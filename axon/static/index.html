@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Axon Agent</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+</head>
+
+<body>
+    <div class="layout">
+        <!-- ── Sidebar ──────────────────────────────────────────────────── -->
+        <aside class="sidebar">
+            <div class="sidebar-logo">
+                <img src="favicon.png" alt="Axon Logo" class="logo-img">
+                <span class="logo-text">AXON</span>
+                <span class="logo-version">v0.2</span>
+            </div>
+            <nav class="sidebar-nav">
+                <button class="nav-item active" data-page="chat">
+                    <span class="nav-icon">💬</span><span>Chat</span>
+                </button>
+                <button class="nav-item" data-page="overview">
+                    <span class="nav-icon">📊</span><span>Overview</span>
+                </button>
+                <button class="nav-item" data-page="models">
+                    <span class="nav-icon">🤖</span><span>Models</span>
+                </button>
+                <button class="nav-item" data-page="tools">
+                    <span class="nav-icon">🔧</span><span>Tools</span>
+                </button>
+                <button class="nav-item" data-page="patterns">
+                    <span class="nav-icon">🔀</span><span>Tool Router</span>
+                </button>
+                <button class="nav-item" data-page="memory">
+                    <span class="nav-icon">🧠</span><span>Memory</span>
+                </button>
+                <button class="nav-item" data-page="scheduler">
+                    <span class="nav-icon">📅</span><span>Scheduler</span>
+                </button>
+                <button class="nav-item" data-page="watchers">
+                    <span class="nav-icon">👁️</span><span>Watchers</span>
+                </button>
+                <button class="nav-item" data-page="mcp">
+                    <span class="nav-icon">🔌</span><span>MCP</span>
+                </button>
+                <button class="nav-item" data-page="files">
+                    <span class="nav-icon">📁</span><span>Files</span>
+                </button>
+                <button class="nav-item" data-page="runs">
+                    <span class="nav-icon">📜</span><span>History</span>
+                </button>
+                <button class="nav-item" data-page="messaging">
+                    <span class="nav-icon">📱</span><span>Messaging</span>
+                </button>
+                <button class="nav-item" data-page="settings">
+                    <span class="nav-icon">⚙</span><span>Settings</span>
+                </button>
+            </nav>
+            <div class="sidebar-status">
+                <span class="ws-dot" id="wsDot"></span>
+                <span id="wsStatus">Connecting...</span>
+            </div>
+        </aside>
+
+        <!-- ── Main content ──────────────────────────────────────────────── -->
+        <main class="main">
+            <!-- CHAT ────────────────────────────────────────────────────── -->
+            <section class="page active" id="page-chat">
+                <div class="chat-layout">
+                    <div class="chat-messages" id="chatMessages">
+                        <div class="chat-welcome">
+                            <img src="favicon.png" alt="Axon Logo" class="welcome-logo">
+                            <h2>Axon Agent</h2>
+                            <p>Ask me anything. I can use tools, search the web, manage files, schedule tasks, and more.
+                            </p>
+                        </div>
+                    </div>
+                    <div class="chat-input-area">
+                        <div class="chat-input-row">
+                            <textarea id="chatInput" placeholder="Message Axon..." rows="1"></textarea>
+                            <button id="chatSend" class="btn btn-primary">Send</button>
+                        </div>
+                        <div class="chat-hints">
+                            <span class="hint">⏎ Send</span>
+                            <span class="hint">Shift+⏎ New line</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- pages continue... simplified for brevity since user already has them -->
+            <!-- OVERVIEW -->
+            <section class="page" id="page-overview">
+                <div class="page-header">
+                    <h1>Overview</h1>
+                </div>
+                <div class="stat-row" id="overviewStats"></div>
+                <div class="card">
+                    <h2>Recent Runs</h2>
+                    <div id="recentRuns"></div>
+                </div>
+            </section>
+
+            <section class="page" id="page-models">
+                <div class="page-header">
+                    <h1>Models</h1>
+                    <div class="header-actions">
+                        <button class="btn btn-sm btn-success" onclick="showAddModel()">+ Add Model</button>
+                        <button class="btn btn-sm" onclick="loadModels()">↻ Refresh</button>
+                    </div>
+                </div>
+                <div id="modelsList"></div>
+            </section>
+
+            <section class="page" id="page-tools">
+                <div class="page-header">
+                    <h1>Tools</h1><button class="btn btn-sm btn-success" onclick="reloadTools()">↻ Reload</button>
+                </div>
+                <div id="toolsList"></div>
+            </section>
+
+            <section class="page" id="page-patterns">
+                <div class="page-header">
+                    <h1>Tool Router</h1><button class="btn btn-sm btn-success" onclick="showAddPattern()">+ Add
+                        Pattern</button>
+                </div>
+                <div class="card">
+                    <h2>Live Test</h2>
+                    <div class="test-row">
+                        <input type="text" id="patternTestInput" placeholder="Type a message to test routing..."
+                            style="flex:1;margin:0">
+                        <button class="btn btn-primary btn-sm" onclick="testRouting()">Test</button>
+                    </div>
+                    <div id="testResult" style="margin-top:10px"></div>
+                </div>
+                <div id="patternsList"></div>
+            </section>
+
+            <section class="page" id="page-memory">
+                <div class="page-header">
+                    <h1>Memory</h1>
+                </div>
+                <div class="card">
+                    <h2>Search Long-Term Memory</h2>
+                    <div class="test-row">
+                        <input type="text" id="memorySearch" placeholder="Search memories..." style="flex:1;margin:0">
+                        <button class="btn btn-primary btn-sm" onclick="searchMemory()">Search</button>
+                    </div>
+                </div>
+                <div id="memoryList"></div>
+            </section>
+
+            <section class="page" id="page-scheduler">
+                <div class="page-header">
+                    <h1>Scheduler</h1><button class="btn btn-sm btn-success" onclick="showCreateJob()">+ New
+                        Job</button>
+                </div>
+                <div id="jobsList"></div>
+            </section>
+
+            <section class="page" id="page-watchers">
+                <div class="page-header">
+                    <h1>Smart Notifications</h1>
+                    <div class="header-actions">
+                        <button class="btn btn-sm btn-success" onclick="showAddWatcher()">+ Add Watcher</button>
+                        <button class="btn btn-sm" onclick="loadWatchers()">↻ Refresh</button>
+                    </div>
+                </div>
+                <p class="page-desc" style="margin-bottom: 20px;">Automatically poll services (like Gmail or Facebook) on an interval and use AI to filter out noise.</p>
+                <div id="watchersList"></div>
+                
+                <div class="card" style="margin-top: 30px;">
+                    <h2>Polling Activity Log</h2>
+                    <div id="watcherLogList" style="max-height: 300px; overflow-y: auto; background: var(--bg-1); border-radius: 4px; padding: 10px;"></div>
+                </div>
+            </section>
+
+            <section class="page" id="page-mcp">
+                <div class="page-header">
+                    <h1>MCP Servers</h1><button class="btn btn-sm btn-success" onclick="showConnectMcp()">+
+                        Connect</button>
+                </div>
+                <div id="mcpList"></div>
+            </section>
+
+            <section class="page" id="page-files">
+                <div class="page-header">
+                    <h1>Files</h1><label class="btn btn-sm btn-success" style="cursor:pointer">Upload <input type="file"
+                            hidden onchange="uploadFile(this)"></label>
+                </div>
+                <div class="card">
+                    <h2>Incoming</h2>
+                    <div id="filesIncoming"></div>
+                </div>
+                <div class="card">
+                    <h2>Outgoing</h2>
+                    <div id="filesOutgoing"></div>
+                </div>
+            </section>
+
+            <section class="page" id="page-runs">
+                <div class="page-header">
+                    <h1>Run History</h1><button class="btn btn-sm" onclick="loadRuns()">↻ Refresh</button>
+                </div>
+                <div id="runsList"></div>
+            </section>
+
+            <section class="page" id="page-messaging">
+                <div class="page-header">
+                    <h1>Messaging</h1>
+                </div>
+                <p class="page-desc">Connect Axon to external platforms. Tokens are stored securely in your settings.
+                </p>
+                <div id="platformsList"></div>
+            </section>
+
+            <section class="page" id="page-settings">
+                <div class="page-header">
+                    <h1>Settings</h1>
+                </div>
+                <p class="page-desc">All changes take effect immediately — no restart required.</p>
+                <div id="settingsList"></div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Modals -->
+    <div class="modal-overlay" id="patternModal">
+        <div class="modal">
+            <h3>Add Pattern</h3>
+            <label>Tool Name</label><input type="text" id="newPatternTool">
+            <label>Regex Pattern</label><input type="text" id="newPatternRegex">
+            <label>Description</label><input type="text" id="newPatternDesc">
+            <div class="modal-actions">
+                <button class="btn" onclick="closeModal('patternModal')">Cancel</button>
+                <button class="btn btn-success" onclick="addPattern()">Add</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="jobModal">
+        <div class="modal">
+            <h3 id="jobModalTitle">Create Scheduled Job</h3>
+            <label>Name</label><input type="text" id="jobName">
+            <label>Task</label><textarea id="jobTask" rows="3"></textarea>
+            <label>Schedule</label><input type="text" id="jobSchedule">
+            <label>Stop when</label><input type="text" id="jobStopCond">
+            <div class="modal-actions">
+                <button class="btn" onclick="closeModal('jobModal')">Cancel</button>
+                <button class="btn btn-success" id="jobSaveBtn" onclick="saveJob()">Schedule</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="watcherModal">
+        <div class="modal">
+            <h3>Add Watcher</h3>
+            
+            <label>Service Type</label>
+            <select id="watcherService" onchange="toggleWatcherCustomFields()">
+                <option value="gmail">Gmail</option>
+                <option value="outlook">Outlook</option>
+                <option value="facebook">Facebook Messenger</option>
+                <option value="gcal">Google Calendar</option>
+                <option value="mscal">Microsoft Calendar</option>
+                <option value="custom">Custom Tool / MCP</option>
+            </select>
+            
+            <div id="watcherCustomFields" style="display: none; margin-top: 15px; padding: 15px; background: rgba(0,0,0,0.2); border-radius: 6px;">
+                <label>Tool Name</label>
+                <input type="text" id="watcherToolName" placeholder="e.g. web_request or crm_leads" style="margin-bottom: 10px;">
+                
+                <label>Tool Arguments (JSON)</label>
+                <textarea id="watcherToolArgs" rows="3" placeholder='{"url": "https://api.example.com"}' style="margin-bottom: 10px;">{}</textarea>
+                
+                <label>UI Label</label>
+                <input type="text" id="watcherLabel" placeholder="e.g. API Alerts">
+            </div>
+
+            <label style="margin-top: 15px;">Poll Interval (Minutes)</label>
+            <input type="number" id="watcherPollMins" value="5" min="1">
+            
+            <div style="margin-top: 15px; margin-bottom: 20px;">
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; justify-content: flex-start;">
+                    <input type="checkbox" id="watcherEnabled" checked style="margin: 0; width: auto;">
+                    Enable immediately
+                </label>
+            </div>
+            
+            <input type="hidden" id="watcherId">
+
+            <div class="modal-actions">
+                <button class="btn" onclick="closeModal('watcherModal')">Cancel</button>
+                <button class="btn btn-success" onclick="saveWatcher()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="mcpModal">
+        <div class="modal">
+            <h3>Connect MCP Server</h3>
+            <label>Name</label><input type="text" id="mcpName">
+            <label>URL</label><input type="text" id="mcpUrl" placeholder="http://localhost:8000">
+            <label>API Key / Token (Optional)</label><input type="password" id="mcpKey" placeholder="Bearer xxxxx">
+            <div class="modal-actions">
+                <button class="btn" onclick="closeModal('mcpModal')">Cancel</button>
+                <button class="btn btn-success" onclick="connectMcp()">Connect</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="modelModal">
+        <div class="modal">
+            <h3 id="modelModalTitle">Add AI Model</h3>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Internal Name</label><input type="text" id="modelName" placeholder="e.g. gpt-4-prod">
+                </div>
+                <div class="form-group">
+                    <label>Provider</label>
+                    <select id="modelProvider">
+                        <option value="openai">OpenAI</option>
+                        <option value="openrouter">OpenRouter</option>
+                        <option value="groq">Groq</option>
+                        <option value="cerebras">Cerebras</option>
+                        <option value="gemini">Gemini</option>
+                        <option value="anthropic">Anthropic</option>
+                        <option value="ollama">Ollama</option>
+                    </select>
+                </div>
+            </div>
+            <label>Model ID</label><input type="text" id="modelId" placeholder="e.g. gpt-4o">
+            <label>API Key (or ${ENV_VAR})</label><input type="text" id="modelKey">
+            <label>Base URL (Optional)</label><input type="text" id="modelBaseUrl">
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Priority (Lower = Higher)</label><input type="number" id="modelPriority" value="1">
+                </div>
+                <div class="form-group">
+                    <label>Role</label>
+                    <select id="modelRole">
+                        <option value="">General</option>
+                        <option value="router">Router</option>
+                        <option value="tool_writer">Tool Writer</option>
+                        <option value="paid_model">Paid Fallback</option>
+                    </select>
+                </div>
+            </div>
+            <label>Max Tokens (output)</label><input type="number" id="modelMaxTokens" value="4096">
+            <div class="modal-actions">
+                <button class="btn" onclick="closeModal('modelModal')">Cancel</button>
+                <button class="btn btn-success" onclick="saveModel()">Save Model</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+
+</html>
