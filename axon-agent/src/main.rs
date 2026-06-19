@@ -633,6 +633,14 @@ async fn main() -> anyhow::Result<()> {
             [],
         );
         let _ = conn.execute(
+            "INSERT OR IGNORE INTO settings VALUES ('agent.quality_check_mode', 'mutating', 'string', 'When to spend an LLM quality check: all (every tool-backed answer), mutating (only state-changing actions, false refusals, or blank/fake-success responses), off', 'agent', datetime('now'))",
+            [],
+        );
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO settings VALUES ('agent.max_parallel_tools', '3', 'int', 'Max tools executed concurrently per request. Keep low on small/shared-core hosts (e2-micro); raise on larger machines', 'agent', datetime('now'))",
+            [],
+        );
+        let _ = conn.execute(
             "INSERT OR IGNORE INTO settings VALUES ('agent.request_timeout_secs', '45', 'int', 'Total wall-clock budget in seconds for one agent run', 'agent', datetime('now'))",
             [],
         );

@@ -468,7 +468,26 @@ async fn validate_response(
         };
     }
 
+    // Scope the (LLM-backed) quality check by action risk. On a free-tier model
+    // pool, running a second model on every read-only lookup mostly burns rate
+    // limits and latency. `agent.quality_check_mode`:
+    //   "all"      — audit every tool-backed answer (legacy behavior)
+    //   "mutating" — audit only when the stakes are real: a successful
+    //                state-changing action, a routed-but-unused tool (likely a
+    //                false refusal), or a blank/hallucinated-success response.
+    //                Plain successful reads skip the LLM call (the zero-cost
+    //                claim/structural/service-mismatch guards above still run).
+    //   "off"      — never (same as agent.quality_check = false)
+    let any_mutating_success = tool_receipts.iter().any(|r| r.ok && r.is_mutating);
+    let qc_mode = settings.get_str("agent.quality_check_mode", "mutating");
+    let qc_scope_ok = match qc_mode.as_str() {
+        "off" => false,
+        "all" => true,
+        _ => any_mutating_success || tools_routed_but_unused || is_blank,
+    };
+
     let should_qc = qc_enabled
+        && qc_scope_ok
         && (!tools_used.is_empty() || is_blank || tools_routed_but_unused)
         && !is_subtask
         && !is_completion_confirm

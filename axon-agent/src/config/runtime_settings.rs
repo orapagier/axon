@@ -85,7 +85,10 @@ impl RuntimeSettings {
         self.get_int("agent.max_iterations", 20)
     }
     pub fn max_parallel_tools(&self) -> usize {
-        self.get_int("agent.max_parallel_tools", 5) as usize
+        // Conservative default for small/shared-core hosts (e.g. e2-micro): a
+        // single request fanning out CPU-bound tools (image gen, JS, shell) can
+        // starve the runtime. Tune up via the dashboard on larger machines.
+        self.get_int("agent.max_parallel_tools", 3) as usize
     }
     pub fn tool_timeout_secs(&self) -> u64 {
         self.get_int("agent.tool_timeout_secs", 30) as u64
