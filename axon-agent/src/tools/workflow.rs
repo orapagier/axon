@@ -1,0 +1,3103 @@
+use crate::error_reporting::send_global_error_notification;
+use crate::state::AppState;
+use crate::tools::http::{HttpAuth, HttpRequestParams, HttpRequestTool};
+use boa_engine::{Context, JsString, JsValue, NativeFunction, Source};
+use regex::Regex;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::time::Duration;
+
+// Gmail trigger data: holds new email data between the background poll check
+// and the actual workflow execution so the stimulus node can inject it.
+static GMAIL_TRIGGER_DATA: once_cell::sync::Lazy<
+    tokio::sync::Mutex<std::collections::HashMap<String, Value>>,
+> = once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
+
+static WHATSAPP_TRIGGER_DATA: once_cell::sync::Lazy<
+    tokio::sync::Mutex<std::collections::HashMap<String, Value>>,
+> = once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
+
+static TELEGRAM_TRIGGER_DATA: once_cell::sync::Lazy<
+    tokio::sync::Mutex<std::collections::HashMap<String, Value>>,
+> = once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
+
+static EXTERNAL_TRIGGER_DATA: once_cell::sync::Lazy<
+    tokio::sync::Mutex<std::collections::HashMap<String, Value>>,
+> = once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const JS_SCRIPT_MAX_BYTES: usize = 64 * 1024;
+const JS_LOG_MAX_LINES: usize = 200;
+const JS_TIMEOUT: Duration = Duration::from_secs(10);
+
+// ── Data types ────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Workflow {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub enabled: bool,
+    pub trigger_type: String,
+    pub trigger_config: Value,
+    pub last_run_at: Option<String>,
+    pub last_status: String,
+    pub created_at: String,
+    #[serde(default)]
+    pub nodes: Vec<WorkflowNode>,
+    #[serde(default)]
+    pub edges: Vec<WorkflowEdge>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowNode {
+    pub id: String,
+    pub workflow_id: String,
+    pub position: i64,
+    #[serde(default)]
+    pub position_x: f64,
+    #[serde(default)]
+    pub position_y: f64,
+    pub node_type: String,
+    pub name: String,
+    pub config: Value,
+    pub enabled: bool,
+    #[serde(default)]
+    pub continue_on_fail: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowEdge {
+    pub id: String,
+    pub workflow_id: String,
+    pub source_id: String,
+    pub target_id: String,
+    pub source_handle: Option<String>,
+    pub target_handle: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeResult {
+    pub node_id: String,
+    pub node_name: String,
+    pub node_type: String,
+    pub position: i64,
+    pub status: String, // "success" | "error"
+    pub output: Value,
+    pub duration_ms: u64,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowRunResult {
+    pub run_id: String,
+    pub workflow_id: String,
+    pub status: String,
+    pub node_results: Vec<NodeResult>,
+    pub final_output: Value,
+    pub total_duration_ms: u64,
+}
+
+// ── Node executors ────────────────────────────────────────────────────────────
+
+async fn execute_http_node(config: &Value) -> Result<Value, String> {
+    let method = config
+        .get("method")
+        .and_then(|v| v.as_str())
+        .unwrap_or("GET")
+        .to_string();
+    let url = config
+        .get("url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    if url.is_empty() {
+        return Err("URL is empty".to_string());
+    }
+
+    let authentication = config
+        .get("authentication")
+        .and_then(|v| v.as_str())
+        .unwrap_or("none");
+
+    let auth = if authentication != "none" {
+        Some(HttpAuth {
+            auth_type: authentication.to_string(),
+            user: config
+                .get("user")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            password: config
+                .get("password")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            header_name: config
+                .get("authHeaderName")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            header_value: config
+                .get("authHeaderValue")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+        })
+    } else {
+        None
+    };
+
+    let mut headers_obj = serde_json::Map::new();
+    if config
+        .get("sendHeaders")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        let specify = config
+            .get("specifyHeaders")
+            .and_then(|v| v.as_str())
+            .unwrap_or("keypair");
+        if specify == "json" {
+            if let Some(json_s) = config.get("jsonHeaders").and_then(|v| v.as_str()) {
+                if let Ok(Value::Object(map)) = serde_json::from_str(json_s) {
+                    for (k, v) in map {
+                        headers_obj.insert(k, v);
+                    }
+                }
+            }
+        } else {
+            if let Some(params) = config
+                .get("headerParameters")
+                .and_then(|v| v.get("parameters"))
+                .and_then(|v| v.as_array())
+            {
+                for p in params {
+                    if let (Some(name), Some(value)) =
+                        (p.get("name").and_then(|v| v.as_str()), p.get("value"))
+                    {
+                        if !name.is_empty() {
+                            headers_obj
+                                .insert(name.to_string(), try_parse_json_value(value.clone()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut query_obj = serde_json::Map::new();
+    if config
+        .get("sendQuery")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        let specify = config
+            .get("specifyQuery")
+            .and_then(|v| v.as_str())
+            .unwrap_or("keypair");
+        if specify == "json" {
+            if let Some(json_s) = config.get("jsonQuery").and_then(|v| v.as_str()) {
+                if let Ok(Value::Object(map)) = serde_json::from_str(json_s) {
+                    for (k, v) in map {
+                        query_obj.insert(k, v);
+                    }
+                }
+            }
+        } else {
+            if let Some(params) = config
+                .get("queryParameters")
+                .and_then(|v| v.get("parameters"))
+                .and_then(|v| v.as_array())
+            {
+                for p in params {
+                    if let (Some(name), Some(value)) =
+                        (p.get("name").and_then(|v| v.as_str()), p.get("value"))
+                    {
+                        if !name.is_empty() {
+                            query_obj.insert(name.to_string(), try_parse_json_value(value.clone()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let raw_content_type = config
+        .get("contentType")
+        .or_else(|| config.get("bodyContentType"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("json");
+
+    let content_type = raw_content_type;
+
+    let specify_body = config
+        .get("specifyBody")
+        .and_then(|v| v.as_str())
+        .unwrap_or("keypair");
+
+    // Debug: Log raw config values before body processing
+    tracing::info!("Synapse BEFORE body - specify_body: {:?}, sendBody: {:?}, jsonBody: {:?}, contentType: {:?}",
+        specify_body,
+        config.get("sendBody"),
+        config.get("jsonBody"),
+        config.get("contentType")
+    );
+
+    let has_body_method = ["POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+        .contains(&method.to_uppercase().as_str());
+
+    let body = if has_body_method
+        && config
+            .get("sendBody")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true)
+    {
+        match content_type {
+            "json" => {
+                if specify_body == "json" {
+                    // jsonBody can be either a String (raw JSON) or already-parsed Object
+                    config.get("jsonBody").and_then(|v| {
+                        if let Some(s) = v.as_str() {
+                            // Raw JSON string - parse it
+                            serde_json::from_str(s).ok()
+                        } else {
+                            // Already parsed JSON value
+                            Some(v.clone())
+                        }
+                    })
+                } else if specify_body == "string" {
+                    config
+                        .get("body")
+                        .and_then(|v| v.as_str())
+                        .map(|b| json!(b))
+                } else {
+                    let mut base_obj = serde_json::Map::new();
+                    if let Some(params) = config
+                        .get("bodyParameters")
+                        .and_then(|v| v.get("parameters"))
+                        .and_then(|v| v.as_array())
+                    {
+                        for p in params {
+                            if let (Some(name), Some(value)) =
+                                (p.get("name").and_then(|v| v.as_str()), p.get("value"))
+                            {
+                                if !name.is_empty() {
+                                    base_obj.insert(
+                                        name.to_string(),
+                                        try_parse_json_value(value.clone()),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    if base_obj.is_empty() {
+                        None
+                    } else {
+                        Some(Value::Object(base_obj))
+                    }
+                }
+            }
+            "form-urlencoded" | "multipart-form-data" => {
+                if specify_body == "string" {
+                    config
+                        .get("body")
+                        .and_then(|v| v.as_str())
+                        .map(|b| json!(b))
+                } else {
+                    let mut base_obj = serde_json::Map::new();
+                    if let Some(params) = config
+                        .get("bodyParameters")
+                        .and_then(|v| v.get("parameters"))
+                        .and_then(|v| v.as_array())
+                    {
+                        for p in params {
+                            if let (Some(name), Some(value)) =
+                                (p.get("name").and_then(|v| v.as_str()), p.get("value"))
+                            {
+                                if !name.is_empty() {
+                                    if content_type == "multipart-form-data" {
+                                        let p_type = p
+                                            .get("parameterType")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("formData");
+                                        if p_type == "formBinaryData" {
+                                            base_obj.insert(
+                                                name.to_string(),
+                                                json!({ "_axon_file_path": value.clone() }),
+                                            );
+                                        } else {
+                                            base_obj.insert(
+                                                name.to_string(),
+                                                try_parse_json_value(value.clone()),
+                                            );
+                                        }
+                                    } else {
+                                        base_obj.insert(
+                                            name.to_string(),
+                                            try_parse_json_value(value.clone()),
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Some(Value::Object(base_obj))
+                }
+            }
+            "raw" => config
+                .get("body")
+                .and_then(|v| v.as_str())
+                .map(|b| json!(b)),
+            _ => None,
+        }
+    } else {
+        None
+    };
+
+    let options = config.get("options");
+    tracing::info!("Synapse options raw: {:?}", options);
+    tracing::info!("Synapse proxy: {:?}", options.and_then(|o| o.get("proxy")));
+    let timeout_seconds = options
+        .and_then(|o| o.get("timeout"))
+        .and_then(|v| v.as_u64())
+        .map(|v| (v / 1000).max(1)) // ms to sec; sub-second values must not truncate to 0
+        .or_else(|| config.get("timeout").and_then(|v| v.as_u64()))
+        .or(Some(30));
+
+    let allow_unauthorized_certs = options
+        .and_then(|o| o.get("allowUnauthorizedCerts"))
+        .and_then(|v| v.as_bool())
+        .or_else(|| {
+            config
+                .get("allowUnauthorizedCerts")
+                .and_then(|v| v.as_bool())
+        });
+
+    let full_response = options
+        .and_then(|o| o.get("fullResponse"))
+        .or_else(|| config.get("fullResponse"))
+        .and_then(|v| v.as_bool());
+
+    // Debug: Log the body and content type
+    tracing::info!(
+        "Synapse body: {:?}, content_type: {:?}, specify_body: {:?}",
+        body,
+        content_type,
+        specify_body
+    );
+
+    // Debug: Log jsonBody field specifically
+    tracing::info!("Synapse jsonBody raw: {:?}", config.get("jsonBody"));
+
+    let params = HttpRequestParams {
+        method,
+        url,
+        headers: if headers_obj.is_empty() {
+            None
+        } else {
+            Some(Value::Object(headers_obj))
+        },
+        query: if query_obj.is_empty() {
+            None
+        } else {
+            Some(Value::Object(query_obj))
+        },
+        body,
+        auth,
+        timeout_seconds,
+        response_format: config
+            .get("responseFormat")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        limit: None,
+        // Proxy can be at top level or in options
+        proxy: config
+            .get("proxy")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .or_else(|| {
+                options
+                    .and_then(|o| o.get("proxy"))
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(String::from)
+            }),
+        send_binary_data: Some(content_type == "binaryData"),
+        binary_property: config
+            .get("inputDataFieldName")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        body_content_type: Some(content_type.to_string()),
+        stealth_headers: config.get("stealthHeaders").and_then(|v| v.as_bool()),
+        raw_content_type: config
+            .get("rawContentType")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        allow_unauthorized_certs,
+        full_response,
+        data_cleaner: options
+            .and_then(|o| o.get("dataCleaner"))
+            .and_then(|v| v.as_bool())
+            .or_else(|| config.get("dataCleaner").and_then(|v| v.as_bool())),
+        always_output_binary: options
+            .and_then(|o| o.get("alwaysOutputBinary"))
+            .and_then(|v| v.as_bool())
+            .or_else(|| config.get("alwaysOutputBinary").and_then(|v| v.as_bool())),
+        json_body: None,
+        specify_body: None,
+        header_parameters: None,
+    };
+
+    let tool = HttpRequestTool::new();
+    match tool.request(params).await {
+        Ok(resp) => serde_json::to_value(resp).map_err(|e| e.to_string()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+// ── JS Execution Infrastructure ───────────────────────────────────────────────
+
+thread_local! {
+    static JS_LOG_BUFFER: std::cell::RefCell<Option<std::sync::Arc<std::sync::Mutex<Vec<String>>>>>
+        = std::cell::RefCell::new(None);
+}
+
+struct JsLogGuard;
+impl JsLogGuard {
+    fn install(logs: std::sync::Arc<std::sync::Mutex<Vec<String>>>) -> Self {
+        JS_LOG_BUFFER.with(|b| *b.borrow_mut() = Some(logs));
+        JsLogGuard
+    }
+}
+impl Drop for JsLogGuard {
+    fn drop(&mut self) {
+        JS_LOG_BUFFER.with(|b| *b.borrow_mut() = None);
+    }
+}
+
+fn js_value_to_json(val: &JsValue, context: &mut Context) -> Value {
+    if val.is_null() || val.is_undefined() {
+        Value::Null
+    } else if let Some(b) = val.as_boolean() {
+        json!(b)
+    } else if let Some(n) = val.as_number() {
+        if n.is_nan() || n.is_infinite() {
+            Value::Null
+        } else if n.fract() == 0.0 {
+            json!(n as i64)
+        } else {
+            json!(n)
+        }
+    } else if let Some(s) = val.as_string() {
+        json!(s.to_std_string_escaped())
+    } else if let Some(obj) = val.as_object() {
+        if obj.is_array() {
+            let len = obj
+                .get(JsString::from("length"), context)
+                .ok()
+                .and_then(|v| v.as_number())
+                .unwrap_or(0.0) as usize;
+            let mut arr = Vec::with_capacity(len);
+            for i in 0..len {
+                arr.push(js_value_to_json(
+                    &obj.get(i, context).unwrap_or_default(),
+                    context,
+                ));
+            }
+            Value::Array(arr)
+        } else {
+            let keys = obj.own_property_keys(context).unwrap_or_default();
+            let mut map = serde_json::Map::new();
+            for key in keys {
+                let key_str = match &key {
+                    boa_engine::property::PropertyKey::String(s) => s.to_std_string_escaped(),
+                    boa_engine::property::PropertyKey::Index(i) => i.get().to_string(),
+                    _ => continue,
+                };
+                map.insert(
+                    key_str,
+                    js_value_to_json(&obj.get(key, context).unwrap_or_default(), context),
+                );
+            }
+            Value::Object(map)
+        }
+    } else {
+        Value::Null
+    }
+}
+
+/// Strip `{{ expression }}` wrappers from a JS script so that dragged-in
+/// expressions become plain JavaScript references.
+/// E.g. `const item = {{ $node["Gmail"].data }};`
+///   →  `const item = $node["Gmail"].data;`
+fn strip_expression_wrappers(script: &str) -> String {
+    // (?s) so expressions spanning multiple lines are also unwrapped
+    static RE: once_cell::sync::Lazy<Regex> =
+        once_cell::sync::Lazy::new(|| Regex::new(r"(?s)\{\{\s*(.+?)\s*\}\}").unwrap());
+    RE.replace_all(script, "$1").to_string()
+}
+
+async fn execute_js_node(
+    raw_script: &str,
+    node: &WorkflowNode,
+    results: &[NodeResult],
+    workflow_id: &str,
+) -> Result<Value, String> {
+    if raw_script.is_empty() {
+        return Err("No script specified".to_string());
+    }
+    if raw_script.len() > JS_SCRIPT_MAX_BYTES {
+        return Err("Script too large".to_string());
+    }
+
+    // Strip {{ }} wrappers so dragged expressions become valid JS.
+    // $node is injected as a native JS variable, so $node["Name"].data works.
+    let script = strip_expression_wrappers(raw_script);
+
+    let results_copy = results.to_vec();
+    let node_id = node.id.clone();
+    let node_name = node.name.clone();
+    let wf_id = workflow_id.to_string();
+    let logs = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let logs_for_thread = logs.clone();
+
+    let task = tokio::task::spawn_blocking(move || {
+        let _guard = JsLogGuard::install(logs_for_thread);
+        let mut context = Context::default();
+
+        // Hard interpreter limits: tokio::time::timeout only abandons the
+        // blocking task — it cannot stop boa. Without these, an infinite
+        // loop in a user script leaks a blocking thread forever.
+        context.runtime_limits_mut().set_loop_iteration_limit(5_000_000);
+        context.runtime_limits_mut().set_recursion_limit(512);
+
+        // ── console.log / print ───────────────────────────────────────────
+        context
+            .register_global_builtin_callable(
+                JsString::from("print"),
+                1,
+                NativeFunction::from_copy_closure(|_this, args, _ctx| {
+                    let msg = args.first().cloned().unwrap_or_default();
+                    JS_LOG_BUFFER.with(|b| {
+                        if let Some(logs) = b.borrow().as_ref() {
+                            if let Ok(mut lock) = logs.lock() {
+                                if lock.len() < JS_LOG_MAX_LINES {
+                                    lock.push(msg.display().to_string());
+                                }
+                            }
+                        }
+                    });
+                    Ok(JsValue::undefined())
+                }),
+            )
+            .map_err(|e| e.to_string())?;
+
+        context
+            .eval(Source::from_bytes(
+                b"var console = { log: print, warn: print, error: print, info: print, debug: print };",
+            ))
+            .map_err(|e| e.to_string())?;
+
+        // ── $results (ordered array of all previous results) ──────────────
+        let results_json =
+            serde_json::to_string(&results_copy).unwrap_or_else(|_| "[]".to_string());
+        context
+            .eval(Source::from_bytes(
+                format!("var $results = {};", results_json).as_bytes(),
+            ))
+            .map_err(|e| e.to_string())?;
+
+        // ── $node map: $node["NodeName"].data.field ───────────────────────
+        let mut nodes_map = serde_json::Map::new();
+        for r in &results_copy {
+            let mut node_obj = serde_json::Map::new();
+            node_obj.insert("output".to_string(), r.output.clone());
+            node_obj.insert("data".to_string(), r.output.clone());
+            node_obj.insert("json".to_string(), r.output.clone());
+            node_obj.insert("error".to_string(), serde_json::json!(r.error));
+            node_obj.insert("name".to_string(), serde_json::json!(r.node_name));
+            node_obj.insert("id".to_string(), serde_json::json!(r.node_id));
+            node_obj.insert("type".to_string(), serde_json::json!(r.node_type));
+            let val = serde_json::Value::Object(node_obj);
+            // Index by both ID and name (case-insensitive alias too)
+            nodes_map.insert(r.node_id.clone(), val.clone());
+            nodes_map.insert(r.node_name.clone(), val.clone());
+            // Lowercase alias so users don't have to worry about case
+            let lower = r.node_name.to_lowercase();
+            if lower != r.node_name {
+                nodes_map.entry(lower).or_insert(val);
+            }
+        }
+        let node_json = serde_json::to_string(&serde_json::Value::Object(nodes_map))
+            .unwrap_or_else(|_| "{}".to_string());
+        context
+            .eval(Source::from_bytes(
+                format!("var $node = {};", node_json).as_bytes(),
+            ))
+            .map_err(|e| e.to_string())?;
+
+        // ── n8n-style convenience helpers ─────────────────────────────────
+        // $input  — the most recent predecessor node's output (what n8n calls $input.first().json)
+        // $json   — alias for $input
+        // $prevNode — metadata about the previous node
+        // $items  — array of all previous node outputs
+        // $now    — current ISO timestamp
+        // $today  — current date YYYY-MM-DD
+        // $execution — workflow context
+        // $nodeId / $nodeName — current JS node identity
+        let prev = results_copy.last();
+        let input_json = prev
+            .map(|r| serde_json::to_string(&r.output).unwrap_or_else(|_| "{}".to_string()))
+            .unwrap_or_else(|| "{}".to_string());
+        let prev_node_json = prev
+            .map(|r| {
+                serde_json::to_string(&serde_json::json!({
+                    "name": r.node_name,
+                    "id": r.node_id,
+                    "type": r.node_type,
+                    "output": r.output,
+                    "data": r.output,
+                    "json": r.output,
+                }))
+                .unwrap_or_else(|_| "{}".to_string())
+            })
+            .unwrap_or_else(|| "{}".to_string());
+
+        // $items: array of {json, name, id, type} for all preceding nodes
+        let items_arr: Vec<Value> = results_copy
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "json": r.output,
+                    "data": r.output,
+                    "name": r.node_name,
+                    "id": r.node_id,
+                    "type": r.node_type,
+                })
+            })
+            .collect();
+        let items_json = serde_json::to_string(&items_arr).unwrap_or_else(|_| "[]".to_string());
+
+        let now = chrono::Utc::now();
+        let helpers = format!(
+            r#"
+var $input = {input};
+var $json = $input;
+var $prevNode = {prev_node};
+var $items = {items};
+var $now = "{now_iso}";
+var $today = "{today}";
+var $execution = {{ "workflowId": "{wf_id}" }};
+var $nodeId = "{node_id}";
+var $nodeName = "{node_name}";
+var $env = {{}};
+"#,
+            input = input_json,
+            prev_node = prev_node_json,
+            items = items_json,
+            now_iso = now.to_rfc3339(),
+            today = now.format("%Y-%m-%d"),
+            wf_id = wf_id,
+            node_id = node_id,
+            node_name = node_name,
+        );
+        context
+            .eval(Source::from_bytes(helpers.as_bytes()))
+            .map_err(|e| format!("Helper injection error: {}", e))?;
+
+        // ── Execute the user script ───────────────────────────────────────
+        let wrapped = format!("(function() {{\n{}\n}})()", script);
+        match context.eval(Source::from_bytes(wrapped.as_bytes())) {
+            Ok(res) => Ok(js_value_to_json(&res, &mut context)),
+            Err(e) => {
+                let err_str = e.to_string();
+                // Include the first few lines of the processed script to help debug
+                let preview: String = script.lines().take(5).collect::<Vec<_>>().join("\n");
+                Err(format!(
+                    "JS Error: {}\n--- Script preview ---\n{}",
+                    err_str, preview
+                ))
+            }
+        }
+    });
+
+    match tokio::time::timeout(JS_TIMEOUT, task).await {
+        Ok(Ok(Ok(val))) => Ok(val),
+        Ok(Ok(Err(e))) => Err(format!("JS Error: {}", e)),
+        Ok(Err(e)) => Err(format!("JS panic: {}", e)),
+        Err(_) => Err("JS timeout (10s limit exceeded)".to_string()),
+    }
+}
+
+fn execute_axon_node<'a>(
+    config: &'a Value,
+    state: &'a AppState,
+    workflow_id: &'a str,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send + 'a>> {
+    Box::pin(async move {
+        // Extract stimulus — handle any value type since interpolation may return Object/Array
+        let stimulus = match config.get("stimulus") {
+            Some(Value::String(s)) => s.trim().to_string(),
+            Some(Value::Null) | None => String::new(),
+            Some(other) => serde_json::to_string_pretty(other).unwrap_or_default(),
+        };
+
+        // Extract cortex — same resilient extraction
+        let cortex = match config.get("cortex") {
+            Some(Value::String(s)) => s.trim().to_string(),
+            Some(Value::Null) | None => String::new(),
+            Some(other) => serde_json::to_string_pretty(other).unwrap_or_default(),
+        };
+
+        if stimulus.is_empty() {
+            return Err("Axon node: stimulus (User Prompt) is empty".to_string());
+        }
+
+        // Extract optional model selection
+        let selected_model = config
+            .get("model")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(String::from);
+
+        // Per-node memory toggle (default ON for backwards compatibility).
+        let memory_enabled = config
+            .get("memory_enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
+        // Extract optional tools selection
+        let selected_tools: Vec<String> = config
+            .get("tools")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Build system prompt with optional tool injection
+        let mut system_prompt_text = cortex.clone();
+        if !selected_tools.is_empty() {
+            let tool_section = format!(
+                "\n\n[TOOL RESTRICTION]\nYou have access ONLY to the following tools: {}. \
+                 Use only these tools to fulfill the user's request. Do not attempt to use any other tools.",
+                selected_tools.join(", ")
+            );
+            system_prompt_text.push_str(&tool_section);
+        }
+
+        if let Some(ref model) = selected_model {
+            tracing::info!(
+                "Axon node: user selected model '{}' for workflow {}",
+                model,
+                workflow_id
+            );
+        }
+
+        let system_prompt = if system_prompt_text.is_empty() {
+            None
+        } else {
+            Some(system_prompt_text.as_str())
+        };
+
+        // Run through the Axon agent with an isolated session per workflow
+        let session = format!("wf:{}", workflow_id);
+        let mut ctx = crate::agent::RunContext::new(
+            &stimulus,
+            "workflow",
+            Some(&session),
+            None,
+            None,
+            None,
+            system_prompt,
+        );
+        ctx.preferred_model = selected_model;
+        ctx.memory_enabled = memory_enabled;
+
+        if !selected_tools.is_empty() {
+            ctx.allowed_tools = Some(selected_tools);
+        }
+
+        let agent_response = crate::agent::run_task(&stimulus, state, ctx)
+            .await
+            .map_err(|e| format!("Axon agent error: {}", e))?;
+
+        Ok(serde_json::json!({
+            "output": agent_response
+        }))
+    })
+}
+
+async fn execute_nociceptor_node(
+    state: &AppState,
+    previous_results: &[NodeResult],
+) -> Result<Value, String> {
+    use crate::router::model_router::{drain_alerts, format_alerts};
+
+    // 1. Drain recent infrastructure alerts from the Model Router
+    let model_alerts = drain_alerts(&state.router).await;
+    let model_alert_text = format_alerts(&model_alerts);
+
+    // 2. Identify failures in the current workflow's nodes
+    let node_failures: Vec<_> = previous_results
+        .iter()
+        .filter(|r| r.status == "error")
+        .collect();
+
+    if model_alerts.is_empty() && node_failures.is_empty() {
+        return Ok(serde_json::json!({
+            "status": "No alerts or node failures found",
+            "model_alerts": 0,
+            "node_failures": 0,
+            "dispatched": false
+        }));
+    }
+
+    // 3. Construct a unified report
+    let mut report = String::new();
+
+    if !model_alert_text.is_empty() {
+        report.push_str(&model_alert_text);
+        report.push_str("\n\n");
+    }
+
+    if !node_failures.is_empty() {
+        report.push_str("Nociceptor Alert!\n");
+        for f in &node_failures {
+            report.push_str(&format!(
+                "- ❌ Node: '{}' ({}) failed: {}\n",
+                f.node_name,
+                f.node_type,
+                f.error.as_deref().unwrap_or("No error details")
+            ));
+        }
+    }
+
+    let alert_count = model_alerts.len() + node_failures.len();
+
+    match send_global_error_notification(
+        state,
+        "workflow.nociceptor",
+        "Nociceptor captured workflow errors",
+        &report,
+        None,
+        None,
+    )
+    .await
+    {
+        Ok(_) => Ok(serde_json::json!({
+            "status": format!("Dispatched report with {} items", alert_count),
+            "alert_count": alert_count,
+            "dispatched": true
+        })),
+        Err(e) => Ok(serde_json::json!({
+            "status": format!("Errors found but global notification failed: {}", e),
+            "alert_count": alert_count,
+            "dispatched": false
+        })),
+    }
+}
+
+// Helper to try parsing a string as JSON if it looks like an array or object
+fn try_parse_json_value(val: Value) -> Value {
+    if let Value::String(ref s) = val {
+        let trimmed = s.trim();
+
+        // Already JSON?
+        if (trimmed.starts_with('[') && trimmed.ends_with(']'))
+            || (trimmed.starts_with('{') && trimmed.ends_with('}'))
+        {
+            if let Ok(parsed) = serde_json::from_str(trimmed) {
+                return parsed;
+            }
+        }
+
+        // Try Number (Prioritize Integer)
+        if let Ok(n) = trimmed.parse::<i64>() {
+            return json!(n);
+        }
+        if let Ok(n) = trimmed.parse::<f64>() {
+            return json!(n);
+        }
+
+        // Try Boolean
+        if trimmed.to_lowercase() == "true" {
+            return json!(true);
+        }
+        if trimmed.to_lowercase() == "false" {
+            return json!(false);
+        }
+
+        // Try Comma-separated array (Smart Detection)
+        // Only apply for short, single-line strings that look like actual CSV lists
+        // (e.g. "en,fr,de" or "1,2,3"), NOT for natural language prose containing commas.
+        if trimmed.contains(',')
+            && !trimmed.contains('{')
+            && !trimmed.contains('}')
+            && !trimmed.contains('\n')
+            && !trimmed.contains('\r')
+            && trimmed.len() <= 200
+            && !trimmed.contains(", ")
+        // prose uses ", " while CSV uses ","
+        {
+            let parts: Vec<Value> = trimmed
+                .split(',')
+                .map(|p| p.trim())
+                .filter(|p| !p.is_empty())
+                .map(|p| try_parse_json_value(json!(p)))
+                .collect();
+            if !parts.is_empty() {
+                return Value::Array(parts);
+            }
+        }
+
+        // Try simplified array syntax: [en] -> ["en"]
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            let interior = trimmed[1..trimmed.len() - 1].trim();
+            if !interior.is_empty() && !interior.contains(',') {
+                return Value::Array(vec![try_parse_json_value(json!(interior))]);
+            }
+        }
+    }
+    val
+}
+
+// ── Gmail Trigger Executor ────────────────────────────────────────────────────
+
+async fn execute_gmail_trigger(
+    config: &Value,
+    state: &AppState,
+    workflow_id: &str,
+) -> Result<Value, String> {
+    // Check for pre-fetched data from the background Gmail poller.
+    // This contains ONLY new emails (not previously seen), set by check_and_trigger_gmail().
+    {
+        let data = GMAIL_TRIGGER_DATA.lock().await;
+        if let Some(trigger_data) = data.get(workflow_id) {
+            tracing::info!(
+                "Gmail trigger: using pre-fetched new email data for workflow {}",
+                workflow_id
+            );
+            return Ok(trigger_data.clone());
+        }
+    }
+
+    // Fallback: manual "Execute Step" click — do a live fetch of all unread emails
+    let label = config
+        .get("gmail_label")
+        .and_then(|v| v.as_str())
+        .unwrap_or("INBOX");
+    let max_results = config
+        .get("gmail_max_results")
+        .and_then(|v| {
+            v.as_u64()
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        })
+        .unwrap_or(10);
+
+    let query = format!("is:unread label:{}", label.to_lowercase());
+    let args = json!({
+        "query": query,
+        "max_results": max_results,
+    });
+
+    // Use ToolRegistry::run() — the same proven path the watcher engine uses.
+    // It automatically handles MCP server resolution via the registered tool source.
+    match state.tools.run("gmail_list", args).await {
+        Ok(data) => {
+            tracing::info!(
+                "Gmail trigger (manual): fetched emails from label={}, max={}",
+                label,
+                max_results
+            );
+
+            // Mark as read if configured
+            let mark_read = config
+                .get("gmail_mark_read")
+                .and_then(|v| {
+                    v.as_bool()
+                        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+                })
+                .unwrap_or(false);
+
+            if mark_read {
+                if let Some(emails) = data.as_array() {
+                    for email in emails {
+                        if let Some(msg_id) = email.get("id").and_then(|v| v.as_str()) {
+                            let mark_args = json!({ "ids": vec![msg_id] });
+                            let _ = state.tools.run("gmail_mark_read", mark_args).await;
+                        }
+                    }
+                }
+            }
+
+            Ok(json!({
+                "trigger": "gmail",
+                "label": label,
+                "emails": data,
+            }))
+        }
+        Err(e) => Err(format!("Gmail trigger failed: {}", e)),
+    }
+}
+
+// ── Interpolation ─────────────────────────────────────────────────────────────
+
+// Evaluate a full JS expression using boa_engine. Inject $node representing the results map.
+fn evaluate_js_expression(
+    expression: &str,
+    results: &std::collections::HashMap<String, NodeResult>,
+) -> Option<Value> {
+    let mut context = boa_engine::Context::default();
+
+    let mut nodes_map = serde_json::Map::new();
+    for (key, res) in results {
+        let mut node_obj = serde_json::Map::new();
+        node_obj.insert("output".to_string(), res.output.clone());
+        node_obj.insert("data".to_string(), res.output.clone());
+        // Mirror the alias set exposed by the JS node so complex expressions
+        // that fall through to full JS evaluation see the same shape.
+        node_obj.insert("json".to_string(), res.output.clone());
+        node_obj.insert("name".to_string(), serde_json::json!(res.node_name));
+        node_obj.insert("id".to_string(), serde_json::json!(res.node_id));
+        node_obj.insert("type".to_string(), serde_json::json!(res.node_type));
+        node_obj.insert("error".to_string(), serde_json::json!(res.error));
+        let val = Value::Object(node_obj);
+        nodes_map.insert(key.clone(), val.clone());
+        nodes_map.insert(res.node_name.clone(), val);
+    }
+
+    let nodes_json =
+        serde_json::to_string(&Value::Object(nodes_map)).unwrap_or_else(|_| "{}".to_string());
+    let setup_script = format!("var $node = {};", nodes_json);
+
+    if context
+        .eval(boa_engine::Source::from_bytes(setup_script.as_bytes()))
+        .is_err()
+    {
+        return None;
+    }
+
+    let wrapped = format!("(function() {{ return {}; }})()", expression);
+    match context.eval(boa_engine::Source::from_bytes(wrapped.as_bytes())) {
+        Ok(res) => Some(js_value_to_json(&res, &mut context)),
+        Err(e) => {
+            tracing::debug!("JS evaluation failed for {}: {}", expression, e);
+            None
+        }
+    }
+}
+
+// Resolves a single value against node results. Preserves types for full matches.
+fn resolve_value(s: &str, results: &std::collections::HashMap<String, NodeResult>) -> Value {
+    use once_cell::sync::Lazy;
+    // Compiled once: this function runs for every string in every node config.
+    static RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r#"\{\{\s*\$?node\[['"](.+?)['"]\]\.([a-zA-Z0-9_\-\.\[\]]+)\s*\}\}"#).unwrap()
+    });
+    static RE_DOT: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r#"\{\{\s*\$?node\.([a-zA-Z0-9_\-]+)\.([a-zA-Z0-9_\-\.\[\]]+)\s*\}\}"#).unwrap()
+    });
+    static RE_PURE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r#"\$?node\[['"](.+?)['"]\]\.([a-zA-Z0-9_\-\.\[\]]+)$"#).unwrap()
+    });
+    static RE_PURE_DOT: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r#"\$?node\.([a-zA-Z0-9_\-]+)\.([a-zA-Z0-9_\-\.\[\]]+)$"#).unwrap()
+    });
+    static RE_ANY: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(?s)\{\{(.+?)\}\}"#).unwrap());
+    let re = &*RE;
+    let re_dot = &*RE_DOT;
+
+    // Check if the input is JUST an expression. If so, return the raw Value.
+    if s.trim().starts_with("{{") && s.trim().ends_with("}}") && s.matches("{{").count() == 1 {
+        let clean = s.trim();
+        let expression = &clean[2..clean.len() - 2].trim();
+
+        // Match bracketed form: $node["Name"].field
+        if let Some(cap) = RE_PURE.captures(expression) {
+            let identifier = &cap[1];
+            let field = &cap[2];
+            let res = results.get(identifier).or_else(|| {
+                results
+                    .values()
+                    .find(|r| r.node_name.to_lowercase() == identifier.to_lowercase())
+            });
+            if let Some(res) = res {
+                let val = get_raw_field(res, field);
+                // Preserve null so downstream nodes see the real value.
+                // Previously this converted null -> "" which hid missing data.
+                return val;
+            }
+        }
+
+        // Match dot form: $node.id.field
+        if let Some(cap) = RE_PURE_DOT.captures(expression) {
+            let identifier = &cap[1];
+            let field = &cap[2];
+            let res = results.get(identifier).or_else(|| {
+                results
+                    .values()
+                    .find(|r| r.node_name.to_lowercase() == identifier.to_lowercase())
+            });
+            if let Some(res) = res {
+                let val = get_raw_field(res, field);
+                // null is preserved as-is (no silent conversion to empty string)
+                return val;
+            }
+        }
+
+        // Fallback: Full JS evaluation
+        if let Some(val) = evaluate_js_expression(expression, results) {
+            // null is preserved as-is (no silent conversion to empty string)
+            return val;
+        }
+    }
+
+    // Mixed string interpolation - requires stringifying results
+    let mut result = s.to_string();
+
+    // Bracketed form: {{ $node["Name"].field }}
+    for cap in re.captures_iter(s) {
+        let identifier = &cap[1];
+        let field = &cap[2];
+        let res = results.get(identifier).or_else(|| {
+            results
+                .values()
+                .find(|r| r.node_name.to_lowercase() == identifier.to_lowercase())
+        });
+        if let Some(res) = res {
+            let val = extract_field(res, field);
+            result = result.replace(&cap[0], &val);
+        }
+    }
+
+    // Dot form: {{ $node.id.field }}
+    let result_clone = result.clone();
+    for cap in re_dot.captures_iter(&result_clone) {
+        let identifier = &cap[1];
+        let field = &cap[2];
+        let res = results.get(identifier).or_else(|| {
+            results
+                .values()
+                .find(|r| r.node_name.to_lowercase() == identifier.to_lowercase())
+        });
+        if let Some(res) = res {
+            let val = extract_field(res, field);
+            result = result.replace(&cap[0], &val);
+        }
+    }
+
+    // JS Fallback for ANY remaining {{ ... }} blocks that weren't matched purely!
+    let result_cleanup = result.clone();
+    for cap in RE_ANY.captures_iter(&result_cleanup) {
+        let expression = cap[1].trim();
+        if let Some(val) = evaluate_js_expression(expression, results) {
+            let val_str = match &val {
+                Value::String(s) => s.clone(),
+                Value::Number(n) => {
+                    if let Some(f) = n.as_f64() {
+                        if f.fract() == 0.0 {
+                            (f as i64).to_string()
+                        } else {
+                            n.to_string()
+                        }
+                    } else {
+                        n.to_string()
+                    }
+                }
+                Value::Bool(b) => b.to_string(),
+                Value::Null | Value::Array(_) | Value::Object(_) => {
+                    serde_json::to_string(&val).unwrap_or_default()
+                }
+            };
+            // Only replace if it doesn't leave "null" incorrectly... wait!
+            let final_str = if val.is_null() {
+                "".to_string()
+            } else {
+                val_str
+            };
+            result = result.replace(&cap[0], &final_str);
+        }
+    }
+
+    Value::String(result)
+}
+
+fn extract_field(res: &NodeResult, field: &str) -> String {
+    match field {
+        // "json" is exposed as an alias in JS nodes; honor it here too so
+        // {{ $node["X"].json.field }} doesn't silently resolve to "".
+        "data" | "output" | "json" => res.output.to_string(),
+        "error" => res.error.clone().unwrap_or_default(),
+        _ if field.starts_with("data.")
+            || field.starts_with("output.")
+            || field.starts_with("json.") => {
+            let path = &field[field.find('.').unwrap() + 1..];
+            res.output
+                .pointer(&format!(
+                    "/{}",
+                    path.replace("[", "/").replace("]", "").replace(".", "/")
+                ))
+                .map(|v| {
+                    if v.is_string() {
+                        v.as_str().unwrap().to_string()
+                    } else if let Some(n) = v.as_f64() {
+                        if n.fract() == 0.0 {
+                            (n as i64).to_string()
+                        } else {
+                            v.to_string()
+                        }
+                    } else {
+                        v.to_string()
+                    }
+                })
+                .unwrap_or_default()
+        }
+        _ if field.starts_with("binary.") => {
+            let path = &field[field.find('.').unwrap() + 1..];
+            res.output
+                .get("binary")
+                .and_then(|f| {
+                    f.pointer(&format!(
+                        "/{}",
+                        path.replace("[", "/").replace("]", "").replace(".", "/")
+                    ))
+                })
+                .map(|v| {
+                    if v.is_string() {
+                        v.as_str().unwrap().to_string()
+                    } else if let Some(n) = v.as_f64() {
+                        if n.fract() == 0.0 {
+                            (n as i64).to_string()
+                        } else {
+                            v.to_string()
+                        }
+                    } else {
+                        v.to_string()
+                    }
+                })
+                .unwrap_or_default()
+        }
+        _ if field.starts_with("file.") => {
+            let path = &field[field.find('.').unwrap() + 1..];
+            res.output
+                .get("binary") // look in binary first as it's the new standard
+                .or_else(|| res.output.get("file"))
+                .and_then(|f| {
+                    f.pointer(&format!(
+                        "/{}",
+                        path.replace("[", "/").replace("]", "").replace(".", "/")
+                    ))
+                })
+                .map(|v| {
+                    if v.is_string() {
+                        v.as_str().unwrap().to_string()
+                    } else if let Some(n) = v.as_f64() {
+                        if n.fract() == 0.0 {
+                            (n as i64).to_string()
+                        } else {
+                            v.to_string()
+                        }
+                    } else {
+                        v.to_string()
+                    }
+                })
+                .unwrap_or_default()
+        }
+        // Generic fallback: treat any other field as a direct path into the
+        // node's output (e.g. {{ $node["Loop"].current }}, {{ $node["X"].body }}).
+        // Without this, unknown fields silently stringified to "".
+        _ => res
+            .output
+            .pointer(&parse_path_pointer(field))
+            .map(|v| {
+                if let Some(s) = v.as_str() {
+                    s.to_string()
+                } else if let Some(n) = v.as_f64() {
+                    if n.fract() == 0.0 {
+                        (n as i64).to_string()
+                    } else {
+                        v.to_string()
+                    }
+                } else {
+                    v.to_string()
+                }
+            })
+            .unwrap_or_default(),
+    }
+}
+
+fn get_raw_field(res: &NodeResult, field: &str) -> Value {
+    match field {
+        "data" | "output" | "json" => res.output.clone(),
+        "error" => json!(res.error),
+        _ if field.starts_with("data.")
+            || field.starts_with("output.")
+            || field.starts_with("json.") => {
+            let path = &field[field.find('.').unwrap() + 1..];
+            res.output
+                .pointer(&format!(
+                    "/{}",
+                    path.replace("[", "/").replace("]", "").replace(".", "/")
+                ))
+                .cloned()
+                .unwrap_or(Value::Null)
+        }
+        "binary" => res.output.get("binary").cloned().unwrap_or(Value::Null),
+        _ if field.starts_with("binary.") => {
+            let path = &field[field.find('.').unwrap() + 1..];
+            res.output
+                .get("binary")
+                .and_then(|f| {
+                    f.pointer(&format!(
+                        "/{}",
+                        path.replace("[", "/").replace("]", "").replace(".", "/")
+                    ))
+                })
+                .cloned()
+                .unwrap_or(Value::Null)
+        }
+        _ if field.starts_with("file.") => {
+            let path = &field[field.find('.').unwrap() + 1..];
+            res.output
+                .get("binary")
+                .or_else(|| res.output.get("file"))
+                .and_then(|f| {
+                    f.pointer(&format!(
+                        "/{}",
+                        path.replace("[", "/").replace("]", "").replace(".", "/")
+                    ))
+                })
+                .cloned()
+                .unwrap_or(Value::Null)
+        }
+        // Generic fallback: treat any other field as a direct path into the
+        // node's output so natural expressions resolve to the real value
+        // (preserving type) instead of silently yielding null.
+        _ => res
+            .output
+            .pointer(&parse_path_pointer(field))
+            .cloned()
+            .unwrap_or(Value::Null),
+    }
+}
+
+// Recursively walk the JSON tree and interpolate string values directly
+fn interpolate_value(
+    val: &Value,
+    results: &std::collections::HashMap<String, NodeResult>,
+) -> Value {
+    match val {
+        Value::String(s) => {
+            // Resolve expressions but do NOT re-parse the result through
+            // try_parse_json_value — that caused double-parsing where strings
+            // like "123" became numbers, "true" became bools, and comma-
+            // containing strings became arrays.
+            resolve_value(s, results)
+        }
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(k, v)| (k.clone(), interpolate_value(v, results)))
+                .collect(),
+        ),
+        Value::Array(arr) => {
+            Value::Array(arr.iter().map(|v| interpolate_value(v, results)).collect())
+        }
+        other => other.clone(),
+    }
+}
+
+fn interpolate_config(
+    config: &Value,
+    results: &std::collections::HashMap<String, NodeResult>,
+    state: &AppState,
+) -> Value {
+    let mut interpolated = interpolate_value(config, results);
+
+    // Inject credentials if specified
+    if let Value::Object(ref mut map) = interpolated {
+        if let Some(cred_id) = map.get("credential_id").and_then(|v| v.as_str()) {
+            if !cred_id.is_empty() {
+                if let Ok(conn) = state.db.get() {
+                    if let Ok(data_str) = conn.query_row(
+                        "SELECT data FROM credentials WHERE id = ?1",
+                        [cred_id],
+                        |r| r.get::<_, String>(0),
+                    ) {
+                        if let Ok(Value::Object(cred_map)) = serde_json::from_str(&data_str) {
+                            for (k, v) in cred_map {
+                                map.insert(k, v);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    interpolated
+}
+
+fn parse_path_pointer(path: &str) -> String {
+    format!(
+        "/{}",
+        path.replace("[", "/").replace("]", "").replace(".", "/")
+    )
+}
+
+fn extract_items_for_loop(
+    raw_items: &Value,
+    array_path: Option<&str>,
+) -> Result<Vec<Value>, String> {
+    if let Some(arr) = raw_items.as_array() {
+        return Ok(arr.clone());
+    }
+
+    if let Some(obj) = raw_items.as_object() {
+        if let Some(path) = array_path {
+            if !path.trim().is_empty() {
+                if let Some(v) = Value::Object(obj.clone()).pointer(&parse_path_pointer(path)) {
+                    if let Some(arr) = v.as_array() {
+                        return Ok(arr.clone());
+                    }
+                }
+            }
+        }
+
+        if let Some(v) = obj.get("items").and_then(|v| v.as_array()) {
+            return Ok(v.clone());
+        }
+        if let Some(v) = obj.get("files").and_then(|v| v.as_array()) {
+            return Ok(v.clone());
+        }
+        if let Some(v) = obj.get("data").and_then(|v| v.as_array()) {
+            return Ok(v.clone());
+        }
+        if let Some(v) = obj.values().find_map(|v| v.as_array()) {
+            return Ok(v.clone());
+        }
+    }
+
+    if raw_items.is_null() {
+        return Ok(Vec::new());
+    }
+
+    Err("Loop node expects an array (or an object containing an array)".to_string())
+}
+
+fn is_truthy(value: &str) -> bool {
+    matches!(
+        value.trim().to_lowercase().as_str(),
+        "true" | "1" | "yes" | "on"
+    )
+}
+
+fn evaluate_condition(data_type: &str, op: &str, v1: &str, v2: &str) -> bool {
+    match data_type {
+        "boolean" => {
+            let b1 = is_truthy(v1);
+            let b2 = is_truthy(v2);
+            match op {
+                "isTrue" => b1,
+                "isFalse" => !b1,
+                "notEquals" => b1 != b2,
+                _ => b1 == b2, // equals
+            }
+        }
+        "number" => {
+            let n1 = v1.trim().parse::<f64>().unwrap_or(0.0);
+            let n2 = v2.trim().parse::<f64>().unwrap_or(0.0);
+            match op {
+                "equals" => (n1 - n2).abs() < f64::EPSILON,
+                "notEquals" => (n1 - n2).abs() >= f64::EPSILON,
+                "greater" => n1 > n2,
+                "less" => n1 < n2,
+                "greaterEqual" => n1 >= n2,
+                "lessEqual" => n1 <= n2,
+                "isEmpty" => v1.trim().is_empty(),
+                "isNotEmpty" => !v1.trim().is_empty(),
+                "isTrue" => n1 != 0.0,
+                "isFalse" => n1 == 0.0,
+                _ => (n1 - n2).abs() < f64::EPSILON,
+            }
+        }
+        _ => match op {
+            "equals" => v1 == v2,
+            "notEquals" => v1 != v2,
+            "contains" => v1.contains(v2),
+            "notContains" => !v1.contains(v2),
+            "startsWith" => v1.starts_with(v2),
+            "endsWith" => v1.ends_with(v2),
+            "isEmpty" => v1.is_empty(),
+            "isNotEmpty" => !v1.is_empty(),
+            "regex" => Regex::new(v2).map(|re| re.is_match(v1)).unwrap_or(false),
+            "greater" => v1.parse::<f64>().unwrap_or(0.0) > v2.parse::<f64>().unwrap_or(0.0),
+            "less" => v1.parse::<f64>().unwrap_or(0.0) < v2.parse::<f64>().unwrap_or(0.0),
+            "greaterEqual" => v1.parse::<f64>().unwrap_or(0.0) >= v2.parse::<f64>().unwrap_or(0.0),
+            "lessEqual" => v1.parse::<f64>().unwrap_or(0.0) <= v2.parse::<f64>().unwrap_or(0.0),
+            "isTrue" => is_truthy(v1),
+            "isFalse" => !is_truthy(v1),
+            _ => v1 == v2,
+        },
+    }
+}
+
+fn execute_if_condition_node(config: &Value) -> Result<Value, String> {
+    let conditions = config
+        .get("conditions")
+        .and_then(|v| v.get("parameters"))
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let combine = config
+        .get("combineOperation")
+        .and_then(|v| v.as_str())
+        .unwrap_or("all");
+
+    let mut results = Vec::new();
+    for cond in &conditions {
+        let data_type = cond
+            .get("dataType")
+            .and_then(|v| v.as_str())
+            .unwrap_or("string");
+        let op = cond
+            .get("operation")
+            .and_then(|v| v.as_str())
+            .unwrap_or("equals");
+
+        let v1_raw = cond.get("value1");
+        let v1 = v1_raw
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| v1_raw.map(|v| v.to_string()).unwrap_or_default());
+
+        let v2_raw = cond.get("value2");
+        let v2 = v2_raw
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| v2_raw.map(|v| v.to_string()).unwrap_or_default());
+
+        results.push(evaluate_condition(data_type, op, &v1, &v2));
+    }
+
+    let final_result = if combine == "any" {
+        results.iter().any(|&r| r)
+    } else {
+        results.iter().all(|&r| r)
+    };
+
+    Ok(json!({
+        "condition": final_result,
+        "branch": if final_result { "true" } else { "false" },
+        "outputIndex": if final_result { 0 } else { 1 }
+    }))
+}
+
+fn execute_switch_node(config: &Value) -> Result<Value, String> {
+    let data_type = config
+        .get("dataType")
+        .and_then(|v| v.as_str())
+        .unwrap_or("string");
+    let value_raw = config.get("value1");
+    let value = value_raw
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| value_raw.map(|v| v.to_string()).unwrap_or_default());
+
+    let rules = config
+        .get("rules")
+        .and_then(|v| v.get("parameters"))
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    // Static UI outputs: Case1..Case5 + Default (index 5)
+    let max_cases = 5usize;
+    let mut matched_index: Option<usize> = None;
+
+    for (idx, rule) in rules.iter().enumerate().take(max_cases) {
+        let op = rule
+            .get("operation")
+            .and_then(|v| v.as_str())
+            .unwrap_or("equals");
+        let case_raw = rule.get("value2").or_else(|| rule.get("value"));
+        let case_value = case_raw
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| case_raw.map(|v| v.to_string()).unwrap_or_default());
+
+        if evaluate_condition(data_type, op, &value, &case_value) {
+            matched_index = Some(idx);
+            break;
+        }
+    }
+
+    let output_index = matched_index.unwrap_or(max_cases);
+    Ok(json!({
+        "value": value,
+        "outputIndex": output_index,
+        "branch": if let Some(i) = matched_index {
+            format!("case_{}", i + 1)
+        } else {
+            "default".to_string()
+        }
+    }))
+}
+
+fn find_iteration_source_node_id(
+    current_node_id: &str,
+    edges: &[WorkflowEdge],
+    node_results: &std::collections::HashMap<String, NodeResult>,
+) -> Option<String> {
+    for edge in edges.iter().filter(|e| e.target_id == current_node_id) {
+        let source_id = &edge.source_id;
+        let has_loop_marker = node_results
+            .get(source_id)
+            .and_then(|r| r.output.get("_axon_loop"))
+            .and_then(|v| v.as_object())
+            .is_some();
+        let has_items = node_results
+            .get(source_id)
+            .and_then(|r| r.output.get("items"))
+            .and_then(|v| v.as_array())
+            .is_some();
+        if has_loop_marker && has_items {
+            return Some(source_id.clone());
+        }
+    }
+    None
+}
+
+async fn execute_node_by_type(
+    node: &WorkflowNode,
+    config: &Value,
+    state: &AppState,
+    trigger_source: &str,
+    workflow_id: &str,
+    node_results: &std::collections::HashMap<String, NodeResult>,
+) -> Result<Value, String> {
+    match node.node_type.as_str() {
+        "trigger" | "circadian" | "stimulus" => {
+            if config.get("type").and_then(|v| v.as_str()) == Some("gmail") {
+                match execute_gmail_trigger(config, state, workflow_id).await {
+                    Ok(data) => Ok(data),
+                    Err(e) => {
+                        tracing::warn!("Gmail trigger fetch failed: {}", e);
+                        Ok(json!({"trigger": trigger_source, "gmail_error": e}))
+                    }
+                }
+            } else if config.get("type").and_then(|v| v.as_str()) == Some("whatsapp") {
+                let mut data = WHATSAPP_TRIGGER_DATA.lock().await;
+                if let Some(val) = data.remove(workflow_id) {
+                    Ok(val)
+                } else {
+                    Ok(json!({"trigger": trigger_source}))
+                }
+            } else if config.get("type").and_then(|v| v.as_str()) == Some("telegram") {
+                let mut data = TELEGRAM_TRIGGER_DATA.lock().await;
+                if let Some(val) = data.remove(workflow_id) {
+                    Ok(val)
+                } else {
+                    Ok(json!({"trigger": trigger_source}))
+                }
+            } else if config.get("type").and_then(|v| v.as_str()) == Some("webhook") {
+                let mut data = EXTERNAL_TRIGGER_DATA.lock().await;
+                if let Some(val) = data.remove(workflow_id) {
+                    Ok(val)
+                } else {
+                    Ok(json!({"trigger": trigger_source}))
+                }
+            } else {
+                Ok(json!({"trigger": trigger_source}))
+            }
+        }
+        "synapse" => execute_http_node(config).await,
+        "myelin" => crate::tools::myelin::execute_myelin_node(state, config).await,
+        "telegram" => crate::tools::telegram::execute_telegram_node(config).await,
+        "whatsapp" => crate::tools::whatsapp::execute_whatsapp_node(config).await,
+        "shell" => {
+            let cmd = config.get("command").and_then(|v| v.as_str()).unwrap_or("");
+            if cmd.trim().is_empty() {
+                return Err("Shell node: command is empty".to_string());
+            }
+            let (shell, arg) = if cfg!(target_os = "windows") {
+                ("cmd", "/C")
+            } else {
+                ("sh", "-c")
+            };
+            let fut = tokio::process::Command::new(shell).arg(arg).arg(cmd).output();
+            // Bound execution so a hung command can't stall the whole workflow run.
+            match tokio::time::timeout(Duration::from_secs(600), fut).await {
+                Ok(Ok(o)) => {
+                    let stdout = String::from_utf8_lossy(&o.stdout).to_string();
+                    let stderr = String::from_utf8_lossy(&o.stderr).to_string();
+                    if o.status.success() {
+                        Ok(json!({
+                            "stdout": stdout,
+                            "stderr": stderr,
+                            "exit_code": o.status.code()
+                        }))
+                    } else {
+                        let detail = if stderr.trim().is_empty() { &stdout } else { &stderr };
+                        Err(format!(
+                            "Command failed (exit code {:?}): {}",
+                            o.status.code(),
+                            detail
+                        ))
+                    }
+                }
+                Ok(Err(e)) => Err(e.to_string()),
+                Err(_) => Err("Shell command timed out after 600s".to_string()),
+            }
+        }
+        "javascript" => {
+            // Sort by position for deterministic $results[N] ordering.
+            // HashMap iteration order is random, which caused the JS node
+            // to intermittently error when scripts accessed $results by index.
+            let mut vec: Vec<_> = node_results.values().cloned().collect();
+            vec.sort_by_key(|r| r.position);
+
+            // Use the RAW script from node.config (not the interpolated config)
+            // because interpolate_config mangles {{ }} expressions by converting
+            // complex objects to strings. The JS engine handles {{ }} natively
+            // by stripping wrappers and using $node as a real JS variable.
+            let raw_script = node
+                .config
+                .get("script")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            execute_js_node(raw_script, node, &vec, workflow_id).await
+        }
+        "axon" => execute_axon_node(config, state, workflow_id).await,
+        "nociceptor" => {
+            let vec: Vec<_> = node_results.values().cloned().collect();
+            execute_nociceptor_node(state, &vec).await
+        }
+        "fovea" => {
+            let mut args = serde_json::Map::new();
+            if let Some(obj) = config.as_object() {
+                for (k, v) in obj {
+                    args.insert(k.clone(), v.clone());
+                }
+            }
+            match crate::agent::r#loop::execute_internal_tool_from_workflow(
+                "image_tool",
+                Value::Object(args),
+                state.clone(),
+            )
+            .await
+            {
+                Ok(v) => Ok(v),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        t if t == "mcp" || t.starts_with("mcp_") => {
+            let tool_name = config
+                .get("tool_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if tool_name.is_empty() {
+                return Err("MCP node: tool_name is required".into());
+            }
+
+            let mut args = serde_json::Map::new();
+            if let Some(obj) = config.as_object() {
+                for (k, v) in obj {
+                    // credential_id is workflow plumbing, not a tool argument
+                    if k != "tool_name" && k != "mcp_server" && k != "credential_id" {
+                        args.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+
+            let server = config
+                .get("mcp_server")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            let all_tools = state.tools.all().await;
+            let is_internal = all_tools
+                .iter()
+                .find(|t| t.name == tool_name)
+                .map(|t| t.source == crate::tools::schema::ToolSource::Internal)
+                .unwrap_or(false);
+
+            if is_internal {
+                match crate::agent::r#loop::execute_internal_tool_from_workflow(
+                    tool_name,
+                    Value::Object(args),
+                    state.clone(),
+                )
+                .await
+                {
+                    Ok(v) => Ok(v),
+                    Err(e) => Err(e.to_string()),
+                }
+            } else {
+                let server_name = if !server.is_empty() {
+                    server.to_string()
+                } else {
+                    all_tools
+                        .iter()
+                        .find(|t| t.name == tool_name)
+                        .and_then(|t| match &t.source {
+                            crate::tools::schema::ToolSource::Mcp { server_name, .. } => {
+                                Some(server_name.clone())
+                            }
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| "axon-mcp".to_string())
+                };
+
+                match state
+                    .mcp
+                    .call(&server_name, tool_name, Value::Object(args))
+                    .await
+                {
+                    // normalize_mcp_output converts MCP isError responses into
+                    // {"error":true,"message":...} — surface those as node
+                    // failures instead of reporting success.
+                    Ok(v) => {
+                        if v.get("error").and_then(|b| b.as_bool()).unwrap_or(false) {
+                            let msg = v
+                                .get("message")
+                                .and_then(|m| m.as_str())
+                                .unwrap_or("MCP tool returned an error");
+                            Err(format!("MCP tool '{}' failed: {}", tool_name, msg))
+                        } else {
+                            Ok(v)
+                        }
+                    }
+                    Err(e) => Err(e.to_string()),
+                }
+            }
+        }
+        "wait" => {
+            let amount = config
+                .get("amount")
+                .and_then(|v| {
+                    if let Some(n) = v.as_f64() {
+                        Some(n)
+                    } else if let Some(s) = v.as_str() {
+                        s.parse::<f64>().ok()
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(1.0);
+            let unit = config
+                .get("unit")
+                .and_then(|v| v.as_str())
+                .unwrap_or("seconds");
+
+            let seconds = match unit {
+                "minutes" => amount * 60.0,
+                "hours" => amount * 3600.0,
+                "days" => amount * 86400.0,
+                _ => amount,
+            }
+            .max(0.0);
+
+            // Sleep in short slices so workflow cancellation takes effect
+            // promptly instead of after the full (possibly days-long) wait.
+            let deadline =
+                tokio::time::Instant::now() + tokio::time::Duration::from_secs_f64(seconds);
+            loop {
+                let now = tokio::time::Instant::now();
+                if now >= deadline {
+                    break;
+                }
+                let slice = (deadline - now).min(tokio::time::Duration::from_secs(1));
+                tokio::time::sleep(slice).await;
+
+                let cancelled = {
+                    let cancellations = state.workflow_cancellations.lock().await;
+                    cancellations.contains(workflow_id)
+                };
+                if cancelled {
+                    return Err("Workflow cancelled during wait".to_string());
+                }
+            }
+            Ok(json!({ "waited_seconds": seconds }))
+        }
+        "ifCondition" => execute_if_condition_node(config),
+        "switch" => execute_switch_node(config),
+        "loop" => {
+            let raw_items = config.get("items").cloned().unwrap_or(Value::Null);
+            let array_path = config.get("array_path").and_then(|v| v.as_str());
+            let items = extract_items_for_loop(&raw_items, array_path)?;
+            Ok(json!({
+                "_axon_loop": {
+                    "enabled": true,
+                    "count": items.len()
+                },
+                "items": items,
+                "count": items.len(),
+                "index": -1,
+                "current": Value::Null
+            }))
+        }
+        _ => Err(format!("Unknown type: {}", node.node_type)),
+    }
+}
+
+// ── Workflow Engine Impl ──────────────────────────────────────────────────────
+
+pub struct WorkflowEngine;
+impl WorkflowEngine {
+    pub async fn run(
+        workflow_id: &str,
+        state: &AppState,
+        target_node_id: Option<String>,
+        run_id: Option<String>,
+    ) -> anyhow::Result<WorkflowRunResult> {
+        Self::run_with_trigger(workflow_id, state, "manual", target_node_id, run_id).await
+    }
+
+    pub async fn run_with_trigger(
+        workflow_id: &str,
+        state: &AppState,
+        trigger_source: &str,
+        target_node_id: Option<String>,
+        external_run_id: Option<String>,
+    ) -> anyhow::Result<WorkflowRunResult> {
+        tracing::info!(
+            "Starting workflow run for {} (source: {})",
+            workflow_id,
+            trigger_source
+        );
+        let start = std::time::Instant::now();
+        let run_id = external_run_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+        let (workflow_name, nodes, edges) = {
+            let conn = state.db.get()?;
+            let name: String = conn.query_row(
+                "SELECT name FROM workflows WHERE id = ?1",
+                [workflow_id],
+                |r| r.get(0),
+            )?;
+
+            let mut s = conn.prepare("SELECT id, workflow_id, position, position_x, position_y, node_type, name, config, enabled, continue_on_fail FROM workflow_nodes WHERE workflow_id = ?")?;
+            let nodes: Vec<WorkflowNode> = s
+                .query_map([workflow_id], |r| {
+                    Ok(WorkflowNode {
+                        id: r.get(0)?,
+                        workflow_id: r.get(1)?,
+                        position: r.get(2)?,
+                        position_x: r.get(3)?,
+                        position_y: r.get(4)?,
+                        node_type: r.get(5)?,
+                        name: r.get(6)?,
+                        config: serde_json::from_str::<Value>(&r.get::<_, String>(7)?)
+                            .unwrap_or(json!({})),
+                        enabled: r.get::<_, i32>(8)? != 0,
+                        continue_on_fail: r.get::<_, i32>(9)? != 0,
+                    })
+                })?
+                .filter_map(|r| r.ok())
+                .collect();
+
+            let edges = conn.prepare("SELECT id, workflow_id, source_id, target_id, source_handle, target_handle FROM workflow_edges WHERE workflow_id = ?")?
+                .query_map([workflow_id], |r| Ok(WorkflowEdge {
+                    id: r.get(0)?, workflow_id: r.get(1)?, source_id: r.get(2)?, target_id: r.get(3)?,
+                    source_handle: r.get(4).ok(), target_handle: r.get(5).ok(),
+                }))?.filter_map(|r| r.ok()).collect::<Vec<_>>();
+
+            // INSERT OR IGNORE: if run_in_background already pre-created this record, skip the insert.
+            conn.execute("INSERT OR IGNORE INTO workflow_runs (id, workflow_id, status, started_at, node_results) VALUES (?1, ?2, 'running', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), '[]')", [run_id.clone(), workflow_id.to_string()])?;
+            (name, nodes, edges)
+        };
+
+        let mut node_results = std::collections::HashMap::new();
+
+        // [New feature]: Load latest results from DB as fallback for expressions for skipped/unconnected nodes.
+        if let Ok(conn) = state.db.get() {
+            if let Ok(last_results_str) = conn.query_row(
+                "SELECT node_results FROM workflow_runs WHERE workflow_id = ?1 AND id != ?2 AND status IN ('success','error') ORDER BY started_at DESC LIMIT 1",
+                rusqlite::params![workflow_id, run_id],
+                |r| r.get::<_, String>(0)
+            ) {
+                if let Ok(last_results) = serde_json::from_str::<Vec<NodeResult>>(&last_results_str) {
+                    for r in last_results {
+                        node_results.insert(r.node_id.clone(), r);
+                    }
+                }
+            }
+        }
+
+        let mut ordered_results = Vec::new();
+        let mut in_degree = std::collections::HashMap::new();
+        // Counts how many *taken* (non-skipped-branch) inputs each node has
+        // received. A node whose in-degree reaches 0 with no live inputs sits
+        // entirely on not-taken branches and is skipped instead of executed.
+        let mut live_inputs: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        let mut workflow_status = "success".to_string();
+        for n in &nodes {
+            in_degree.insert(n.id.clone(), 0);
+        }
+        for e in &edges {
+            *in_degree.entry(e.target_id.clone()).or_insert(0) += 1;
+        }
+
+        // Logic for partial run: Identification of ancestors
+        let mut required_node_ids = std::collections::HashSet::new();
+        if let Some(ref target_id) = target_node_id {
+            let mut stack = vec![target_id.clone()];
+            while let Some(current) = stack.pop() {
+                if required_node_ids.insert(current.clone()) {
+                    // Find all sources that lead to this node
+                    for e in edges.iter().filter(|e| e.target_id == current) {
+                        stack.push(e.source_id.clone());
+                    }
+                }
+            }
+            tracing::info!(
+                "Partial run: Required nodes for {}: {:?}",
+                target_id,
+                required_node_ids
+            );
+        }
+
+        let has_triggers = nodes
+            .iter()
+            .any(|n| matches!(n.node_type.as_str(), "trigger" | "circadian" | "stimulus"));
+
+        let mut queue: std::collections::VecDeque<_> = nodes
+            .iter()
+            .filter(|n| {
+                let deg = *in_degree.get(&n.id).unwrap_or(&0) == 0;
+                if target_node_id.is_some() {
+                    deg && required_node_ids.contains(&n.id)
+                } else {
+                    if has_triggers {
+                        // Strict pipeline definition: Only start from Trigger nodes if they exist.
+                        // This prevents separated, orphaned subgraphs from running accidentally.
+                        deg && matches!(n.node_type.as_str(), "trigger" | "circadian" | "stimulus")
+                    } else {
+                        deg
+                    }
+                }
+            })
+            .map(|n| n.id.clone())
+            .collect();
+
+        tracing::info!("Initial queue with {} nodes", queue.len());
+
+        while let Some(current_id) = queue.pop_front() {
+            tracing::debug!("Processing node {}", current_id);
+            // Check for cancellation — ensure guard is dropped before any .await
+            let is_cancelled = {
+                let cancellations = state.workflow_cancellations.lock().await;
+                cancellations.contains(workflow_id) || cancellations.contains(&run_id)
+            };
+
+            if is_cancelled {
+                tracing::info!("Workflow run {} cancelled", run_id);
+                {
+                    let conn = state.db.get()?;
+                    conn.execute("UPDATE workflow_runs SET status = 'cancelled', finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?", [&run_id])?;
+                }
+                return Ok(WorkflowRunResult {
+                    run_id,
+                    workflow_id: workflow_id.to_string(),
+                    status: "cancelled".to_string(),
+                    node_results: node_results.into_values().collect(),
+                    final_output: json!({}),
+                    total_duration_ms: start.elapsed().as_millis() as u64,
+                });
+            }
+
+            let node = match nodes.iter().find(|n| n.id == current_id) {
+                Some(n) => n,
+                None => continue,
+            };
+            if !node.enabled {
+                // Emit a "skipped" result so the frontend can properly transition
+                // the animation instead of leaving this node stuck in waiting state.
+                let nr = NodeResult {
+                    node_id: current_id.clone(),
+                    node_name: node.name.clone(),
+                    node_type: node.node_type.clone(),
+                    position: node.position,
+                    status: "skipped".to_string(),
+                    output: json!({"skipped": true, "reason": "Node is disabled"}),
+                    duration_ms: 0,
+                    error: None,
+                };
+                node_results.insert(current_id.clone(), nr.clone());
+                ordered_results.push(nr);
+
+                // Incremental DB update so the frontend poll sees it immediately
+                if let Ok(res_json) = serde_json::to_string(&ordered_results) {
+                    if let Ok(conn) = state.db.get() {
+                        let _ = conn.execute(
+                            "UPDATE workflow_runs SET node_results = ? WHERE id = ?",
+                            rusqlite::params![res_json, run_id.clone()],
+                        );
+                    }
+                }
+
+                for e in edges.iter().filter(|e| e.source_id == current_id) {
+                    let deg = in_degree.entry(e.target_id.clone()).or_insert(1);
+                    if *deg > 0 {
+                        *deg -= 1;
+                    }
+                    // A disabled node passes through: downstream still runs.
+                    *live_inputs.entry(e.target_id.clone()).or_insert(0) += 1;
+                    if *deg == 0 {
+                        queue.push_back(e.target_id.clone());
+                    }
+                }
+                continue;
+            }
+
+            let n_start = std::time::Instant::now();
+            let iteration_source_id =
+                find_iteration_source_node_id(&current_id, &edges, &node_results);
+            let can_iterate = !matches!(
+                node.node_type.as_str(),
+                "loop" | "ifCondition" | "switch" | "trigger" | "circadian" | "stimulus"
+            );
+
+            let result = if can_iterate {
+                if let Some(source_node_id) = iteration_source_id {
+                    if let Some(source_result) = node_results.get(&source_node_id) {
+                        if let Some(items) =
+                            source_result.output.get("items").and_then(|v| v.as_array())
+                        {
+                            let mut iteration_outputs = Vec::new();
+                            let mut iteration_errors = Vec::new();
+
+                            for (idx, item) in items.iter().enumerate() {
+                                let mut temp_results = node_results.clone();
+                                if let Some(source_mut) = temp_results.get_mut(&source_node_id) {
+                                    if let Some(out_obj) = source_mut.output.as_object_mut() {
+                                        out_obj.insert("current".to_string(), item.clone());
+                                        out_obj.insert("index".to_string(), json!(idx));
+                                        out_obj.insert(
+                                            "is_last".to_string(),
+                                            json!(idx + 1 == items.len()),
+                                        );
+                                    }
+                                }
+
+                                let item_config =
+                                    interpolate_config(&node.config, &temp_results, state);
+                                match execute_node_by_type(
+                                    node,
+                                    &item_config,
+                                    state,
+                                    trigger_source,
+                                    workflow_id,
+                                    &temp_results,
+                                )
+                                .await
+                                {
+                                    Ok(v) => iteration_outputs.push(v),
+                                    Err(e) => {
+                                        iteration_errors.push(json!({
+                                            "index": idx,
+                                            "item": item,
+                                            "error": e
+                                        }));
+                                        if !node.continue_on_fail {
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+
+                            if !iteration_errors.is_empty() && !node.continue_on_fail {
+                                Err(format!(
+                                    "Iteration failed in node '{}' ({} errors)",
+                                    node.name,
+                                    iteration_errors.len()
+                                ))
+                            } else {
+                                Ok(json!({
+                                    "_axon_loop": {
+                                        "enabled": true,
+                                        "count": items.len(),
+                                        "source_node_id": source_node_id
+                                    },
+                                    "items": iteration_outputs,
+                                    "count": items.len(),
+                                    "error_count": iteration_errors.len(),
+                                    "errors": iteration_errors
+                                }))
+                            }
+                        } else {
+                            let config = interpolate_config(&node.config, &node_results, state);
+                            execute_node_by_type(
+                                node,
+                                &config,
+                                state,
+                                trigger_source,
+                                workflow_id,
+                                &node_results,
+                            )
+                            .await
+                        }
+                    } else {
+                        let config = interpolate_config(&node.config, &node_results, state);
+                        execute_node_by_type(
+                            node,
+                            &config,
+                            state,
+                            trigger_source,
+                            workflow_id,
+                            &node_results,
+                        )
+                        .await
+                    }
+                } else {
+                    let config = interpolate_config(&node.config, &node_results, state);
+                    execute_node_by_type(
+                        node,
+                        &config,
+                        state,
+                        trigger_source,
+                        workflow_id,
+                        &node_results,
+                    )
+                    .await
+                }
+            } else {
+                let config = interpolate_config(&node.config, &node_results, state);
+                execute_node_by_type(
+                    node,
+                    &config,
+                    state,
+                    trigger_source,
+                    workflow_id,
+                    &node_results,
+                )
+                .await
+            };
+            let duration = n_start.elapsed().as_millis() as u64;
+            let (status, output, error) = match result {
+                Ok(v) => ("success".to_string(), v, None),
+                Err(e) => ("error".to_string(), json!({}), Some(e)),
+            };
+
+            tracing::info!(
+                "Node '{}' ({}, type={}) completed in {}ms — status={}",
+                node.name,
+                current_id,
+                node.node_type,
+                duration,
+                status
+            );
+
+            let nr = NodeResult {
+                node_id: current_id.clone(),
+                node_name: node.name.clone(),
+                node_type: node.node_type.clone(),
+                position: node.position,
+                status: status.clone(),
+                output,
+                duration_ms: duration,
+                error,
+            };
+
+            node_results.insert(current_id.clone(), nr.clone());
+            ordered_results.push(nr.clone());
+
+            // Halting logic: if stop on error and node failed, break the whole workflow.
+            if status == "error" && !node.continue_on_fail {
+                tracing::warn!(
+                    "Workflow execution halted due to error in node '{}' ({})",
+                    node.name,
+                    current_id
+                );
+                workflow_status = "error".to_string();
+                break;
+            }
+
+            // Scan for files in the node result to auto-register in DB/UI
+            let reg_start = std::time::Instant::now();
+            state
+                .files
+                .register_from_json(&nr.output, Some(node.name.clone()))
+                .await;
+            let reg_ms = reg_start.elapsed().as_millis();
+            if reg_ms > 100 {
+                tracing::warn!("File registration for '{}' took {}ms", node.name, reg_ms);
+            }
+
+            let mut skip_stack: Vec<String> = Vec::new();
+            for e in edges.iter().filter(|e| e.source_id == current_id) {
+                // If this is a partial run, only continue down required paths
+                if target_node_id.is_some() && !required_node_ids.contains(&e.target_id) {
+                    continue;
+                }
+
+                // Branch routing for IF/Switch nodes: only follow matching output handle.
+                let mut live = true;
+                if node.node_type == "ifCondition" || node.node_type == "switch" {
+                    if let Some(nr) = node_results.get(&current_id) {
+                        let output_index = nr
+                            .output
+                            .get("outputIndex")
+                            .and_then(|v| {
+                                v.as_i64()
+                                    .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
+                            })
+                            .unwrap_or(0);
+
+                        let expected_handle = format!("output_main_{}", output_index);
+                        let is_true = output_index == 0;
+
+                        if let Some(ref sh) = e.source_handle {
+                            let lower = sh.to_lowercase();
+                            let matches = sh == &expected_handle
+                                || (node.node_type == "ifCondition"
+                                    && ((is_true && lower == "true")
+                                        || (!is_true && lower == "false")));
+
+                            if !matches {
+                                tracing::info!(
+                                    "Branch node {}: skipping edge to {} (handle '{}' != output {})",
+                                    current_id,
+                                    e.target_id,
+                                    sh,
+                                    output_index
+                                );
+                                live = false;
+                            } else {
+                                tracing::info!(
+                                    "Branch node {}: following edge to {} (handle '{}')",
+                                    current_id,
+                                    e.target_id,
+                                    sh
+                                );
+                            }
+                        }
+                    }
+                }
+
+                // Even a not-taken branch edge must release the target's
+                // in-degree — otherwise a merge node fed by both branches
+                // deadlocks and skipped-branch nodes hang forever.
+                let deg = in_degree.entry(e.target_id.clone()).or_insert(1);
+                if *deg > 0 {
+                    *deg -= 1;
+                }
+                if live {
+                    *live_inputs.entry(e.target_id.clone()).or_insert(0) += 1;
+                }
+                if *deg == 0 {
+                    if live_inputs.get(&e.target_id).copied().unwrap_or(0) > 0 {
+                        queue.push_back(e.target_id.clone());
+                    } else {
+                        skip_stack.push(e.target_id.clone());
+                    }
+                }
+            }
+
+            // Propagate skips: a node whose inputs were all not-taken branches
+            // never executes. Emit an explicit 'skipped' result (so the UI can
+            // settle) and release its downstream edges in turn.
+            while let Some(skip_id) = skip_stack.pop() {
+                if let Some(sn) = nodes.iter().find(|n| n.id == skip_id) {
+                    let nr = NodeResult {
+                        node_id: skip_id.clone(),
+                        node_name: sn.name.clone(),
+                        node_type: sn.node_type.clone(),
+                        position: sn.position,
+                        status: "skipped".to_string(),
+                        output: json!({"skipped": true, "reason": "Branch not taken"}),
+                        duration_ms: 0,
+                        error: None,
+                    };
+                    // Keep any preloaded last-run result for expression
+                    // fallback; only record the skip for this run's sequence.
+                    node_results.entry(skip_id.clone()).or_insert(nr.clone());
+                    ordered_results.push(nr);
+                }
+                for e in edges.iter().filter(|e| e.source_id == skip_id) {
+                    if target_node_id.is_some() && !required_node_ids.contains(&e.target_id) {
+                        continue;
+                    }
+                    let deg = in_degree.entry(e.target_id.clone()).or_insert(1);
+                    if *deg > 0 {
+                        *deg -= 1;
+                    }
+                    if *deg == 0 {
+                        if live_inputs.get(&e.target_id).copied().unwrap_or(0) > 0 {
+                            queue.push_back(e.target_id.clone());
+                        } else {
+                            skip_stack.push(e.target_id.clone());
+                        }
+                    }
+                }
+            }
+
+            // Incremental Progress Update for Polling (Sync the ordered sequence)
+            if let Ok(res_json) = serde_json::to_string(&ordered_results) {
+                if let Ok(conn) = state.db.get() {
+                    let _ = conn.execute(
+                        "UPDATE workflow_runs SET node_results = ? WHERE id = ?",
+                        rusqlite::params![res_json, run_id.clone()],
+                    );
+                }
+            }
+        }
+
+        let results_vec = ordered_results;
+        let total_ms = start.elapsed().as_millis() as u64;
+        let status =
+            if workflow_status == "error" || results_vec.iter().any(|r| r.status == "error") {
+                "error"
+            } else {
+                "success"
+            };
+        let final_output = results_vec
+            .last()
+            .map(|r| r.output.clone())
+            .unwrap_or(json!({}));
+
+        {
+            let conn = state.db.get()?;
+            let res_json = serde_json::to_string(&results_vec).unwrap_or_default();
+            conn.execute("UPDATE workflow_runs SET status = ?, finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), node_results = ? WHERE id = ?", [status, &res_json, &run_id])?;
+            conn.execute("UPDATE workflows SET last_status = ?, last_run_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?", [status, workflow_id])?;
+        }
+
+        let failed_nodes: Vec<&NodeResult> =
+            results_vec.iter().filter(|r| r.status == "error").collect();
+        if !failed_nodes.is_empty() {
+            let mut detail_lines = vec![
+                format!("workflow_id={}", workflow_id),
+                format!("run_id={}", run_id),
+            ];
+            for failed in failed_nodes.iter().take(5) {
+                detail_lines.push(format!(
+                    "- node='{}' type='{}' error={}",
+                    failed.node_name,
+                    failed.node_type,
+                    failed.error.as_deref().unwrap_or("unknown")
+                ));
+            }
+            if failed_nodes.len() > 5 {
+                detail_lines.push(format!(
+                    "- ... and {} additional node errors",
+                    failed_nodes.len() - 5
+                ));
+            }
+
+            if let Err(e) = send_global_error_notification(
+                state,
+                "workflow.engine",
+                &format!("Workflow '{}' reported execution errors", workflow_name),
+                &detail_lines.join("\n"),
+                None,
+                None,
+            )
+            .await
+            {
+                tracing::warn!("Workflow global error notification failed: {}", e);
+            }
+        }
+
+        Ok(WorkflowRunResult {
+            run_id,
+            workflow_id: workflow_id.to_string(),
+            status: status.to_string(),
+            node_results: results_vec,
+            final_output,
+            total_duration_ms: total_ms,
+        })
+    }
+
+    /// Spawn a workflow run (or single-node run) in the background and return
+    /// the run_id immediately.  The HTTP handler can respond right away so the
+    /// frontend can start polling while the backend is still executing, giving
+    /// truly live edge/node animations instead of a post-run replay.
+    ///
+    /// Usage in route handlers:
+    ///
+    ///   // Full workflow run
+    ///   let run_id = Workflow::run_in_background(&wf_id, &state, None).await?;
+    ///   return Json(json!({ "ok": true, "run_id": run_id }));
+    ///
+    ///   // Single-node run (play button / Execute Step)
+    ///   let run_id = Workflow::run_in_background(&wf_id, &state, Some(node_id)).await?;
+    ///   return Json(json!({ "ok": true, "run_id": run_id }));
+    pub async fn set_whatsapp_trigger_data(workflow_id: String, v: Value) {
+        WHATSAPP_TRIGGER_DATA.lock().await.insert(workflow_id, v);
+    }
+    pub async fn set_telegram_trigger_data(workflow_id: String, v: Value) {
+        TELEGRAM_TRIGGER_DATA.lock().await.insert(workflow_id, v);
+    }
+    pub async fn set_external_trigger_data(workflow_id: String, v: Value) {
+        EXTERNAL_TRIGGER_DATA.lock().await.insert(workflow_id, v);
+    }
+
+    pub fn run_in_background(
+        workflow_id: &str,
+        state: &AppState,
+        target_node_id: Option<String>,
+    ) -> anyhow::Result<String> {
+        let run_id = uuid::Uuid::new_v4().to_string();
+
+        // Pre-create the run record as 'running' so the very first frontend poll
+        // can find it immediately, even before the spawned task starts executing.
+        // This prevents the poll from seeing the previous run and incorrectly
+        // setting backendDone=true before our new run appears.
+        {
+            let conn = state.db.get()?;
+            conn.execute(
+                "INSERT INTO workflow_runs (id, workflow_id, status, started_at, node_results) \
+                 VALUES (?1, ?2, 'running', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), '[]') \
+                 ON CONFLICT(id) DO NOTHING",
+                [run_id.clone(), workflow_id.to_string()],
+            )?;
+        }
+
+        let s = state.clone();
+        let wf_id = workflow_id.to_string();
+        let rid = run_id.clone();
+
+        tokio::spawn(async move {
+            // Pass the pre-created run_id so run_with_trigger reuses it rather
+            // than inserting a duplicate record.
+            if let Err(e) =
+                Self::run_with_trigger(&wf_id, &s, "manual", target_node_id, Some(rid.clone()))
+                    .await
+            {
+                tracing::error!("Background workflow run failed: {}", e);
+                if let Ok(conn) = s.db.get() {
+                    let _ = conn.execute(
+                        "UPDATE workflow_runs SET status = 'failed', finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
+                        [&rid],
+                    );
+                }
+                let details = format!("workflow_id={}\nrun_id={}\nerror={}", wf_id, rid, e);
+                if let Err(notify_err) = send_global_error_notification(
+                    &s,
+                    "workflow.engine",
+                    "Workflow runtime crashed before completion",
+                    &details,
+                    None,
+                    None,
+                )
+                .await
+                {
+                    tracing::warn!(
+                        "Background workflow crash notification failed: {}",
+                        notify_err
+                    );
+                }
+            }
+        });
+
+        tracing::info!(
+            "Workflow '{}' spawned in background, run_id={}",
+            workflow_id,
+            run_id
+        );
+        Ok(run_id)
+    }
+
+    fn trigger_priority(trigger_type: &str) -> u8 {
+        match trigger_type {
+            "gmail" => 3,
+            "cron" | "watcher" => 2,
+            _ => 1,
+        }
+    }
+
+    fn is_workflow_run_active(state: &AppState, workflow_id: &str) -> bool {
+        let Ok(conn) = state.db.get() else {
+            return false;
+        };
+
+        // Ignore stale 'running' rows (e.g. process killed mid-run): without the
+        // time bound a single orphaned row blocks scheduled triggers forever.
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM workflow_runs WHERE workflow_id = ?1 AND status = 'running' \
+             AND started_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-6 hours'))",
+            rusqlite::params![workflow_id],
+            |r| r.get::<_, i64>(0),
+        )
+        .map(|exists| exists != 0)
+        .unwrap_or(false)
+    }
+
+    pub async fn start_background_loop(state: AppState) {
+        let state = std::sync::Arc::new(state);
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
+        tracing::info!("Workflow background loop started (60s interval)");
+        loop {
+            interval.tick().await;
+            let workflows = {
+                let Ok(conn) = state.db.get() else {
+                    tracing::warn!("Workflow loop: failed to get DB connection");
+                    continue;
+                };
+                // JOIN with workflow_nodes to detect cron triggers stored in circadian/trigger node configs,
+                // not just the workflow-level trigger_type (which may be stale or incorrectly set to 'manual')
+                conn.prepare(
+                    "SELECT id, name, trigger_type, trigger_config, last_run_at FROM (
+                        SELECT DISTINCT w.id, w.name,
+                            COALESCE(
+                                json_extract(wn.config, '$.type'),
+                                CASE WHEN wn.node_type IN ('circadian', 'stimulus') THEN 'cron' END,
+                                w.trigger_type
+                            ) as trigger_type,
+                            COALESCE(wn.config, w.trigger_config) as trigger_config,
+                            w.last_run_at
+                         FROM workflows w
+                         LEFT JOIN workflow_nodes wn ON wn.workflow_id = w.id AND wn.node_type IN ('trigger', 'circadian', 'stimulus')
+                         WHERE w.enabled = 1
+                    ) WHERE trigger_type IN ('cron', 'watcher', 'gmail')"
+                )
+                    .and_then(|mut s| s.query_map([], |r| Ok(Workflow {
+                        id: r.get(0)?, name: r.get(1)?, description: String::new(), enabled: true,
+                        trigger_type: r.get::<_, String>(2)?, trigger_config: serde_json::from_str(&r.get::<_, String>(3)?).unwrap_or(json!({})),
+                        last_run_at: r.get(4)?, last_status: String::new(), created_at: String::new(),
+                        nodes: vec![], edges: vec![],
+                    })).map(|i| i.filter_map(|r| r.ok()).collect::<Vec<_>>())).unwrap_or_default()
+            };
+
+            // The SQL join can return duplicate rows per workflow when multiple
+            // trigger-like nodes exist. Keep one row per workflow id.
+            let mut deduped: std::collections::HashMap<String, Workflow> =
+                std::collections::HashMap::new();
+            for wf in workflows {
+                match deduped.entry(wf.id.clone()) {
+                    std::collections::hash_map::Entry::Vacant(slot) => {
+                        slot.insert(wf);
+                    }
+                    std::collections::hash_map::Entry::Occupied(mut existing) => {
+                        if Self::trigger_priority(&wf.trigger_type)
+                            > Self::trigger_priority(&existing.get().trigger_type)
+                        {
+                            existing.insert(wf);
+                        }
+                    }
+                }
+            }
+            let workflows: Vec<Workflow> = deduped.into_values().collect();
+
+            if !workflows.is_empty() {
+                tracing::info!(
+                    "Workflow loop: found {} cron/watcher workflow(s): {}",
+                    workflows.len(),
+                    workflows
+                        .iter()
+                        .map(|w| format!("{}({})", w.name, w.trigger_type))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
+
+            for wf in workflows {
+                if wf.trigger_type == "gmail" {
+                    // Gmail trigger: poll-first watcher pattern
+                    // Only trigger if there are genuinely NEW emails since last check
+                    if !should_trigger(&wf) {
+                        continue;
+                    }
+                    if Self::is_workflow_run_active(state.as_ref(), &wf.id) {
+                        tracing::info!(
+                            "Workflow '{}' ({}) already running; skip duplicate gmail trigger",
+                            wf.name,
+                            wf.id
+                        );
+                        continue;
+                    }
+
+                    let s = state.clone();
+                    let wf_id = wf.id.clone();
+                    let wf_name = wf.name.clone();
+                    tokio::spawn(async move {
+                        match check_and_trigger_gmail(&wf_id, &wf_name, &wf.trigger_config, &s)
+                            .await
+                        {
+                            Ok(true) => tracing::info!(
+                                "Gmail trigger '{}': new emails found, workflow triggered",
+                                wf_name
+                            ),
+                            Ok(false) => {
+                                tracing::debug!("Gmail trigger '{}': no new emails", wf_name)
+                            }
+                            Err(e) => tracing::warn!("Gmail trigger '{}' failed: {}", wf_name, e),
+                        }
+                    });
+                } else {
+                    let triggered = should_trigger(&wf);
+                    if triggered {
+                        if Self::is_workflow_run_active(state.as_ref(), &wf.id) {
+                            tracing::info!(
+                                "Workflow '{}' ({}) already running; skip duplicate scheduled trigger",
+                                wf.name,
+                                wf.id
+                            );
+                            continue;
+                        }
+                        tracing::info!(
+                            "Workflow '{}' ({}) → TRIGGERED, spawning run",
+                            wf.name,
+                            wf.id
+                        );
+                        let s = state.clone();
+                        tokio::spawn(async move {
+                            let _ =
+                                Self::run_with_trigger(&wf.id, &s, &wf.trigger_type, None, None)
+                                    .await;
+                        });
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Gmail watcher: polls for new emails, compares against stored seen IDs,
+/// and only triggers the workflow when genuinely new messages arrive.
+/// Stores new email data so the stimulus node can inject it as trigger output.
+async fn check_and_trigger_gmail(
+    workflow_id: &str,
+    workflow_name: &str,
+    trigger_config: &Value,
+    state: &AppState,
+) -> Result<bool, String> {
+    let label = trigger_config
+        .get("gmail_label")
+        .and_then(|v| v.as_str())
+        .unwrap_or("INBOX");
+    let max_results = trigger_config
+        .get("gmail_max_results")
+        .and_then(|v| {
+            v.as_u64()
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        })
+        .unwrap_or(10);
+
+    let query = format!("is:unread label:{}", label.to_lowercase());
+    let args = json!({
+        "query": query,
+        "max_results": max_results,
+    });
+
+    // Use ToolRegistry::run() — same proven path as the watcher engine
+    let data = state
+        .tools
+        .run("gmail_list", args)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Extract email entries from the response
+    let emails = data
+        .as_array()
+        .or_else(|| data.get("messages").and_then(|v| v.as_array()))
+        .or_else(|| data.get("emails").and_then(|v| v.as_array()))
+        .cloned()
+        .unwrap_or_default();
+
+    // Extract all current message IDs
+    let current_ids: Vec<String> = emails
+        .iter()
+        .filter_map(|e| {
+            e.get("id")
+                .or_else(|| e.get("message_id"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        })
+        .collect();
+
+    // Load previously seen IDs from the DB
+    let seen_ids: Vec<String> = {
+        let conn = state.db.get().map_err(|e| e.to_string())?;
+        conn.query_row(
+            "SELECT json_extract(trigger_config, '$.gmail_last_seen_ids') FROM workflows WHERE id = ?1",
+            rusqlite::params![workflow_id],
+            |r| r.get::<_, Option<String>>(0),
+        )
+        .ok()
+        .flatten()
+        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+        .unwrap_or_default()
+    };
+
+    let seen_set: std::collections::HashSet<&str> = seen_ids.iter().map(|s| s.as_str()).collect();
+
+    // Find genuinely new emails (not in seen_ids)
+    let new_emails: Vec<&Value> = emails
+        .iter()
+        .filter(|e| {
+            e.get("id")
+                .or_else(|| e.get("message_id"))
+                .and_then(|v| v.as_str())
+                .map(|id| !seen_set.contains(id))
+                .unwrap_or(false)
+        })
+        .collect();
+
+    // Update the seen IDs in the DB (keep last 200 to prevent unbounded growth)
+    let mut updated_ids = seen_ids.clone();
+    for id in &current_ids {
+        if !updated_ids.contains(id) {
+            updated_ids.push(id.clone());
+        }
+    }
+    // Keep only the last 200 seen IDs
+    if updated_ids.len() > 200 {
+        updated_ids = updated_ids.split_off(updated_ids.len() - 200);
+    }
+
+    {
+        let conn = state.db.get().map_err(|e| e.to_string())?;
+        let ids_json = serde_json::to_string(&updated_ids).unwrap_or_else(|_| "[]".into());
+        conn.execute(
+            "UPDATE workflows SET trigger_config = json_set(trigger_config, '$.gmail_last_seen_ids', json(?1)) WHERE id = ?2",
+            rusqlite::params![ids_json, workflow_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    if new_emails.is_empty() {
+        // First poll (no seen IDs stored yet): baseline — don't trigger
+        if seen_ids.is_empty() && !current_ids.is_empty() {
+            tracing::info!(
+                "Gmail trigger '{}': first poll — stored {} baseline IDs (silent)",
+                workflow_name,
+                current_ids.len()
+            );
+        }
+        return Ok(false);
+    }
+
+    tracing::info!(
+        "Gmail trigger '{}': {} new email(s) detected (out of {} total)",
+        workflow_name,
+        new_emails.len(),
+        emails.len()
+    );
+
+    // Store the new email data in a global map so execute_gmail_trigger can pick it up
+    {
+        let data = json!({
+            "trigger": "gmail",
+            "label": label,
+            "new_email_count": new_emails.len(),
+            "emails": new_emails,
+        });
+        GMAIL_TRIGGER_DATA
+            .lock()
+            .await
+            .insert(workflow_id.to_string(), data);
+    }
+
+    // Trigger the workflow
+    WorkflowEngine::run_with_trigger(workflow_id, state, "gmail", None, None)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Clean up the trigger data after run
+    GMAIL_TRIGGER_DATA.lock().await.remove(workflow_id);
+
+    // Mark as read if configured
+    let mark_read = trigger_config
+        .get("gmail_mark_read")
+        .and_then(|v| {
+            v.as_bool()
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        })
+        .unwrap_or(false);
+    if mark_read {
+        for email in &new_emails {
+            if let Some(msg_id) = email.get("id").and_then(|v| v.as_str()) {
+                let mark_args = json!({ "ids": vec![msg_id] });
+                let _ = state.tools.run("gmail_mark_read", mark_args).await;
+            }
+        }
+    }
+
+    Ok(true)
+}
+
+fn should_trigger(wf: &Workflow) -> bool {
+    use std::str::FromStr;
+
+    let now = chrono::Utc::now();
+
+    // Robust last_run_at parsing: try RFC3339 first, then NaiveDateTime fallback
+    let last_run_dt = wf
+        .last_run_at
+        .as_ref()
+        .filter(|l| !l.trim().is_empty())
+        .and_then(|l| {
+            // Try RFC3339 first (e.g. "2026-04-16T20:50:39Z" or "2026-04-16T20:50:39+00:00")
+            chrono::DateTime::parse_from_rfc3339(l)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .ok()
+                .or_else(|| {
+                    // Fallback: NaiveDateTime without timezone (assume UTC)
+                    chrono::NaiveDateTime::parse_from_str(l, "%Y-%m-%dT%H:%M:%S")
+                        .or_else(|_| chrono::NaiveDateTime::parse_from_str(l, "%Y-%m-%d %H:%M:%S"))
+                        .ok()
+                        .map(|naive| naive.and_utc())
+                })
+        })
+        .unwrap_or_else(|| {
+            tracing::debug!(
+                "Workflow '{}': no valid last_run_at (raw={:?}), treating as never-run",
+                wf.name,
+                wf.last_run_at
+            );
+            now - chrono::Duration::days(365)
+        });
+
+    let schedules_val = wf.trigger_config.get("schedules").or_else(|| {
+        wf.trigger_config
+            .get("config")
+            .and_then(|c| c.get("schedules"))
+    });
+
+    if let Some(schedules) = schedules_val
+        .and_then(|v| v.get("parameters"))
+        .and_then(|v| v.as_array())
+    {
+        for s in schedules {
+            let mut eval_cron = String::new();
+            if let Some(mode) = s.get("mode").and_then(|v| v.as_str()) {
+                let val = s
+                    .get("value")
+                    .and_then(|v| {
+                        v.as_i64()
+                            .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
+                    })
+                    .unwrap_or(1)
+                    .max(1);
+                let dow = s.get("dayOfWeek").and_then(|v| v.as_str()).unwrap_or("MON");
+                let hod = s
+                    .get("hourOfDay")
+                    .and_then(|v| {
+                        v.as_i64()
+                            .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
+                    })
+                    .unwrap_or(9);
+                let moh = s
+                    .get("minuteOfHour")
+                    .and_then(|v| {
+                        v.as_i64()
+                            .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
+                    })
+                    .unwrap_or(0);
+                let custom = s
+                    .get("customCron")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("0 * * * * *");
+                match mode {
+                    "minutes" => eval_cron = format!("0 */{} * * * *", val),
+                    "hours" => eval_cron = format!("0 {} */{} * * *", moh, val),
+                    "days" => eval_cron = format!("0 {} {} */{} * *", moh, hod, val),
+                    "weekly" => eval_cron = format!("0 {} {} * * {}", moh, hod, dow),
+                    _ => eval_cron = custom.to_string(),
+                }
+                tracing::debug!(
+                    "Workflow '{}': mode={} → manila cron='{}'",
+                    wf.name,
+                    mode,
+                    eval_cron
+                );
+            } else if let Some(cron_expr) = s.get("cron").and_then(|v| v.as_str()) {
+                eval_cron = cron_expr.to_string();
+            }
+
+            if !eval_cron.is_empty() {
+                // Convert manila cron to UTC
+                let utc_cron = crate::scheduler::engine::manila_cron_to_utc(&eval_cron);
+                tracing::debug!(
+                    "Workflow '{}': manila='{}' → utc='{}'",
+                    wf.name,
+                    eval_cron,
+                    utc_cron
+                );
+                match cron::Schedule::from_str(&utc_cron) {
+                    Ok(schedule) => {
+                        if let Some(next_fire) = schedule.after(&last_run_dt).next() {
+                            let should = next_fire <= now;
+                            tracing::info!(
+                                "Workflow '{}': last_run={}, next_fire={}, now={}, trigger={}",
+                                wf.name,
+                                last_run_dt,
+                                next_fire,
+                                now,
+                                should
+                            );
+                            if should {
+                                return true;
+                            }
+                        } else {
+                            tracing::warn!(
+                                "Workflow '{}': cron '{}' produced no next fire time after {}",
+                                wf.name,
+                                utc_cron,
+                                last_run_dt
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            "Workflow '{}': INVALID cron expression '{}' (from manila '{}'): {}",
+                            wf.name,
+                            utc_cron,
+                            eval_cron,
+                            e
+                        );
+                    }
+                }
+            }
+        }
+        // An explicit schedules array was provided. Whether it is empty, its
+        // entries failed to produce a valid cron, or a valid cron simply isn't
+        // due yet, do NOT fall back to legacy interval polling — that would
+        // silently fire on a default interval the user never configured. A
+        // cron-mode trigger with no due schedule is inactive this tick.
+        return false;
+    } else {
+        tracing::debug!(
+            "Workflow '{}': no schedules found in trigger_config, falling back to interval",
+            wf.name
+        );
+    }
+
+    // 2. Fallback to legacy interval-based polling
+    let mut mins = if wf.trigger_type == "gmail" {
+        // Gmail triggers use poll_interval from config (default 5 min)
+        wf.trigger_config
+            .get("poll_interval")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(5)
+    } else if wf.trigger_type == "watcher" {
+        15
+    } else {
+        60
+    };
+
+    if let Some(m) = wf
+        .trigger_config
+        .get("interval_mins")
+        .and_then(|v| v.as_u64())
+    {
+        mins = m;
+    }
+
+    let elapsed = (now - last_run_dt).num_minutes();
+    let should = elapsed >= mins as i64;
+    tracing::info!(
+        "Workflow '{}': interval fallback — elapsed={}min, threshold={}min, trigger={}",
+        wf.name,
+        elapsed,
+        mins,
+        should
+    );
+    should
+}

@@ -1,0 +1,135 @@
+use super::types::*;
+use super::ProviderCallOptions;
+use crate::tools::schema::ToolDefinition;
+use anyhow::Context;
+use once_cell::sync::Lazy;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+
+#[derive(Serialize)]
+struct AnthReq<'a> {
+    model: &'a str,
+    max_tokens: u32,
+    messages: Vec<AnthMsg>,
+    #[serde(skip_serializing_if = "str::is_empty")]
+    system: &'a str,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tools: Vec<Value>,
+}
+#[derive(Serialize, Deserialize)]
+struct AnthMsg {
+    role: String,
+    content: Value,
+}
+#[derive(Deserialize)]
+struct AnthResp {
+    content: Vec<AnthBlock>,
+    stop_reason: Option<String>,
+    usage: AnthUsage,
+}
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum AnthBlock {
+    Text {
+        text: String,
+    },
+    ToolUse {
+        id: String,
+        name: String,
+        input: Value,
+    },
+}
+#[derive(Deserialize)]
+struct AnthUsage {
+    input_tokens: u32,
+    output_tokens: u32,
+}
+
+static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
+    reqwest::Client::builder()
+        .user_agent("axon-agent/1.0")
+        .build()
+        .expect("build shared Anthropic HTTP client")
+});
+
+pub async fn call(
+    model: &mut ModelRecord,
+    messages: &[Message],
+    system: &str,
+    tools: &[ToolDefinition],
+    max_tokens: u32,
+    _options: ProviderCallOptions,
+) -> anyhow::Result<UnifiedResponse> {
+    let msgs: Vec<AnthMsg> = messages.iter().map(|m| {
+        let content = match &m.content {
+            MessageContent::Text(t) => json!(t),
+            MessageContent::Blocks(b) => json!(b.iter().map(|blk| match blk {
+                ContentBlock::Text { text }       => json!({"type":"text","text":text}),
+                ContentBlock::ToolUse { id,name,input } => json!({"type":"tool_use","id":id,"name":name,"input":input}),
+                ContentBlock::ToolResult { tool_use_id, content } => json!({"type":"tool_result","tool_use_id":tool_use_id,"content":content}),
+                ContentBlock::Image { media_type, data } => json!({"type":"image","source":{"type":"base64","media_type":media_type,"data":data}}),
+            }).collect::<Vec<_>>()),
+        };
+        AnthMsg { role: m.role.clone(), content }
+    }).collect();
+
+    let tool_defs: Vec<Value> = tools
+        .iter()
+        .map(|t| {
+            json!({
+                "name":t.name,"description":t.description,
+                "input_schema":{"type":"object","properties":t.parameters,"required":t.required}
+            })
+        })
+        .collect();
+
+    let resp = HTTP_CLIENT
+        .post("https://api.anthropic.com/v1/messages")
+        .header("x-api-key", &model.api_key)
+        .header("anthropic-version", "2023-06-01")
+        .header("content-type", "application/json")
+        .json(&AnthReq {
+            model: &model.model_id,
+            max_tokens,
+            messages: msgs,
+            system,
+            tools: tool_defs,
+        })
+        .send()
+        .await
+        .context("Anthropic request")?;
+
+    let rl = super::openai_compat::parse_rl_headers("anthropic", resp.headers());
+    model.rl_snapshot = rl;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        if status.as_u16() == 429 {
+            anyhow::bail!("rate limit: {}", body);
+        }
+        anyhow::bail!("anthropic {}: {}", status, body);
+    }
+    let body: AnthResp = resp.json().await.context("parse anthropic response")?;
+    let mut blocks = vec![];
+    for b in body.content {
+        match b {
+            AnthBlock::Text { text } => blocks.push(ContentBlock::text(text)),
+            AnthBlock::ToolUse { id, name, input } => {
+                blocks.push(ContentBlock::ToolUse { id, name, input })
+            }
+        }
+    }
+    let stop = match body.stop_reason.as_deref() {
+        Some("tool_use") => StopReason::ToolUse,
+        Some("max_tokens") => StopReason::MaxTokens,
+        _ => StopReason::EndTurn,
+    };
+    Ok(UnifiedResponse {
+        content: blocks,
+        stop_reason: stop,
+        usage: UsageInfo {
+            input_tokens: body.usage.input_tokens,
+            output_tokens: body.usage.output_tokens,
+        },
+    })
+}

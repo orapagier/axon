@@ -1,0 +1,523 @@
+[settings]
+
+[[models]]
+name       = "axon"
+provider   = "openai"
+model_id   = "axon-ai"
+api_key    = "${AXON_API_KEY}"
+base_url   = "http://localhost:5000/v1"
+role       = ""
+priority   = 2
+timeout_secs = 60
+enabled    = true
+
+# ── GENERAL ROLE GEMINI ─────────────────────────────────────────────
+
+[[models]]
+name       = "gemini-axondev1991"
+provider   = "google"
+model_id   = "gemini-2.5-flash"
+api_key    = "${GEMINI_API_KEY_AXONDEV1991}"
+role       = ""
+priority   = 1
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "gemini-samuzzielorapa"
+provider   = "google"
+model_id   = "gemini-2.5-flash"
+api_key    = "${GEMINI_API_KEY_SAMUZZIELORAPA}"
+role       = ""
+priority   = 1
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "gemini-shirahproject2"
+provider   = "google"
+model_id   = "gemini-2.5-flash"
+api_key    = "${GEMINI_API_KEY_SHIRAHPROJECT2}"
+role       = ""
+priority   = 1
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "gemini-shirahproject3"
+provider   = "google"
+model_id   = "gemini-2.5-flash"
+api_key    = "${GEMINI_API_KEY_SHIRAHPROJECT3}"
+role       = ""
+priority   = 1
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "gemini-shirahhn8n1"
+provider   = "google"
+model_id   = "gemini-2.5-flash"
+api_key    = "${GEMINI_API_KEY_SHIRAHN8N1}"
+role       = ""
+priority   = 1
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "gemini-shirahhn8n2"
+provider   = "google"
+model_id   = "gemini-2.5-flash"
+api_key    = "${GEMINI_API_KEY_SHIRAHN8N2}"
+role       = ""
+priority   = 1
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "gemini-samsam12232020"
+provider   = "google"
+model_id   = "gemini-2.5-flash"
+api_key    = "${GEMINI_API_KEY_SAMSAM12232020}"
+role       = ""
+priority   = 1
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "gemini-oraparamlej"
+provider   = "google"
+model_id   = "gemini-2.5-flash"
+api_key    = "${GEMINI_API_KEY_ORAPARAMLEJ}"
+role       = ""
+priority   = 1
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "gemini-orapagier"
+provider   = "google"
+model_id   = "gemini-2.5-flash"
+api_key    = "${GEMINI_API_KEY_ORAPAGIER}"
+role       = ""
+priority   = 1
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "gemini-shirahproject1"
+provider   = "google"
+model_id   = "gemini-2.5-flash"
+api_key    = "${GEMINI_API_KEY_SHIRAHPROJECT1}"
+role       = ""
+priority   = 1
+timeout_secs = 60
+enabled    = true
+
+# ── GENERAL ROLE OLLAMA ─────────────────────────────────────────────
+
+[[models]]
+name       = "ollama-shirahhn8n1"
+provider   = "ollama"
+model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
+api_key    = "${OLLAMA_API_KEY_SHIRAHN8N1}"
+base_url   = "https://ollama.com"
+role       = ""
+priority   = 2
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "ollama-shirahhn8n2"
+provider   = "ollama"
+model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
+api_key    = "${OLLAMA_API_KEY_SHIRAHN8N2}"
+base_url   = "https://ollama.com"
+role       = ""
+priority   = 2
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "ollama-shirahproject1"
+provider   = "ollama"
+model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
+api_key    = "${OLLAMA_API_KEY_SHIRAHPROJECT1}"
+base_url   = "https://ollama.com"
+role       = ""
+priority   = 2
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "ollama-shirahproject2"
+provider   = "ollama"
+model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
+api_key    = "${OLLAMA_API_KEY_SHIRAHPROJECT2}"
+base_url   = "https://ollama.com"
+role       = ""
+priority   = 2
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "ollama-shirahproject3"
+provider   = "ollama"
+model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
+api_key    = "${OLLAMA_API_KEY_SHIRAHPROJECT3}"
+base_url   = "https://ollama.com"
+role       = ""
+priority   = 2
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "ollama-samsam12232020"
+provider   = "ollama"
+model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
+api_key    = "${OLLAMA_API_KEY_SAMSAM12232020}"
+base_url   = "https://ollama.com"
+role       = ""
+priority   = 2
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "ollama-orapagier"
+provider   = "ollama"
+model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
+api_key    = "${OLLAMA_API_KEY_ORAPAGIER}"
+base_url   = "https://ollama.com"
+role       = ""
+priority   = 2
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "ollama-oraparamlej"
+provider   = "ollama"
+model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
+api_key    = "${OLLAMA_API_KEY_ORAPARAMLEJ}"
+base_url   = "https://ollama.com"
+role       = ""
+priority   = 2
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "ollama-orapajelmar2"
+provider   = "ollama"
+model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
+api_key    = "${OLLAMA_API_KEY_ORAPAJELMAR2}"
+base_url   = "https://ollama.com"
+role       = ""
+priority   = 2
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "ollama-samuzzielorapa"
+provider   = "ollama"
+model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
+api_key    = "${OLLAMA_API_KEY_SAMUZZIELORAPA}"
+base_url   = "https://ollama.com"
+role       = ""
+priority   = 2
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "ollama-1"
+provider   = "ollama"
+model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
+api_key    = "${OLLAMA_API_KEY_1}"
+base_url   = "https://ollama.com"
+role       = ""
+priority   = 2
+timeout_secs = 60
+enabled    = true
+
+# ── GENERAL ROLE OPENROUTER ─────────────────────────────────────────────
+
+[[models]]
+name       = "openrouter-shirahhn8n1"
+provider   = "openrouter"
+model_id   = "nvidia/nemotron-3-super-120b-a12b:free"
+api_key    = "${OPENROUTER_API_KEY_SHIRAHN8N1}"
+base_url   = "https://openrouter.ai/api/v1"
+role       = ""
+priority   = 2
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "openrouter-shirahhn8n2"
+provider   = "openrouter"
+model_id   = "nvidia/nemotron-3-super-120b-a12b:free"
+api_key    = "${OPENROUTER_API_KEY_SHIRAHN8N2}"
+base_url   = "https://openrouter.ai/api/v1"
+role       = ""
+priority   = 2
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "openrouter-shirahproject1"
+provider   = "openrouter"
+model_id   = "nvidia/nemotron-3-super-120b-a12b:free"
+api_key    = "${OPENROUTER_API_KEY_SHIRAHPROJECT1}"
+base_url   = "https://openrouter.ai/api/v1"
+role       = ""
+priority   = 2
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "openrouter-shirahproject2"
+provider   = "openrouter"
+model_id   = "nvidia/nemotron-3-super-120b-a12b:free"
+api_key    = "${OPENROUTER_API_KEY_SHIRAHPROJECT2}"
+base_url   = "https://openrouter.ai/api/v1"
+role       = ""
+priority   = 2
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "openrouter-shirahproject3"
+provider   = "openrouter"
+model_id   = "nvidia/nemotron-3-super-120b-a12b:free"
+api_key    = "${OPENROUTER_API_KEY_SHIRAHPROJECT3}"
+base_url   = "https://openrouter.ai/api/v1"
+role       = ""
+priority   = 2
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "openrouter-samsam12232020"
+provider   = "openrouter"
+model_id   = "nvidia/nemotron-3-super-120b-a12b:free"
+api_key    = "${OPENROUTER_API_KEY_SAMSAM12232020}"
+base_url   = "https://openrouter.ai/api/v1"
+role       = ""
+priority   = 2
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "openrouter-orapagier"
+provider   = "openrouter"
+model_id   = "nvidia/nemotron-3-super-120b-a12b:free"
+api_key    = "${OPENROUTER_API_KEY_ORAPAGIER}"
+base_url   = "https://openrouter.ai/api/v1"
+role       = ""
+priority   = 2
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "openrouter-oraparamlej"
+provider   = "openrouter"
+model_id   = "nvidia/nemotron-3-super-120b-a12b:free"
+api_key    = "${OPENROUTER_API_KEY_ORAPARAMLEJ}"
+base_url   = "https://openrouter.ai/api/v1"
+role       = ""
+priority   = 2
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "openrouter-orapajelmar2"
+provider   = "openrouter"
+model_id   = "nvidia/nemotron-3-super-120b-a12b:free"
+api_key    = "${OPENROUTER_API_KEY_ORAPAJELMAR2}"
+base_url   = "https://openrouter.ai/api/v1"
+role       = ""
+priority   = 2
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "openrouter-samuzzielorapa"
+provider   = "openrouter"
+model_id   = "nvidia/nemotron-3-super-120b-a12b:free"
+api_key    = "${OPENROUTER_API_KEY_SAMUZZIELORAPA}"
+base_url   = "https://openrouter.ai/api/v1"
+role       = ""
+priority   = 2
+timeout_secs = 60
+enabled    = true
+
+# ── GENERAL ROLE NVIDIA ─────────────────────────────────────────────
+
+[[models]]
+name = "nvidia-shirahn8n1"
+provider = "nvidia"
+model_id = "deepseek-ai/deepseek-v4-pro"
+api_key = "${NVIDIA_API_KEY_SHIRAHN8N1}"
+base_url = "https://integrate.api.nvidia.com/v1"
+role = ""
+priority = 1
+timeout_secs = 60
+enabled = true
+
+[[models]]
+name = "nvidia-orapajelmar"
+provider = "nvidia"
+model_id = "deepseek-ai/deepseek-v4-pro"
+api_key = "${NVIDIA_API_KEY_ORAPAJELMAR}"
+base_url = "https://integrate.api.nvidia.com/v1"
+role = ""
+priority = 1
+timeout_secs = 60
+enabled = true
+
+[[models]]
+name = "nvidia-orapagier"
+provider = "nvidia"
+model_id = "deepseek-ai/deepseek-v4-pro"
+api_key = "${NVIDIA_API_KEY_ORAPAGIER}"
+base_url = "https://integrate.api.nvidia.com/v1"
+role = ""
+priority = 1
+timeout_secs = 60
+enabled = true
+
+[[models]]
+name = "nvidia-oraparamlej"
+provider = "nvidia"
+model_id = "deepseek-ai/deepseek-v4-pro"
+api_key = "${NVIDIA_API_KEY_ORAPARAMLEJ}"
+base_url = "https://integrate.api.nvidia.com/v1"
+role = ""
+priority = 1
+timeout_secs = 60
+enabled = true
+
+# ── TOOL ROUTER ─────────────────────────────────────────────
+
+[[models]]
+name       = "cerebras-shirahhn8n1"
+provider   = "cerebras"
+model_id   = "gpt-oss-120b"
+api_key    = "${CEREBRAS_API_KEY_SHIRAHN8N1}"
+base_url   = "https://api.cerebras.ai/v1"
+role       = "router"
+priority = 1
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "cerebras-shirahhn8n2"
+provider   = "cerebras"
+model_id   = "gpt-oss-120b"
+api_key    = "${CEREBRAS_API_KEY_SHIRAHN8N2}"
+base_url   = "https://api.cerebras.ai/v1"
+role       = "router"
+priority = 1
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "cerebras-shirahproject1"
+provider   = "cerebras"
+model_id   = "gpt-oss-120b"
+api_key    = "${CEREBRAS_API_KEY_SHIRAHPROJECT1}"
+base_url   = "https://api.cerebras.ai/v1"
+role       = "router"
+priority = 1
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "cerebras-shirahproject2"
+provider   = "cerebras"
+model_id   = "gpt-oss-120b"
+api_key    = "${CEREBRAS_API_KEY_SHIRAHPROJECT2}"
+base_url   = "https://api.cerebras.ai/v1"
+role       = "router"
+priority = 1
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "cerebras-samsam12232020"
+provider   = "cerebras"
+model_id   = "gpt-oss-120b"
+api_key    = "${CEREBRAS_API_KEY_SAMSAM12232020}"
+base_url   = "https://api.cerebras.ai/v1"
+role       = "router"
+priority = 1
+timeout_secs = 60
+enabled    = true
+
+# ── AXON NODE ─────────────────────────────────────────────
+
+[[models]]
+name       = "groq-shirahproject3"
+provider   = "groq"
+model_id   = "openai/gpt-oss-120b"
+api_key    = "${GROQ_API_KEY_SHIRAHPROJECT3}"
+base_url   = "https://api.groq.com/openai/v1"
+role       = "axon_node"
+priority = 10
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "groq-shirahn8n2"
+provider   = "groq"
+model_id   = "openai/gpt-oss-120b"
+api_key    = "${GROQ_API_KEY_SHIRAHN8N2}"
+base_url   = "https://api.groq.com/openai/v1"
+role       = "axon_node"
+priority = 10
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "groq-samsam12232020"
+provider   = "groq"
+model_id   = "openai/gpt-oss-120b"
+api_key    = "${GROQ_API_KEY_SAMSAM12232020}"
+base_url   = "https://api.groq.com/openai/v1"
+role       = "axon_node"
+priority = 10
+timeout_secs = 60
+enabled    = true
+
+# ── MEMORY COMPRESSOR ─────────────────────────────────────────────
+
+[[models]]
+name       = "cerebras-orapagier"
+provider   = "cerebras"
+model_id   = "gpt-oss-120b"
+api_key    = "${CEREBRAS_API_KEY_ORAPAGIER}"
+base_url   = "https://api.cerebras.ai/v1"
+role       = "memory_compressor"
+priority = 1
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "cerebras-oraparamlej"
+provider   = "cerebras"
+model_id   = "gpt-oss-120b"
+api_key    = "${CEREBRAS_API_KEY_ORAPARAMLEJ}"
+base_url   = "https://api.cerebras.ai/v1"
+role       = "memory_compressor"
+priority = 1
+timeout_secs = 60
+enabled    = true
+
+# ── PAID MODEL - ULTIMATE FALLBACK ─────────────────────────────────────────────
+
+[[models]]
+name       = "gemini-orapajelmar"
+provider   = "google"
+model_id   = "gemini-2.5-flash-lite"
+api_key    = "${GEMINI_API_KEY_ORAPAJELMAR}"
+role       = "paid_model"
+priority = 100
+timeout_secs = 60
+enabled    = false

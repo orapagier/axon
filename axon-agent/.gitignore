@@ -1,0 +1,11 @@
+.env
+memory/axon.db
+memory/axon.db-wal
+memory/axon.db-shm
+target/
+tools_temp/*.py
+files/incoming/*
+files/outgoing/*
+!files/incoming/.gitkeep
+!files/outgoing/.gitkeep
+!tools_temp/.gitkeep

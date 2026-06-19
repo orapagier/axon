@@ -1,0 +1,16 @@
+[package]
+name = "axon-core"
+version = "2.0.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.11", features = ["json", "rustls-tls", "multipart", "stream"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"
+dirs = "5.0"
+chrono = { version = "0.4", features = ["serde"] }
+url = "2.5"
+base64 = "0.22"
+rmcp = { version = "0.1", features = ["server"] }

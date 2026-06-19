@@ -1,0 +1,2964 @@
+use super::context::{AgentEvent, RunContext};
+use super::tool_writer::write_temporary_tool;
+use crate::error_reporting::send_global_error_notification;
+use crate::memory::compressor::{compress_and_store, search_recent_observations};
+use crate::providers::types::{ContentBlock, Message, MessageContent};
+use crate::router::{call_llm, call_llm_with_options, drain_alerts, format_alerts, CallLlmOptions};
+use crate::scheduler::store::StopCondition;
+use crate::state::AppState;
+use crate::tools::runner::run_parallel;
+use crate::tools::schema::{ToolDefinition, ToolSource};
+use crate::tools::{ShellTool, SshTool};
+use once_cell::sync::Lazy;
+use std::sync::Arc;
+use tokio::sync::mpsc;
+
+// ── Compiled-once regexes ────────────────────────────────────────────────────
+
+static RE_TOOL_TEXT: Lazy<regex::Regex> =
+    Lazy::new(|| regex::Regex::new(r"(?i)\bTool:\s*\w+").unwrap());
+static RE_THINKING_BLOCK: Lazy<regex::Regex> =
+    Lazy::new(|| regex::Regex::new(r"(?si)\(Thinking:.*?\)").unwrap());
+static RE_STRIP_TOOL_LINE: Lazy<regex::Regex> =
+    Lazy::new(|| regex::Regex::new(r"(?im)^\s*Tool:\s*.*$").unwrap());
+static RE_STRIP_PARAMS_LINE: Lazy<regex::Regex> =
+    Lazy::new(|| regex::Regex::new(r"(?im)^\s*Parameters:\s*.*$").unwrap());
+static RE_STRIP_ACTION_LINE: Lazy<regex::Regex> =
+    Lazy::new(|| regex::Regex::new(r"(?im)^\s*Action:\s*.*$").unwrap());
+static RE_STRIP_OBSERVATION_LINE: Lazy<regex::Regex> =
+    Lazy::new(|| regex::Regex::new(r"(?im)^\s*Observation:\s*.*$").unwrap());
+static RE_STRIP_THOUGHT_LINE: Lazy<regex::Regex> =
+    Lazy::new(|| regex::Regex::new(r"(?im)^\s*Thought:\s*.*$").unwrap());
+static RE_STRIP_API_NAME: Lazy<regex::Regex> =
+    Lazy::new(|| regex::Regex::new(r#"(?im)^\s*"?api_name"?:\s*.*$"#).unwrap());
+static RE_STRIP_PARAMETERS: Lazy<regex::Regex> =
+    Lazy::new(|| regex::Regex::new(r#"(?im)^\s*"?parameters"?:\s*.*$"#).unwrap());
+static RE_COLLAPSE_NEWLINES: Lazy<regex::Regex> =
+    Lazy::new(|| regex::Regex::new(r"\n{3,}").unwrap());
+static RE_REPAIR_TOOL_PLAIN: Lazy<regex::Regex> =
+    Lazy::new(|| regex::Regex::new(r"(?i)(?:^|\n)\s*Tool:\s*(\w+)\s*(?:\n|$)").unwrap());
+static RE_REPAIR_PARAMS: Lazy<regex::Regex> =
+    Lazy::new(|| regex::Regex::new(r"(?i)Parameters:\s*(\{[^}]*\}|None|none|null)").unwrap());
+static RE_XML_FUNC: Lazy<regex::Regex> =
+    Lazy::new(|| regex::Regex::new(r"<function=([^>]+)>").unwrap());
+static RE_XML_PARAM: Lazy<regex::Regex> =
+    Lazy::new(|| regex::Regex::new(r"(?s)<parameter=([^>]+)>(.*?)</parameter>").unwrap());
+static RE_CALL_COLON: Lazy<regex::Regex> =
+    Lazy::new(|| regex::Regex::new(r"(?m)^\s*call:(\w+)\{(.+)\}\s*$").unwrap());
+static RE_STRIP_CALL_COLON: Lazy<regex::Regex> =
+    Lazy::new(|| regex::Regex::new(r"(?im)^\s*call:\w+\{.*\}\s*$").unwrap());
+static RE_MUTATION_CLAIM: Lazy<regex::Regex> = Lazy::new(|| {
+    regex::Regex::new(
+        r"(?i)\b(i|we|it)\s+(?:have\s+)?(sent|created|scheduled|deleted|updated|uploaded|moved|replied|forwarded|marked|posted|published|completed|added|removed|shared|triggered|ran|executed)\b",
+    )
+    .unwrap()
+});
+static RE_DATA_CLAIM: Lazy<regex::Regex> = Lazy::new(|| {
+    regex::Regex::new(
+        r"(?i)\b(i checked|i found|i retrieved|i looked up|in your|from your|you have\s+\d+|there\s+(?:is|are)\s+\d+)\b",
+    )
+    .unwrap()
+});
+static RE_TIME_SENSITIVE_TASK: Lazy<regex::Regex> = Lazy::new(|| {
+    regex::Regex::new(
+        r"(?i)\b(now|current|time|date|day|clock|today|tomorrow|yesterday|tonight|morning|afternoon|evening|weekend|this\s+week|next\s+week|this\s+month|next\s+month|this\s+year|next\s+year|monday|tuesday|wednesday|thursday|friday|saturday|sunday|schedule|scheduled|scheduling|remind|reminder|deadline|due|calendar|meeting|appointment|cron|timezone|utc|pst|est|cst|mst|gmt|in\s+\d+\s+(minute|minutes|hour|hours|day|days|week|weeks|month|months)|at\s+\d{1,2}(?::\d{2})?\s*(am|pm)?)\b",
+    )
+    .unwrap()
+});
+
+// ── Shared constants — single source of truth ────────────────────────────────
+
+/// Phrases that indicate the model is refusing to use an available tool.
+/// Defined once to prevent the two-location duplication that caused silent drift.
+const REFUSAL_PHRASES: &[&str] = &[
+    "unable to",
+    "cannot",
+    "can't",
+    "not found",
+    "not available",
+    "not installed",
+    "i don't have",
+    "i do not have",
+    "i'm unable",
+    "don't have access",
+    "do not have access",
+    "no access",
+    "not connected",
+    "can not",
+    "isn't connected",
+    "is not connected",
+    "i lack",
+    "not possible",
+    "not supported",
+];
+
+/// Short action-completion phrases used to skip QC on simple confirmations.
+const COMPLETION_SIGNALS: &[&str] = &[
+    "posted",
+    "published",
+    "sent",
+    "created",
+    "scheduled",
+    "deleted",
+    "updated",
+    "uploaded",
+    "moved",
+    "replied",
+    "forwarded",
+    "marked",
+    "done",
+    "completed",
+    "success",
+];
+
+/// Tool name aliases emitted by hallucinating models, mapped to real names.
+/// Static so it is never allocated inside the hot loop.
+static TOOL_NAME_REMAPS: &[(&str, &str)] = &[
+    // Gmail
+    ("gmail_tool", "gmail_list"),
+    ("gmail_read_email", "gmail_read"),
+    ("gmail_check", "gmail_list"),
+    ("gmail_inbox", "gmail_list"),
+    ("gmail_unread", "gmail_list"),
+    ("gmail_list_unread", "gmail_list"),
+    ("gmail_send_email", "gmail_send"),
+    // Outlook
+    ("outlook_tool", "outlook_list_emails"),
+    ("outlook_list_unread", "outlook_list_emails"),
+    ("outlook_check", "outlook_list_emails"),
+    ("outlook_inbox", "outlook_list_emails"),
+    ("outlook_unread", "outlook_list_emails"),
+    ("outlook_read", "outlook_read_email"),
+    ("outlook_send", "outlook_send_email"),
+    // Calendar
+    ("calendar_tool", "gcal_list_events"),
+    ("google_calendar", "gcal_list_events"),
+    ("gcal_events", "gcal_list_events"),
+    ("ms_calendar", "mscal_list_events"),
+    ("microsoft_calendar", "mscal_list_events"),
+    ("mscal_events", "mscal_list_events"),
+    // Drive
+    ("drive_tool", "gdrive_list"),
+    ("google_drive", "gdrive_list"),
+    ("onedrive_tool", "onedrive_list"),
+    // Facebook
+    ("facebook_page", "fb_get_page"),
+    ("facebook_posts", "fb_list_posts"),
+    ("fb_posts", "fb_list_posts"),
+    ("facebook_insights", "fb_get_insights"),
+    ("fb_insights", "fb_get_insights"),
+    ("facebook_chats", "fb_list_messenger_chats"),
+    ("fb_chats", "fb_list_messenger_chats"),
+    ("facebook_messages", "fb_list_messenger_chats"),
+    ("fb_messages", "fb_list_messenger_chats"),
+];
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+struct ToolExecutionReceipt {
+    name: String,
+    ok: bool,
+    is_mutating: bool,
+}
+
+enum RepairDecision {
+    Repaired(crate::providers::types::UnifiedResponse),
+    Blocked(String),
+    None,
+}
+
+/// The single verdict produced by `validate_response`.
+/// Computed once per response; drives both token emission and loop control.
+enum ValidationDecision {
+    /// Response is good — emit token and break (or continue to finalize).
+    Pass,
+    /// Loop must continue. Inject `message` into history before the next LLM call.
+    Retry {
+        message: String,
+        reason: RetryReason,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RetryReason {
+    HallucinatedToolCall,
+    Refusal,
+    ClaimGuard,
+    QualityCheck,
+    BlankResponse,
+}
+
+/// Per-run counters for observability. Written to the DB at finalization.
+#[derive(Default)]
+struct GuardCounts {
+    nudge_count: u32,
+    claim_guard_count: u32,
+    qc_correction_count: u32,
+}
+
+// ── Small helpers ────────────────────────────────────────────────────────────
+
+fn stable_route_seed(input: &str) -> usize {
+    // Stable FNV-1a so routing remains reproducible across process restarts
+    // and Rust stdlib hasher changes.
+    const FNV_OFFSET_BASIS_64: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME_64: u64 = 0x100000001b3;
+    let mut hash = FNV_OFFSET_BASIS_64;
+    for &b in input.as_bytes() {
+        hash ^= b as u64;
+        hash = hash.wrapping_mul(FNV_PRIME_64);
+    }
+    hash as usize
+}
+
+fn spawn_model_wait_heartbeat(
+    tx: Option<mpsc::Sender<AgentEvent>>,
+    run_id: String,
+    has_candidate_tools: bool,
+) -> Option<tokio::task::JoinHandle<()>> {
+    let tx = tx?;
+    Some(tokio::spawn(async move {
+        let mut waited_secs = 0u64;
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_secs(4)).await;
+            waited_secs += 4;
+            let text = if has_candidate_tools {
+                format!(
+                    "Waiting for the model to decide the next step... {}s",
+                    waited_secs
+                )
+            } else {
+                format!("Waiting for the model response... {}s", waited_secs)
+            };
+            if tx
+                .send(AgentEvent::Thinking {
+                    run_id: run_id.clone(),
+                    text,
+                })
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+    }))
+}
+
+/// Whether an executed tool mutates state. Reads the authoritative `is_mutating`
+/// flag from the tool registry (the single source of truth), falling back to
+/// name-based derivation only for tools not present in the registry — e.g. a
+/// freshly written temp tool or a repaired call whose name isn't registered yet.
+///
+/// This replaces the old substring-marker scan, which false-positived read
+/// tools whose names merely contained a write marker (`fb_list_posts` → `_post`,
+/// `fb_get_scheduled_posts` → `_schedule`). Those misclassifications let a
+/// successful *read* vouch for a fabricated *write* claim in the claim guard.
+fn receipt_is_mutating(name: &str, all_tools: &[ToolDefinition]) -> bool {
+    all_tools
+        .iter()
+        .find(|t| t.name == name)
+        .map(|t| t.is_mutating)
+        .unwrap_or_else(|| crate::tools::schema::derive_is_mutating(name))
+}
+
+fn is_explicit_tool_authoring_task(task: &str) -> bool {
+    let lower = task.to_ascii_lowercase();
+    let phrases = [
+        "write a tool",
+        "create a tool",
+        "build a tool",
+        "make a tool",
+        "add a tool",
+        "temporary tool",
+        "temp tool",
+        "python tool",
+        "new tool",
+        "tool named",
+        "tool definition",
+        "missing tool",
+        "plugin",
+    ];
+    phrases.iter().any(|phrase| lower.contains(phrase))
+}
+
+/// Returns true when the task implies a bulk/recurring operation.
+/// Uses positive + negative signals to reduce false positives.
+/// E.g. "tell me all about Paris" has "all" but is not a bulk task.
+fn is_bulk_task(task: &str) -> bool {
+    let lower = task.to_lowercase();
+    let positives = ["all", "every", "each", "multiple", "recurring", "batch"];
+    let negatives = [
+        "all about",
+        "all in all",
+        "after all",
+        "above all",
+        "overall",
+        "tell me all",
+        "all the info",
+        "all the detail",
+    ];
+    let has_positive = positives.iter().any(|s| lower.contains(s));
+    let has_negative = negatives.iter().any(|s| lower.contains(s));
+    has_positive && !has_negative
+}
+
+fn deterministic_tool_claim_guard(
+    text: &str,
+    routed_tools: &[String],
+    tool_receipts: &[ToolExecutionReceipt],
+) -> Option<String> {
+    let lower = text.to_ascii_lowercase();
+    let any_success = tool_receipts.iter().any(|r| r.ok);
+    let any_mutating_success = tool_receipts.iter().any(|r| r.ok && r.is_mutating);
+    let successful_tools = tool_receipts
+        .iter()
+        .filter(|r| r.ok)
+        .map(|r| r.name.as_str())
+        .collect::<Vec<_>>();
+    let routed_or_attempted_tools = !routed_tools.is_empty() || !tool_receipts.is_empty();
+    let claims_mutation = RE_MUTATION_CLAIM.is_match(text);
+    let claims_tool_backed_data = RE_DATA_CLAIM.is_match(text)
+        || (lower.contains("your ") && routed_or_attempted_tools && !any_success);
+
+    if claims_mutation && !any_mutating_success {
+        let executed = if successful_tools.is_empty() {
+            "none".to_string()
+        } else {
+            successful_tools.join(", ")
+        };
+        return Some(format!(
+            "You claimed a mutating action was completed, but there is no successful mutating execution receipt for this run. Successful tools so far: {}. You must call the correct tool natively before claiming the action is done, or clearly say it has not been completed yet.",
+            executed
+        ));
+    }
+
+    if routed_or_attempted_tools && !any_success && claims_tool_backed_data {
+        return Some(
+            "You claimed fresh tool-backed data, but no successful tool execution receipt exists for this run. Do not present checked/found/retrieved results until a real tool call succeeds."
+                .to_string(),
+        );
+    }
+
+    None
+}
+
+fn task_needs_time_context(task: &str) -> bool {
+    RE_TIME_SENSITIVE_TASK.is_match(task)
+}
+
+fn content_block_char_len(block: &ContentBlock) -> usize {
+    match block {
+        ContentBlock::Text { text } => text.len(),
+        ContentBlock::ToolUse { name, input, .. } => name.len() + input.to_string().len(),
+        ContentBlock::ToolResult { content, .. } => content.len(),
+        ContentBlock::Image { data, .. } => data.len(),
+    }
+}
+
+fn message_char_len(message: &Message) -> usize {
+    match &message.content {
+        MessageContent::Text(s) => s.len(),
+        MessageContent::Blocks(blocks) => blocks.iter().map(content_block_char_len).sum(),
+    }
+}
+
+// ── Validation pipeline ──────────────────────────────────────────────────────
+
+/// Single-pass response validator. Replaces the two parallel condition trees
+/// that previously existed (one for token deferral, one for the actual retry).
+/// This is the only place where QC eligibility, claim guard, and nudge logic live.
+///
+/// Returns `Pass` when the response is ready to emit, or `Retry { message, reason }`
+/// when the loop must continue with an injected correction.
+async fn validate_response(
+    text: &str,
+    tool_names: &[String],
+    tool_receipts: &[ToolExecutionReceipt],
+    tools_used: &[String],
+    guard_counts: &mut GuardCounts,
+    iters: u32,
+    task: &str,
+    messages: &[Message],
+    bulk_task: bool,
+    router: crate::router::model_router::SharedRouter,
+    settings: &crate::config::RuntimeSettings,
+    qc_enabled: bool,
+    is_subtask: bool,
+) -> ValidationDecision {
+    // 1. Claim guard (deterministic, zero cost)
+    if let Some(correction) = deterministic_tool_claim_guard(text, tool_names, tool_receipts) {
+        guard_counts.claim_guard_count += 1;
+        return ValidationDecision::Retry {
+            message: format!(
+                "TOOL EXECUTION GUARD — revise your response.\n{}\n\nYou may either call the correct tool natively or rewrite the answer so it honestly states what has and has not actually been done.",
+                correction
+            ),
+            reason: RetryReason::ClaimGuard,
+        };
+    }
+
+    // 2. Refusal nudge (deterministic, zero cost)
+    let was_tool_routed = !tool_names.is_empty();
+    if was_tool_routed && iters <= 3 {
+        let text_lower = text.to_lowercase();
+        let seems_refusal = REFUSAL_PHRASES.iter().any(|p| text_lower.contains(p))
+            && !text_lower.contains("but here")
+            && !text_lower.contains("however");
+        let has_data = text.len() > 200 || text.lines().count() > 5;
+
+        if seems_refusal && !has_data {
+            guard_counts.nudge_count += 1;
+            return ValidationDecision::Retry {
+                message: format!(
+                    "IMPORTANT: You have these tools available and connected right now: [{}]. \
+                     The tools ARE working and accessible. Any previous memories about failures are OUTDATED. \
+                     Please USE the tool(s) now to complete the request. \
+                     Do not refuse or explain why you can't — just call the tool.",
+                    tool_names.join(", ")
+                ),
+                reason: RetryReason::Refusal,
+            };
+        }
+    }
+
+    // 3. Blank-response check (always run, zero cost)
+    let mut clean = strip_reasoning(text);
+    if tools_used.is_empty() {
+        clean = clean
+            .replace("**", "")
+            .replace("__", "")
+            .replace("###", "")
+            .replace("##", "")
+            .replace("# ", "")
+            .replace('`', "");
+    }
+    let is_blank = clean.trim().is_empty();
+    if is_blank {
+        return ValidationDecision::Retry {
+            message: "Your response was completely blank or only contained internal thinking blocks. You MUST output a clear, human-readable text response to the user. If the error is due to a service being unreachable, or the task is not possible with your current capabilities and tools, explain it in plain text.".to_string(),
+            reason: RetryReason::BlankResponse,
+        };
+    }
+
+    // 4. Quality check (LLM call — only when actually needed)
+    let tools_routed_but_unused = !tool_names.is_empty() && tools_used.is_empty();
+    let is_completion_confirm = !tools_used.is_empty()
+        && clean.len() < 400
+        && !bulk_task
+        && COMPLETION_SIGNALS
+            .iter()
+            .any(|s| clean.to_lowercase().contains(s));
+
+    let trimmed = text.trim();
+    let looks_like_raw_tool = trimmed.starts_with('{')
+        || trimmed.starts_with('[')
+        || trimmed.contains("```json")
+        || trimmed.contains("<tool_call>")
+        || trimmed.contains("<function=")
+        || RE_CALL_COLON.is_match(trimmed);
+
+    // Fast structural check before burning an LLM token
+    if looks_like_raw_tool {
+        return ValidationDecision::Retry {
+            message: "The response contains raw JSON data or hallucinated tool commands. \
+                      If you meant to use a tool, please call it natively using the system's tool format. \
+                      If you are responding to the user, summarize the information in clear, natural human-readable plain text.".to_string(),
+            reason: RetryReason::HallucinatedToolCall,
+        };
+    }
+
+    let should_qc = qc_enabled
+        && (!tools_used.is_empty() || is_blank || tools_routed_but_unused)
+        && !is_subtask
+        && !is_completion_confirm
+        && guard_counts.qc_correction_count < 3;
+
+    if should_qc {
+        let tool_evidence = extract_tool_evidence(messages);
+        if let Some(correction) = quality_check(task, text, &tool_evidence, router, settings).await
+        {
+            guard_counts.qc_correction_count += 1;
+            return ValidationDecision::Retry {
+                message: format!(
+                    "QUALITY CHECK CORRECTION — please revise your response:\n{}\n\n\
+                     Rewrite your response addressing the issues above. \
+                     You may use tools to gather correct information if needed, but DO NOT make up inaccurate information.",
+                    correction
+                ),
+                reason: RetryReason::QualityCheck,
+            };
+        }
+    }
+
+    ValidationDecision::Pass
+}
+
+// ── Public entry points ──────────────────────────────────────────────────────
+
+pub async fn run_task(task: &str, state: &AppState, ctx: RunContext) -> anyhow::Result<String> {
+    let run_id = ctx.run_id.clone();
+    let result = run_inner(task, state, ctx, None).await;
+    if result.is_err() {
+        mark_run_failed_if_running(state, &run_id);
+    }
+    result
+}
+
+pub async fn run_task_streaming(
+    task: &str,
+    state: &AppState,
+    ctx: RunContext,
+    tx: mpsc::Sender<AgentEvent>,
+) -> anyhow::Result<String> {
+    let run_id = ctx.run_id.clone();
+    let result = run_inner(task, state, ctx, Some(tx)).await;
+    if result.is_err() {
+        mark_run_failed_if_running(state, &run_id);
+    }
+    result
+}
+
+fn mark_run_failed_if_running(state: &AppState, run_id: &str) {
+    if let Ok(conn) = state.db.get() {
+        let _ = conn.execute(
+            "UPDATE runs SET status='failed', result='Agent task terminated unexpectedly', finished_at=datetime('now') WHERE id=?1 AND status='running'",
+            rusqlite::params![run_id],
+        );
+    }
+}
+
+fn strip_router_alert_footer(text: &str) -> String {
+    let markers = [
+        "\n---\n*Router alerts during this run:*",
+        "*Router alerts during this run:*",
+        "Router alerts during this run:",
+    ];
+    for marker in markers {
+        if let Some(idx) = text.find(marker) {
+            return text[..idx].trim_end().to_string();
+        }
+    }
+    text.to_string()
+}
+
+// ── Context builder (extracted from run_inner) ───────────────────────────────
+
+struct RunSystemContext {
+    sys: String,
+    messages: Vec<Message>,
+    filtered_initial: Vec<ToolDefinition>,
+    tier_initial: String,
+}
+
+async fn build_run_context(
+    task: &str,
+    state: &AppState,
+    ctx: &RunContext,
+    base_system: &str,
+    needs_time_context: bool,
+) -> RunSystemContext {
+    let top_k = state.settings.long_term_top_k();
+    let memory_enabled = ctx.memory_enabled;
+    let is_conversational = crate::router::tool_router::CONVERSATIONAL.is_match(task);
+    let should_search_memory = memory_enabled && !is_conversational && task.len() > 10;
+
+    // Load short-term history
+    let mut messages: Vec<Message> = if memory_enabled {
+        state
+            .memory
+            .short
+            .to_messages(&ctx.session_id)
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    // Strip stale alert footers from old history rows
+    for msg in &mut messages {
+        if msg.role == "assistant" {
+            if let MessageContent::Text(text) = &mut msg.content {
+                *text = strip_router_alert_footer(text);
+            }
+        }
+    }
+    if messages.last().map(|m| m.role != "user").unwrap_or(true) {
+        messages.push(Message::user(task));
+    }
+    if memory_enabled {
+        let _ = state.memory.add_user(&ctx.session_id, task);
+    }
+
+    // Parallel: memory search + initial tool routing
+    let (memories_res, routing_res) = tokio::join!(
+        async {
+            if should_search_memory {
+                let exclude = if ctx.session_id == "owner" {
+                    Some("scheduler")
+                } else {
+                    None
+                };
+                state.memory.search(task, top_k, exclude).await
+            } else {
+                Ok(vec![])
+            }
+        },
+        async {
+            let all_tools = state.tools.all_enabled_for_agent().await;
+            if let Some(ref allowed) = ctx.allowed_tools {
+                let filtered: Vec<_> = all_tools
+                    .into_iter()
+                    .filter(|t| allowed.contains(&t.name))
+                    .collect();
+                let mut info = serde_json::Map::new();
+                info.insert(
+                    "tier".to_string(),
+                    serde_json::Value::String("manual".to_string()),
+                );
+                (filtered, serde_json::Value::Object(info))
+            } else {
+                state.tool_router.filter_tools(task, &all_tools, &[]).await
+            }
+        }
+    );
+
+    let memories = memories_res.unwrap_or_default();
+    let (filtered_initial, route_info) = routing_res;
+    let tier_initial = route_info
+        .get("tier")
+        .and_then(|t| t.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    // Long-term observations
+    let observations = if memory_enabled {
+        search_recent_observations(task, 5, &state.db)
+    } else {
+        Vec::new()
+    };
+
+    // Build context strings
+    let time_ctx = if needs_time_context {
+        let now = ctx.user_time.clone().unwrap_or_else(|| {
+            chrono::Utc::now()
+                .with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap())
+                .format("%A, %B %e, %Y, %H:%M:%S")
+                .to_string()
+        });
+        format!("- Local time/date: {}\n", now)
+    } else {
+        String::new()
+    };
+
+    let mem_ctx = if memories.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\n\n[Relevant memories — these are HINTS only, always verify with tools]\n{}",
+            memories
+                .iter()
+                .map(|m| format!("- ({}) {}", m.created_at, m.content))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    };
+
+    let obs_ctx = if observations.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\n\n[Recent tool observations — for context only, always re-verify]\n{}",
+            observations.join("\n")
+        )
+    };
+
+    let files_ctx = if ctx.attached_files.is_empty() {
+        String::new()
+    } else {
+        let lines: Vec<String> = ctx
+            .attached_files
+            .iter()
+            .map(|f| {
+                format!(
+                    "  - '{}' ({}, {} bytes) at: {}",
+                    f.original_name, f.mime_type, f.size, f.local_path
+                )
+            })
+            .collect();
+        format!("\n\n[User attached files]\n{}", lines.join("\n"))
+    };
+
+    let sys = format!(
+        "{}\n\n[Context]\n{}{}{}{}\n\n\
+CRITICAL RULES:\n\
+1. ALWAYS call the relevant tool to get current data. NEVER answer from memories or past observations alone.\n\
+2. Memories and observations above are HINTS for context — they may be outdated or wrong. Always verify by calling tools.\n\
+3. If a tool exists for the request (email, calendar, search, etc.), you MUST call it — do NOT claim you cannot access it.\n\
+4. Provide responses in PLAIN TEXT ONLY. Do not use Markdown formatting.\n\
+5. If your previous chat history contains errors, outages, or broken services, DO NOT bring them up again when the user says 'hi' or greets you. Assume problems may have been resolved in the background. Only discuss past errors if the user explicitly asks.\n\
+6. Do NOT mention the current time/date unless the user asked for it or the task genuinely requires it.\n\n\
+FILE HANDLING:\n\
+- To send a file back to the user, include <send_file>/path/to/local/file</send_file> in your final answer.\n\
+- When user attached files are listed above, use the local path directly with upload tools.\n\
+- SSH upload: action='upload_file', local_path=<path>, remote_path=<destination>\n\
+- Google Drive upload: gdrive_upload_binary, local_path=<path>, name=<filename>\n\
+- OneDrive upload: onedrive_upload_binary, local_path=<path>, name=<filename>\n\
+- Gmail with attachment: gmail_send_with_attachment, local_path=<path>\n\
+- Outlook with attachment: outlook_send_with_attachment, local_path=<path>\n\
+- SSH download saves to local path; use <send_file> to deliver it to user.\n\
+- GDrive/OneDrive download tools return local path; use <send_file> to deliver.",
+        base_system, time_ctx, mem_ctx, obs_ctx, files_ctx
+    );
+
+    RunSystemContext {
+        sys,
+        messages,
+        filtered_initial,
+        tier_initial,
+    }
+}
+
+// ── Main agent loop ──────────────────────────────────────────────────────────
+
+async fn run_inner(
+    task: &str,
+    state: &AppState,
+    ctx: RunContext,
+    tx: Option<mpsc::Sender<AgentEvent>>,
+) -> anyhow::Result<String> {
+    let run_id = ctx.run_id.clone();
+
+    if let Ok(conn) = state.db.get() {
+        let _ = conn.execute(
+            "INSERT INTO runs (id,task,status,platform,session_id,job_id,parent_run_id) VALUES (?1,?2,'running',?3,?4,?5,?6)",
+            rusqlite::params![run_id, task, ctx.platform, ctx.session_id, ctx.job_id, ctx.parent_run_id],
+        );
+    }
+
+    macro_rules! emit {
+        ($e:expr) => {
+            if let Some(ref t) = tx {
+                let _ = t.send($e).await;
+            }
+        };
+    }
+
+    let run_start = tokio::time::Instant::now();
+    let run_timeout_secs = state.settings.get_int("agent.run_timeout_secs", 300) as u64;
+    let run_deadline = run_start + tokio::time::Duration::from_secs(run_timeout_secs);
+    let model_chain_base_secs = state.settings.request_timeout_secs();
+    let model_chain_max_secs = state.settings.request_timeout_max_secs();
+
+    // Derive a stable per-run base seed from run_id.
+    // UUID v4 is already random; we just need a deterministic 64-bit mixer.
+    let base_route_seed = stable_route_seed(&run_id);
+
+    emit!(AgentEvent::Thinking {
+        run_id: run_id.clone(),
+        text: "Analyzing request...".into()
+    });
+
+    let max_iter = state.settings.max_iterations();
+    let max_par = state.settings.max_parallel_tools();
+    let allow_write = state.settings.allow_tool_writing();
+    let write_retries = state.settings.temp_tool_max_retries();
+    let qc_enabled = state.settings.get_bool("agent.quality_check", true);
+    // Global correction budget — a single ceiling across ALL retry reasons
+    // (claim guard, refusal nudge, blank, hallucinated tool syntax, quality
+    // check). Prevents pathological correction loops/oscillation that the
+    // per-reason caps don't cover; bounded well under max_iter so we exit
+    // gracefully with a best-effort answer instead of churning to timeout.
+    let max_corrections = state.settings.get_int("agent.max_corrections", 6) as u32;
+    let memory_enabled = ctx.memory_enabled;
+    let task_is_bulk = is_bulk_task(task);
+    let is_conversational = crate::router::tool_router::CONVERSATIONAL.is_match(task);
+    let needs_time_context = task_needs_time_context(task);
+
+    let mut base_system = ctx
+        .system_prompt
+        .clone()
+        .unwrap_or_else(|| state.settings.system_prompt());
+    if needs_time_context {
+        let now_manila =
+            chrono::Utc::now().with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap());
+        base_system = format!(
+            "{}\n\n[SYSTEM CLOCK: {}]\n* This is the exact current date & time (Asia/Manila, UTC+8).\n* Use this internally to accurately calculate relative dates (e.g., today, tomorrow, next week, scheduling).\n* Do NOT mention the current time/date to the user unless they asked for it or the task genuinely requires it.",
+            base_system,
+            now_manila.format("%A, %Y-%m-%d %H:%M:%S")
+        );
+    }
+
+    let RunSystemContext {
+        sys,
+        mut messages,
+        filtered_initial,
+        tier_initial,
+    } = build_run_context(task, state, &ctx, &base_system, needs_time_context).await;
+
+    let mut iters = 0u32;
+    let mut tokens = 0u32;
+    let mut models_used: Vec<String> = vec![];
+    let mut tools_used: Vec<String> = vec![];
+    let mut tool_receipts: Vec<ToolExecutionReceipt> = vec![];
+    let mut guard_counts = GuardCounts::default();
+    // Total corrections issued this run, across every retry reason. Backs the
+    // global correction budget (`max_corrections`).
+    let mut total_corrections = 0u32;
+    let mut token_emitted = false;
+    // Track the last model that responded successfully so we can prefer it
+    // on the next iteration (sticky routing). Cleared when validation forces
+    // a correction — a different model may handle the correction better.
+    let mut last_model: Option<String> = None;
+    // Consecutive correction counter for exponential backoff.
+    #[allow(unused_assignments)]
+    let mut consecutive_corrections: u32 = 0;
+    let final_text;
+
+    'agent: loop {
+        iters += 1;
+        let iter_start = std::time::Instant::now();
+
+        // ── Guard: run deadline ──────────────────────────────────────────────
+        if tokio::time::Instant::now() >= run_deadline {
+            let alerts = drain_alerts(&state.router).await;
+            dispatch_router_alert_notifications(
+                &alerts,
+                state,
+                tx.as_ref(),
+                &run_id,
+                &ctx.platform,
+                ctx.chat_id.as_deref(),
+                "Run timeout while waiting on model routing",
+            )
+            .await;
+            let msg = format!("Run timeout reached after {}s", run_timeout_secs);
+            dispatch_global_error_notification_event(
+                state,
+                tx.as_ref(),
+                &run_id,
+                &ctx.platform,
+                ctx.chat_id.as_deref(),
+                "Agent run timeout",
+                &msg,
+            )
+            .await;
+            emit!(AgentEvent::Error {
+                run_id: run_id.clone(),
+                message: msg.clone()
+            });
+            finalize(
+                state,
+                &run_id,
+                "failed",
+                &msg,
+                iters,
+                tokens,
+                &models_used,
+                &tools_used,
+                &guard_counts,
+            );
+            return Err(anyhow::anyhow!(msg));
+        }
+
+        // ── Guard: max iterations ────────────────────────────────────────────
+        if iters as i64 > max_iter {
+            let alerts = drain_alerts(&state.router).await;
+            dispatch_router_alert_notifications(
+                &alerts,
+                state,
+                tx.as_ref(),
+                &run_id,
+                &ctx.platform,
+                ctx.chat_id.as_deref(),
+                "Agent max-iteration guard triggered",
+            )
+            .await;
+            let msg = format!("Max iterations ({}) reached", max_iter);
+            dispatch_global_error_notification_event(
+                state,
+                tx.as_ref(),
+                &run_id,
+                &ctx.platform,
+                ctx.chat_id.as_deref(),
+                "Agent max iterations reached",
+                &msg,
+            )
+            .await;
+            emit!(AgentEvent::Error {
+                run_id: run_id.clone(),
+                message: msg.clone()
+            });
+            finalize(
+                state,
+                &run_id,
+                "failed",
+                &msg,
+                iters,
+                tokens,
+                &models_used,
+                &tools_used,
+                &guard_counts,
+            );
+            return Err(anyhow::anyhow!(msg));
+        }
+
+        emit!(AgentEvent::Thinking {
+            run_id: run_id.clone(),
+            text: format!("Iteration {}/{}", iters, max_iter)
+        });
+
+        // ── Tool routing ─────────────────────────────────────────────────────
+        let all_tools = state.tools.all_enabled_for_agent().await;
+
+        let (filtered, _tier, tool_names) = if iters == 1 {
+            let names: Vec<String> = filtered_initial.iter().map(|t| t.name.clone()).collect();
+            if !names.is_empty() {
+                emit!(AgentEvent::Tools {
+                    run_id: run_id.clone(),
+                    tools: names.clone(),
+                    tier: tier_initial.clone(),
+                    parallel: names.len() > 1
+                });
+            }
+            (filtered_initial.clone(), tier_initial.clone(), names)
+        } else {
+            let (mut f, info) = if let Some(ref allowed) = ctx.allowed_tools {
+                let filtered: Vec<_> = all_tools
+                    .iter()
+                    .filter(|t| allowed.contains(&t.name))
+                    .cloned()
+                    .collect();
+                let mut route_info = serde_json::Map::new();
+                route_info.insert(
+                    "tier".to_string(),
+                    serde_json::Value::String("manual".to_string()),
+                );
+                (filtered, serde_json::Value::Object(route_info))
+            } else {
+                state
+                    .tool_router
+                    .filter_tools(task, &all_tools, &messages)
+                    .await
+            };
+
+            // Suppress already-called read tools on bulk tasks
+            {
+                let already_called: std::collections::HashSet<String> = messages
+                    .iter()
+                    .filter(|m| m.role == "assistant")
+                    .flat_map(|m| {
+                        if let MessageContent::Blocks(blocks) = &m.content {
+                            blocks
+                                .iter()
+                                .filter_map(|b| {
+                                    if let ContentBlock::ToolUse { name, .. } = b {
+                                        Some(name.clone())
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect::<Vec<_>>()
+                        } else {
+                            vec![]
+                        }
+                    })
+                    .collect();
+                let read_suffixes = ["_list", "_list_events", "_get", "_search", "_get_freebusy"];
+                if task_is_bulk {
+                    f.retain(|t| {
+                        !(already_called.contains(&t.name)
+                            && read_suffixes.iter().any(|s| t.name.ends_with(s)))
+                    });
+                }
+            }
+
+            let names: Vec<String> = f.iter().map(|t| t.name.clone()).collect();
+            let t = info
+                .get("tier")
+                .and_then(|t| t.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+            if !names.is_empty() {
+                emit!(AgentEvent::Tools {
+                    run_id: run_id.clone(),
+                    tools: names.clone(),
+                    tier: t.clone(),
+                    parallel: names.len() > 1
+                });
+            }
+            (f, t, names)
+        };
+
+        trim_tool_results_by_budget(&mut messages, 50_000);
+
+        // ── Model selection & call ───────────────────────────────────────────
+
+        // Per-iteration seed: add a golden-ratio-mixed iteration delta to the
+        // base seed. This gives each iteration a distinct, uniform
+        // starting offset in the model pool without shared mutable state.
+        // 0x9e3779b97f4a7c15 is the 64-bit Fibonacci hashing constant.
+        let iter_seed =
+            base_route_seed.wrapping_add((iters as usize).wrapping_mul(0x9e3779b97f4a7c15_usize));
+
+        // Task-phase-aware role selection.
+        // The phase is derived from observable run state — no extra config needed.
+        //
+        // simple_tasks   → fast cheap model: conversational, no tools, first attempt
+        // complex_tasks  → capable model: any tool use, corrections, long runs
+        // ""             → general pool: unclassified, let the router decide
+        let preferred_role = if filtered.is_empty()
+            && is_conversational
+            && iters == 1
+            && guard_counts.qc_correction_count == 0
+        {
+            "simple_tasks"
+        } else if !filtered.is_empty()
+            || iters > 1
+            || guard_counts.qc_correction_count > 0
+            || guard_counts.claim_guard_count > 0
+            || guard_counts.nudge_count > 0
+        {
+            // Corrections and tool-using iterations always deserve the most capable model.
+            "complex_tasks"
+        } else {
+            ""
+        };
+
+        let model_phase = if !filtered.is_empty() && tools_used.is_empty() {
+            "Planning next step..."
+        } else if !filtered.is_empty() {
+            "Reviewing tool results..."
+        } else if guard_counts.qc_correction_count > 0 || guard_counts.claim_guard_count > 0 {
+            "Refining response..."
+        } else if iters > 1 {
+            "Refining response..."
+        } else {
+            "Drafting response..."
+        };
+        emit!(AgentEvent::Thinking {
+            run_id: run_id.clone(),
+            text: model_phase.into()
+        });
+
+        let model_wait_heartbeat =
+            spawn_model_wait_heartbeat(tx.clone(), run_id.clone(), !filtered.is_empty());
+
+        let prompt_chars = sys.len() + messages.iter().map(message_char_len).sum::<usize>();
+        let prompt_bonus_secs = ((prompt_chars as u64).saturating_add(1499) / 1500) * 4;
+        let tool_bonus_secs = (filtered.len().min(8) as u64) * 2;
+        let adaptive_chain_secs = model_chain_base_secs
+            .saturating_add(prompt_bonus_secs)
+            .saturating_add(tool_bonus_secs)
+            .min(model_chain_max_secs);
+        let min_model_chain_secs = state.settings.get_int("agent.min_model_chain_secs", 60) as u64;
+        let model_chain_secs = adaptive_chain_secs.max(min_model_chain_secs);
+
+        let llm_result = call_llm_with_options(
+            &messages,
+            &sys,
+            &filtered,
+            None,
+            preferred_role,
+            Arc::clone(&state.router),
+            &state.settings,
+            CallLlmOptions {
+                preferred_model_name: ctx.preferred_model.clone(),
+                // Sticky: prefer the model that worked last iteration.
+                // `last_model` is already cleared to `None` by every correction
+                // path (QC, claim-guard, blank, hallucinated, blocked-repair),
+                // so no additional guard_counts gate is needed here.
+                sticky_model_name: last_model.clone(),
+                deadline: Some(
+                    tokio::time::Instant::now()
+                        + tokio::time::Duration::from_secs(model_chain_secs),
+                ),
+                route_seed: Some(iter_seed),
+                ..CallLlmOptions::default()
+            },
+        )
+        .await;
+
+        if let Some(handle) = model_wait_heartbeat {
+            handle.abort();
+        }
+
+        let (mut response, model_name, tier) = match llm_result {
+            Ok(v) => v,
+            Err(e) => {
+                let alerts = drain_alerts(&state.router).await;
+                dispatch_router_alert_notifications(
+                    &alerts,
+                    state,
+                    tx.as_ref(),
+                    &run_id,
+                    &ctx.platform,
+                    ctx.chat_id.as_deref(),
+                    "All model routes failed",
+                )
+                .await;
+                let msg = format!("All models exhausted: {}", e);
+                dispatch_global_error_notification_event(
+                    state,
+                    tx.as_ref(),
+                    &run_id,
+                    &ctx.platform,
+                    ctx.chat_id.as_deref(),
+                    "All model routes exhausted",
+                    &msg,
+                )
+                .await;
+                emit!(AgentEvent::Error {
+                    run_id: run_id.clone(),
+                    message: msg.clone()
+                });
+                finalize(
+                    state,
+                    &run_id,
+                    "failed",
+                    &msg,
+                    iters,
+                    tokens,
+                    &models_used,
+                    &tools_used,
+                    &guard_counts,
+                );
+                return Err(anyhow::anyhow!(msg));
+            }
+        };
+
+        tokens += response.usage.total();
+        if !models_used.contains(&model_name) {
+            models_used.push(model_name.clone());
+        }
+        // Record for sticky routing on the next iteration.
+        last_model = Some(model_name.clone());
+        // Reset correction counter on successful model response.
+        consecutive_corrections = 0;
+        emit!(AgentEvent::Model {
+            run_id: run_id.clone(),
+            model: model_name.clone(),
+            iteration: iters,
+            duration_ms: iter_start.elapsed().as_millis() as u64
+        });
+
+        let mut text = response.text_content();
+        text = strip_router_alert_footer(&text);
+
+        // ── Hallucinated tool call repair ────────────────────────────────────
+        if !response.has_tool_calls()
+            && (text.contains('{')
+                && (text.contains("\"name\"")
+                    || text.contains("\"action\"")
+                    || text.contains("\"tool\"")
+                    || text.contains("\"api_name\""))
+                || RE_TOOL_TEXT.is_match(&text)
+                || text.contains("<tool_call>")
+                || RE_CALL_COLON.is_match(&text))
+        {
+            match repair_tool_call(&text, response.clone(), &all_tools) {
+                RepairDecision::Repaired(repaired) => {
+                    response = repaired;
+                    text = response.text_content();
+                }
+                RepairDecision::Blocked(reason) => {
+                    emit!(AgentEvent::Thinking {
+                        run_id: run_id.clone(),
+                        text: "Blocking hallucinated text tool call".into()
+                    });
+                    messages.push(Message::user(&format!(
+                        "TOOL EXECUTION GUARD — your previous response attempted to express a tool call in plain text instead of using the native tool-calling API.\n{}\n\nUse the native tool-calling mechanism only. Do not print JSON, XML, call:tool{{...}}, or Tool:/Parameters: syntax in the message body.",
+                        reason
+                    )));
+                    // Force a fresh model pick on the correction turn.
+                    last_model = None;
+                    continue 'agent;
+                }
+                RepairDecision::None => {}
+            }
+        }
+
+        // Persist assistant turn to message history
+        if text.trim().is_empty() && !response.has_tool_calls() {
+            messages.push(Message::assistant_with_blocks(vec![ContentBlock::Text {
+                text: "(blank response)".to_string(),
+            }]));
+        } else {
+            messages.push(Message::assistant_with_blocks(response.content.clone()));
+        }
+
+        if let Ok(conn) = state.db.get() {
+            let _ = conn.execute(
+                "INSERT INTO run_iterations (id, run_id, iteration, model_name, tokens, tier, duration_ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![uuid::Uuid::new_v4().to_string(), run_id, iters, model_name.clone(), response.usage.total(), tier.clone(), iter_start.elapsed().as_millis() as i64]
+            );
+        }
+
+        // ── No tool calls → validate and maybe finalize ──────────────────────
+        if !response.has_tool_calls() {
+            let is_subtask = ctx.depth > 0;
+
+            // Single-pass validation — the only place all guards live
+            let decision = validate_response(
+                &text,
+                &tool_names,
+                &tool_receipts,
+                &tools_used,
+                &mut guard_counts,
+                iters,
+                task,
+                &messages,
+                task_is_bulk,
+                Arc::clone(&state.router),
+                &state.settings,
+                qc_enabled,
+                is_subtask,
+            )
+            .await;
+
+            match decision {
+                ValidationDecision::Retry { message, reason } => {
+                    // Global correction budget: stop retrying once we've issued
+                    // `max_corrections` total corrections across all reasons.
+                    // Return the best answer so far with an honest caveat rather
+                    // than looping to the iteration/timeout backstop or
+                    // oscillating between correction types.
+                    total_corrections += 1;
+                    if total_corrections > max_corrections {
+                        emit!(AgentEvent::Thinking {
+                            run_id: run_id.clone(),
+                            text: "Correction budget reached — returning best-effort response"
+                                .into()
+                        });
+                        let mut clean = strip_reasoning(&text);
+                        if tools_used.is_empty() {
+                            clean = clean
+                                .replace("**", "")
+                                .replace("__", "")
+                                .replace("###", "")
+                                .replace("##", "")
+                                .replace("# ", "")
+                                .replace('`', "");
+                        }
+                        let mut final_output = strip_router_alert_footer(clean.trim());
+                        if final_output.is_empty() {
+                            final_output = "I wasn't able to fully verify this request after several attempts. Please rephrase or check the logs and try again.".to_string();
+                        } else {
+                            final_output.push_str("\n\n(Note: I reached my self-correction limit, so this is my best-effort answer and some details may be unverified.)");
+                        }
+
+                        if !token_emitted {
+                            emit!(AgentEvent::Token {
+                                run_id: run_id.clone(),
+                                text: final_output.clone()
+                            });
+                        }
+
+                        let alerts = drain_alerts(&state.router).await;
+                        dispatch_router_alert_notifications(
+                            &alerts,
+                            state,
+                            tx.as_ref(),
+                            &run_id,
+                            &ctx.platform,
+                            ctx.chat_id.as_deref(),
+                            "Model/router alert during run",
+                        )
+                        .await;
+
+                        final_text = final_output.clone();
+                        emit!(AgentEvent::Done {
+                            run_id: run_id.clone(),
+                            full_text: final_output,
+                            total_tokens: tokens,
+                            iterations: iters,
+                            total_duration_ms: run_start.elapsed().as_millis() as u64,
+                        });
+                        finalize(
+                            state,
+                            &run_id,
+                            "completed",
+                            &final_text,
+                            iters,
+                            tokens,
+                            &models_used,
+                            &tools_used,
+                            &guard_counts,
+                        );
+                        break 'agent;
+                    }
+
+                    emit!(AgentEvent::Thinking {
+                        run_id: run_id.clone(),
+                        text: match reason {
+                            RetryReason::Refusal =>
+                                format!("Nudging model to use tools: [{}]", tool_names.join(", ")),
+                            RetryReason::ClaimGuard =>
+                                "Validating tool-backed claims against execution receipts".into(),
+                            RetryReason::QualityCheck => format!(
+                                "Quality issue found, refining response (Attempt {}/3)...",
+                                guard_counts.qc_correction_count
+                            ),
+                            RetryReason::BlankResponse =>
+                                "Response was blank, requesting retry".into(),
+                            RetryReason::HallucinatedToolCall =>
+                                "Blocking raw tool syntax in response".into(),
+                        }
+                    });
+                    messages.push(Message::user(&message));
+
+                    // Clear sticky preference on QC/claim-guard corrections so the
+                    // router can pick a fresh model. A model that produced a bad
+                    // response shouldn't be the first tried on the correction turn.
+                    if matches!(
+                        reason,
+                        RetryReason::QualityCheck
+                            | RetryReason::ClaimGuard
+                            | RetryReason::BlankResponse
+                            | RetryReason::HallucinatedToolCall
+                    ) {
+                        last_model = None;
+                    }
+
+                    // Exponential backoff on correction-triggered retries to reduce
+                    // rate-limit pressure. 400ms × 2^(n-1), capped at 3200ms.
+                    // Does not apply on the first nudge (no tools called yet).
+                    if reason != RetryReason::Refusal || guard_counts.nudge_count > 1 {
+                        consecutive_corrections += 1;
+                        let backoff_ms = (400u64).saturating_mul(
+                            1u64 << consecutive_corrections.saturating_sub(1).min(3),
+                        );
+                        tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)).await;
+                    }
+
+                    continue 'agent;
+                }
+                ValidationDecision::Pass => {
+                    // Memory write (only for useful, tool-backed results)
+                    if memory_enabled {
+                        let _ = state.memory.add_assistant(&ctx.session_id, &text);
+                        let text_lower = text.to_lowercase();
+                        let is_useful = text.len() > 100
+                            && !text_lower.contains("i'm unable")
+                            && !text_lower.contains("i cannot")
+                            && !text_lower.contains("i don't have access")
+                            && !text_lower.starts_with("i'm sorry")
+                            && !text_lower.contains("all models exhausted")
+                            && !text_lower.contains("max iterations")
+                            && !text_lower.contains("router alert")
+                            && !tools_used.is_empty();
+                        if is_useful {
+                            let _ = state
+                                .memory
+                                .remember(
+                                    &format!(
+                                        "Task: {task}\nResult: {}",
+                                        text.chars().take(500).collect::<String>()
+                                    ),
+                                    "task_result",
+                                    &[],
+                                )
+                                .await;
+                        }
+                    }
+
+                    // Emit token (deferred until we know we're passing)
+                    if !text.is_empty() && !token_emitted {
+                        emit!(AgentEvent::Token {
+                            run_id: run_id.clone(),
+                            text: text.clone()
+                        });
+                    }
+
+                    // Clean and finalize output
+                    let mut clean = strip_reasoning(&text);
+                    if tools_used.is_empty() {
+                        clean = clean
+                            .replace("**", "")
+                            .replace("__", "")
+                            .replace("###", "")
+                            .replace("##", "")
+                            .replace("# ", "")
+                            .replace('`', "");
+                    }
+                    let mut final_output = clean.trim().to_string();
+                    final_output = strip_router_alert_footer(&final_output);
+
+                    if final_output.is_empty() {
+                        final_output = "I encountered an error and couldn't produce a valid response. Please check the logs or try your request again.".to_string();
+                    }
+
+                    // Resolve <send_file> tags for dashboard
+                    if ctx.platform == "dashboard" {
+                        while let (Some(s), Some(e)) = (
+                            final_output.find("<send_file>"),
+                            final_output.find("</send_file>"),
+                        ) {
+                            if s < e {
+                                let path = final_output[s + 11..e].trim().to_string();
+                                let filename = std::path::Path::new(&path)
+                                    .file_name()
+                                    .unwrap_or_default()
+                                    .to_string_lossy();
+                                let md_link = format!(
+                                    "\n\n📎 **[Download {}](/api/download?path={})**\n\n",
+                                    filename,
+                                    urlencoding::encode(&path)
+                                );
+                                final_output = format!(
+                                    "{}{}{}",
+                                    &final_output[..s],
+                                    md_link,
+                                    &final_output[e + 12..]
+                                );
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+
+                    let alerts = drain_alerts(&state.router).await;
+                    dispatch_router_alert_notifications(
+                        &alerts,
+                        state,
+                        tx.as_ref(),
+                        &run_id,
+                        &ctx.platform,
+                        ctx.chat_id.as_deref(),
+                        "Model/router alert during run",
+                    )
+                    .await;
+
+                    final_text = final_output.clone();
+                    emit!(AgentEvent::Done {
+                        run_id: run_id.clone(),
+                        full_text: final_output,
+                        total_tokens: tokens,
+                        iterations: iters,
+                        total_duration_ms: run_start.elapsed().as_millis() as u64,
+                    });
+                    finalize(
+                        state,
+                        &run_id,
+                        "completed",
+                        &final_text,
+                        iters,
+                        tokens,
+                        &models_used,
+                        &tools_used,
+                        &guard_counts,
+                    );
+                    break 'agent;
+                }
+            }
+        }
+
+        // ── Tool calls → execute ─────────────────────────────────────────────
+        token_emitted = false;
+
+        let mut calls = response.tool_calls();
+
+        if tokio::time::Instant::now() >= run_deadline {
+            let alerts = drain_alerts(&state.router).await;
+            dispatch_router_alert_notifications(
+                &alerts,
+                state,
+                tx.as_ref(),
+                &run_id,
+                &ctx.platform,
+                ctx.chat_id.as_deref(),
+                "Run timeout before tool execution",
+            )
+            .await;
+            let msg = format!(
+                "Run timeout reached before tool execution after {}s",
+                run_timeout_secs
+            );
+            dispatch_global_error_notification_event(
+                state,
+                tx.as_ref(),
+                &run_id,
+                &ctx.platform,
+                ctx.chat_id.as_deref(),
+                "Agent tool-execution timeout",
+                &msg,
+            )
+            .await;
+            emit!(AgentEvent::Error {
+                run_id: run_id.clone(),
+                message: msg.clone()
+            });
+            finalize(
+                state,
+                &run_id,
+                "failed",
+                &msg,
+                iters,
+                tokens,
+                &models_used,
+                &tools_used,
+                &guard_counts,
+            );
+            return Err(anyhow::anyhow!(msg));
+        }
+
+        // ── Auto-repair hallucinated tool names ──────────────────────────────
+        for call in calls.iter_mut() {
+            // SSH exec alias
+            if call.name == "ssh_tool" || call.name == "ssh" {
+                if let Some(obj) = call.input.as_object_mut() {
+                    if obj.get("action").and_then(|v| v.as_str()) == Some("exec") {
+                        obj.insert("action".to_string(), serde_json::json!("run"));
+                    }
+                }
+            }
+            // Name remaps from static table (never allocated in hot path)
+            let name_lower = call.name.to_lowercase();
+            if let Some(&(_, right)) = TOOL_NAME_REMAPS
+                .iter()
+                .find(|(wrong, _)| *wrong == name_lower.as_str())
+            {
+                tracing::info!(
+                    "Auto-remapped hallucinated tool '{}' -> '{}'",
+                    call.name,
+                    right
+                );
+                call.name = right.to_string();
+            }
+        }
+
+        // ── Pre-execution service mismatch correction ────────────────────────
+        {
+            let task_lower = task.to_lowercase();
+            let mut any_fixed = false;
+            for pair in crate::router::service_map::SERVICE_PAIRS {
+                let a_kw = pair.a_keywords;
+                let a_prefix = pair.a_prefix;
+                let b_kw = pair.b_keywords;
+                let b_prefix = pair.b_prefix;
+                let user_wants_a = a_kw.iter().any(|kw| task_lower.contains(kw));
+                let user_wants_b = b_kw.iter().any(|kw| task_lower.contains(kw));
+                if user_wants_a && user_wants_b {
+                    continue;
+                }
+                for call in calls.iter_mut() {
+                    if user_wants_a && call.name.starts_with(b_prefix) {
+                        let old = call.name.clone();
+                        let candidate = format!("{}{}", a_prefix, &call.name[b_prefix.len()..]);
+                        if all_tools.iter().any(|t| t.name == candidate) {
+                            call.name = candidate;
+                            tracing::warn!(
+                                "Service mismatch fix: user said {:?}, remapped '{}' -> '{}'",
+                                a_kw[0],
+                                old,
+                                call.name
+                            );
+                            any_fixed = true;
+                        } else {
+                            tracing::warn!(
+                                "Service mismatch: would remap '{}' -> '{}' but target not found",
+                                old,
+                                candidate
+                            );
+                        }
+                    } else if user_wants_b && call.name.starts_with(a_prefix) {
+                        let old = call.name.clone();
+                        let candidate = format!("{}{}", b_prefix, &call.name[a_prefix.len()..]);
+                        if all_tools.iter().any(|t| t.name == candidate) {
+                            call.name = candidate;
+                            tracing::warn!(
+                                "Service mismatch fix: user said {:?}, remapped '{}' -> '{}'",
+                                b_kw[0],
+                                old,
+                                call.name
+                            );
+                            any_fixed = true;
+                        } else {
+                            tracing::warn!(
+                                "Service mismatch: would remap '{}' -> '{}' but target not found",
+                                old,
+                                candidate
+                            );
+                        }
+                    }
+                }
+            }
+            if any_fixed {
+                emit!(AgentEvent::Thinking {
+                    run_id: run_id.clone(),
+                    text: "Corrected service mismatch in tool call".into()
+                });
+            }
+        }
+
+        // ── Execute internal vs external tools ───────────────────────────────
+        let mut result_msgs = vec![];
+
+        use crate::providers::types::ToolCall;
+        let (internal, external): (Vec<ToolCall>, Vec<ToolCall>) =
+            calls.into_iter().partition(|tc| {
+                all_tools
+                    .iter()
+                    .find(|t| t.name == tc.name)
+                    .map(|t| t.source == ToolSource::Internal)
+                    .unwrap_or(false)
+            });
+
+        let is_parallel = internal.len() > 1;
+        let mut futures: Vec<tokio::task::JoinHandle<(String, String, serde_json::Value)>> = vec![];
+
+        for tc in internal {
+            let tc = tc.clone();
+            let state = state.clone();
+            let ctx = ctx.clone();
+            let run_id = run_id.clone();
+            let tx_clone = tx.clone();
+
+            futures.push(tokio::spawn(async move {
+                if let Some(ref t) = tx_clone {
+                    let _ = t.send(AgentEvent::ToolStart { run_id: run_id.clone(), tool: tc.name.clone(), tool_call_id: tc.id.clone() }).await;
+                }
+                let t0 = std::time::Instant::now();
+                let (ok, val) = match handle_internal(&tc.name, tc.input.clone(), state.clone(), ctx.clone(), run_id.clone()).await {
+                    Ok(v) => (true, v),
+                    Err(e) => (false, serde_json::json!({"error": e.to_string()})),
+                };
+                let duration_ms = t0.elapsed().as_millis() as u64;
+                if let Some(ref t) = tx_clone {
+                    let _ = t.send(AgentEvent::ToolEnd { run_id: run_id.clone(), tool: tc.name.clone(), tool_call_id: tc.id.clone(), duration_ms, ok }).await;
+                }
+                if let Ok(conn) = state.db.get() {
+                    let _ = conn.execute(
+                        "INSERT INTO tool_calls (id,run_id,tool_name,args,result,error,duration_ms,parallel) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+                        rusqlite::params![uuid::Uuid::new_v4().to_string(), run_id, tc.name, serde_json::to_string(&tc.input).ok(), serde_json::to_string(&val).ok(), if ok { None } else { Some(val.to_string()) }, duration_ms as i64, is_parallel as i32]
+                    );
+                }
+                spawn_compress(run_id.clone(), tc.name.clone(), tc.input.clone(), val.clone(), Arc::clone(&state.router), Arc::clone(&state.settings), Arc::clone(&state.db));
+                (tc.id, tc.name, val)
+            }));
+        }
+
+        let joined_results = futures::future::join_all(futures).await;
+        for res in joined_results {
+            if let Ok((id, name, val)) = res {
+                state
+                    .files
+                    .register_from_json(&val, Some(name.clone()))
+                    .await;
+                if !tools_used.contains(&name) {
+                    tools_used.push(name.clone());
+                }
+                let has_error = val.get("error").is_some();
+                tool_receipts.push(ToolExecutionReceipt {
+                    name: name.clone(),
+                    ok: !has_error,
+                    is_mutating: receipt_is_mutating(&name, &all_tools),
+                });
+                if has_error {
+                    let enriched = serde_json::json!({ "result": val, "guidance": format!("Tool '{}' returned an error. Review the error message, adjust your parameters, and try again.", name) });
+                    result_msgs.push(Message::tool_result(&id, enriched));
+                } else {
+                    result_msgs.push(Message::tool_result(&id, val));
+                }
+            }
+        }
+
+        if !external.is_empty() {
+            for tc in &external {
+                emit!(AgentEvent::ToolStart {
+                    run_id: run_id.clone(),
+                    tool: tc.name.clone(),
+                    tool_call_id: tc.id.clone()
+                });
+            }
+            let mut final_calls = vec![];
+            for tc in external {
+                let exists = all_tools.iter().any(|t| t.name == tc.name);
+                if !exists && allow_write && is_explicit_tool_authoring_task(task) {
+                    emit!(AgentEvent::Thinking {
+                        run_id: run_id.clone(),
+                        text: format!("Tool '{}' missing — writing it...", tc.name)
+                    });
+                    match write_temporary_tool(
+                        &format!(
+                            "Tool named '{}': {}",
+                            tc.name,
+                            tc.input.to_string().chars().take(200).collect::<String>()
+                        ),
+                        &tc.input,
+                        Arc::clone(&state.router),
+                        &state.settings,
+                        write_retries,
+                    )
+                    .await
+                    {
+                        Ok(new_name) => {
+                            if let Ok(def) = ToolDefinition::from_python_file(&format!(
+                                "tools_temp/{}.py",
+                                new_name
+                            )) {
+                                state.tools.register(def).await;
+                            }
+                            let mut ntc = tc.clone();
+                            ntc.name = new_name;
+                            final_calls.push(ntc);
+                        }
+                        Err(e) => {
+                            tracing::warn!("Auto-write failed: {}", e);
+                            final_calls.push(tc);
+                        }
+                    }
+                } else {
+                    final_calls.push(tc);
+                }
+            }
+
+            let results = run_parallel(final_calls, Arc::new(state.tools.clone()), max_par).await;
+            for res in &results {
+                emit!(AgentEvent::ToolEnd {
+                    run_id: run_id.clone(),
+                    tool: res.tool_name.clone(),
+                    tool_call_id: res.tool_use_id.clone(),
+                    duration_ms: res.duration_ms,
+                    ok: res.error.is_none()
+                });
+                if !tools_used.contains(&res.tool_name) {
+                    tools_used.push(res.tool_name.clone());
+                }
+                tool_receipts.push(ToolExecutionReceipt {
+                    name: res.tool_name.clone(),
+                    ok: res.error.is_none(),
+                    is_mutating: receipt_is_mutating(&res.tool_name, &all_tools),
+                });
+                if let Ok(conn) = state.db.get() {
+                    let _ = conn.execute(
+                        "INSERT INTO tool_calls (id,run_id,tool_name,args,result,error,duration_ms,parallel) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+                        rusqlite::params![uuid::Uuid::new_v4().to_string(), run_id, res.tool_name,
+                            serde_json::to_string(&res.input).ok(),
+                            serde_json::to_string(&res.output).ok(), res.error, res.duration_ms as i64, (results.len() > 1) as i32]
+                    );
+                }
+                spawn_compress(
+                    run_id.clone(),
+                    res.tool_name.clone(),
+                    res.input.clone(),
+                    res.output.clone(),
+                    Arc::clone(&state.router),
+                    Arc::clone(&state.settings),
+                    Arc::clone(&state.db),
+                );
+
+                if res.error.is_some() {
+                    let enriched = serde_json::json!({
+                        "error": res.error,
+                        "output": res.output,
+                        "guidance": format!("Tool '{}' failed. Check your parameters and try again with corrected input. Common issues: missing required fields, wrong field names, auth not set up.", res.tool_name)
+                    });
+                    result_msgs.push(Message::tool_result(&res.tool_use_id, enriched));
+                } else {
+                    result_msgs.push(Message::tool_result(&res.tool_use_id, res.output.clone()));
+                }
+            }
+        }
+
+        messages.extend(result_msgs);
+    }
+
+    Ok(final_text)
+}
+
+// ── Compression helper ───────────────────────────────────────────────────────
+
+fn spawn_compress(
+    run_id: String,
+    tool_name: String,
+    tool_args: serde_json::Value,
+    tool_result: serde_json::Value,
+    router: crate::router::model_router::SharedRouter,
+    settings: Arc<crate::config::RuntimeSettings>,
+    db: Arc<r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>>,
+) {
+    tokio::spawn(async move {
+        compress_and_store(
+            &run_id,
+            &tool_name,
+            &tool_args,
+            &tool_result,
+            router,
+            settings,
+            db,
+        )
+        .await;
+    });
+}
+
+// ── Internal tool dispatch ───────────────────────────────────────────────────
+
+/// Fill in stored credentials for an agent-invoked tool so the model doesn't
+/// have to know secrets (e.g. a Telegram bot token). Resolution order:
+///   1. an explicit `credential_id` in the args → that credential's data
+///   2. otherwise the most-recently-created credential whose `service` matches
+///
+/// Credential fields only fill *gaps*: anything the agent passed explicitly is
+/// preserved (unlike the workflow path's `interpolate_config`, which overwrites,
+/// because there the user picked the credential deliberately). If no credential
+/// is found this is a no-op and the downstream tool surfaces its own clear
+/// "missing token" error.
+fn merge_stored_credentials(service: &str, args: serde_json::Value, state: &AppState) -> serde_json::Value {
+    let mut map = match args {
+        serde_json::Value::Object(m) => m,
+        other => return other,
+    };
+
+    let data_str = state.db.get().ok().and_then(|conn| {
+        let explicit_id = map
+            .get("credential_id")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+        match explicit_id {
+            Some(id) => conn
+                .query_row(
+                    "SELECT data FROM credentials WHERE id = ?1",
+                    [id.as_str()],
+                    |r| r.get::<_, String>(0),
+                )
+                .ok(),
+            None => conn
+                .query_row(
+                    "SELECT data FROM credentials WHERE service = ?1 ORDER BY created_at DESC LIMIT 1",
+                    [service],
+                    |r| r.get::<_, String>(0),
+                )
+                .ok(),
+        }
+    });
+
+    if let Some(data_str) = data_str {
+        if let Ok(serde_json::Value::Object(cred_map)) = serde_json::from_str(&data_str) {
+            for (k, v) in cred_map {
+                map.entry(k).or_insert(v);
+            }
+        }
+    }
+
+    serde_json::Value::Object(map)
+}
+
+async fn handle_internal(
+    name: &str,
+    args: serde_json::Value,
+    state: AppState,
+    ctx: RunContext,
+    run_id: String,
+) -> anyhow::Result<serde_json::Value> {
+    match name {
+        "cron_job_tool" => handle_job(args, state, ctx, run_id).await,
+        "watcher_tool" => handle_watcher(args, state, ctx).await,
+        "agent_memory_tool" => handle_memory(args, state).await,
+        "ssh_tool" => handle_ssh(args, state).await,
+        "shell_tool" => handle_shell(args).await,
+        "parallel_worker" => handle_parallel_worker(args, state, ctx).await,
+        "web_search" => handle_web_search(args, state).await,
+        // NOTE: dispatch keys MUST match the names the tools are registered/exposed
+        // under (see tools::http::{tool_definition, list_saved_tool_definition,
+        // run_saved_tool_definition}), not the handler fn names. They diverged once
+        // and silently 404'd every HTTP tool call as "Unknown internal tool".
+        "synapse" => handle_http_request(args, state).await,
+        "list_synapses" => handle_list_saved_http_requests(state).await,
+        "run_synapse" => handle_run_saved_http_request(args, state).await,
+        "list_workflows" => handle_list_workflows(state).await,
+        "run_workflow" => handle_run_workflow(args, state).await,
+        "image_tool" => crate::tools::image_tool::handle_image(args).await,
+        // These reuse the workflow-node executors directly: the agent's tool args
+        // share the same shape as the node `config` they read from. We first fill
+        // in stored credentials (the agent doesn't carry secrets), then lift the
+        // String-typed errors into anyhow.
+        "telegram" => {
+            let args = merge_stored_credentials("telegram", args, &state);
+            crate::tools::telegram::execute_telegram_node(&args)
+                .await
+                .map_err(|e| anyhow::anyhow!(e))
+        }
+        "whatsapp" => {
+            let args = merge_stored_credentials("whatsapp", args, &state);
+            crate::tools::whatsapp::execute_whatsapp_node(&args)
+                .await
+                .map_err(|e| anyhow::anyhow!(e))
+        }
+        // myelin works on staged files, not external credentials.
+        "myelin" => crate::tools::myelin::execute_myelin_node(&state, &args)
+            .await
+            .map_err(|e| anyhow::anyhow!(e)),
+        other => anyhow::bail!("Unknown internal tool: {}", other),
+    }
+}
+
+pub async fn execute_internal_tool_from_workflow(
+    name: &str,
+    args: serde_json::Value,
+    state: AppState,
+) -> anyhow::Result<serde_json::Value> {
+    let ctx = crate::agent::RunContext::new(
+        "workflow_internal_execution",
+        "workflow",
+        Some("workflow-session"),
+        None,
+        None,
+        None,
+        None,
+    );
+    handle_internal(name, args, state, ctx, uuid::Uuid::new_v4().to_string()).await
+}
+
+// ── Tool handlers (unchanged) ────────────────────────────────────────────────
+
+async fn handle_parallel_worker(
+    args: serde_json::Value,
+    state: AppState,
+    ctx: RunContext,
+) -> anyhow::Result<serde_json::Value> {
+    if ctx.depth >= 2 {
+        return Ok(
+            serde_json::json!({ "error": "parallel_worker cannot be nested more than 2 levels deep" }),
+        );
+    }
+    let tasks = args
+        .get("sub_tasks")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| anyhow::anyhow!("sub_tasks array required"))?;
+    if tasks.is_empty() {
+        return Ok(serde_json::json!({"status": "no tasks provided"}));
+    }
+
+    let mut futures = vec![];
+    for t in tasks {
+        let task_str = t.as_str().unwrap_or("").to_string();
+        let s2 = state.clone();
+        let mut sub_ctx = ctx.clone();
+        sub_ctx.run_id = uuid::Uuid::new_v4().to_string();
+        sub_ctx.parent_run_id = Some(ctx.run_id.clone());
+        sub_ctx.depth = ctx.depth + 1;
+        sub_ctx.session_id = uuid::Uuid::new_v4().to_string();
+        futures.push(tokio::spawn(async move {
+            run_inner_owned(task_str, s2, sub_ctx).await
+        }));
+    }
+
+    let results = futures::future::join_all(futures).await;
+    let output: Vec<serde_json::Value> = results
+        .into_iter()
+        .map(|r| match r {
+            Ok(Ok(res)) => serde_json::json!({"status": "ok", "result": res}),
+            Ok(Err(e)) => serde_json::json!({"status": "error", "message": e.to_string()}),
+            Err(e) => serde_json::json!({"status": "panic", "message": e.to_string()}),
+        })
+        .collect();
+
+    Ok(serde_json::json!({ "status": "completed", "parallel_results": output }))
+}
+
+fn run_inner_owned(
+    task: String,
+    state: AppState,
+    ctx: RunContext,
+) -> futures::future::BoxFuture<'static, anyhow::Result<String>> {
+    use futures::FutureExt;
+    async move { run_inner(&task, &state, ctx, None).await }.boxed()
+}
+
+async fn handle_shell(args: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+    let cmd = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
+    let timeout = args
+        .get("timeout_seconds")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(30);
+    ShellTool::run_command(cmd, timeout).await
+}
+
+async fn handle_web_search(
+    args: serde_json::Value,
+    state: AppState,
+) -> anyhow::Result<serde_json::Value> {
+    let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
+    let top_n = args.get("top_n").and_then(|v| v.as_u64()).unwrap_or(5) as u8;
+    if query.is_empty() {
+        return Ok(serde_json::json!({"error": "Query is required"}));
+    }
+    let tool = crate::tools::web_search::WebSearchTool::new(Arc::clone(&state.db));
+    match tool.search(query, top_n).await {
+        Ok(response) => {
+            let formatted =
+                crate::tools::web_search::format_for_llm(&response, response.results.len());
+            Ok(
+                serde_json::json!({ "success": true, "account_used": response.account_used, "result_count": response.results.len(), "formatted": formatted, "results": response.results }),
+            )
+        }
+        Err(e) => Ok(serde_json::json!({ "error": format!("Web search failed: {}", e) })),
+    }
+}
+
+async fn handle_http_request(
+    args: serde_json::Value,
+    state: AppState,
+) -> anyhow::Result<serde_json::Value> {
+    let params: crate::tools::http::HttpRequestParams = serde_json::from_value(args)?;
+    let tool = crate::tools::http::HttpRequestTool::new();
+    match tool.request(params).await {
+        Ok(resp) => {
+            if let Some(binary) = &resp.binary {
+                if let Ok(bytes) = tokio::fs::read(&binary.local_path).await {
+                    use sha2::{Digest, Sha256};
+                    let hash = format!("{:x}", Sha256::digest(&bytes));
+                    let _ = state
+                        .files
+                        .store_path(
+                            hash,
+                            binary.original_name.clone(),
+                            binary.local_path.clone(),
+                            binary.mime_type.clone(),
+                            bytes.len(),
+                            Some("synapse".to_string()),
+                        )
+                        .await;
+                }
+            }
+            Ok(serde_json::to_value(resp)?)
+        }
+        Err(e) => Ok(serde_json::json!({"error": e.to_string()})),
+    }
+}
+
+async fn handle_list_saved_http_requests(state: AppState) -> anyhow::Result<serde_json::Value> {
+    let items = {
+        let conn = state
+            .db
+            .get()
+            .map_err(|e| anyhow::anyhow!("DB error: {}", e))?;
+        let mut stmt = conn.prepare("SELECT id, name, url, method FROM http_requests")?;
+        let items: Vec<serde_json::Value> = stmt
+            .query_map([], |r| Ok(serde_json::json!({ "id": r.get::<_, String>(0)?, "name": r.get::<_, String>(1)?, "url": r.get::<_, String>(2)?, "method": r.get::<_, String>(3)? })))?
+            .filter_map(|r| r.ok()).collect();
+        items
+    };
+    Ok(serde_json::json!({ "saved_requests": items }))
+}
+
+async fn handle_run_saved_http_request(
+    args: serde_json::Value,
+    state: AppState,
+) -> anyhow::Result<serde_json::Value> {
+    let name_or_id = args
+        .get("name_or_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let (req_id, mut params, next_request_id) = {
+        let conn = state
+            .db
+            .get()
+            .map_err(|e| anyhow::anyhow!("DB error: {}", e))?;
+        let mut stmt = conn.prepare("SELECT id, url, method, headers, body, proxy, next_request_id FROM http_requests WHERE id=?1 OR name=?1")?;
+        let mut rows = stmt.query([&name_or_id])?;
+        if let Some(row) = rows.next()? {
+            let req_id: String = row.get::<_, String>(0)?;
+            let params = crate::tools::http::HttpRequestParams {
+                url: row.get::<_, String>(1)?,
+                method: row.get::<_, String>(2)?,
+                headers: row
+                    .get::<_, Option<String>>(3)?
+                    .and_then(|s| serde_json::from_str(&s).ok()),
+                query: None,
+                body: row
+                    .get::<_, Option<String>>(4)?
+                    .and_then(|s| serde_json::from_str(&s).ok()),
+                auth: None,
+                timeout_seconds: Some(30),
+                response_format: Some("text".to_string()),
+                limit: None,
+                proxy: row.get::<_, Option<String>>(5)?,
+                send_binary_data: None,
+                binary_property: None,
+                body_content_type: None,
+                stealth_headers: None,
+                raw_content_type: None,
+                allow_unauthorized_certs: None,
+                full_response: None,
+                data_cleaner: None,
+                always_output_binary: None,
+                json_body: None,
+                specify_body: None,
+                header_parameters: None,
+            };
+            let next_request_id: Option<String> = row.get::<_, Option<String>>(6)?;
+            (req_id, params, next_request_id)
+        } else {
+            anyhow::bail!("Saved request '{}' not found", name_or_id)
+        }
+    };
+
+    if let Some(bo) = args.get("body_override") {
+        params.body = Some(bo.clone());
+    }
+    if let Some(ho) = args.get("header_overrides").and_then(|v| v.as_object()) {
+        let mut current = params
+            .headers
+            .unwrap_or(serde_json::json!({}))
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
+        for (k, v) in ho {
+            current.insert(k.clone(), v.clone());
+        }
+        params.headers = Some(serde_json::Value::Object(current));
+    }
+
+    let tool = crate::tools::http::HttpRequestTool::new();
+    let first_result = match tool.request(params).await {
+        Ok(resp) => {
+            if let Some(binary) = &resp.binary {
+                if let Ok(bytes) = tokio::fs::read(&binary.local_path).await {
+                    use sha2::{Digest, Sha256};
+                    let hash = format!("{:x}", Sha256::digest(&bytes));
+                    let _ = state
+                        .files
+                        .store_path(
+                            hash,
+                            binary.original_name.clone(),
+                            binary.local_path.clone(),
+                            binary.mime_type.clone(),
+                            bytes.len(),
+                            Some("synapse".to_string()),
+                        )
+                        .await;
+                }
+            }
+            serde_json::to_value(resp)?
+        }
+        Err(e) => return Ok(serde_json::json!({"error": e.to_string()})),
+    };
+
+    if let Some(ref next_id) = next_request_id {
+        let chain_result = Box::pin(handle_run_saved_http_request(
+            serde_json::json!({"name_or_id": next_id}),
+            state.clone(),
+        ))
+        .await;
+        let chain_val = chain_result.unwrap_or(serde_json::json!({"error": "chain failed"}));
+        Ok(
+            serde_json::json!({ "request_id": req_id, "result": first_result, "chained_to": next_id, "chain_result": chain_val }),
+        )
+    } else {
+        Ok(first_result)
+    }
+}
+
+async fn handle_list_workflows(state: AppState) -> anyhow::Result<serde_json::Value> {
+    let items = {
+        let conn = state
+            .db
+            .get()
+            .map_err(|e| anyhow::anyhow!("DB error: {}", e))?;
+        let mut stmt = conn.prepare("SELECT w.id, w.name, w.trigger_type, w.last_status, (SELECT COUNT(*) FROM workflow_nodes WHERE workflow_id = w.id) as node_count FROM workflows w ORDER BY w.name")?;
+        let items: Vec<serde_json::Value> = stmt
+            .query_map([], |r| Ok(serde_json::json!({ "id": r.get::<_, String>(0)?, "name": r.get::<_, String>(1)?, "trigger_type": r.get::<_, String>(2)?, "last_status": r.get::<_, String>(3)?, "node_count": r.get::<_, i64>(4)? })))?
+            .filter_map(|r| r.ok()).collect();
+        items
+    };
+    Ok(serde_json::json!({ "workflows": items }))
+}
+
+async fn handle_run_workflow(
+    args: serde_json::Value,
+    state: AppState,
+) -> anyhow::Result<serde_json::Value> {
+    let name_or_id = args
+        .get("name_or_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let workflow_id = {
+        let conn = state
+            .db
+            .get()
+            .map_err(|e| anyhow::anyhow!("DB error: {}", e))?;
+        conn.query_row(
+            "SELECT id FROM workflows WHERE id = ?1 OR name = ?1 LIMIT 1",
+            rusqlite::params![name_or_id],
+            |r| r.get::<_, String>(0),
+        )
+        .ok()
+    };
+    let wf_id =
+        workflow_id.ok_or_else(|| anyhow::anyhow!("Workflow '{}' not found", name_or_id))?;
+    match crate::tools::workflow::WorkflowEngine::run_in_background(&wf_id, &state, None) {
+        Ok(run_id) => Ok(serde_json::json!({ "ok": true, "run_id": run_id })),
+        Err(e) => Ok(serde_json::json!({ "error": e.to_string() })),
+    }
+}
+
+async fn handle_ssh(args: serde_json::Value, state: AppState) -> anyhow::Result<serde_json::Value> {
+    let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("");
+    let server = args
+        .get("server_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let cmd = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
+    let remote = args
+        .get("remote_path")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let local_path = args
+        .get("local_path")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let timeout = args
+        .get("timeout_seconds")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(30);
+
+    match action {
+        "list_servers"                       => SshTool::list_servers(state).await,
+        "run" | "exec_command" | "execute" | "exec" => SshTool::run_command(server, cmd, timeout, state).await,
+        "upload_file"                        => SshTool::upload_file(server, remote, local_path, state).await,
+        "download_file"                      => SshTool::download_file(server, remote, state).await,
+        other => anyhow::bail!("Unknown SSH action: '{}'. Valid actions are: 'run', 'upload_file', 'download_file', 'list_servers'.", other),
+    }
+}
+
+async fn handle_job(
+    args: serde_json::Value,
+    state: AppState,
+    ctx: RunContext,
+    run_id: String,
+) -> anyhow::Result<serde_json::Value> {
+    match args.get("action").and_then(|v| v.as_str()).unwrap_or("") {
+        "create" => {
+            let stop: Option<StopCondition> = args.get("stop_condition").and_then(|v| serde_json::from_value(v.clone()).ok());
+            let j = state.scheduler.create(
+                args.get("name").and_then(|v| v.as_str()).unwrap_or("agent-job"),
+                args.get("task").and_then(|v| v.as_str()).unwrap_or(""),
+                args.get("schedule_nl").and_then(|v| v.as_str()).unwrap_or("every hour"),
+                "agent", Some(run_id.as_str()), Some(&ctx.platform), ctx.chat_id.as_deref(), stop,
+            ).await?;
+            Ok(serde_json::json!({"status":"created","job_id":j.id,"cron":j.cron_expr}))
+        }
+        "edit" => {
+            let id = args.get("job_id").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("job_id required for edit"))?;
+            let existing = state.scheduler.get_all().await?.into_iter().find(|j| j.id == id).ok_or_else(|| anyhow::anyhow!("Job '{}' not found", id))?;
+            let name     = args.get("new_name").and_then(|v| v.as_str()).unwrap_or(&existing.name);
+            let task     = args.get("new_task").and_then(|v| v.as_str()).unwrap_or(&existing.task);
+            let schedule = args.get("new_schedule").and_then(|v| v.as_str()).unwrap_or(&existing.schedule_nl);
+            state.scheduler.update(id, name, task, schedule).await?;
+            Ok(serde_json::json!({"status": "updated", "job_id": id}))
+        }
+        "pause"  => { let id = args.get("job_id").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("job_id required"))?; state.scheduler.pause(id).await?;  Ok(serde_json::json!({"status":"paused"})) }
+        "resume" => { let id = args.get("job_id").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("job_id required"))?; state.scheduler.resume(id).await?; Ok(serde_json::json!({"status":"resumed"})) }
+        "delete" => { let id = args.get("job_id").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("job_id required"))?; state.scheduler.delete(id).await?; Ok(serde_json::json!({"status":"deleted"})) }
+        "list"   => { let jobs = state.scheduler.get_all().await?; Ok(serde_json::json!({ "jobs": jobs })) }
+        other => anyhow::bail!("Unknown job action: '{}'. Valid actions are: 'create', 'edit', 'pause', 'resume', 'delete', 'list'. Make sure to provide the action and relevant arguments like 'task' and 'schedule_nl'.", other),
+    }
+}
+
+async fn handle_watcher(
+    args: serde_json::Value,
+    state: AppState,
+    _ctx: RunContext,
+) -> anyhow::Result<serde_json::Value> {
+    fn parse_poll_mins(schedule: &str) -> f64 {
+        if schedule.contains("minute") {
+            schedule
+                .split_whitespace()
+                .next()
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(30.0)
+        } else if schedule.contains("hour") {
+            schedule
+                .split_whitespace()
+                .next()
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(1.0)
+                * 60.0
+        } else {
+            30.0
+        }
+    }
+
+    match args.get("action").and_then(|v| v.as_str()).unwrap_or("") {
+        "add" => {
+            let name = args
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Watcher");
+            let task = args
+                .get("watch_command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let schedule = args
+                .get("schedule_nl")
+                .and_then(|v| v.as_str())
+                .unwrap_or("every 30 minutes");
+            let poll_mins = parse_poll_mins(schedule);
+            let id = uuid::Uuid::new_v4().to_string();
+            if let Ok(conn) = state.db.get() {
+                let _ = conn.execute("INSERT INTO watchers (id, service, tool_name, label, enabled, poll_mins, created_at) VALUES (?1, 'command', ?2, ?3, 1, ?4, datetime('now'))", rusqlite::params![id, task, name, poll_mins]);
+            }
+            Ok(serde_json::json!({"status": "created", "watcher_id": id, "poll_mins": poll_mins}))
+        }
+        "edit" => {
+            let id = args
+                .get("watcher_id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("watcher_id required"))?;
+            if let Ok(conn) = state.db.get() {
+                if let Some(n) = args.get("name").and_then(|v| v.as_str()) {
+                    let _ = conn.execute(
+                        "UPDATE watchers SET label=?1 WHERE id=?2",
+                        rusqlite::params![n, id],
+                    );
+                }
+                if let Some(t) = args.get("watch_command").and_then(|v| v.as_str()) {
+                    let _ = conn.execute(
+                        "UPDATE watchers SET tool_name=?1 WHERE id=?2",
+                        rusqlite::params![t, id],
+                    );
+                }
+                if let Some(s) = args.get("schedule_nl").and_then(|v| v.as_str()) {
+                    let _ = conn.execute(
+                        "UPDATE watchers SET poll_mins=?1 WHERE id=?2",
+                        rusqlite::params![parse_poll_mins(s), id],
+                    );
+                }
+            }
+            Ok(serde_json::json!({"status": "updated", "watcher_id": id}))
+        }
+        "pause" => {
+            let id = args
+                .get("watcher_id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("watcher_id required"))?;
+            if let Ok(conn) = state.db.get() {
+                let _ = conn.execute(
+                    "UPDATE watchers SET enabled=0 WHERE id=?1",
+                    rusqlite::params![id],
+                );
+            }
+            Ok(serde_json::json!({"status": "paused"}))
+        }
+        "resume" => {
+            let id = args
+                .get("watcher_id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("watcher_id required"))?;
+            if let Ok(conn) = state.db.get() {
+                let _ = conn.execute(
+                    "UPDATE watchers SET enabled=1 WHERE id=?1",
+                    rusqlite::params![id],
+                );
+            }
+            Ok(serde_json::json!({"status": "resumed"}))
+        }
+        "delete" => {
+            let id = args
+                .get("watcher_id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("watcher_id required"))?;
+            if let Ok(conn) = state.db.get() {
+                let _ = conn.execute("DELETE FROM watchers WHERE id=?1", rusqlite::params![id]);
+            }
+            Ok(serde_json::json!({"status": "deleted"}))
+        }
+        "list" => {
+            if let Ok(conn) = state.db.get() {
+                let mut stmt =
+                    conn.prepare("SELECT id, label, tool_name, service, enabled FROM watchers")?;
+                let watchers: Vec<serde_json::Value> = stmt
+                    .query_map([], |r| Ok(serde_json::json!({ "id": r.get::<_, String>(0)?, "name": r.get::<_, String>(1)?, "task": r.get::<_, String>(2)?, "service": r.get::<_, String>(3)?, "enabled": r.get::<_, i32>(4)? != 0 })))?
+                    .filter_map(|r| r.ok()).collect();
+                Ok(serde_json::json!({"watchers": watchers}))
+            } else {
+                anyhow::bail!("DB error")
+            }
+        }
+        other => anyhow::bail!("Unknown watcher action: '{}'", other),
+    }
+}
+
+async fn handle_memory(
+    args: serde_json::Value,
+    state: AppState,
+) -> anyhow::Result<serde_json::Value> {
+    let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
+    match args.get("action").and_then(|v| v.as_str()).unwrap_or("") {
+        "store" => {
+            let tags: Vec<String> = args
+                .get("tags")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+            let refs: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
+            Ok(
+                serde_json::json!({"stored":true,"id":state.memory.remember(content,"agent_note",&refs).await?}),
+            )
+        }
+        "search" => {
+            let k = args.get("top_k").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
+            Ok(serde_json::json!({"results":state.memory.search(content, k, None).await?}))
+        }
+        "delete" => {
+            let id = args
+                .get("memory_id")
+                .and_then(|v| v.as_i64())
+                .ok_or_else(|| anyhow::anyhow!("memory_id required"))?;
+            state.memory.forget(id)?;
+            Ok(serde_json::json!({"deleted":true}))
+        }
+        other => anyhow::bail!("Unknown memory action: {}", other),
+    }
+}
+
+// ── DB helpers ───────────────────────────────────────────────────────────────
+
+/// Write the final run record. Guard trigger counts are stored so you can
+/// query how often each guard fires in production without log scraping.
+fn finalize(
+    state: &AppState,
+    id: &str,
+    status: &str,
+    result: &str,
+    iters: u32,
+    tokens: u32,
+    models: &[String],
+    tools: &[String],
+    guards: &GuardCounts,
+) {
+    if let Ok(conn) = state.db.get() {
+        let _ = conn.execute(
+            "UPDATE runs SET status=?1,result=?2,iterations=?3,total_tokens=?4,models_used=?5,tools_used=?6,\
+             nudge_count=?7,claim_guard_count=?8,qc_correction_count=?9,finished_at=datetime('now') WHERE id=?10",
+            rusqlite::params![
+                status, result, iters, tokens,
+                serde_json::to_string(models).ok(),
+                serde_json::to_string(tools).ok(),
+                guards.nudge_count,
+                guards.claim_guard_count,
+                guards.qc_correction_count,
+                id
+            ]
+        );
+    }
+}
+
+/// Trim oldest tool exchanges when the total character footprint of all
+/// ToolResult blocks exceeds `budget_chars`, keeping the most recent context.
+///
+/// Correctness rule: a `tool_use` block and its matching `tool_result` are an
+/// inseparable pair (matched by id). Providers (Anthropic, OpenAI) reject the
+/// whole request with a 400 if either half appears without the other. So we
+/// remove complete pairs by id — never a lone result, never a lone use — and
+/// then drop any message whose block list became empty. Text blocks that shared
+/// an assistant turn with a removed `tool_use` are preserved.
+///
+/// Using a character budget instead of a fixed count prevents one large tool
+/// result from silently consuming the context window alongside many small ones.
+fn trim_tool_results_by_budget(messages: &mut Vec<Message>, budget_chars: usize) {
+    fn result_chars(messages: &[Message]) -> usize {
+        messages
+            .iter()
+            .map(|m| {
+                if let MessageContent::Blocks(blocks) = &m.content {
+                    blocks
+                        .iter()
+                        .map(|b| match b {
+                            ContentBlock::ToolResult { content, .. } => content.len(),
+                            _ => 0,
+                        })
+                        .sum()
+                } else {
+                    0
+                }
+            })
+            .sum()
+    }
+
+    let mut total = result_chars(messages);
+    if total <= budget_chars {
+        return;
+    }
+
+    // Weight of each tool_use_id that currently has a result present.
+    let mut result_len_by_id: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    for m in messages.iter() {
+        if let MessageContent::Blocks(blocks) = &m.content {
+            for b in blocks {
+                if let ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                } = b
+                {
+                    *result_len_by_id.entry(tool_use_id.clone()).or_insert(0) += content.len();
+                }
+            }
+        }
+    }
+
+    // Oldest-first list of tool_use ids that have a matching result — only these
+    // can be removed as complete pairs without orphaning anything.
+    let mut ordered_ids: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for m in messages.iter() {
+        if let MessageContent::Blocks(blocks) = &m.content {
+            for b in blocks {
+                if let ContentBlock::ToolUse { id, .. } = b {
+                    if result_len_by_id.contains_key(id) && seen.insert(id.clone()) {
+                        ordered_ids.push(id.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    for id in ordered_ids {
+        if total <= budget_chars {
+            break;
+        }
+        let freed = result_len_by_id.get(&id).copied().unwrap_or(0);
+        for m in messages.iter_mut() {
+            if let MessageContent::Blocks(blocks) = &mut m.content {
+                blocks.retain(|b| {
+                    !(matches!(b, ContentBlock::ToolUse { id: i, .. } if *i == id)
+                        || matches!(b, ContentBlock::ToolResult { tool_use_id, .. } if *tool_use_id == id))
+                });
+            }
+        }
+        total = total.saturating_sub(freed);
+    }
+
+    // Never send a contentless turn: drop messages whose block list is now empty.
+    messages.retain(|m| !matches!(&m.content, MessageContent::Blocks(b) if b.is_empty()));
+}
+
+// ── Tool call repair ─────────────────────────────────────────────────────────
+
+fn repair_tool_call(
+    text: &str,
+    resp: crate::providers::types::UnifiedResponse,
+    available_tools: &[ToolDefinition],
+) -> RepairDecision {
+    let finalize = |mut resp: crate::providers::types::UnifiedResponse,
+                    name: String,
+                    input: serde_json::Value|
+     -> RepairDecision {
+        if !available_tools.iter().any(|t| t.name == name) {
+            return RepairDecision::Blocked(format!(
+                "The tool '{}' is not a real registered tool. Do not invent tool names.",
+                name
+            ));
+        }
+        if receipt_is_mutating(&name, available_tools) {
+            return RepairDecision::Blocked(format!(
+                "The tool '{}' appears mutating. Mutating actions must use the native tool-calling mechanism so the executor can produce a real execution receipt.",
+                name
+            ));
+        }
+        resp.content
+            .retain(|b| !matches!(b, ContentBlock::Text { .. }));
+        resp.content.push(ContentBlock::ToolUse {
+            id: format!("repair-{}", &uuid::Uuid::new_v4().to_string()[..8]),
+            name,
+            input,
+        });
+        RepairDecision::Repaired(resp)
+    };
+
+    // JSON-based repair
+    if let Some(start) = text.find('{') {
+        if let Some(end) = text.rfind('}') {
+            if end > start {
+                let json_str = &text[start..=end];
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
+                    let parsed = if let Some(n) = val.get("name").and_then(|v| v.as_str()) {
+                        let args = if let Some(a) = val.get("arguments") {
+                            if a.is_string() {
+                                serde_json::from_str(a.as_str().unwrap()).unwrap_or(a.clone())
+                            } else {
+                                a.clone()
+                            }
+                        } else if let Some(i) = val.get("input") {
+                            i.clone()
+                        } else {
+                            serde_json::json!({})
+                        };
+                        Some((n.to_string(), args))
+                    } else if let Some(n) = val.get("tool").and_then(|v| v.as_str()) {
+                        let args = val.get("args").cloned().unwrap_or_else(|| {
+                            val.get("input").cloned().unwrap_or_else(|| {
+                                val.get("arguments")
+                                    .cloned()
+                                    .unwrap_or(serde_json::json!({}))
+                            })
+                        });
+                        Some((n.to_string(), args))
+                    } else if let Some(action) = val.get("action").and_then(|v| v.as_str()) {
+                        let mut input = val.clone();
+                        if let Some(obj) = input.as_object_mut() {
+                            obj.remove("action");
+                        }
+                        let tool_name = match action {
+                            "run" | "exec" | "ssh" => "ssh_tool",
+                            "search" | "google" => "web_search_tool",
+                            "read" | "write" | "edit" => "file_tool",
+                            _ => return RepairDecision::None,
+                        };
+                        Some((tool_name.to_string(), input))
+                    } else if let Some(n) = val.get("api_name").and_then(|v| v.as_str()) {
+                        let args = val
+                            .get("parameters")
+                            .cloned()
+                            .unwrap_or(serde_json::json!({}));
+                        Some((n.to_string(), args))
+                    } else {
+                        None
+                    };
+
+                    if let Some((name, input)) = parsed {
+                        return finalize(resp, name, input);
+                    }
+                }
+            }
+        }
+    }
+
+    // XML <tool_call> format
+    if let (Some(start), Some(end)) = (text.find("<tool_call>"), text.find("</tool_call>")) {
+        let block = &text[start..end + 12];
+        if let Some(caps) = RE_XML_FUNC.captures(block) {
+            if let Some(m) = caps.get(1) {
+                let tool_name = m.as_str().to_string();
+                let mut input = serde_json::Map::new();
+                for caps_param in RE_XML_PARAM.captures_iter(block) {
+                    if let (Some(k), Some(v)) = (caps_param.get(1), caps_param.get(2)) {
+                        input.insert(
+                            k.as_str().to_string(),
+                            serde_json::Value::String(v.as_str().trim().to_string()),
+                        );
+                    }
+                }
+                return finalize(resp, tool_name, serde_json::Value::Object(input));
+            }
+        }
+    }
+
+    // call:tool{...} format
+    if let Some(caps) = RE_CALL_COLON.captures(text) {
+        if let (Some(t), Some(a)) = (caps.get(1), caps.get(2)) {
+            let tool_name = t.as_str().to_string();
+            let raw_args = a.as_str().trim();
+            let input = if let Ok(val) =
+                serde_json::from_str::<serde_json::Value>(&format!("{{{}}}", raw_args))
+            {
+                val
+            } else {
+                let mut map = serde_json::Map::new();
+                for pair in raw_args.split(',') {
+                    if let Some((k, v)) = pair.split_once(':') {
+                        map.insert(
+                            k.trim().to_string(),
+                            serde_json::Value::String(v.trim().to_string()),
+                        );
+                    }
+                }
+                serde_json::Value::Object(map)
+            };
+            tracing::info!(
+                "Repaired call:colon tool call: {} -> {:?}",
+                tool_name,
+                input
+            );
+            return finalize(resp, tool_name, input);
+        }
+    }
+
+    // Plain-text "Tool: xxx" format
+    if let Some(caps) = RE_REPAIR_TOOL_PLAIN.captures(text) {
+        if let Some(m) = caps.get(1) {
+            let tool_name = m.as_str().to_string();
+            let input = if let Some(pcaps) = RE_REPAIR_PARAMS.captures(text) {
+                if let Some(raw) = pcaps.get(1) {
+                    let r = raw.as_str();
+                    if r.eq_ignore_ascii_case("none") || r.eq_ignore_ascii_case("null") {
+                        serde_json::json!({})
+                    } else {
+                        serde_json::from_str(r).unwrap_or(serde_json::json!({}))
+                    }
+                } else {
+                    return RepairDecision::None;
+                }
+            } else {
+                serde_json::json!({})
+            };
+            return finalize(resp, tool_name, input);
+        }
+    }
+
+    RepairDecision::None
+}
+
+// ── Notification dispatch ────────────────────────────────────────────────────
+
+async fn dispatch_router_alert_notifications(
+    alerts: &[crate::router::RouterAlert],
+    state: &AppState,
+    tx: Option<&mpsc::Sender<AgentEvent>>,
+    run_id: &str,
+    platform: &str,
+    chat_id: Option<&str>,
+    summary: &str,
+) {
+    if alerts.is_empty() {
+        return;
+    }
+    let alert_text = format_alerts(alerts);
+    if alert_text.trim().is_empty() {
+        return;
+    }
+
+    if let Some(t) = tx {
+        let _ = t
+            .send(AgentEvent::Notification {
+                run_id: run_id.to_string(),
+                level: "error".to_string(),
+                title: summary.to_string(),
+                message: alert_text,
+            })
+            .await;
+        return;
+    }
+    if let Err(e) = send_global_error_notification(
+        state,
+        "agent.router",
+        summary,
+        &alert_text,
+        Some(platform),
+        chat_id,
+    )
+    .await
+    {
+        tracing::warn!("dispatch_router_alert_notifications: {}", e);
+    }
+}
+
+async fn dispatch_global_error_notification_event(
+    state: &AppState,
+    tx: Option<&mpsc::Sender<AgentEvent>>,
+    run_id: &str,
+    platform: &str,
+    chat_id: Option<&str>,
+    summary: &str,
+    details: &str,
+) {
+    let details_trimmed = details.trim();
+    if details_trimmed.is_empty() {
+        return;
+    }
+
+    if let Some(t) = tx {
+        let _ = t
+            .send(AgentEvent::Notification {
+                run_id: run_id.to_string(),
+                level: "error".to_string(),
+                title: summary.to_string(),
+                message: details_trimmed.to_string(),
+            })
+            .await;
+        return;
+    }
+    if let Err(e) = send_global_error_notification(
+        state,
+        "agent.runtime",
+        summary,
+        details_trimmed,
+        Some(platform),
+        chat_id,
+    )
+    .await
+    {
+        tracing::warn!("dispatch_global_error_notification_event: {}", e);
+    }
+}
+
+// ── Text cleaning ────────────────────────────────────────────────────────────
+
+fn strip_reasoning(text: &str) -> String {
+    let mut result = RE_THINKING_BLOCK.replace_all(text, "").to_string();
+    result = RE_STRIP_TOOL_LINE.replace_all(&result, "").to_string();
+    result = RE_STRIP_PARAMS_LINE.replace_all(&result, "").to_string();
+    result = RE_STRIP_ACTION_LINE.replace_all(&result, "").to_string();
+    result = RE_STRIP_OBSERVATION_LINE
+        .replace_all(&result, "")
+        .to_string();
+    result = RE_STRIP_THOUGHT_LINE.replace_all(&result, "").to_string();
+    result = RE_STRIP_API_NAME.replace_all(&result, "").to_string();
+    result = RE_STRIP_PARAMETERS.replace_all(&result, "").to_string();
+    result = RE_STRIP_CALL_COLON.replace_all(&result, "").to_string();
+    result = RE_COLLAPSE_NEWLINES
+        .replace_all(&result, "\n\n")
+        .to_string();
+    result.trim().to_string()
+}
+
+// ── Quality check ────────────────────────────────────────────────────────────
+
+fn extract_tool_evidence(messages: &[Message]) -> String {
+    let mut evidence = Vec::new();
+    for msg in messages {
+        if let MessageContent::Blocks(blocks) = &msg.content {
+            for block in blocks {
+                match block {
+                    ContentBlock::ToolUse { name, input, .. } => {
+                        let args_str = serde_json::to_string(input).unwrap_or_default();
+                        let args_short: String = args_str.chars().take(200).collect();
+                        evidence.push(format!("[CALLED] {} ({})", name, args_short));
+                    }
+                    ContentBlock::ToolResult { content, .. } => {
+                        let result_str = serde_json::to_string(content).unwrap_or_default();
+                        let result_short: String = result_str.chars().take(800).collect();
+                        let truncated = if result_str.len() > 800 {
+                            "... [truncated]"
+                        } else {
+                            ""
+                        };
+                        evidence.push(format!("[RESULT] {}{}", result_short, truncated));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    if evidence.is_empty() {
+        String::new()
+    } else {
+        evidence.join("\n")
+    }
+}
+
+/// LLM-based quality gate. Only called for responses that pass the cheaper
+/// deterministic checks. Gracefully degrades to None if no model is available.
+async fn quality_check(
+    original_task: &str,
+    proposed_response: &str,
+    tool_evidence: &str,
+    router: crate::router::model_router::SharedRouter,
+    settings: &crate::config::RuntimeSettings,
+) -> Option<String> {
+    // Skip very short responses — confirmations, greetings
+    if proposed_response.len() < 120 {
+        return None;
+    }
+
+    // Fast-pass: short action-completion confirm with real tool evidence
+    {
+        let lower = proposed_response.to_lowercase();
+        let has_completion = COMPLETION_SIGNALS.iter().any(|s| lower.contains(s));
+        if has_completion && proposed_response.len() < 400 && !tool_evidence.is_empty() {
+            return None;
+        }
+    }
+
+    // Fast structural check (no LLM needed)
+    let trimmed = proposed_response.trim();
+    if trimmed.starts_with('{')
+        || trimmed.starts_with('[')
+        || trimmed.contains("```json")
+        || trimmed.contains("``` json")
+        || trimmed.contains("<tool_call>")
+        || trimmed.contains("<function=")
+        || RE_CALL_COLON.is_match(trimmed)
+    {
+        return Some(
+            "The response contains raw JSON data or hallucinated tool commands. \
+             If you meant to use a tool, please call it natively using the system's tool format. \
+             If you are responding to the user, summarize the information in clear, natural human-readable plain text."
+                .to_string(),
+        );
+    }
+
+    // Fast service mismatch check
+    {
+        let task_lower = original_task.to_lowercase();
+        let evidence_lower = tool_evidence.to_lowercase();
+        for (keywords, wrong_prefix, correction) in crate::router::service_map::mismatch_rules() {
+            if keywords.iter().any(|kw| task_lower.contains(kw))
+                && evidence_lower.contains(wrong_prefix)
+            {
+                return Some(format!(
+                    "SERVICE MISMATCH: The user asked for {} but you used the wrong service. \
+                     Please use {}. Call the correct tool and respond with its data.",
+                    keywords[0], correction
+                ));
+            }
+        }
+    }
+
+    let prompt = format!(
+        "You are a quality gate for an AI agent. Your job is to catch CRITICAL errors only.\n\n\
+         REQUEST: {}\n\n\
+         TOOL EVIDENCE (ground truth from actual tool calls):\n{}\n\n\
+         RESPONSE:\n{}\n\n\
+         Only flag the response if it has a CRITICAL problem:\n\
+         1. FABRICATION: The response states facts that are NOT in the tool evidence (making up data)\n\
+         2. WRONG QUESTION: The response answers a completely different question than what was asked\n\
+         3. RAW DUMP: The response contains raw JSON data, ```json blocks, dictionary variables, or hallucinated tool commands instead of a natural human-readable answer\n\
+         4. WRONG SERVICE: User asked for Microsoft (mscal/outlook/onedrive) but got Google (gcal/gmail/gdrive) data, or vice versa\n\
+         5. FALSE REFUSAL: The response says it cannot do something (e.g. \"I cannot create events\") even though the tool evidence shows you have tools for it. You MUST use tools instead of refusing.\n\
+         6. HALLUCINATED SUCCESS: Tool evidence shows \"(no tools called)\" but the response claims to have completed a task that requires tool access.\n\n\
+         Do NOT flag for:\n\
+         - Minor omissions or style preferences\n\
+         - Slightly imperfect wording or formatting\n\
+         - Missing optional details that weren't explicitly asked for\n\
+         - The response being shorter than you'd prefer\n\n\
+         WHEN IN DOUBT, PASS. A good-enough answer is better than a retry that might make things worse.\n\n\
+         Respond with exactly: PASS\n\
+         Or if there is a CRITICAL issue: one sentence describing what is critically wrong.",
+        original_task,
+        if tool_evidence.is_empty() { "(no tools called)" } else { tool_evidence },
+        proposed_response.chars().take(1500).collect::<String>()
+    );
+
+    let sys = "You are a quality gate. Output ONLY 'PASS' or ONE sentence about a critical issue. Nothing else. When in doubt, output PASS.";
+
+    if !crate::router::has_available_role(&router, "quality_checker").await {
+        return None;
+    }
+
+    match call_llm(
+        &[Message::user(&prompt)],
+        sys,
+        &[],
+        Some(150),
+        "quality_checker",
+        router,
+        settings,
+        None,
+    )
+    .await
+    {
+        Ok((resp, model, _)) => {
+            let verdict = resp.text_content().trim().to_string();
+            tracing::info!(
+                "Quality check [{}]: {}",
+                model,
+                verdict.chars().take(80).collect::<String>()
+            );
+            if verdict.to_uppercase().starts_with("PASS") {
+                None
+            } else {
+                Some(verdict)
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Quality check skipped (model unavailable): {}", e);
+            None
+        }
+    }
+}

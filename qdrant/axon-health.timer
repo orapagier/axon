@@ -1,0 +1,16 @@
+# =============================================================================
+# /etc/systemd/system/axon-health.timer
+# Daily health check at 06:00
+# =============================================================================
+
+[Unit]
+Description=axon-mcp daily health check timer
+Requires=axon-health.service
+
+[Timer]
+OnCalendar=*-*-* 06:00:00
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

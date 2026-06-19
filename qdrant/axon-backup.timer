@@ -1,0 +1,16 @@
+# =============================================================================
+# /etc/systemd/system/axon-backup.timer
+# Weekly backup every Sunday at 04:00 (after trim at 03:00)
+# =============================================================================
+
+[Unit]
+Description=axon-mcp weekly Qdrant backup
+Requires=axon-backup.service
+
+[Timer]
+OnCalendar=Sun *-*-* 04:00:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

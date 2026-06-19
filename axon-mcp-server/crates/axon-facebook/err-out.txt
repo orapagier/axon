@@ -1,0 +1,48 @@
+    Checking ring v0.17.14
+    Checking h2 v0.3.27
+    Checking h2 v0.4.13
+    Checking tower v0.5.3
+    Checking rmcp v0.1.5
+    Checking rustls-platform-verifier v0.6.2
+    Checking tower-http v0.6.8
+    Checking rustls-webpki v0.101.7
+    Checking sct v0.7.1
+    Checking rustls v0.21.12
+    Checking hyper v1.8.1
+    Checking hyper v0.14.32
+    Checking tokio-rustls v0.24.1
+    Checking hyper-util v0.1.20
+    Checking hyper-rustls v0.24.2
+    Checking hyper-tls v0.5.0
+    Checking hyper-rustls v0.27.9
+    Checking reqwest v0.11.27
+    Checking reqwest v0.13.2
+    Checking axon-core v2.0.0 (C:\Users\Admin\OneDrive - samuzziel\Documents\Dev\Axon\axon-mcp-server\crates\axon-core)
+    Checking axon-facebook v2.0.0 (C:\Users\Admin\OneDrive - samuzziel\Documents\Dev\Axon\axon-mcp-server\crates\axon-facebook)
+error[E0599]: no method named `multipart` found for struct `reqwest::async_impl::request::RequestBuilder` in the current scope
+   --> crates\axon-facebook\src\posts.rs:129:14
+    |
+125 | /         state
+126 | |             .client
+127 | |             .post(format!("{FB_API}/{pid}/photos"))
+128 | |             .bearer_auth(&tok)
+129 | |             .multipart(form)
+    | |             -^^^^^^^^^ method not found in `reqwest::async_impl::request::RequestBuilder`
+    | |_____________|
+    |
+
+error[E0282]: type annotations needed
+   --> crates\axon-facebook\src\posts.rs:125:9
+    |
+125 | /         state
+126 | |             .client
+127 | |             .post(format!("{FB_API}/{pid}/photos"))
+128 | |             .bearer_auth(&tok)
+129 | |             .multipart(form)
+130 | |             .send()
+131 | |             .await?
+    | |___________________^ cannot infer type
+
+Some errors have detailed explanations: E0282, E0599.
+For more information about an error, try `rustc --explain E0282`.
+error: could not compile `axon-facebook` (lib) due to 2 previous errors

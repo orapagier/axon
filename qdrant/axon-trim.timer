@@ -1,0 +1,19 @@
+# =============================================================================
+# /etc/systemd/system/axon-trim.timer
+# Runs trim every Sunday at 03:00 and on any missed run after boot
+# =============================================================================
+
+[Unit]
+Description=axon-mcp weekly memory trim
+Requires=axon-trim.service
+
+[Timer]
+# Every Sunday at 03:00 local time
+OnCalendar=Sun *-*-* 03:00:00
+# Run immediately if a scheduled run was missed (e.g. server was down)
+Persistent=true
+# Random delay up to 10 min — avoids exact-time load spikes
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target

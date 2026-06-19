@@ -1,0 +1,31 @@
+[package]
+name = "image_processor"
+version = "0.1.0"
+edition = "2021"
+description = "A full-featured image processing library for AI agent pipelines"
+license = "MIT"
+
+[lib]
+name = "image_processor"
+path = "src/lib.rs"
+
+[[example]]
+name = "quote_image"
+path = "examples/quote_image.rs"
+
+[[example]]
+name = "batch_process"
+path = "examples/batch_process.rs"
+
+[dependencies]
+image = { version = "0.25", features = ["png", "jpeg", "webp"] }
+imageproc = "0.25"
+ab_glyph = "0.2"
+rayon = "1"
+thiserror = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+kamadak-exif = "0.5"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }

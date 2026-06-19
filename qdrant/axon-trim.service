@@ -1,0 +1,17 @@
+# =============================================================================
+# /etc/systemd/system/axon-trim.service
+# Memory trim cycle — removes expired and low-value vectors
+# =============================================================================
+
+[Unit]
+Description=axon-mcp memory trim cycle
+After=qdrant.service
+Requires=qdrant.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+ExecStart=/usr/local/bin/axon-trim
+StandardOutput=append:/var/log/qdrant/trim.log
+StandardError=append:/var/log/qdrant/trim.log
+TimeoutStartSec=300

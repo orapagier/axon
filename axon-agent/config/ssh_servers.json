@@ -1,0 +1,22 @@
+{
+    "servers": {
+        "server1": {
+            "host": "150.136.121.78",
+            "port": 22,
+            "user": "ubuntu",
+            "key_path": "config/ssh_keys/server1.key"
+        },
+        "server2": {
+            "host": "157.151.172.158",
+            "port": 22,
+            "user": "ubuntu",
+            "key_path": "config/ssh_keys/server2.key"
+        },
+        "axon server": {
+            "host": "34.24.72.0",
+            "port": 22,
+            "user": "ramlej",
+            "key_path": ""
+        }
+    }
+}

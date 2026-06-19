@@ -1,0 +1,15 @@
+# =============================================================================
+# /etc/systemd/system/axon-health.service
+# =============================================================================
+
+[Unit]
+Description=axon-mcp daily health check
+After=qdrant.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+ExecStart=/usr/local/bin/axon-health
+StandardOutput=append:/var/log/qdrant/health.log
+StandardError=append:/var/log/qdrant/health.log
+TimeoutStartSec=60

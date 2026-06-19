@@ -1,0 +1,525 @@
+use crate::config::RuntimeSettings;
+use crate::providers::types::Message;
+use crate::router::model_router::SharedRouter;
+use crate::tools::schema::ToolDefinition;
+use anyhow::Context;
+use once_cell::sync::Lazy;
+use r2d2::Pool;
+use r2d2_sqlite::SqliteConnectionManager;
+use regex::Regex;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+pub static CONVERSATIONAL: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+    r"(?i)^(hi+|hello|hey|thanks|thank\s+you|ok(ay)?|sure|yes|no|nope|yep|yeah|yup|bye|goodbye|good\s+(morning|evening|night|day)|how\s+are\s+you|what.s\s+up|got\s+it|sounds\s+good|perfect|great|cool|nice|lol|haha|hmm+|alright|nevermind|nvm|noted|understood|what\s+day\s+is\s+it|what\s+time\s+is\s+it|what\s+is\s+the\s+date|today.s\s+date|what\s+date\s+is\s+it|current\s+time|date\s*time\s*now|date\s+now|time\s+now|clock)\W*$"
+).unwrap()
+});
+
+static MULTISTEP: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+    r"(?i)\b(then|and\s+then|after\s+that|afterwards|next\s*[,;]?|and\s+also|followed\s+by|once\s+(that.?s?\s+)?done|first\s*[,;]|second\s*[,;]|finally\s*[,;]?|additionally|as\s+well\s+as)\b"
+).unwrap()
+});
+
+/// Intent-aware static routes: maps (service keywords) → (read_tools, write_tools, all_tools).
+/// When the user mentions a service, we check intent (read vs write) and inject ONLY relevant tools.
+/// This prevents routing noise (e.g., send tools for "check new gmail") and ensures coverage for
+/// services like Facebook that weren't previously routed at all.
+struct StaticRoute {
+    pattern: Regex,
+    read_tools: Vec<&'static str>, // check, list, read, new, unread, inbox, get, show
+    write_tools: Vec<&'static str>, // send, compose, write, create, post, reply, upload, share
+}
+
+static READ_INTENT: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)\b(check|list|read|new|unread|inbox|get|show|see|view|fetch|retrieve|latest|recent|upcoming|look\s+at|what.s|what\s+are|any\s+new|download)\b").unwrap()
+});
+
+static WRITE_INTENT: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)\b(send|compose|write|create|post|reply|upload|share|forward|schedule|draft|attach|make|publish|update|edit|delete|remove|hide|unhide|like|unlike|set|add|remind|reminder|email|mail|notify|message|dm|text)\b").unwrap()
+});
+
+static STATIC_ROUTES: Lazy<Vec<StaticRoute>> = Lazy::new(|| {
+    vec![
+        // ── Facebook ──
+        StaticRoute {
+            pattern: Regex::new(r"(?i)\b(facebook\s+chat|fb\s+chat|messenger|facebook\s+message|fb\s+message|facebook\s+dm)s?\b").unwrap(),
+            read_tools: vec!["fb_list_messenger_chats", "fb_get_messenger_chat"],
+            write_tools: vec!["fb_send_message", "fb_send_message_image"],
+        },
+        StaticRoute {
+            pattern: Regex::new(r"(?i)\b(facebook\s+comment|fb\s+comment)s?\b").unwrap(),
+            read_tools: vec!["fb_list_comments", "fb_recent_comments"],
+            write_tools: vec!["fb_reply_to_comment", "fb_delete_comment", "fb_hide_comment", "fb_react_object", "fb_unreact_object"],
+        },
+        StaticRoute {
+            pattern: Regex::new(r"(?i)\b(facebook\s+post|fb\s+post)s?\b").unwrap(),
+            read_tools: vec!["fb_list_posts", "fb_get_post", "fb_get_scheduled_posts"],
+            write_tools: vec!["fb_create_post", "fb_create_post_with_image", "fb_create_post_with_video", "fb_update_post", "fb_delete_post", "fb_schedule_post"],
+        },
+        StaticRoute {
+            pattern: Regex::new(r"(?i)\b(facebook\s+page|fb\s+page|facebook\s+insight|fb\s+insight|facebook\s+analytics|fb\s+analytics|facebook\s+fans|fb\s+fans|facebook\s+reach|fb\s+reach)s?\b").unwrap(),
+            read_tools: vec!["fb_get_page", "fb_page_insights", "fb_post_insights"],
+            write_tools: vec!["fb_update_page"],
+        },
+        // Catch-all "facebook" — route to most common read tools
+        StaticRoute {
+            pattern: Regex::new(r"(?i)\b(facebook|fb)\b").unwrap(),
+            read_tools: vec!["fb_list_messenger_chats", "fb_list_posts", "fb_recent_comments", "fb_get_page"],
+            write_tools: vec!["fb_create_post", "fb_create_post_with_image", "fb_create_post_with_video", "fb_send_message", "fb_reply_to_comment"],
+        },
+        // ── Gmail ──
+        StaticRoute {
+            pattern: Regex::new(r"(?i)\b(gmail|google\s+email|google\s+mail)\b").unwrap(),
+            read_tools: vec!["gmail_list", "gmail_get", "gmail_search", "gmail_list_labels", "gmail_download_attachment", "gmail_list_drafts", "gmail_get_draft"],
+            write_tools: vec!["gmail_send", "gmail_send_with_attachment", "gmail_reply", "gmail_trash", "gmail_mark_read", "gmail_mark_unread", "gmail_add_label", "gmail_remove_label", "gmail_forward", "gmail_delete", "gmail_untrash", "gmail_create_draft", "gmail_update_draft", "gmail_send_draft", "gmail_delete_draft"],
+        },
+        // ── Outlook ──
+        StaticRoute {
+            pattern: Regex::new(r"(?i)\b(outlook|outlook\s+email|microsoft\s+email|ms\s+email)\b").unwrap(),
+            read_tools: vec!["outlook_list_emails", "outlook_read_email", "outlook_search", "outlook_download_attachment"],
+            write_tools: vec!["outlook_send_email", "outlook_reply_email", "outlook_forward_email", "outlook_send_with_attachment", "outlook_move_email", "outlook_delete_email"],
+        },
+        // ── Microsoft Calendar ──
+        StaticRoute {
+            pattern: Regex::new(r"(?i)\b(mscal|microsoft\s+calendar|outlook\s+calendar|ms\s+cal)\b").unwrap(),
+            read_tools: vec!["mscal_list_events", "mscal_get_event"],
+            write_tools: vec!["mscal_create_event", "mscal_update_event", "mscal_delete_event"],
+        },
+        // ── Google Calendar ──
+        StaticRoute {
+            pattern: Regex::new(r"(?i)\b(gcal|google\s+calendar)\b").unwrap(),
+            read_tools: vec![
+                "gcal_list_events",
+                "gcal_list_calendars",
+                "gcal_get_event",
+                "gcal_get_freebusy",
+            ],
+            write_tools: vec![
+                "gcal_create_event",
+                "gcal_quick_add",
+                "gcal_update_event",
+                "gcal_delete_event",
+                "gcal_move_event",
+            ],
+        },
+        // ── OneDrive ──
+        StaticRoute {
+            pattern: Regex::new(r"(?i)\b(onedrive|one\s+drive|microsoft\s+drive|ms\s+drive)\b").unwrap(),
+            read_tools: vec!["onedrive_list", "onedrive_search", "onedrive_download"],
+            write_tools: vec!["onedrive_upload_binary", "onedrive_share", "onedrive_move_file", "onedrive_delete"],
+        },
+        StaticRoute {
+            pattern: Regex::new(r"(?i)\b(gdrive|google\s+drive)\b").unwrap(),
+            read_tools: vec![
+                "gdrive_list",
+                "gdrive_search",
+                "gdrive_download_binary",
+            ],
+            write_tools: vec![
+                "gdrive_upload_binary",
+                "gdrive_upload_folder",
+                "gdrive_share",
+                "gdrive_move_file",
+                "gdrive_delete",
+            ],
+        },
+        // ── Google Contacts ──
+        StaticRoute {
+            pattern: Regex::new(r"(?i)\b(gcon|google\s+contacts?|google\s+people)\b").unwrap(),
+            read_tools: vec!["gcon_list_contacts", "gcon_get_contact", "gcon_search_contacts"],
+            write_tools: vec!["gcon_create_contact", "gcon_update_contact", "gcon_delete_contact"],
+        },
+        // ── Microsoft Contacts ──
+        StaticRoute {
+            pattern: Regex::new(r"(?i)\b(mscontacts|microsoft\s+contacts?|outlook\s+contacts?)\b").unwrap(),
+            read_tools: vec!["mscontacts_list_contacts", "mscontacts_get_contact"],
+            write_tools: vec!["mscontacts_create_contact", "mscontacts_update_contact", "mscontacts_delete_contact"],
+        },
+        // ── Google Tasks ──
+        StaticRoute {
+            pattern: Regex::new(r"(?i)\b(gtasks|google\s+tasks?|to-do|todo)\b").unwrap(),
+            read_tools: vec!["gtasks_list_lists", "gtasks_list_tasks"],
+            write_tools: vec!["gtasks_create_task", "gtasks_complete_task"],
+        },
+        // ── Google Meet ──
+        StaticRoute {
+            pattern: Regex::new(r"(?i)\b(gmeet|google\s+meet|conference|transcript)\b").unwrap(),
+            read_tools: vec!["gmeet_list_records", "gmeet_get_full_transcript"],
+            write_tools: vec![],
+        },
+        // ── Google Docs ──
+        StaticRoute {
+            pattern: Regex::new(r"(?i)\b(gdocs|google\s+docs?)\b").unwrap(),
+            read_tools: vec!["gdocs_get_text"],
+            write_tools: vec!["gdocs_create", "gdocs_append_text"],
+        },
+        // ── Google Sheets ──
+        StaticRoute {
+            pattern: Regex::new(r"(?i)\b(gsheets|google\s+sheets?|spreadsheet)s?\b").unwrap(),
+            read_tools: vec![
+                "gsheets_list", "gsheets_get", "gsheets_read_range", "gsheets_batch_read", "gsheets_find",
+            ],
+            write_tools: vec![
+                "gsheets_create", "gsheets_write_range", "gsheets_batch_write",
+                "gsheets_append_rows", "gsheets_clear_range",
+                "gsheets_add_sheet", "gsheets_delete_sheet", "gsheets_rename_sheet",
+                "gsheets_duplicate_sheet", "gsheets_copy_sheet_to",
+                "gsheets_insert_dimension", "gsheets_delete_dimension",
+                "gsheets_sort_range", "gsheets_create_filter", "gsheets_clear_filter",
+                "gsheets_merge_cells", "gsheets_unmerge_cells",
+                "gsheets_bold_row", "gsheets_freeze_rows", "gsheets_auto_resize",
+                "gsheets_format_cells", "gsheets_add_conditional_format",
+                "gsheets_clear_conditional_formats", "gsheets_batch_update",
+            ],
+        },
+        // ── Google Slides ──
+        StaticRoute {
+            pattern: Regex::new(r"(?i)\b(gslides|google\s+slides?|presentation)\b").unwrap(),
+            read_tools: vec![],
+            write_tools: vec!["gslides_create", "gslides_replace_text"],
+        },
+        // ── Google Chat ──
+        StaticRoute {
+            pattern: Regex::new(r"(?i)\b(gchat|google\s+chat)\b").unwrap(),
+            read_tools: vec!["gchat_list_spaces"],
+            write_tools: vec!["gchat_send_message"],
+        },
+        // ── Workflows ──
+        StaticRoute {
+            pattern: Regex::new(r"(?i)\bworkflows?\b").unwrap(),
+            read_tools: vec!["list_workflows"],
+            write_tools: vec!["run_workflow"],
+        },
+    ]
+});
+
+/// Select tools from a StaticRoute based on user intent
+fn select_by_intent(route: &StaticRoute, msg: &str) -> Vec<String> {
+    let is_read = READ_INTENT.is_match(msg);
+    let is_write = WRITE_INTENT.is_match(msg);
+    if is_read && !is_write {
+        route.read_tools.iter().map(|s| s.to_string()).collect()
+    } else if is_write && !is_read {
+        route.write_tools.iter().map(|s| s.to_string()).collect()
+    } else {
+        // Ambiguous or both — return all
+        let mut all: Vec<String> = route.read_tools.iter().map(|s| s.to_string()).collect();
+        all.extend(route.write_tools.iter().map(|s| s.to_string()));
+        all
+    }
+}
+
+pub struct ToolRouter {
+    patterns: Arc<RwLock<HashMap<String, Vec<Regex>>>>,
+    db: Arc<Pool<SqliteConnectionManager>>,
+    router: SharedRouter,
+    settings: Arc<RuntimeSettings>,
+}
+
+impl ToolRouter {
+    pub fn new(
+        db: Arc<Pool<SqliteConnectionManager>>,
+        router: SharedRouter,
+        settings: Arc<RuntimeSettings>,
+    ) -> Self {
+        ToolRouter {
+            patterns: Arc::new(RwLock::new(HashMap::new())),
+            db,
+            router,
+            settings,
+        }
+    }
+
+    pub async fn load_patterns(&self) -> anyhow::Result<()> {
+        let rows: Vec<(String, String)> = {
+            let conn = self.db.get().context("DB pool")?;
+            let mut s =
+                conn.prepare("SELECT tool_name, pattern FROM tool_patterns WHERE enabled=1")?;
+            let res = s
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .filter_map(|r| r.ok())
+                .collect();
+            res
+        };
+        let mut map: HashMap<String, Vec<Regex>> = HashMap::new();
+        for (tool, pat) in rows {
+            match Regex::new(&format!("(?i){}", pat)) {
+                Ok(re) => map.entry(tool).or_default().push(re),
+                Err(e) => tracing::warn!("Invalid pattern '{}': {}", pat, e),
+            }
+        }
+        let count: usize = map.values().map(|v| v.len()).sum();
+        *self.patterns.write().await = map;
+        tracing::info!("Tool router: {} patterns loaded", count);
+        Ok(())
+    }
+
+    // FIX: async fn using .read().await — never calls block_on
+    async fn tier1(&self, msg: &str) -> (Vec<String>, bool) {
+        let p = self.patterns.read().await;
+        let mut matched: Vec<String> = p
+            .iter()
+            .filter(|(_, pats)| pats.iter().any(|re| re.is_match(msg)))
+            .map(|(n, _)| n.clone())
+            .collect();
+
+        // Intent-aware static routes: inject the right tools for the mentioned services,
+        // filtered by user intent (read vs write) to avoid routing noise
+        let mut service_hit = false;
+        for route in STATIC_ROUTES.iter() {
+            if route.pattern.is_match(msg) {
+                for tool in select_by_intent(route, msg) {
+                    if !matched.contains(&tool) {
+                        matched.push(tool);
+                    }
+                }
+                service_hit = true;
+            }
+        }
+
+        let confident =
+            service_hit || (!matched.is_empty() && matched.len() <= 3 && !MULTISTEP.is_match(msg));
+        (matched, confident)
+    }
+
+    async fn tier2(
+        &self,
+        msg: &str,
+        candidates: &[ToolDefinition],
+        history: &[Message],
+        multi: bool,
+    ) -> (Vec<String>, serde_json::Value) {
+        let names: std::collections::HashSet<String> =
+            candidates.iter().map(|t| t.name.clone()).collect();
+        let tool_list = candidates
+            .iter()
+            .map(|t| {
+                format!(
+                    "- {}: {}",
+                    t.name,
+                    t.description.chars().take(120).collect::<String>()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let prior: Vec<String> = history
+            .iter()
+            .rev()
+            .filter(|m| m.role == "user")
+            .take(2)
+            .filter_map(|m| match &m.content {
+                crate::providers::types::MessageContent::Text(t) => {
+                    Some(t.chars().take(120).collect())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        let sys_prompt = self.settings.get_str("router.system_prompt", "You are a routing proxy. Reply ONLY with comma-separated names of the tools needed, or exactly NONE. Do not use quotes or backticks.");
+        // The SERVICE DISAMBIGUATION block is generated from the single
+        // `service_map::SERVICE_PAIRS` registry so it can never drift from the
+        // pre-execution corrector and quality gate in the agent loop.
+        let default_user_tmpl = format!(
+            "You are a strict tool router. Based on the request, select the necessary tools from the list.\nTools:\n{{tool_list}}\n{{prior}}{{multi}}{}\nRequest: {{msg}}\n\nRULES:\n1. Output strictly a comma-separated list of tool names.\n2. Do NOT output anything else (no markdown, no quotes, no conversational text).\n3. If NO tools are needed, output exactly: NONE\n4. NEVER mix Google and Microsoft tools for the same request.\n\nTools needed:",
+            crate::router::service_map::router_disambiguation_block()
+        );
+        let user_tmpl = self
+            .settings
+            .get_str("router.user_prompt", &default_user_tmpl);
+        let prior_str = if prior.is_empty() {
+            String::new()
+        } else {
+            format!("Prior: {}\n", prior.join(" -> "))
+        };
+        let multi_str = if multi {
+            "Multi-step: list ALL tools needed.\n"
+        } else {
+            ""
+        };
+        let prompt = user_tmpl
+            .replace("{tool_list}", &tool_list)
+            .replace("{prior}", &prior_str)
+            .replace("{multi}", &multi_str)
+            .replace("{msg}", msg);
+
+        let t0 = std::time::Instant::now();
+        match crate::router::model_router::call_llm(
+            &[Message::user(&prompt)],
+            &sys_prompt,
+            &[],
+            None,
+            "router",
+            Arc::clone(&self.router),
+            &self.settings,
+            None,
+        )
+        .await
+        {
+            Ok((resp, model, tier)) => {
+                let raw = resp.text_content().trim().to_uppercase();
+                let dur = t0.elapsed().as_millis();
+                if raw == "NONE" || raw.is_empty() {
+                    return (
+                        vec![],
+                        serde_json::json!({"tier": tier, "model": model, "duration_ms": dur}),
+                    );
+                }
+                let mut used = std::collections::HashSet::new();
+                let sel: Vec<String> = raw
+                    .split(',')
+                    .map(|s| s.trim().to_lowercase())
+                    .filter(|s: &String| {
+                        if names.contains(s.as_str()) && !used.contains(s) {
+                            used.insert(s.clone());
+                            true
+                        } else {
+                            false
+                        }
+                    })
+                    .collect();
+                (
+                    sel,
+                    serde_json::json!({"tier": tier, "model": model, "duration_ms": dur}),
+                )
+            }
+            Err(e) => {
+                tracing::warn!("Tier2 router failed: {}", e);
+                (vec![], serde_json::json!({"tier":"binary_llm_failed"}))
+            }
+        }
+    }
+
+    pub async fn filter_tools(
+        &self,
+        msg: &str,
+        all_tools: &[ToolDefinition],
+        history: &[Message],
+    ) -> (Vec<ToolDefinition>, serde_json::Value) {
+        let msg = msg.trim();
+        let by_name: HashMap<String, &ToolDefinition> =
+            all_tools.iter().map(|t| (t.name.clone(), t)).collect();
+        if CONVERSATIONAL.is_match(msg) {
+            return (vec![], serde_json::json!({"tier":"simple_tasks"}));
+        }
+        let multi = MULTISTEP.is_match(msg);
+        let (hits, confident) = self.tier1(msg).await;
+        if confident {
+            let tools = hits
+                .iter()
+                .filter_map(|n| by_name.get(n).map(|t| (*t).clone()))
+                .collect();
+            return (tools, serde_json::json!({"tier":"regex","duration_ms":0}));
+        }
+        let candidates: Vec<ToolDefinition> = if multi || hits.is_empty() {
+            all_tools.to_vec()
+        } else {
+            hits.iter()
+                .filter_map(|n| by_name.get(n).map(|t| (*t).clone()))
+                .collect()
+        };
+        let (llm_hits, telem) = self.tier2(msg, &candidates, history, multi).await;
+        if telem.get("tier").and_then(|v| v.as_str()) != Some("binary_llm_failed") {
+            let merged = if multi && !hits.is_empty() {
+                let mut v = hits.clone();
+                for h in &llm_hits {
+                    if !v.contains(h) {
+                        v.push(h.clone());
+                    }
+                }
+                v
+            } else {
+                llm_hits
+            };
+            let tools = merged
+                .iter()
+                .filter_map(|n| by_name.get(n).map(|t| (*t).clone()))
+                .collect();
+            return (tools, telem);
+        }
+        (
+            all_tools.to_vec(),
+            serde_json::json!({"tier":"passthrough"}),
+        )
+    }
+
+    pub async fn all_patterns(&self) -> anyhow::Result<Vec<serde_json::Value>> {
+        let conn = self.db.get()?;
+        let mut s = conn.prepare("SELECT id, tool_name, pattern, description, enabled FROM tool_patterns ORDER BY tool_name")?;
+        let res: Vec<serde_json::Value> = s
+            .query_map([], |r| {
+                Ok(serde_json::json!({
+                    "id": r.get::<_, i64>(0)?,
+                    "tool_name": r.get::<_, String>(1)?,
+                    "pattern": r.get::<_, String>(2)?,
+                    "description": r.get::<_, Option<String>>(3)?,
+                    "enabled": r.get::<_, bool>(4)?,
+                }))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(res)
+    }
+
+    pub async fn update_bulk_patterns(&self, items: Vec<serde_json::Value>) -> anyhow::Result<()> {
+        {
+            let mut conn = self.db.get()?;
+            let tx = conn.transaction()?;
+            // Keep MCP patterns untouched by filtering out enabled=1 where it might contain "mcp" (?)
+            // Actually, easiest is just delete all and assume user JSON provides them, OR wipe everything and since MCP patterns are seeded on startup, we just let them stay or be recreated.
+            // Let's wipe everything because main.rs "INSERT OR IGNORE" handles MCP patterns on boot.
+            tx.execute("DELETE FROM tool_patterns", [])?;
+            let mut stmt = tx.prepare("INSERT INTO tool_patterns (tool_name, pattern, description, enabled) VALUES (?1, ?2, ?3, ?4)")?;
+            for raw in items {
+                let tool_name = raw.get("tool_name").and_then(|v| v.as_str()).unwrap_or("");
+                let pattern = raw.get("pattern").and_then(|v| v.as_str()).unwrap_or("");
+                let description = raw.get("description").and_then(|v| v.as_str());
+                let enabled = raw.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+
+                if tool_name.is_empty() || pattern.is_empty() {
+                    continue;
+                }
+                stmt.execute(rusqlite::params![tool_name, pattern, description, enabled])?;
+            }
+            drop(stmt);
+            tx.commit()?;
+        }
+        let _ = self.load_patterns().await;
+        Ok(())
+    }
+
+    pub async fn add_pattern(
+        &self,
+        tool: &str,
+        pat: &str,
+        desc: Option<&str>,
+    ) -> anyhow::Result<i64> {
+        let conn = self.db.get()?;
+        conn.execute("INSERT INTO tool_patterns (tool_name, pattern, description, enabled) VALUES (?1, ?2, ?3, 1)",
+            rusqlite::params![tool, pat, desc])?;
+        let id = conn.last_insert_rowid();
+        let _ = self.load_patterns().await;
+        Ok(id)
+    }
+
+    pub async fn set_enabled(&self, id: i64, enabled: bool) -> anyhow::Result<()> {
+        let conn = self.db.get()?;
+        conn.execute(
+            "UPDATE tool_patterns SET enabled=?1 WHERE id=?2",
+            rusqlite::params![enabled, id],
+        )?;
+        let _ = self.load_patterns().await;
+        Ok(())
+    }
+
+    pub async fn delete_pattern(&self, id: i64) -> anyhow::Result<()> {
+        let conn = self.db.get()?;
+        conn.execute("DELETE FROM tool_patterns WHERE id=?1", [id])?;
+        let _ = self.load_patterns().await;
+        Ok(())
+    }
+}

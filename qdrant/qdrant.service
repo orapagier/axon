@@ -1,0 +1,51 @@
+# =============================================================================
+# /etc/systemd/system/qdrant.service
+# Qdrant vector database — Oracle E2 Micro optimised
+# =============================================================================
+
+[Unit]
+Description=Qdrant vector database (axon-mcp memory)
+Documentation=https://qdrant.tech/documentation
+After=network.target
+Wants=network-online.target
+StartLimitIntervalSec=120
+StartLimitBurst=3
+
+[Service]
+Type=simple
+# Replace 'ubuntu' with your actual username if different
+User=ubuntu
+Group=ubuntu
+
+WorkingDirectory=/var/lib/qdrant
+ExecStart=/usr/local/bin/qdrant --config-path /etc/qdrant/config.yaml
+
+# Restart policy
+Restart=on-failure
+RestartSec=10
+
+# Logging — goes to journald, logrotate handles /var/log/qdrant
+StandardOutput=append:/var/log/qdrant/qdrant.log
+StandardError=append:/var/log/qdrant/qdrant.err.log
+
+# ── Memory limits — CRITICAL for 1GB server ──────────────────────────────────
+# Hard ceiling: kill Qdrant before it OOMs the whole server
+MemoryMax=400M
+# No swap for Qdrant — swap causes severe latency spikes
+MemorySwapMax=0
+# If OOM triggered, kill just this process (not random others)
+OOMPolicy=kill
+OOMScoreAdjust=500
+
+# ── Security hardening disabled for GCP compatibility ─────────────────────────
+
+# ── Resource limits ───────────────────────────────────────────────────────────
+# Limit open files (Qdrant uses mmap heavily)
+LimitNOFILE=65536
+# Limit CPU time for background work
+CPUQuota=60%
+# IO weight — give OS and agent priority over background optimization
+IOWeight=50
+
+[Install]
+WantedBy=multi-user.target

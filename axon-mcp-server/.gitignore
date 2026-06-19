@@ -1,0 +1,8 @@
+/target
+Cargo.lock
+credentials.json
+tokens.json
+*.pem
+*.key
+.env
+.env.*
