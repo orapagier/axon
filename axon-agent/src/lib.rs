@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod config;
 pub mod crypto;
+pub mod db;
 pub mod dashboard;
 pub mod error_reporting;
 pub mod files;

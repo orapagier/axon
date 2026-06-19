@@ -1,0 +1,40 @@
+-- Legacy value normalizations: one-time corrections to existing settings.
+-- Each is guarded by a WHERE clause so re-running every boot is a no-op once
+-- applied, and operator-customized values are left untouched.
+-- These are intentionally DATA fixes (not schema) and are kept apart from
+-- migrations/0001-0003 and seed.sql. They can be retired once no live database
+-- predates them.
+
+-- Replace the very first terse system prompt with the plain-text version.
+UPDATE settings
+   SET value = 'You are Axon, a capable AI agent. Always provide responses in plain text only, no Markdown formatting (no asterisks, no bolding, no code blocks unless essential for data). Complete tasks efficiently using available tools. If a tool is missing and tool writing is enabled, write one. If a task needs follow-up later, schedule it.'
+ WHERE key = 'agent.system_prompt'
+   AND value LIKE 'You are Axon, a capable AI agent. Complete%';
+
+-- Stop weaker models hallucinating ```json / <tool_call> blocks.
+UPDATE settings
+   SET value = value || '
+5. CRITICAL: You MUST use the native JSON tool calling mechanism provided by the API. NEVER output raw JSON snippets, markdown code blocks (```json), or XML tags like <tool_call> in your message body. Speak in plain text only.'
+ WHERE key = 'agent.system_prompt'
+   AND value NOT LIKE '%native JSON tool calling%';
+
+-- Also call out the call:tool{args} hallucination format.
+UPDATE settings
+   SET value = REPLACE(value,
+        'or XML tags like <tool_call> in your message body',
+        'XML tags like <tool_call>, or call:tool_name{args} syntax in your message body')
+ WHERE key = 'agent.system_prompt'
+   AND value LIKE '%or XML tags like <tool_call> in your message body%';
+
+-- Lower the old 60-minute rate-limit cooldown default to 1 minute.
+UPDATE settings SET value = '1'
+ WHERE key = 'router.rate_limit_cooldown' AND value = '60';
+
+-- Fix the old quiet-hours-end default (07:00 -> 04:00).
+UPDATE settings SET value = '04:00'
+ WHERE key = 'watcher.quiet_hours_end' AND value = '07:00';
+
+-- Lower the old parallel-tool default (5 -> 3) on hosts that never changed it,
+-- so existing installs also benefit from the small/shared-core default.
+UPDATE settings SET value = '3'
+ WHERE key = 'agent.max_parallel_tools' AND value = '5';
