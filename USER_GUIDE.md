@@ -18,7 +18,7 @@ router, memory, tools, integrations, scheduling, workflows, security, and troubl
 | Path | What it is |
 |------|-----------|
 | `axon-agent/` | **The core agent + web dashboard** (Rust). The main binary you run. Serves the HTTP API, dashboard UI, WebSocket stream, webhooks, scheduler, watcher, and the agent reasoning loop. |
-| `axon-mcp-server/` | **MCP tool server** (Rust workspace). Exposes Google, Microsoft, Facebook, Instagram, CRM, and business/utility tools over the Model Context Protocol (SSE). The agent connects to it as an MCP client. |
+| `axon-mcp-server/` | **Integration tool crates** (Rust workspace): Google, Microsoft, Facebook, Instagram, CRM, business/utility tools. These are now compiled **directly into `axon-agent`** and run in-process; the standalone `axon-mcp` binary is no longer built or deployed. |
 | `axon-ui/` | **Web dashboard** (Vue 3 + Vite). Built to static files and served by `axon-agent`. |
 | `axon-api-proxy/` | Standalone LLM API key-pool proxy (Rust). |
 | `axon-image/` | Image-processing/generation library (Rust) used by the agent's `image_tool`. |
@@ -45,7 +45,7 @@ day-to-day operation.
                         │   • Scheduler, Watcher, Workflows        │
                         └───────┬───────────────┬──────────────────┘
                                 │               │
-                 SQLite (memory/axon.db)   MCP (SSE) to axon-mcp-server (:8080)
+                 SQLite (memory/axon.db)   In-process integration tools
                                 │               │
                           Qdrant (vectors)  Google / Microsoft / Facebook / CRM tools
                                                 │
@@ -54,11 +54,12 @@ day-to-day operation.
                                                      Ollama, …)
 ```
 
-- The **agent** is the only process users talk to. It owns the dashboard, the webhooks, and
-  the reasoning loop.
-- The **MCP server** is a separate process the agent auto-connects to at
-  `http://127.0.0.1:8080/sse`. It provides the "integration" tools (Gmail, Calendar, Drive,
-  OneDrive, Outlook, Facebook pages, Instagram, CRM, etc.).
+- The **agent** is the only process users talk to. It owns the dashboard, the webhooks, the
+  reasoning loop, **and the integration tools themselves** (Gmail, Calendar, Drive, OneDrive,
+  Outlook, Facebook pages, Instagram, CRM, etc.), which now run **in-process** — the former
+  separate `axon-mcp` server has been merged in (no second process, no SSE hop, no port 8080).
+- The agent can still connect to **external** MCP servers you add from the dashboard's
+  Services/MCP page; those continue to use SSE.
 - **Qdrant** is an external service used for long-term semantic memory.
 
 ---
@@ -111,16 +112,14 @@ Then open **http://localhost:3000**.
 > The agent serves the UI from `axon-agent/static/`. If you change UI code, rebuild the UI
 > and re-copy `dist/` into `static/` (this is exactly what `run.bat` automates).
 
-Optionally run the **MCP server** in a second terminal to enable the Google/Microsoft/
-Facebook/CRM tools:
+The Google/Microsoft/Facebook/Instagram/CRM tools are built into the agent and start
+automatically — **no second process to run.** OAuth still happens from the dashboard's
+**Services** page; the callback returns to the agent itself (`/auth/:service/callback`).
 
-```bash
-cd axon-mcp-server
-cargo run --release        # listens on 0.0.0.0:8080 by default
-```
-
-The agent auto-connects to `http://127.0.0.1:8080/sse` on startup if no MCP server is
-already configured in its database.
+> For OAuth redirects and Instagram media URLs to resolve correctly, the agent's environment
+> needs `AXON_PUBLIC_BASE_URL` (or `AXON_CALLBACK_HOST`) set to its public base URL — or set
+> `instagram.public_base_url` on the Settings page. `credentials.json` (your OAuth app
+> client IDs/secrets) must sit in the agent's working directory or `~/.local/share/axon-mcp/`.
 
 ---
 
@@ -284,7 +283,7 @@ ground truth — this is enforced in the system prompt and the claim guard.
 - **Tool authoring:** when `agent.allow_tool_writing` is on, the agent can write a temporary
   tool on the fly for a one-off need.
 
-### Via the MCP server (`axon-mcp-server`)
+### Built-in integrations (in-process, from the `axon-mcp-server` crates)
 Gmail, Google Calendar/Drive/Docs/Sheets/Slides/Contacts/Tasks/Meet/Chat/Forms/Places/
 YouTube; Microsoft Outlook/Calendar/OneDrive/Teams; Facebook pages/posts/comments/insights/
 messaging; Instagram publishing; a CRM (leads/deals/orgs/activities); and business utilities
@@ -365,8 +364,9 @@ bash deploy.sh --skip-deploy   # build + bundle only
 `deploygcp.sh` / `deployfrontend.sh` are GCP- and frontend-only variants. The target host,
 remote dir, and SSH details are set at the top of each script — **update
 `TARGET_SERVER`/`REMOTE_DIR` to your own host** before using them. On the server, run the
-agent and MCP server under a process supervisor (systemd), and install Qdrant via
-`qdrant/install.sh` (which also sets up backup/health/trim timers).
+agent under a process supervisor (systemd), and install Qdrant via `qdrant/install.sh`
+(which also sets up backup/health/trim timers). The deploy script now disables/removes any
+legacy `axon-mcp` service, since integrations run in-process.
 
 ---
 
@@ -378,7 +378,7 @@ agent and MCP server under a process supervisor (systemd), and install Qdrant vi
 | REST works but the live log / chat stream never connects (status "disconnected") | WebSocket auth. This was a real bug when the master key contained URL-special characters (`+ / = space …`); it is fixed in this revision (the `api_key` query param is now URL-decoded server-side). Rebuild the agent. |
 | "All models exhausted — check API keys or wait for rate limits to reset" | No usable model. Check that provider keys resolve (`${...}` placeholders must exist in env or settings), that models are `enabled`, and whether everything is on rate-limit cooldown. |
 | `Model '…' has unresolved API key placeholder ${X}` | The `${X}` in `models.toml` isn't defined in the environment or the `settings` table. Add it to `.env` or the Settings page. |
-| Integration tools (Gmail/Calendar/etc.) missing | The MCP server isn't running or wasn't reachable at `127.0.0.1:8080/sse`. Start `axon-mcp-server`; the agent reconnects on the next restart. |
+| Integration tools (Gmail/Calendar/etc.) missing | The in-process integrations failed to initialize — usually a missing `credentials.json`. Check the startup log for "In-process MCP init failed"; ensure `credentials.json` is in the agent's working dir or `~/.local/share/axon-mcp/`. |
 | Decryption warnings / garbled stored keys | `AXON_MASTER_KEY` changed (or was unset) after secrets were saved. Re-enter the affected secrets with the correct, stable key. |
 | Long-term memory recall does nothing | Qdrant not running or `VOYAGE_API_KEY` unset. The agent runs fine without it, but semantic recall is disabled. |
 | `npm run build` fails with `'vite' is not recognized` | UI dev dependencies aren't fully installed. Run `npm install` in `axon-ui/` first. |
@@ -393,7 +393,7 @@ log at `/tmp/autoreply_debug.log` on the server.
 
 - **Default URL:** http://localhost:3000
 - **Agent port:** `AXON_PORT` (default `3000`)
-- **MCP server:** `http://127.0.0.1:8080/sse`
+- **Integrations:** in-process (the former `axon-mcp` on `:8080` is merged into the agent)
 - **Database:** `axon-agent/memory/axon.db` (`AXON_DB_PATH`)
 - **Built UI is served from:** `axon-agent/static/`
 - **Staged files:** `axon-agent/data/files/`
