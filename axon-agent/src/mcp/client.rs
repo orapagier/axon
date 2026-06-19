@@ -322,8 +322,73 @@ pub fn normalize_mcp_output(raw: serde_json::Value) -> serde_json::Value {
     }
 }
 
+/// Convert an MCP tool (as JSON, either from an SSE `tools/list` reply or from
+/// serializing an in-process `rmcp::model::Tool`) into the agent's
+/// `ToolDefinition`. Shared by the SSE client and the in-process provider so
+/// both produce identical tool definitions.
+pub fn tool_def_from_json(v: &serde_json::Value, server_name: &str) -> Option<ToolDefinition> {
+    let name = v.get("name").and_then(|n| n.as_str())?.to_string();
+    let description = v
+        .get("description")
+        .and_then(|d| d.as_str())
+        .map(|s| s.to_string());
+    let schema = v.get("inputSchema").or_else(|| v.get("input_schema"));
+    let (params, required) = schema
+        .map(|s| {
+            let p = s
+                .get("properties")
+                .cloned()
+                .unwrap_or(serde_json::json!({}));
+            let r: Vec<String> = s
+                .get("required")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+            (p, r)
+        })
+        .unwrap_or((serde_json::json!({}), vec![]));
+    Some(ToolDefinition {
+        name: name.clone(),
+        is_mutating: crate::tools::schema::derive_is_mutating(&name),
+        description: description.unwrap_or_else(|| "MCP tool".into()),
+        parameters: params,
+        required,
+        source: ToolSource::Mcp {
+            server_name: server_name.to_string(),
+            tool_name: name,
+        },
+        enabled: true,
+    })
+}
+
+/// A connected MCP backend: either a remote server over SSE, or the built-in
+/// integration services running in-process (no separate axon-mcp process).
+pub enum McpBackend {
+    Sse(McpClient),
+    InProcess(crate::mcp::inprocess::InProcessMcp),
+}
+
+impl McpBackend {
+    async fn call_tool(
+        &self,
+        name: &str,
+        args: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        match self {
+            McpBackend::Sse(c) => c.call_tool(name, args).await,
+            McpBackend::InProcess(p) => p.call_tool(name, args).await,
+        }
+    }
+
+    async fn cached_tools(&self) -> Vec<ToolDefinition> {
+        match self {
+            McpBackend::Sse(c) => c.cached_tools().await,
+            McpBackend::InProcess(p) => p.cached_tools(),
+        }
+    }
+}
+
 pub struct McpManager {
-    clients: tokio::sync::RwLock<HashMap<String, McpClient>>,
+    clients: tokio::sync::RwLock<HashMap<String, McpBackend>>,
 }
 
 impl McpManager {
@@ -341,8 +406,37 @@ impl McpManager {
     ) -> anyhow::Result<Vec<ToolDefinition>> {
         let client = McpClient::new(name, url, api_key).await?;
         let tools = client.list_tools().await?;
-        self.clients.write().await.insert(name.to_string(), client);
+        self.clients
+            .write()
+            .await
+            .insert(name.to_string(), McpBackend::Sse(client));
         Ok(tools)
+    }
+
+    /// Register the built-in integration services as an in-process backend.
+    /// Tools are sourced as `Mcp { server_name: name }` so the rest of the
+    /// agent (registry, OAuth handlers, workflows) dispatches to them exactly
+    /// as it did to the old separate axon-mcp process — minus the SSE hop.
+    pub async fn connect_inprocess(&self, name: &str) -> anyhow::Result<Vec<ToolDefinition>> {
+        let provider = crate::mcp::inprocess::InProcessMcp::new(name).await?;
+        let tools = provider.cached_tools();
+        self.clients
+            .write()
+            .await
+            .insert(name.to_string(), McpBackend::InProcess(provider));
+        Ok(tools)
+    }
+
+    /// The shared `axon_core::AppState` of the in-process backend, if present.
+    /// Used by the agent's media route to resolve temporary media files.
+    pub async fn inprocess_state(&self) -> Option<std::sync::Arc<axon_core::AppState>> {
+        let clients = self.clients.read().await;
+        for backend in clients.values() {
+            if let McpBackend::InProcess(p) = backend {
+                return Some(p.mcp_state());
+            }
+        }
+        None
     }
 
     pub async fn disconnect(&self, name: &str) {

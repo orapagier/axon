@@ -1,4 +1,4 @@
-use super::{api, ws};
+use super::{api, media, ws};
 use crate::state::AppState;
 use axum::{routing::get, Router};
 use tower_http::cors::CorsLayer;
@@ -213,6 +213,16 @@ pub fn build_router(state: AppState) -> Router {
         )
         // OAuth callback — Google/Microsoft/Facebook redirect here after login
         .route("/auth/:service/callback", get(api::oauth_callback))
+        // Temporary local-media for Instagram publishing (Meta fetches these;
+        // no auth). Served in-process now that integrations are merged.
+        .route(
+            "/media/local/:token",
+            get(media::local_media).head(media::local_media_head),
+        )
+        .route(
+            "/media/local/:token/:name",
+            get(media::local_media_named).head(media::local_media_named_head),
+        )
         .merge(protected)
         .fallback_service(
             ServeDir::new("static").not_found_service(ServeFile::new("static/index.html")),

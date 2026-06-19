@@ -3,7 +3,6 @@ use axum::extract::{Path, Query, State};
 use axum::{http::HeaderMap, Json};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
 pub async fn get_google_sheets(State(state): State<AppState>) -> Json<Value> {
@@ -126,99 +125,46 @@ fn instagram_setting_to_mcp_env(key: &str) -> Option<&'static str> {
     }
 }
 
-fn resolve_mcp_env_path() -> PathBuf {
-    if let Ok(p) = std::env::var("AXON_MCP_ENV_PATH") {
-        return PathBuf::from(p);
-    }
+/// The Instagram/MCP settings that map to process env vars the in-process
+/// integration services (and OAuth redirect-URI builder) read.
+const MCP_ENV_SETTING_KEYS: &[&str] = &[
+    "instagram.public_base_url",
+    "instagram.bind_addr",
+    "instagram.media_url_ttl_secs",
+    "instagram.image_poll_interval_secs",
+    "instagram.image_poll_timeout_secs",
+    "instagram.video_poll_interval_secs",
+    "instagram.video_poll_timeout_secs",
+];
 
-    let mut candidates = Vec::new();
-    if let Ok(cwd) = std::env::current_dir() {
-        candidates.push(cwd.join("../mcp/.env"));
-        candidates.push(cwd.join("../axon-mcp-server/.env"));
-        candidates.push(cwd.join(".env"));
-    }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            candidates.push(dir.join("../mcp/.env"));
-            candidates.push(dir.join("../axon-mcp-server/.env"));
-            candidates.push(dir.join(".env"));
-        }
-    }
-
-    if let Some(existing) = candidates.iter().find(|p| p.exists()) {
-        return existing.clone();
-    }
-    candidates
-        .into_iter()
-        .next()
-        .unwrap_or_else(|| PathBuf::from("../mcp/.env"))
-}
-
-fn env_value_literal(value: &str) -> String {
-    let needs_quotes = value.is_empty()
-        || value.chars().any(|c| c.is_whitespace())
-        || value.contains('#')
-        || value.contains('=')
-        || value.contains('"')
-        || value.contains('\\');
-    if !needs_quotes {
-        return value.to_string();
-    }
-    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
-}
-
-fn upsert_env_var(path: &PathBuf, env_key: &str, env_value: &str) -> anyhow::Result<()> {
-    let mut lines: Vec<String> = if path.exists() {
-        std::fs::read_to_string(path)?
-            .lines()
-            .map(|l| l.to_string())
-            .collect()
-    } else {
-        Vec::new()
-    };
-
-    let mut updated = false;
-    for line in &mut lines {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with('#') {
-            continue;
-        }
-        let raw = trimmed.strip_prefix("export ").unwrap_or(trimmed);
-        let Some((k, _)) = raw.split_once('=') else {
+/// Apply these settings to the agent's own process environment at startup, so
+/// the in-process MCP services see the operator's configuration. Must be called
+/// before the in-process backend is constructed. Explicit `.env`/environment
+/// values win, and the placeholder base URL is ignored.
+pub fn apply_mcp_env_from_settings(settings: &crate::config::RuntimeSettings) {
+    for key in MCP_ENV_SETTING_KEYS {
+        let Some(env_key) = instagram_setting_to_mcp_env(key) else {
             continue;
         };
-        if k.trim() == env_key {
-            *line = format!("{env_key}={}", env_value_literal(env_value));
-            updated = true;
-            break;
+        if std::env::var(env_key).is_ok() {
+            continue; // respect values already set via .env / environment
         }
+        let val = settings.get_str(key, "");
+        let val = val.trim();
+        if val.is_empty() || val == "https://mcp.yourdomain.com" {
+            continue;
+        }
+        std::env::set_var(env_key, val);
     }
-
-    if !updated {
-        lines.push(format!("{env_key}={}", env_value_literal(env_value)));
-    }
-
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(path, lines.join("\n") + "\n")?;
-    Ok(())
 }
 
 fn sync_instagram_setting_to_mcp_env(key: &str, value: &str) {
-    let Some(env_key) = instagram_setting_to_mcp_env(key) else {
-        return;
-    };
-
-    let env_path = resolve_mcp_env_path();
-    if let Err(e) = upsert_env_var(&env_path, env_key, value.trim()) {
-        tracing::warn!(
-            "Failed syncing dashboard setting '{}' to {} at {}: {}",
-            key,
-            env_key,
-            env_path.display(),
-            e
-        );
+    // Integrations run in-process now, so apply the change to our own
+    // environment instead of writing a separate server's .env file. Values read
+    // per-request (OAuth redirect URI, media base URL) take effect immediately;
+    // values read at service construction still need an agent restart.
+    if let Some(env_key) = instagram_setting_to_mcp_env(key) {
+        std::env::set_var(env_key, value.trim());
     }
 }
 

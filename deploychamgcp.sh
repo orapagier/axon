@@ -68,14 +68,9 @@ if ! $SKIP_BUILD; then
     echo "  ✅ Axon Agent built"
     echo ""
 
-    echo "🔨 [2/6] Building Axon MCP Server (release)..."
-    cd "$ROOT_DIR/axon-mcp-server"
-    if $CLEAN; then
-        echo "  🧹 Cleaning..."
-        cargo clean
-    fi
-    cargo build --release
-    echo "  ✅ Axon MCP Server built"
+    echo "🔨 [2/6] Axon MCP Server — merged in-process (build skipped)"
+    echo "  ℹ️  Integration tools (Google/Microsoft/Facebook/Instagram/CRM) now run"
+    echo "      inside axon-agent. No separate axon-mcp binary or process."
     echo ""
 
     echo "🔨 [3/6] Building Axon UI (Vue)..."
@@ -119,7 +114,6 @@ if ! $SKIP_BUILD; then
         fi
     fi
     mkdir -p "$DIST_DIR/core"
-    mkdir -p "$DIST_DIR/mcp"
 
     # ── Axon Agent binary ──
     if [ -f "axon-agent/target/x86_64-unknown-linux-musl/release/axon" ]; then
@@ -152,33 +146,19 @@ if ! $SKIP_BUILD; then
         echo "  ✅ .env copied"
     fi
 
-    # ── MCP Server binary ──
-    if [ -f "axon-mcp-server/target/x86_64-unknown-linux-musl/release/axon-mcp" ]; then
-        cp axon-mcp-server/target/x86_64-unknown-linux-musl/release/axon-mcp "$DIST_DIR/mcp/"
-        echo "  ✅ axon-mcp binary (musl) copied"
-    elif [ -f "axon-mcp-server/target/release/axon-mcp" ]; then
-        cp axon-mcp-server/target/release/axon-mcp "$DIST_DIR/mcp/"
-        echo "  ✅ axon-mcp binary copied"
-    else
-        echo "  ❌ Error: axon-mcp binary not found!"
-        exit 1
-    fi
-
-    # ── MCP Server assets ──
+    # ── OAuth credentials for the in-process integrations ──
+    # axon-mcp is merged into axon-agent, so ship credentials.json into the
+    # agent's working dir where axon_core::Storage looks for it first.
     if [ -f "axon-mcp-server/credentials.json" ]; then
-        cp axon-mcp-server/credentials.json "$DIST_DIR/mcp/"
-        echo "  ✅ credentials.json copied"
+        cp axon-mcp-server/credentials.json "$DIST_DIR/core/"
+        echo "  ✅ credentials.json copied into core/"
     elif [ -f "axon-mcp-server/credentials.example.json" ]; then
-        cp axon-mcp-server/credentials.example.json "$DIST_DIR/mcp/credentials.json"
-        echo "  ⚠️  credentials.example.json copied as credentials.json (update with real values on server)"
+        cp axon-mcp-server/credentials.example.json "$DIST_DIR/core/credentials.json"
+        echo "  ⚠️  credentials.example.json copied as core/credentials.json (update with real values on server)"
     fi
-    if [ -f "axon-mcp-server/.env" ]; then
-        cp axon-mcp-server/.env "$DIST_DIR/mcp/"
-        echo "  [ok] axon-mcp .env copied"
-    elif [ -f "axon-mcp-server/.env.example" ]; then
-        cp axon-mcp-server/.env.example "$DIST_DIR/mcp/.env.example"
-        echo "  [warn] axon-mcp .env.example copied (create .env on server if needed)"
-    fi
+    # NOTE: any AXON_PUBLIC_BASE_URL / AXON_CALLBACK_HOST that lived in the old
+    # axon-mcp .env must now be present in the agent's core/.env (or set as
+    # Instagram settings in the dashboard) for OAuth redirects + IG media URLs.
 
     # ── Qdrant ──
     if [ -d "qdrant" ]; then
@@ -216,28 +196,14 @@ StandardError=append:$DEPLOY_DIR/agent.log
 WantedBy=multi-user.target
 SVC"
 
-    sudo bash -c "cat <<SVC > /etc/systemd/system/axon-mcp.service
-[Unit]
-Description=Axon MCP Server
-After=network.target
-
-[Service]
-Type=simple
-User=$CURR_USER
-WorkingDirectory=$DEPLOY_DIR/mcp
-ExecStart=$DEPLOY_DIR/mcp/axon-mcp
-Restart=always
-RestartSec=5
-StandardOutput=append:$DEPLOY_DIR/mcp.log
-StandardError=append:$DEPLOY_DIR/mcp.log
-
-[Install]
-WantedBy=multi-user.target
-SVC"
+    # axon-mcp is merged into axon-agent: remove any legacy MCP service so it
+    # stops consuming RAM and a port on this 1GB box.
+    sudo systemctl disable --now axon-mcp 2>/dev/null || true
+    sudo rm -f /etc/systemd/system/axon-mcp.service
 
     sudo systemctl daemon-reload
-    sudo systemctl enable axon-agent axon-mcp
-    echo "✅ Services installed and enabled."
+    sudo systemctl enable axon-agent
+    echo "✅ Service installed and enabled."
 }
 
 case "$ACTION" in
@@ -246,17 +212,15 @@ case "$ACTION" in
         ;;
     "start")
         if systemctl is-active --quiet axon-agent; then
-            echo "🔄 Restarting services via systemd..."
-            sudo systemctl restart axon-agent axon-mcp
+            echo "🔄 Restarting service via systemd..."
+            sudo systemctl restart axon-agent
         else
-            echo "🚀 Starting services..."
+            echo "🚀 Starting service..."
             if [ -f "/etc/systemd/system/axon-agent.service" ]; then
-                sudo systemctl start axon-agent axon-mcp
+                sudo systemctl start axon-agent
             else
-                pkill -f axon-mcp || true
                 pkill -f axon || true
                 sleep 1
-                cd "$DEPLOY_DIR/mcp" && ./axon-mcp < /dev/null > "$DEPLOY_DIR/mcp.log" 2>&1 &
                 cd "$DEPLOY_DIR/core" && ./axon > "$DEPLOY_DIR/agent.log" 2>&1 &
                 echo "⚠️ Started in background. Use './run.sh --install' for auto-restart."
             fi
@@ -264,9 +228,8 @@ case "$ACTION" in
         echo "📊 Use 'journalctl -u axon-agent -f' for logs."
         ;;
     "stop")
-        echo "🛑 Stopping services..."
-        sudo systemctl stop axon-agent axon-mcp 2>/dev/null || true
-        pkill -f axon-mcp || true
+        echo "🛑 Stopping service..."
+        sudo systemctl stop axon-agent 2>/dev/null || true
         pkill -f axon || true
         ;;
     "restart")
@@ -275,7 +238,7 @@ case "$ACTION" in
         $0 start
         ;;
     "status")
-        systemctl status axon-agent axon-mcp
+        systemctl status axon-agent
         ;;
     *)
         echo "Usage: ./run.sh [start|stop|restart|status|--install]"
@@ -334,7 +297,8 @@ $GCLOUD_SSH "bash -s" <<REMOTE
     echo "  🔑 Backing up auth tokens..."
     BACKUP_DIR="/tmp/axon_deploy_backup_\$\$"
     mkdir -p "\$BACKUP_DIR"
-    for f in $REMOTE_DIR/axon/mcp/tokens.json $REMOTE_DIR/axon/mcp/credentials.json \
+    for f in $REMOTE_DIR/axon/core/tokens.json $REMOTE_DIR/axon/core/credentials.json \
+             $REMOTE_DIR/axon/mcp/tokens.json $REMOTE_DIR/axon/mcp/credentials.json \
              $REMOTE_DIR/axon/mcp/.env \
              $REMOTE_DIR/mcp/tokens.json $REMOTE_DIR/mcp/credentials.json \
              $REMOTE_DIR/mcp/.env \
@@ -382,9 +346,10 @@ $GCLOUD_SSH "bash -s" <<REMOTE
 
     # ── Restore auth tokens ──
     echo "  🔑 Restoring auth tokens..."
-    [ -f "\$BACKUP_DIR/tokens.json" ] && cp -f "\$BACKUP_DIR/tokens.json" mcp/ 2>/dev/null || true
-    [ -f "\$BACKUP_DIR/credentials.json" ] && cp -f "\$BACKUP_DIR/credentials.json" mcp/ 2>/dev/null || true
-    [ -f "\$BACKUP_DIR/.env" ] && cp -f "\$BACKUP_DIR/.env" mcp/ 2>/dev/null || true
+    # Integrations run in-process now: restore OAuth creds/tokens into the
+    # agent's working dir (core/), where axon_core::Storage looks for them.
+    [ -f "\$BACKUP_DIR/tokens.json" ] && cp -f "\$BACKUP_DIR/tokens.json" core/ 2>/dev/null || true
+    [ -f "\$BACKUP_DIR/credentials.json" ] && cp -f "\$BACKUP_DIR/credentials.json" core/ 2>/dev/null || true
     [ -f "\$BACKUP_DIR/ssh_servers.json" ] && cp -f "\$BACKUP_DIR/ssh_servers.json" core/config/ 2>/dev/null || true
 
     # ── Restore database ──
@@ -411,18 +376,15 @@ $GCLOUD_SSH "bash -s" <<REMOTE
     sudo fuser -k 8080/tcp 2>/dev/null || true
     sleep 2
 
-    sudo chmod +x run.sh core/axon mcp/axon-mcp
+    sudo chmod +x run.sh core/axon
     sudo ./run.sh --install
 
-    echo "  🚀 Starting services..."
-    sudo systemctl start axon-mcp
-    sleep 1
+    echo "  🚀 Starting service..."
     sudo systemctl start axon-agent
     sleep 3
 
     echo "  📋 Service status:"
     sudo systemctl is-active axon-agent && echo "    ✅ axon-agent: running" || echo "    ❌ axon-agent: failed"
-    sudo systemctl is-active axon-mcp && echo "    ✅ axon-mcp: running" || echo "    ❌ axon-mcp: failed"
     echo "  ✅ Deploy complete"
 REMOTE
 echo "  ✅ Services restarted"
@@ -434,4 +396,3 @@ echo "════════════════════════�
 echo ""
 echo "Check status:"
 echo "  gcloud compute ssh $GCP_INSTANCE --zone=$GCP_ZONE -- 'sudo systemctl status axon-agent'"
-echo "  gcloud compute ssh $GCP_INSTANCE --zone=$GCP_ZONE -- 'sudo systemctl status axon-mcp'"

@@ -319,9 +319,28 @@ async fn main() -> anyhow::Result<()> {
         std::env::var("VOYAGE_API_KEY").ok(),
     ));
 
+    // Make integration settings (Instagram base URL, OAuth redirect host, poll
+    // timeouts) visible to the in-process MCP services before they're built.
+    axon::dashboard::api::apply_mcp_env_from_settings(&settings);
+
     let mcp = Arc::new(McpManager::new());
     tools.set_mcp_manager(Arc::clone(&mcp));
     {
+        // Built-in integrations (Google/Microsoft/Facebook/Instagram/CRM/business)
+        // now run in-process — no separate axon-mcp process, no SSE hop.
+        match mcp.connect_inprocess("axon-mcp").await {
+            Ok(ts) => {
+                let n = ts.len();
+                for t in ts {
+                    tools.register(t).await;
+                }
+                tracing::info!("Loaded {} in-process MCP tools", n);
+            }
+            Err(e) => tracing::warn!("In-process MCP init failed: {}", e),
+        }
+
+        // Reconnect any *external* MCP servers the operator added. Skip legacy
+        // local axon-mcp rows — those are now served in-process above.
         let conn = db.get()?;
         let mut s = conn
             .prepare("SELECT name, url, api_key FROM mcp_servers WHERE status != 'disconnected'")?;
@@ -334,9 +353,14 @@ async fn main() -> anyhow::Result<()> {
             .filter_map(|r| r.ok())
             .collect();
         drop(s);
-        let mut has_servers = false;
         for (name, url, key) in rows {
-            has_servers = true;
+            if name == "axon-mcp"
+                || url.contains("127.0.0.1:8080")
+                || url.contains("localhost:8080")
+                || url.contains(":3001/")
+            {
+                continue; // built-in integrations, now handled in-process
+            }
             match mcp.connect(&name, &url, key).await {
                 Ok(ts) => {
                     for t in ts {
@@ -345,31 +369,6 @@ async fn main() -> anyhow::Result<()> {
                     tracing::info!("Reconnected MCP '{}'", name);
                 }
                 Err(e) => tracing::warn!("MCP reconnect '{}' failed: {}", name, e),
-            }
-        }
-
-        if !has_servers {
-            tracing::info!("No MCP servers in DB, auto-connecting to local axon-mcp...");
-            let _ = db.get().unwrap().execute(
-                "INSERT OR IGNORE INTO mcp_servers (name, url, status) VALUES ('axon-mcp', 'http://127.0.0.1:8080/sse', 'connected')",
-                [],
-            );
-            // Also fix any cached wrong port (3001 -> 8080)
-            let _ = db.get().unwrap().execute(
-                "UPDATE mcp_servers SET url = 'http://127.0.0.1:8080/sse', status = 'connected' WHERE name = 'axon-mcp' AND url LIKE '%:3001/%'",
-                [],
-            );
-            match mcp
-                .connect("axon-mcp", "http://127.0.0.1:8080/sse", None)
-                .await
-            {
-                Ok(ts) => {
-                    for t in ts {
-                        tools.register(t).await;
-                    }
-                    tracing::info!("Auto-connected local MCP");
-                }
-                Err(e) => tracing::warn!("Auto-connect local MCP failed: {}", e),
             }
         }
     }
