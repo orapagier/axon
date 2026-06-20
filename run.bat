@@ -29,13 +29,13 @@ if %errorlevel% neq 0 (
 :: Step 2: Sync Static Files to Backend
 echo [2/3] Deploying static files to backend...
 cd /d "%~dp0"
-if not exist "axon-agent\static" mkdir "axon-agent\static"
+if not exist "crates\axon-agent\static" mkdir "crates\axon-agent\static"
 
 :: Clean old files using PowerShell for better reliability with wildcards
-powershell -Command "Remove-Item -Path 'axon-agent\static\*' -Recurse -Force -ErrorAction SilentlyContinue"
+powershell -Command "Remove-Item -Path 'crates\axon-agent\static\*' -Recurse -Force -ErrorAction SilentlyContinue"
 
 :: Copy new files
-powershell -Command "Copy-Item -Path 'axon-ui\dist\*' -Destination 'axon-agent\static' -Recurse -Force"
+powershell -Command "Copy-Item -Path 'axon-ui\dist\*' -Destination 'crates\axon-agent\static' -Recurse -Force"
 if %errorlevel% neq 0 (
     echo [ERROR] Failed to copy static files!
     pause
@@ -44,7 +44,7 @@ if %errorlevel% neq 0 (
 
 :: Step 3: Run Backend
 echo [3/3] Starting Backend Server (axon-agent)...
-cd /d "%~dp0axon-agent"
+cd /d "%~dp0crates\axon-agent"
 
 :: Stop any existing axon process to avoid build locks
 powershell -Command "Stop-Process -Name axon -Force -ErrorAction SilentlyContinue"

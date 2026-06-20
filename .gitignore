@@ -9,8 +9,8 @@ node_modules/
 axon-ui/dist/
 
 # ── Built UI copied into the agent ──
-axon-agent/static/assets/
-axon-agent/static/index.html
+crates/axon-agent/static/assets/
+crates/axon-agent/static/index.html
 
 # ── Runtime data / databases ──
 **/memory/*.db

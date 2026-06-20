@@ -1179,7 +1179,7 @@ fn load_font_with_fallback(primary_path: &str) -> Result<LoadedFont> {
 /// Discovery order:
 ///   1. `AXON_DATA_DIR` env-var  (set this at deploy time, e.g. `/opt/axon/data`)
 ///   2. Walk up from the running executable looking for a `data/files` sub-dir
-///      (covers `target/release/axon-agent` Ã¢â€ â€™ `data/files` three levels up)
+///      (covers `target/release/axon` -> `data/files` three levels up)
 ///   3. Walk up from the current working directory
 ///
 /// Returns `None` only if none of the above locations exist on disk.

@@ -17,16 +17,16 @@ router, memory, tools, integrations, scheduling, workflows, security, and troubl
 
 | Path | What it is |
 |------|-----------|
-| `axon-agent/` | **The core agent + web dashboard** (Rust). The main binary you run. Serves the HTTP API, dashboard UI, WebSocket stream, webhooks, scheduler, watcher, and the agent reasoning loop. |
-| `axon-mcp-server/` | **Integration tool crates** (Rust workspace): Google, Microsoft, Facebook, Instagram, CRM, business/utility tools. These are now compiled **directly into `axon-agent`** and run in-process; the standalone `axon-mcp` binary is no longer built or deployed. |
+| `Cargo.toml` | **Cargo workspace root** — ties every Rust crate under `crates/` into one build (a single `target/` and `Cargo.lock`). Shared build profiles live here. |
+| `crates/axon-agent/` | **The core agent + web dashboard** (Rust, package `axon`). The main binary you run. Serves the HTTP API, dashboard UI, WebSocket stream, webhooks, scheduler, watcher, and the agent reasoning loop. |
+| `crates/axon-core`, `axon-google`, `axon-microsoft`, `axon-facebook`, `axon-instagram`, `axon-business`, `axon-crm` | **Integration tool crates** (Rust): Google, Microsoft, Facebook, Instagram, CRM, and business/utility tools. Compiled **directly into `axon-agent`** as path dependencies and run in-process — there is no standalone `axon-mcp` binary or process. |
+| `crates/axon-image/` | Image-processing/generation library (Rust, crate `image_processor`) used by the agent's `image_tool`. |
 | `axon-ui/` | **Web dashboard** (Vue 3 + Vite). Built to static files and served by `axon-agent`. |
-| `axon-api-proxy/` | Standalone LLM API key-pool proxy (Rust). |
-| `axon-image/` | Image-processing/generation library (Rust) used by the agent's `image_tool`. |
 | `qdrant/` | Deployment scripts for the Qdrant vector DB (systemd units, backup/health/trim timers, collection setup). |
-| `deploy.sh`, `deploygcp.sh`, `deployfrontend.sh` | Production build + deploy scripts (build release binaries, bundle, ship to the server). |
+| `deployaxongcp.sh`, `deploycham*.sh`, `deployfrontend.sh` | Production build + deploy scripts (build release binaries, bundle, ship to the server). |
 | `run.bat` | One-click local Windows build-and-run (builds UI, copies static, runs agent). |
-| `axon-agent/config/models.toml` | **Model catalog** — the source of truth for which LLMs Axon can use. |
-| `axon-agent/memory/schema.sql` | SQLite schema applied on startup. |
+| `crates/axon-agent/config/models.toml` | **Model catalog** — the source of truth for which LLMs Axon can use. |
+| `crates/axon-agent/memory/schema.sql` | SQLite schema applied on startup. |
 
 The various `.zip`/`.tar.gz` files are build/deploy archives and can be ignored for
 day-to-day operation.
@@ -86,7 +86,7 @@ run.bat
 
 `run.bat` will:
 1. `npm install` (if needed) and `npm run build` inside `axon-ui/`.
-2. Copy `axon-ui/dist/*` into `axon-agent/static/`.
+2. Copy `axon-ui/dist/*` into `crates/axon-agent/static/`.
 3. Stop any running `axon` process, then `cargo run` the agent.
 
 Manual equivalent (any OS):
@@ -99,17 +99,17 @@ npm run build
 
 # 2) Make the built UI available to the agent
 #    (the agent serves ./static as the dashboard)
-mkdir -p ../axon-agent/static
-cp -r dist/* ../axon-agent/static/
+mkdir -p ../crates/axon-agent/static
+cp -r dist/* ../crates/axon-agent/static/
 
 # 3) Run the agent
-cd ../axon-agent
-cargo run            # or: cargo run --release
+cd ../crates/axon-agent
+cargo run            # or: cargo run --release   (from anywhere in the workspace)
 ```
 
 Then open **http://localhost:3000**.
 
-> The agent serves the UI from `axon-agent/static/`. If you change UI code, rebuild the UI
+> The agent serves the UI from `crates/axon-agent/static/`. If you change UI code, rebuild the UI
 > and re-copy `dist/` into `static/` (this is exactly what `run.bat` automates).
 
 The Google/Microsoft/Facebook/Instagram/CRM tools are built into the agent and start
@@ -283,7 +283,7 @@ ground truth — this is enforced in the system prompt and the claim guard.
 - **Tool authoring:** when `agent.allow_tool_writing` is on, the agent can write a temporary
   tool on the fly for a one-off need.
 
-### Built-in integrations (in-process, from the `axon-mcp-server` crates)
+### Built-in integrations (in-process, from the `crates/axon-*` integration crates)
 Gmail, Google Calendar/Drive/Docs/Sheets/Slides/Contacts/Tasks/Meet/Chat/Forms/Places/
 YouTube; Microsoft Outlook/Calendar/OneDrive/Teams; Facebook pages/posts/comments/insights/
 messaging; Instagram publishing; a CRM (leads/deals/orgs/activities); and business utilities
@@ -350,7 +350,7 @@ Set the relevant token (env var or `messaging.*` setting) and restart:
 
 ## 13. Production deployment
 
-`deploy.sh` builds release binaries for `axon-agent` and `axon-mcp-server`, builds the UI,
+`deploy.sh` builds the release `axon` binary (with the integration crates compiled in), builds the UI,
 bundles everything into `axon_deploy.tar.gz`, and ships it to the configured server. Useful
 flags:
 
@@ -394,10 +394,10 @@ log at `/tmp/autoreply_debug.log` on the server.
 - **Default URL:** http://localhost:3000
 - **Agent port:** `AXON_PORT` (default `3000`)
 - **Integrations:** in-process (the former `axon-mcp` on `:8080` is merged into the agent)
-- **Database:** `axon-agent/memory/axon.db` (`AXON_DB_PATH`)
-- **Built UI is served from:** `axon-agent/static/`
-- **Staged files:** `axon-agent/data/files/`
-- **Model catalog:** `axon-agent/config/models.toml`
+- **Database:** `crates/axon-agent/memory/axon.db` (`AXON_DB_PATH`)
+- **Built UI is served from:** `crates/axon-agent/static/`
+- **Staged files:** `crates/axon-agent/data/files/`
+- **Model catalog:** `crates/axon-agent/config/models.toml`
 - **Local run:** `run.bat` (Windows) — builds UI, copies static, runs the agent.
 </content>
 </invoke>

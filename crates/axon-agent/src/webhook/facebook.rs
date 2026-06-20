@@ -108,7 +108,7 @@ fn reply_queue() -> &'static tokio::sync::mpsc::Sender<ReplyJob> {
     })
 }
 
-// ── Credentials from ../mcp/credentials.json ─────────────────────────────────
+// ── Credentials from credentials.json (agent working dir) ────────────────────
 
 static FB_CREDS: OnceCell<FbCreds> = OnceCell::new();
 
@@ -121,10 +121,11 @@ pub struct FbCreds {
 
 pub fn load_fb_creds() -> &'static FbCreds {
     FB_CREDS.get_or_init(|| {
-        // Try ../mcp/credentials.json (deploy layout), then axon-mcp-server/credentials.json (dev layout)
+        // credentials.json lives in the agent's working dir (CWD): crates/axon-agent
+        // in dev, or the deploy `core/` dir in prod. ../mcp/ kept as a legacy fallback.
         let paths = [
+            "credentials.json",
             "../mcp/credentials.json",
-            "../axon-mcp-server/credentials.json",
         ];
         for path in &paths {
             if let Ok(data) = std::fs::read_to_string(path) {

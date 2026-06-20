@@ -33,11 +33,11 @@ fi
 npm run build
 echo "  ✅ Build complete"
 
-# 2. Sync dist → axon-agent/static (same as main deploy)
-echo "📂 [2/4] Syncing to axon-agent/static..."
-rm -rf "$ROOT_DIR/axon-agent/static"
-mkdir -p "$ROOT_DIR/axon-agent/static"
-cp -r dist/* "$ROOT_DIR/axon-agent/static/"
+# 2. Sync dist → crates/axon-agent/static (same as main deploy)
+echo "📂 [2/4] Syncing to crates/axon-agent/static..."
+rm -rf "$ROOT_DIR/crates/axon-agent/static"
+mkdir -p "$ROOT_DIR/crates/axon-agent/static"
+cp -r dist/* "$ROOT_DIR/crates/axon-agent/static/"
 echo "  ✅ Local static synced"
 
 # 3. Bundle and upload

@@ -56,7 +56,7 @@ if ! $SKIP_BUILD; then
     fi
 
     echo "🔨 [1/6] Building Axon Agent (release)..."
-    cd "$ROOT_DIR/axon-agent"
+    cd "$ROOT_DIR/crates/axon-agent"
     if $CLEAN; then
         echo "  🧹 Cleaning..."
         cargo clean
@@ -91,11 +91,11 @@ if ! $SKIP_BUILD; then
     fi
     npm run build
     
-    # Update axon-agent/static with the new build
-    rm -rf "$ROOT_DIR/axon-agent/static"
-    mkdir -p "$ROOT_DIR/axon-agent/static"
-    cp -r dist/* "$ROOT_DIR/axon-agent/static/"
-    echo "  ✅ Axon UI built and synced to axon-agent/static"
+    # Update crates/axon-agent/static with the new build
+    rm -rf "$ROOT_DIR/crates/axon-agent/static"
+    mkdir -p "$ROOT_DIR/crates/axon-agent/static"
+    cp -r dist/* "$ROOT_DIR/crates/axon-agent/static/"
+    echo "  ✅ Axon UI built and synced to crates/axon-agent/static"
     echo ""
 
     # ── Step 2: Bundle ───────────────────────────────────────────────────────
@@ -113,11 +113,11 @@ if ! $SKIP_BUILD; then
     mkdir -p "$DIST_DIR/core"
 
     # ── Axon Agent binary ──
-    if [ -f "axon-agent/target/x86_64-unknown-linux-musl/release/axon" ]; then
-        cp axon-agent/target/x86_64-unknown-linux-musl/release/axon "$DIST_DIR/core/"
+    if [ -f "target/x86_64-unknown-linux-musl/release/axon" ]; then
+        cp target/x86_64-unknown-linux-musl/release/axon "$DIST_DIR/core/"
         echo "  ✅ axon binary (musl) copied"
-    elif [ -f "axon-agent/target/release/axon" ]; then
-        cp axon-agent/target/release/axon "$DIST_DIR/core/"
+    elif [ -f "target/release/axon" ]; then
+        cp target/release/axon "$DIST_DIR/core/"
         echo "  ✅ axon binary copied"
     else
         echo "  ❌ Error: axon binary not found!"
@@ -125,32 +125,32 @@ if ! $SKIP_BUILD; then
     fi
 
     # ── Axon Agent assets ──
-    cp -r axon-agent/static "$DIST_DIR/core/"
-    cp -r axon-agent/config "$DIST_DIR/core/"
-    cp -r axon-agent/tools "$DIST_DIR/core/"
-    if [ -d "axon-agent/data" ]; then
-        cp -r axon-agent/data "$DIST_DIR/core/"
+    cp -r crates/axon-agent/static "$DIST_DIR/core/"
+    cp -r crates/axon-agent/config "$DIST_DIR/core/"
+    cp -r crates/axon-agent/tools "$DIST_DIR/core/"
+    if [ -d "crates/axon-agent/data" ]; then
+        cp -r crates/axon-agent/data "$DIST_DIR/core/"
     fi
     # Copy memory assets but skip locked/local database files
     mkdir -p "$DIST_DIR/core/memory"
-    if [ -d "axon-agent/memory" ]; then
-        find axon-agent/memory -type f ! -name "*.db" ! -name "*.sqlite" ! -name "*.db-wal" ! -name "*.db-shm" -exec cp {} "$DIST_DIR/core/memory/" \; 2>/dev/null || true
+    if [ -d "crates/axon-agent/memory" ]; then
+        find crates/axon-agent/memory -type f ! -name "*.db" ! -name "*.sqlite" ! -name "*.db-wal" ! -name "*.db-shm" -exec cp {} "$DIST_DIR/core/memory/" \; 2>/dev/null || true
     fi
 
-    [ -f "axon-agent/.env.example" ] && cp axon-agent/.env.example "$DIST_DIR/core/.env.example"
-    if [ -f "axon-agent/.env" ]; then
-        cp axon-agent/.env "$DIST_DIR/core/"
+    [ -f "crates/axon-agent/.env.example" ] && cp crates/axon-agent/.env.example "$DIST_DIR/core/.env.example"
+    if [ -f "crates/axon-agent/.env" ]; then
+        cp crates/axon-agent/.env "$DIST_DIR/core/"
         echo "  ✅ .env copied"
     fi
 
     # ── OAuth credentials for the in-process integrations ──
     # axon-mcp is merged into axon-agent, so ship credentials.json into the
     # agent's working dir where axon_core::Storage looks for it first.
-    if [ -f "axon-mcp-server/credentials.json" ]; then
-        cp axon-mcp-server/credentials.json "$DIST_DIR/core/"
+    if [ -f "crates/axon-agent/credentials.json" ]; then
+        cp crates/axon-agent/credentials.json "$DIST_DIR/core/"
         echo "  ✅ credentials.json copied into core/"
-    elif [ -f "axon-mcp-server/credentials.example.json" ]; then
-        cp axon-mcp-server/credentials.example.json "$DIST_DIR/core/credentials.json"
+    elif [ -f "crates/axon-agent/credentials.example.json" ]; then
+        cp crates/axon-agent/credentials.example.json "$DIST_DIR/core/credentials.json"
         echo "  ⚠️  credentials.example.json copied as core/credentials.json (update with real values on server)"
     fi
     # NOTE: any AXON_PUBLIC_BASE_URL / AXON_CALLBACK_HOST that lived in the old
@@ -374,7 +374,6 @@ ssh $SSH_OPTS "$TARGET_SERVER" "bash -s" <<REMOTE
     sudo pkill -9 -f axon-mcp 2>/dev/null || true
     sudo pkill -9 -f 'core/axon' 2>/dev/null || true
     sudo fuser -k 3000/tcp 2>/dev/null || true
-    sudo fuser -k 8080/tcp 2>/dev/null || true
     sleep 2
 
     sudo chmod +x run.sh core/axon

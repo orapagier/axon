@@ -58,15 +58,11 @@ image = "0.25"
 
 # In-process MCP integration services (merged from axon-mcp-server).
 rmcp           = { version = "0.1", features = ["server"] }
-axon-core      = { path = "../axon-mcp-server/crates/axon-core" }
-axon-google    = { path = "../axon-mcp-server/crates/axon-google" }
-axon-microsoft = { path = "../axon-mcp-server/crates/axon-microsoft" }
-axon-facebook  = { path = "../axon-mcp-server/crates/axon-facebook" }
-axon-instagram = { path = "../axon-mcp-server/crates/axon-instagram" }
-axon-business  = { path = "../axon-mcp-server/crates/axon-business" }
-axon-crm       = { path = "../axon-mcp-server/crates/axon-crm" }
+axon-core      = { path = "../axon-core" }
+axon-google    = { path = "../axon-google" }
+axon-microsoft = { path = "../axon-microsoft" }
+axon-facebook  = { path = "../axon-facebook" }
+axon-instagram = { path = "../axon-instagram" }
+axon-business  = { path = "../axon-business" }
+axon-crm       = { path = "../axon-crm" }
 
-[profile.dev]
-debug = 0
-codegen-units = 1
-incremental = false
