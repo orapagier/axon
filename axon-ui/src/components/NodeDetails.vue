@@ -500,7 +500,12 @@ function resolveExpression(expr) {
   if (!hasExpression(expr)) return null
 
   // Matches both: {{ $node["X"].data.path }} and bare $node["X"].data.path
-  const regex = /\{?\{?\s*\$?node\[['"](.+?)['"]\]\.(?:data|output|json)\.?([a-zA-Z0-9_\-\.\[\]]*)\s*\}?\}?/g
+  // The leading {{ and trailing }} (plus their inner padding) are matched as a
+  // single optional unit so that, for the bare form, a trailing space the user
+  // typed after the token is NOT swallowed into the match (and thus erased on
+  // replace). Previously a lone `\s*` here ate that space, making the resolved
+  // value stick to the next word unless the user wrapped it in {{ }}.
+  const regex = /(?:\{\{\s*)?\$?node\[['"](.+?)['"]\]\.(?:data|output|json)\.?([a-zA-Z0-9_\-\.\[\]]*)(?:\s*\}\})?/g
   let resolved = expr
   let match
 
