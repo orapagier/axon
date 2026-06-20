@@ -138,9 +138,15 @@ if ! $SKIP_BUILD; then
     fi
 
     [ -f "crates/axon-agent/.env.example" ] && cp crates/axon-agent/.env.example "$DIST_DIR/core/.env.example"
-    if [ -f "crates/axon-agent/.env" ]; then
+    # ── Canchowlung (cham) instance env ──
+    # This server runs a DIFFERENT Telegram bot token from the main instance, so
+    # ship canchowlung.env renamed to .env instead of the main .env.
+    if [ -f "crates/axon-agent/canchowlung.env" ]; then
+        cp crates/axon-agent/canchowlung.env "$DIST_DIR/core/.env"
+        echo "  ✅ canchowlung.env copied as .env"
+    elif [ -f "crates/axon-agent/.env" ]; then
         cp crates/axon-agent/.env "$DIST_DIR/core/"
-        echo "  ✅ .env copied"
+        echo "  ⚠️  canchowlung.env not found — fell back to main .env"
     fi
 
     # ── OAuth credentials for the in-process integrations ──
