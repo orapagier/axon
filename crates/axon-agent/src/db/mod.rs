@@ -46,6 +46,12 @@ const MIGRATIONS: &[Migration] = &[
         sql: include_str!("migrations/0003_column_additions.sql"),
         tolerant_dup_column: true,
     },
+    Migration {
+        version: 4,
+        name: "telegram_reply_routes",
+        sql: include_str!("migrations/0004_telegram_reply_routes.sql"),
+        tolerant_dup_column: false,
+    },
 ];
 
 const SEED_SQL: &str = include_str!("seed.sql");
@@ -188,7 +194,7 @@ mod tests {
         let max: i64 = conn
             .query_row("SELECT MAX(version) FROM schema_migrations", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(max, 3, "all migrations should be recorded");
+        assert_eq!(max, 4, "all migrations should be recorded");
 
         for t in [
             "settings",
@@ -200,6 +206,7 @@ mod tests {
             "tool_patterns",
             "observations",
             "schema_migrations",
+            "telegram_reply_routes",
         ] {
             assert!(table_exists(&conn, t), "missing table {t}");
         }

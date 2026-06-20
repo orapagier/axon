@@ -630,6 +630,24 @@ impl TelegramGateway {
         Ok(None)
     }
 
+    /// If `message_id` (in `chat_id`) was sent by a workflow, return its
+    /// workflow id. Populated by the workflow engine whenever a telegram node
+    /// sends a message. A `None` here means the replied-to message did not come
+    /// from a workflow (e.g. it was an agent message) → handle normally.
+    fn lookup_reply_route(
+        state: &crate::state::AppState,
+        chat_id: &str,
+        message_id: i64,
+    ) -> Option<String> {
+        let conn = state.db.get().ok()?;
+        conn.query_row(
+            "SELECT workflow_id FROM telegram_reply_routes WHERE chat_id = ?1 AND message_id = ?2 LIMIT 1",
+            rusqlite::params![chat_id, message_id],
+            |r| r.get::<_, String>(0),
+        )
+        .ok()
+    }
+
     fn fetch_workflow_run_summary(
         state: &crate::state::AppState,
         run_id: &str,
@@ -1356,6 +1374,79 @@ impl TelegramGateway {
                 return;
             }
             return;
+        }
+
+        // ── Reply-to-workflow routing ──────────────────────────────────────
+        // If this message is a "reply to" a Telegram message that a workflow
+        // sent, deliver the reply (plus the original replied-to message) to that
+        // workflow's telegram trigger node and stop — do NOT fall through to the
+        // main agent. Slash commands were already handled above, so they are
+        // unaffected. Replies to non-workflow messages have no route entry and
+        // continue to the normal handling below (ending at the main agent).
+        if let Some(reply) = msg.get("reply_to_message") {
+            let replied_msg_id = reply
+                .get("message_id")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            if replied_msg_id > 0 {
+                if let Some(stored_wf) =
+                    Self::lookup_reply_route(&state, &chat_id, replied_msg_id)
+                {
+                    // Confirm the workflow still exists & is enabled, and the
+                    // chat is allowed to run workflows; otherwise fall through.
+                    if let Ok(Some((wf_id, wf_name))) =
+                        Self::resolve_workflow_id_by_name_or_id(&state, &stored_wf)
+                    {
+                        if Self::workflow_access_allowed(&state, &chat_id, user_id.as_deref()) {
+                            let replied_text = reply
+                                .get("text")
+                                .and_then(|v| v.as_str())
+                                .or_else(|| reply.get("caption").and_then(|v| v.as_str()))
+                                .unwrap_or("");
+                            let trigger_data = json!({
+                                "trigger": "telegram",
+                                "events": [{
+                                    "type": "reply",
+                                    "chat_id": chat_id,
+                                    "text": text.clone(),
+                                    "caption": caption.clone(),
+                                    "from": msg.get("from").cloned().unwrap_or_else(|| json!({})),
+                                    "message": msg.clone(),
+                                    "reply_to_message": reply.clone(),
+                                    "replied_text": replied_text,
+                                }]
+                            });
+                            tracing::info!(
+                                "[TELEGRAM] Reply to workflow message → routing to workflow '{}' (id={})",
+                                wf_name,
+                                wf_id
+                            );
+                            let state_clone = Arc::clone(&state);
+                            tokio::spawn(async move {
+                                crate::tools::workflow::WorkflowEngine::set_telegram_trigger_data(
+                                    wf_id.clone(),
+                                    trigger_data,
+                                )
+                                .await;
+                                if let Err(e) =
+                                    crate::tools::workflow::WorkflowEngine::run_in_background(
+                                        &wf_id,
+                                        &state_clone,
+                                        None,
+                                    )
+                                {
+                                    tracing::error!(
+                                        "[TELEGRAM] reply→workflow run failed (id={}): {}",
+                                        wf_id,
+                                        e
+                                    );
+                                }
+                            });
+                            return;
+                        }
+                    }
+                }
+            }
         }
 
         // Extract file_id from document, photo, audio, video, or voice

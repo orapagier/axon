@@ -964,6 +964,39 @@ fn try_parse_json_value(val: Value) -> Value {
     val
 }
 
+// ── Telegram reply-route registry ─────────────────────────────────────────────
+
+/// Record that `workflow_id` sent a Telegram message, keyed by (chat_id,
+/// message_id), so a later "reply to" that message can be routed back into this
+/// workflow's telegram trigger. Called after any `telegram` node succeeds; the
+/// node output is the Telegram `Message` result containing `message_id` + `chat`.
+/// No-ops for operations that return no message (e.g. deleteMessage).
+fn record_telegram_reply_route(state: &AppState, workflow_id: &str, output: &Value) {
+    let (Some(message_id), Some(chat_id)) = (
+        output.get("message_id").and_then(|v| v.as_i64()),
+        output.pointer("/chat/id").and_then(|v| v.as_i64()),
+    ) else {
+        return;
+    };
+    let Ok(conn) = state.db.get() else {
+        return;
+    };
+    if let Err(e) = conn.execute(
+        "INSERT INTO telegram_reply_routes (chat_id, message_id, workflow_id, created_at)
+         VALUES (?1, ?2, ?3, datetime('now'))
+         ON CONFLICT(chat_id, message_id)
+         DO UPDATE SET workflow_id = excluded.workflow_id, created_at = excluded.created_at",
+        rusqlite::params![chat_id.to_string(), message_id, workflow_id],
+    ) {
+        tracing::warn!("Failed to record telegram reply route: {}", e);
+    }
+    // Opportunistic TTL prune so the table can't grow unbounded.
+    let _ = conn.execute(
+        "DELETE FROM telegram_reply_routes WHERE created_at < datetime('now','-30 days')",
+        [],
+    );
+}
+
 // ── Gmail Trigger Executor ────────────────────────────────────────────────────
 
 async fn execute_gmail_trigger(
@@ -2599,6 +2632,12 @@ impl WorkflowEngine {
 
             node_results.insert(current_id.clone(), nr.clone());
             ordered_results.push(nr.clone());
+
+            // Register workflow-sent Telegram messages so replies can be routed
+            // back to this workflow's telegram trigger.
+            if nr.status == "success" && nr.node_type == "telegram" {
+                record_telegram_reply_route(state, workflow_id, &nr.output);
+            }
 
             // Halting logic: if stop on error and node failed, break the whole workflow.
             if status == "error" && !node.continue_on_fail {
