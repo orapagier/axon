@@ -9,40 +9,11 @@ members = [
     "crates/axon-business",
     "crates/axon-crm",
 ]
-default-members = ["."]
 
-[package]
-name    = "axon-mcp"
-version = "2.0.0"
-edition = "2021"
-
-[[bin]]
-name = "axon-mcp"
-path = "src/main.rs"
-
-[dependencies]
-axon-core      = { path = "crates/axon-core" }
-axon-google    = { path = "crates/axon-google" }
-axon-microsoft = { path = "crates/axon-microsoft" }
-axon-facebook  = { path = "crates/axon-facebook" }
-axon-instagram = { path = "crates/axon-instagram" }
-axon-business  = { path = "crates/axon-business" }
-axon-crm       = { path = "crates/axon-crm" }
-
-rmcp      = { version = "0.1", features = ["server", "transport-io"] }
-axum      = { version = "0.7", features = ["macros", "ws"] }
-tower-http = { version = "0.5", features = ["cors"] }
-tokio     = { version = "1",   features = ["full"] }
-anyhow    = "1"
-async-trait = "0.1"
-serde     = { version = "1", features = ["derive"] }
-serde_json = "1"
-tracing   = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-dotenvy = "0.15"
-reqwest-eventsource = "0.6.0"
-tokio-stream = "0.1.18"
-uuid = { version = "1.22.0", features = ["v4"] }
+# This is a virtual workspace: the integration crates above are compiled
+# directly into axon-agent as path dependencies (see axon-agent/Cargo.toml).
+# The old standalone `axon-mcp` binary that ran on :8080 was removed when the
+# MCP server was merged in-process — there is no root package or [[bin]] here.
 
 [profile.release]
 opt-level = 3
