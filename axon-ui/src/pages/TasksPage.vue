@@ -333,7 +333,7 @@ onMounted(load)
 .empty-state {
   padding: 40px;
   text-align: center;
-  color: rgba(0, 0, 0, 0.35);
+  color: var(--muted);
   font-size: 14px;
 }
 
@@ -386,7 +386,7 @@ onMounted(load)
 }
 
 .divider {
-  color: rgba(0, 0, 0, 0.28);
+  color: var(--muted);
 }
 
 .job-task-preview {

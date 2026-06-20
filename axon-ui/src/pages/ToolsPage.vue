@@ -147,7 +147,7 @@ onMounted(load)
 }
 
 .empty-state {
-  color: rgba(0, 0, 0, 0.3);
+  color: var(--muted);
   font-size: 14px;
 }
 

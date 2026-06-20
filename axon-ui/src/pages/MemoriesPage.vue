@@ -291,7 +291,7 @@ onMounted(() => {
 
 .time-text {
   font-size: 12px;
-  color: rgba(0, 0, 0, 0.4);
+  color: var(--muted);
 }
 
 .collapse-icon {
@@ -423,7 +423,7 @@ onMounted(() => {
 .empty-state {
   padding: 40px;
   text-align: center;
-  color: rgba(0, 0, 0, 0.3);
+  color: var(--muted);
   font-size: 14px;
 }
 

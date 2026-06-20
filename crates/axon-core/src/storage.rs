@@ -59,6 +59,47 @@ fn tokens_path() -> PathBuf {
     }
 }
 
+/// Parse credentials.json, accepting either Axon's native flat format
+/// (`{"google": {...}, "microsoft": {...}, "facebook": {...}}`) or a raw
+/// Google Cloud Console OAuth client download (`{"web": {...}}` or
+/// `{"installed": {...}}`), which is mapped onto the `google` section.
+///
+/// Without this, dropping the console-downloaded JSON in as credentials.json
+/// would silently parse to empty Google creds and later fail with a confusing
+/// "Google credentials not configured" / token error.
+fn parse_credentials(raw: &str) -> Result<Credentials> {
+    let value: serde_json::Value =
+        serde_json::from_str(raw).context("credentials.json is not valid JSON")?;
+
+    // Google Cloud Console client download → map to the google section.
+    if let Some(client) = value.get("web").or_else(|| value.get("installed")) {
+        let client_id = client
+            .get("client_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        if !client_id.is_empty() {
+            let client_secret = client
+                .get("client_secret")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            return Ok(Credentials {
+                google: Some(GoogleCreds {
+                    client_id,
+                    client_secret,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            });
+        }
+    }
+
+    // Axon's native flat format.
+    serde_json::from_value(value)
+        .context("expected google/microsoft/facebook sections or a Google client JSON")
+}
+
 fn ensure_dirs() -> Result<()> {
     fs::create_dir_all(config_dir())?;
     fs::create_dir_all(data_dir())?;
@@ -146,7 +187,7 @@ impl Storage {
 
         let credentials = if creds_path().exists() {
             let raw = fs::read_to_string(creds_path()).context("reading credentials.json")?;
-            serde_json::from_str(&raw).context("parsing credentials.json")?
+            parse_credentials(&raw).context("parsing credentials.json")?
         } else {
             Credentials::default()
         };

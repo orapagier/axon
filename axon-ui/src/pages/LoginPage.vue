@@ -136,7 +136,7 @@ async function handleLogin() {
 .login-footer {
   margin-top: 32px;
   font-size: 12px;
-  color: rgba(0, 0, 0, 0.3);
+  color: var(--muted);
 }
 
 .login-footer code {

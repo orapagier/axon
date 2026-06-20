@@ -409,7 +409,7 @@ body {
 }
 
 .welcome-desc {
-    color: rgba(0, 0, 0, 0.5);
+    color: var(--muted);
     line-height: 1.6;
     font-size: 15px;
     z-index: 1;
@@ -472,7 +472,7 @@ body {
 
 .chat-meta {
     font-size: 11px;
-    color: rgba(0, 0, 0, 0.4);
+    color: var(--muted);
     margin-top: 6px;
     display: flex;
     gap: 8px;
@@ -581,7 +581,7 @@ body {
 }
 
 .chat-textarea::placeholder {
-    color: rgba(0, 0, 0, 0.3);
+    color: var(--muted);
 }
 
 /* Chat send button — consolidated into the "POLISHED BUTTON SYSTEM" at end of file. */
@@ -594,7 +594,7 @@ body {
 
 .hint {
     font-size: 11px;
-    color: rgba(0, 0, 0, 0.3);
+    color: var(--muted);
 }
 
 /* ── Cards & common ───────────────────────────────────────────────────────── */

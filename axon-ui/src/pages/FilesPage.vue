@@ -366,7 +366,7 @@ onMounted(load)
 }
 
 .divider {
-  color: rgba(0, 0, 0, 0.14);
+  color: var(--muted);
 }
 
 .empty-state {

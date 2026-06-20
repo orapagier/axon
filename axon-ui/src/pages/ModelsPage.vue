@@ -321,7 +321,7 @@ onMounted(load)
 }
 
 .page-desc {
-  color: rgba(0, 0, 0, 0.5);
+  color: var(--muted);
   font-size: 14px;
   margin: 0;
 }
@@ -349,7 +349,7 @@ onMounted(load)
 .card-title-group h2 {
   font-size: 13px;
   font-weight: 800;
-  color: rgba(0, 0, 0, 0.8);
+  color: var(--text);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   margin: 0;
@@ -358,7 +358,7 @@ onMounted(load)
 .card-summary {
   font-size: 12px;
   font-weight: 600;
-  color: rgba(0, 0, 0, 0.4);
+  color: var(--muted);
   background: rgba(0, 0, 0, 0.2);
   padding: 4px 10px;
   border-radius: 20px;
@@ -429,14 +429,14 @@ onMounted(load)
 
 .model-id-text {
   font-size: 13px;
-  color: rgba(0, 0, 0, 0.5);
+  color: var(--muted);
   font-family: 'Fira Code', monospace;
 }
 
 .priority-pill {
   font-size: 10px;
   font-weight: 700;
-  color: rgba(0, 0, 0, 0.3);
+  color: var(--muted);
   background: rgba(0, 0, 0, 0.05);
   padding: 1px 6px;
   border-radius: 4px;
@@ -462,14 +462,14 @@ onMounted(load)
   font-size: 10px;
   font-weight: 800;
   text-transform: uppercase;
-  color: rgba(0, 0, 0, 0.3);
+  color: var(--muted);
   letter-spacing: 0.05em;
 }
 
 .stat-value {
   font-size: 13px;
   font-weight: 600;
-  color: rgba(0, 0, 0, 0.8);
+  color: var(--text);
 }
 
 .text-danger {
@@ -486,7 +486,7 @@ onMounted(load)
   justify-content: space-between;
   font-size: 11px;
   font-weight: 700;
-  color: rgba(0, 0, 0, 0.4);
+  color: var(--muted);
   margin-bottom: 6px;
   text-transform: uppercase;
   letter-spacing: 0.02em;
@@ -512,7 +512,7 @@ onMounted(load)
 }
 
 .empty-state {
-  color: rgba(0, 0, 0, 0.2);
+  color: var(--muted);
   font-style: italic;
   font-size: 15px;
 }

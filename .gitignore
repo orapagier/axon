@@ -27,6 +27,7 @@ crates/axon-agent/static/index.html
 !*.env.example
 *.key
 credentials.json
+newcredentials.json
 tokens.json
 
 # ── Deploy bundles / archives ──
