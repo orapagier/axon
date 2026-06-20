@@ -68,9 +68,9 @@ if ! $SKIP_BUILD; then
     echo "  ✅ Axon Agent built"
     echo ""
 
-    echo "🔨 [2/6] Axon MCP Server — merged in-process (build skipped)"
-    echo "  ℹ️  Integration tools (Google/Microsoft/Facebook/Instagram/CRM) now run"
-    echo "      inside axon-agent. No separate axon-mcp binary or process."
+    echo "🔨 [2/6] Integration services — built into axon-agent (no separate build)"
+    echo "  ℹ️  Integration tools (Google/Microsoft/Facebook/Instagram/CRM) run"
+    echo "      inside axon-agent — no separate binary or process."
     echo ""
 
     echo "🔨 [3/6] Building Axon UI (Vue)..."
@@ -147,7 +147,7 @@ if ! $SKIP_BUILD; then
     fi
 
     # ── OAuth credentials for the in-process integrations ──
-    # axon-mcp is merged into axon-agent, so ship credentials.json into the
+    # Integrations run inside axon-agent, so ship credentials.json into the
     # agent's working dir where axon_core::Storage looks for it first.
     if [ -f "crates/axon-agent/credentials.json" ]; then
         cp crates/axon-agent/credentials.json "$DIST_DIR/core/"
@@ -156,8 +156,8 @@ if ! $SKIP_BUILD; then
         cp crates/axon-agent/credentials.example.json "$DIST_DIR/core/credentials.json"
         echo "  ⚠️  credentials.example.json copied as core/credentials.json (update with real values on server)"
     fi
-    # NOTE: any AXON_PUBLIC_BASE_URL / AXON_CALLBACK_HOST that lived in the old
-    # axon-mcp .env must now be present in the agent's core/.env (or set as
+    # NOTE: any AXON_PUBLIC_BASE_URL / AXON_CALLBACK_HOST that lived in a
+    # standalone .env must now be present in the agent's core/.env (or set as
     # Instagram settings in the dashboard) for OAuth redirects + IG media URLs.
 
     # ── Qdrant ──
@@ -196,8 +196,8 @@ StandardError=append:$DEPLOY_DIR/agent.log
 WantedBy=multi-user.target
 SVC"
 
-    # axon-mcp is merged into axon-agent: remove any legacy MCP service so it
-    # stops consuming RAM and a port on this 1GB box.
+    # Remove any legacy integration service so it stops consuming RAM and a
+    # port on this 1GB box (integrations now run inside axon-agent).
     sudo systemctl disable --now axon-mcp 2>/dev/null || true
     sudo rm -f /etc/systemd/system/axon-mcp.service
 

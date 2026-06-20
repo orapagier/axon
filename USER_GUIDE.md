@@ -19,7 +19,7 @@ router, memory, tools, integrations, scheduling, workflows, security, and troubl
 |------|-----------|
 | `Cargo.toml` | **Cargo workspace root** — ties every Rust crate under `crates/` into one build (a single `target/` and `Cargo.lock`). Shared build profiles live here. |
 | `crates/axon-agent/` | **The core agent + web dashboard** (Rust, package `axon`). The main binary you run. Serves the HTTP API, dashboard UI, WebSocket stream, webhooks, scheduler, watcher, and the agent reasoning loop. |
-| `crates/axon-core`, `axon-google`, `axon-microsoft`, `axon-facebook`, `axon-instagram`, `axon-business`, `axon-crm` | **Integration tool crates** (Rust): Google, Microsoft, Facebook, Instagram, CRM, and business/utility tools. Compiled **directly into `axon-agent`** as path dependencies and run in-process — there is no standalone `axon-mcp` binary or process. |
+| `crates/axon-core`, `axon-google`, `axon-microsoft`, `axon-facebook`, `axon-instagram`, `axon-business`, `axon-crm` | **Integration tool crates** (Rust): Google, Microsoft, Facebook, Instagram, CRM, and business/utility tools. Compiled **directly into `axon-agent`** as path dependencies and run in-process — there is no separate binary or process for the integrations. |
 | `crates/axon-image/` | Image-processing/generation library (Rust, crate `image_processor`) used by the agent's `image_tool`. |
 | `axon-ui/` | **Web dashboard** (Vue 3 + Vite). Built to static files and served by `axon-agent`. |
 | `qdrant/` | Deployment scripts for the Qdrant vector DB (systemd units, backup/health/trim timers, collection setup). |
@@ -56,8 +56,8 @@ day-to-day operation.
 
 - The **agent** is the only process users talk to. It owns the dashboard, the webhooks, the
   reasoning loop, **and the integration tools themselves** (Gmail, Calendar, Drive, OneDrive,
-  Outlook, Facebook pages, Instagram, CRM, etc.), which now run **in-process** — the former
-  separate `axon-mcp` server has been merged in (no second process, no SSE hop, no port 8080).
+  Outlook, Facebook pages, Instagram, CRM, etc.), which all run **in-process** — the integrations
+  are compiled directly into the agent (no second process, no SSE hop, no extra port).
 - The agent can still connect to **external** MCP servers you add from the dashboard's
   Services/MCP page; those continue to use SSE.
 - **Qdrant** is an external service used for long-term semantic memory.
@@ -119,7 +119,7 @@ automatically — **no second process to run.** OAuth still happens from the das
 > For OAuth redirects and Instagram media URLs to resolve correctly, the agent's environment
 > needs `AXON_PUBLIC_BASE_URL` (or `AXON_CALLBACK_HOST`) set to its public base URL — or set
 > `instagram.public_base_url` on the Settings page. `credentials.json` (your OAuth app
-> client IDs/secrets) must sit in the agent's working directory or `~/.local/share/axon-mcp/`.
+> client IDs/secrets) must sit in the agent's working directory or its local data directory.
 
 ---
 
@@ -365,8 +365,8 @@ bash deploy.sh --skip-deploy   # build + bundle only
 remote dir, and SSH details are set at the top of each script — **update
 `TARGET_SERVER`/`REMOTE_DIR` to your own host** before using them. On the server, run the
 agent under a process supervisor (systemd), and install Qdrant via `qdrant/install.sh`
-(which also sets up backup/health/trim timers). The deploy script now disables/removes any
-legacy `axon-mcp` service, since integrations run in-process.
+(which also sets up backup/health/trim timers). The deploy script ensures all integrations run
+in-process with the agent.
 
 ---
 
@@ -378,7 +378,7 @@ legacy `axon-mcp` service, since integrations run in-process.
 | REST works but the live log / chat stream never connects (status "disconnected") | WebSocket auth. This was a real bug when the master key contained URL-special characters (`+ / = space …`); it is fixed in this revision (the `api_key` query param is now URL-decoded server-side). Rebuild the agent. |
 | "All models exhausted — check API keys or wait for rate limits to reset" | No usable model. Check that provider keys resolve (`${...}` placeholders must exist in env or settings), that models are `enabled`, and whether everything is on rate-limit cooldown. |
 | `Model '…' has unresolved API key placeholder ${X}` | The `${X}` in `models.toml` isn't defined in the environment or the `settings` table. Add it to `.env` or the Settings page. |
-| Integration tools (Gmail/Calendar/etc.) missing | The in-process integrations failed to initialize — usually a missing `credentials.json`. Check the startup log for "In-process MCP init failed"; ensure `credentials.json` is in the agent's working dir or `~/.local/share/axon-mcp/`. |
+| Integration tools (Gmail/Calendar/etc.) missing | The in-process integrations failed to initialize — usually a missing `credentials.json`. Check the startup log for "In-process MCP init failed"; ensure `credentials.json` is in the agent's working dir or its local data directory. |
 | Decryption warnings / garbled stored keys | `AXON_MASTER_KEY` changed (or was unset) after secrets were saved. Re-enter the affected secrets with the correct, stable key. |
 | Long-term memory recall does nothing | Qdrant not running or `VOYAGE_API_KEY` unset. The agent runs fine without it, but semantic recall is disabled. |
 | `npm run build` fails with `'vite' is not recognized` | UI dev dependencies aren't fully installed. Run `npm install` in `axon-ui/` first. |
@@ -393,7 +393,7 @@ log at `/tmp/autoreply_debug.log` on the server.
 
 - **Default URL:** http://localhost:3000
 - **Agent port:** `AXON_PORT` (default `3000`)
-- **Integrations:** in-process (the former `axon-mcp` on `:8080` is merged into the agent)
+- **Integrations:** in-process (compiled directly into the agent, no separate process or port)
 - **Database:** `crates/axon-agent/memory/axon.db` (`AXON_DB_PATH`)
 - **Built UI is served from:** `crates/axon-agent/static/`
 - **Staged files:** `crates/axon-agent/data/files/`

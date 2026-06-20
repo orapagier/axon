@@ -327,7 +327,7 @@ async fn main() -> anyhow::Result<()> {
     tools.set_mcp_manager(Arc::clone(&mcp));
     {
         // Built-in integrations (Google/Microsoft/Facebook/Instagram/CRM/business)
-        // now run in-process — no separate axon-mcp process, no SSE hop.
+        // run in-process — no separate process, no SSE hop.
         match mcp.connect_inprocess("axon-mcp").await {
             Ok(ts) => {
                 let n = ts.len();
@@ -339,8 +339,8 @@ async fn main() -> anyhow::Result<()> {
             Err(e) => tracing::warn!("In-process MCP init failed: {}", e),
         }
 
-        // Reconnect any *external* MCP servers the operator added. Skip legacy
-        // local axon-mcp rows — those are now served in-process above.
+        // Reconnect any *external* MCP servers the operator added. Skip any
+        // local-internal rows — those are served in-process above.
         let conn = db.get()?;
         let mut s = conn
             .prepare("SELECT name, url, api_key FROM mcp_servers WHERE status != 'disconnected'")?;

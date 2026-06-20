@@ -553,14 +553,14 @@ impl InstagramService {
             .send()
             .await
             .with_context(|| {
-                format!("Failed to reach media URL from axon-mcp: {media_url}. Check AXON_PUBLIC_BASE_URL and reverse proxy routing for /media/local/*")
+                format!("Failed to reach local media URL: {media_url}. Check AXON_PUBLIC_BASE_URL and reverse proxy routing for /media/local/*")
             })?;
 
         let status = resp.status();
         if !(status.is_success() || status.as_u16() == 206) {
             let body = resp.text().await.unwrap_or_default();
             return Err(anyhow::anyhow!(
-                "Local media URL is not reachable ({status}) at {media_url}. Ensure this path is publicly accessible and routed to axon-mcp /media/local/:token. Response: {body}"
+                "Local media URL is not reachable ({status}) at {media_url}. Ensure this path is publicly accessible and routed to /media/local/:token. Response: {body}"
             ));
         }
 

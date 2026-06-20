@@ -361,7 +361,7 @@ pub fn tool_def_from_json(v: &serde_json::Value, server_name: &str) -> Option<To
 }
 
 /// A connected MCP backend: either a remote server over SSE, or the built-in
-/// integration services running in-process (no separate axon-mcp process).
+/// integration services running in-process (no separate process).
 pub enum McpBackend {
     Sse(McpClient),
     InProcess(crate::mcp::inprocess::InProcessMcp),
@@ -415,8 +415,8 @@ impl McpManager {
 
     /// Register the built-in integration services as an in-process backend.
     /// Tools are sourced as `Mcp { server_name: name }` so the rest of the
-    /// agent (registry, OAuth handlers, workflows) dispatches to them exactly
-    /// as it did to the old separate axon-mcp process — minus the SSE hop.
+    /// agent (registry, OAuth handlers, workflows) dispatches to them as plain
+    /// async function calls — no separate process and no SSE hop.
     pub async fn connect_inprocess(&self, name: &str) -> anyhow::Result<Vec<ToolDefinition>> {
         let provider = crate::mcp::inprocess::InProcessMcp::new(name).await?;
         let tools = provider.cached_tools();

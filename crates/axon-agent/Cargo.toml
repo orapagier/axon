@@ -56,7 +56,7 @@ cron = "0.16.0"
 image_processor  = { path = "../axon-image" }
 image = "0.25"
 
-# In-process MCP integration services (merged from axon-mcp-server).
+# In-process MCP integration services (Google/Microsoft/Facebook/Instagram/CRM).
 rmcp           = { version = "0.1", features = ["server"] }
 axon-core      = { path = "../axon-core" }
 axon-google    = { path = "../axon-google" }

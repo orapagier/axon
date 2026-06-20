@@ -4,7 +4,7 @@
 # =============================================================================
 
 [Unit]
-Description=Qdrant vector database (axon-mcp memory)
+Description=Qdrant vector database (Axon memory)
 Documentation=https://qdrant.tech/documentation
 After=network.target
 Wants=network-online.target

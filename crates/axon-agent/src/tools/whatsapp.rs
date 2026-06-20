@@ -82,8 +82,8 @@ impl WhatsAppCredentials {
     }
 }
 
-/// Base directory holding axon-mcp's on-disk token files (`tokens.json`,
-/// `credentials.json`). Honors the `AXON_MCP_DATA_DIR` override for deployments
+/// Base directory holding the integration services' on-disk token files
+/// (`tokens.json`, `credentials.json`). Honors the `AXON_MCP_DATA_DIR` override for deployments
 /// that stage these files elsewhere; otherwise the platform local-data dir,
 /// matching `main.rs`. Tests also use the override to make the token fallback
 /// hermetic instead of depending on whatever happens to be on the host.

@@ -1,9 +1,9 @@
 //! In-process MCP provider.
 //!
 //! Runs the integration services (Google, Microsoft, Facebook, Instagram,
-//! Business, CRM) directly inside the agent instead of as a separate axon-mcp
-//! process reached over SSE. Tool dispatch becomes a plain async function call:
-//! no second process, no JSON-RPC/SSE framing, no localhost network hop.
+//! Business, CRM) directly inside the agent, in-process. Tool dispatch becomes
+//! a plain async function call: no second process, no JSON-RPC/SSE framing,
+//! no localhost network hop.
 //!
 //! The provider owns the shared `axon_core::AppState` (OAuth storage, HTTP
 //! client, temporary media registry). The same state instance backs the agent's
@@ -90,7 +90,7 @@ impl InProcessMcp {
         name: &str,
         args: serde_json::Map<String, Value>,
     ) -> anyhow::Result<rmcp::model::CallToolResult> {
-        // Same prefix routing as the former axon-mcp server. Order matters:
+        // Prefix routing for the integration services. Order matters:
         // `facebook_instagram_auth_url` must reach the Facebook service.
         if is_google(name) {
             self.google.call(name, args).await

@@ -4,7 +4,7 @@
 # =============================================================================
 
 [Unit]
-Description=axon-mcp weekly Qdrant backup
+Description=Axon weekly Qdrant backup
 Requires=axon-backup.service
 
 [Timer]

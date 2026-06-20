@@ -3,7 +3,7 @@
 # =============================================================================
 
 [Unit]
-Description=axon-mcp Qdrant snapshot backup
+Description=Axon Qdrant snapshot backup
 After=qdrant.service
 Requires=qdrant.service
 

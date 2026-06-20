@@ -13,7 +13,7 @@ const loaded = ref(false)
 
 const CATEGORY_META = {
   auth: { title: 'Authentication', description: 'Access control, tokens, and session security.' },
-  instagram: { title: 'Instagram Publishing', description: 'axon-mcp media hosting URLs, bind address, TTL, and image/video processing waits.' },
+  instagram: { title: 'Instagram Publishing', description: 'Media hosting URLs, bind address, TTL, and image/video processing waits.' },
   memory: { title: 'Memory', description: 'Retention, recall, and knowledge persistence behavior.' },
   router: { title: 'Router', description: 'Prompt routing and tool decision behavior.' },
   runtime: { title: 'Runtime', description: 'Execution defaults, timeouts, and runtime controls.' },

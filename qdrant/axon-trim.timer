@@ -4,7 +4,7 @@
 # =============================================================================
 
 [Unit]
-Description=axon-mcp weekly memory trim
+Description=Axon weekly memory trim
 Requires=axon-trim.service
 
 [Timer]

@@ -5,8 +5,8 @@
 //! short-lived token; these routes serve that file (with HTTP range support).
 //! Public (unauthenticated) — Meta cannot present the dashboard master key.
 //!
-//! Ported from the former axon-mcp HTTP server now that the integration
-//! services run in-process.
+//! Runs entirely in-process now that the integration services are compiled
+//! directly into the agent.
 
 use axum::{
     extract::{Path, State},

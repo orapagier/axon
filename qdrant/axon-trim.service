@@ -4,7 +4,7 @@
 # =============================================================================
 
 [Unit]
-Description=axon-mcp memory trim cycle
+Description=Axon memory trim cycle
 After=qdrant.service
 Requires=qdrant.service
 

@@ -3,7 +3,7 @@
 # =============================================================================
 
 [Unit]
-Description=axon-mcp daily health check
+Description=Axon daily health check
 After=qdrant.service
 
 [Service]

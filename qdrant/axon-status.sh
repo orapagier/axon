@@ -10,7 +10,7 @@ B='\033[1m'; G='\033[0;32m'; Y='\033[1;33m'; R='\033[0;31m'; C='\033[0;36m'; N='
 clear
 echo ""
 echo -e "${B}╔═══════════════════════════════════════════════╗${N}"
-echo -e "${B}║          axon-mcp system status               ║${N}"
+echo -e "${B}║          Axon system status                   ║${N}"
 echo -e "${B}║          $(date '+%Y-%m-%d %H:%M:%S')                  ║${N}"
 echo -e "${B}╚═══════════════════════════════════════════════╝${N}"
 echo ""
@@ -45,7 +45,7 @@ echo -e "  RAM    [${RAM_COLOR}${RAM_BAR}${N}] ${RAM_PCT}% — ${USED_RAM}MB / $
 # Per-process RAM
 QDRANT_RAM=$(ps aux | grep '[q]drant' | awk '{sum += $6} END {printf "%.0f", sum/1024}')
 AGENT_RAM=$(ps aux | grep '[a]xon-mcp' | awk '{sum += $6} END {printf "%.0f", sum/1024}')
-echo -e "  Qdrant ${QDRANT_RAM}MB | axon-mcp ${AGENT_RAM}MB"
+echo -e "  Qdrant ${QDRANT_RAM}MB | agent ${AGENT_RAM}MB"
 
 echo ""
 

@@ -390,7 +390,7 @@ async function loadMcpTools() {
       const bareToolName = rawToolName.split(/[.:/]/).pop() || rawToolName
       let prefix = bareToolName.split('_')[0]
 
-      // Namespace-safe detection (e.g., axon-mcp.gyoutube_* or server:gyoutube_*).
+      // Namespace-safe detection (e.g., server.gyoutube_* or server:gyoutube_*).
       const knownPrefix = serviceKeys.find((k) =>
         rawToolName === k ||
         rawToolName.startsWith(`${k}_`) ||
