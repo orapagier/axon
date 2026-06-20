@@ -297,12 +297,13 @@ $GCLOUD_SSH "bash -s" <<REMOTE
     echo "  🔑 Backing up auth tokens..."
     BACKUP_DIR="/tmp/axon_deploy_backup_\$\$"
     mkdir -p "\$BACKUP_DIR"
-    for f in $REMOTE_DIR/axon/mcp/tokens.json $REMOTE_DIR/axon/mcp/credentials.json \
-             $REMOTE_DIR/axon/mcp/.env \
-             $REMOTE_DIR/mcp/tokens.json $REMOTE_DIR/mcp/credentials.json \
-             $REMOTE_DIR/mcp/.env \
-             $REMOTE_DIR/axon/core/config/ssh_servers.json \
-             $REMOTE_DIR/axon/config/ssh_servers.json; do
+    # Newest/authoritative copies live in core/ — list them LAST so they win
+    # when an older copy also exists (everything is flattened into one dir).
+    for f in $REMOTE_DIR/mcp/tokens.json $REMOTE_DIR/mcp/credentials.json $REMOTE_DIR/mcp/.env \
+             $REMOTE_DIR/axon/mcp/tokens.json $REMOTE_DIR/axon/mcp/credentials.json $REMOTE_DIR/axon/mcp/.env \
+             $REMOTE_DIR/axon/config/ssh_servers.json \
+             $REMOTE_DIR/axon/core/tokens.json $REMOTE_DIR/axon/core/credentials.json \
+             $REMOTE_DIR/axon/core/config/ssh_servers.json; do
         [ -f "\$f" ] && cp -f "\$f" "\$BACKUP_DIR/" 2>/dev/null || true
     done
 
@@ -343,13 +344,17 @@ $GCLOUD_SSH "bash -s" <<REMOTE
         (cd qdrant && bash install.sh)
     fi
 
-    # ── Restore auth tokens ──
+    # ── Restore: preserve server-only state, let local config win ──
     echo "  🔑 Restoring auth tokens..."
-    # Integrations run in-process now: restore OAuth creds/tokens into the
-    # agent's working dir (core/), where axon_core::Storage looks for them.
+    # tokens.json = the server's live OAuth/login session; it only ever exists on
+    # the server (never shipped in the bundle), so ALWAYS restore it.
     [ -f "\$BACKUP_DIR/tokens.json" ] && cp -f "\$BACKUP_DIR/tokens.json" core/ 2>/dev/null || true
-    [ -f "\$BACKUP_DIR/credentials.json" ] && cp -f "\$BACKUP_DIR/credentials.json" core/ 2>/dev/null || true
-    [ -f "\$BACKUP_DIR/ssh_servers.json" ] && cp -f "\$BACKUP_DIR/ssh_servers.json" core/config/ 2>/dev/null || true
+
+    # credentials.json + ssh_servers.json = config you edit locally and ship in
+    # the bundle, so the LOCAL copy wins and the server always gets your updates.
+    # Fall back to the server's backup only when the bundle didn't ship one.
+    [ ! -f "core/credentials.json" ] && [ -f "\$BACKUP_DIR/credentials.json" ] && cp -f "\$BACKUP_DIR/credentials.json" core/ 2>/dev/null || true
+    [ ! -f "core/config/ssh_servers.json" ] && [ -f "\$BACKUP_DIR/ssh_servers.json" ] && cp -f "\$BACKUP_DIR/ssh_servers.json" core/config/ 2>/dev/null || true
 
     # ── Restore database ──
     DB_BACKUP_DIR="\$BACKUP_DIR/db"
