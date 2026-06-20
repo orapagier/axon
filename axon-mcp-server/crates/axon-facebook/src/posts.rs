@@ -52,19 +52,17 @@ pub async fn create(
     let tok = page_token(state).await?;
     let pid = page_id(state).await?;
 
-    let mut body = json!({ "message": message });
-
+    // Graph write endpoints expect form-encoded params, not a JSON body.
+    let mut form: Vec<(&str, String)> = vec![("message", message.to_owned())];
     match publish_time {
         Some(ts) if ts > 0 => {
-            body["published"] = json!(false);
-            body["scheduled_publish_time"] = json!(ts);
+            form.push(("published", "false".to_owned()));
+            form.push(("scheduled_publish_time", ts.to_string()));
         }
-        _ => {
-            body["published"] = json!(true);
-        }
+        _ => form.push(("published", "true".to_owned())),
     }
     if let Some(l) = link {
-        body["link"] = json!(l);
+        form.push(("link", l.to_owned()));
     }
 
     let resp = state
@@ -72,7 +70,7 @@ pub async fn create(
         .post(format!("{FB_API}/{pid}/feed"))
         .bearer_auth(&tok)
         .query(&[("fields", "id,permalink_url")])
-        .json(&body)
+        .form(&form)
         .send()
         .await?;
     Ok(ensure_ok(resp).await?.json().await?)
@@ -88,7 +86,11 @@ pub async fn create_with_image(state: &AppState, message: &str, image_url: &str)
             .client
             .post(format!("{FB_API}/{pid}/photos"))
             .bearer_auth(&tok)
-            .json(&json!({ "url": image_url, "published": false, "temporary": true }))
+            .form(&[
+                ("url", image_url),
+                ("published", "false"),
+                ("temporary", "true"),
+            ])
             .send()
             .await?;
         ensure_ok(resp).await?.json().await?
@@ -148,7 +150,7 @@ pub async fn update(state: &AppState, post_id: &str, message: &str) -> Result<Va
         .client
         .post(format!("{FB_API}/{post_id}"))
         .bearer_auth(&tok)
-        .json(&json!({ "message": message }))
+        .form(&[("message", message)])
         .send()
         .await?;
     Ok(ensure_ok(resp).await?.json().await?)
@@ -197,7 +199,7 @@ pub async fn create_with_video(state: &AppState, message: &str, video_url: &str)
             .post(format!("{FB_API}/{pid}/videos"))
             .bearer_auth(&tok)
             .query(&[("fields", "id,permalink_url")])
-            .json(&json!({ "file_url": video_url, "description": message }))
+            .form(&[("file_url", video_url), ("description", message)])
             .send()
             .await?;
         ensure_ok(resp).await?.json().await?

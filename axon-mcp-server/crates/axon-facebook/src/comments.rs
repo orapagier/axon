@@ -74,7 +74,7 @@ pub async fn reply(state: &AppState, comment_id: &str, message: &str) -> Result<
         .client
         .post(format!("{FB_API}/{comment_id}/comments"))
         .bearer_auth(&tok)
-        .json(&json!({ "message": message }))
+        .form(&[("message", message)])
         .send()
         .await?;
     Ok(ensure_ok(resp).await?.json().await?)
@@ -98,7 +98,7 @@ pub async fn set_hidden(state: &AppState, comment_id: &str, hide: bool) -> Resul
         .client
         .post(format!("{FB_API}/{comment_id}"))
         .bearer_auth(&tok)
-        .json(&json!({ "is_hidden": hide }))
+        .form(&[("is_hidden", if hide { "true" } else { "false" })])
         .send()
         .await?;
     Ok(ensure_ok(resp).await?.json().await?)

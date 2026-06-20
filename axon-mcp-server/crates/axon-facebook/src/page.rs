@@ -58,13 +58,13 @@ pub async fn update_page(state: &AppState, args: &Map<String, Value>) -> Result<
     let tok = page_token(state).await?;
     let pid = page_id(state).await?;
 
-    let mut body = serde_json::Map::new();
+    let mut form: Vec<(&str, String)> = Vec::new();
     for key in ["about", "description", "phone", "website"] {
         if let Some(v) = args.get(key).and_then(|v| v.as_str()) {
-            body.insert(key.to_owned(), Value::String(v.to_owned()));
+            form.push((key, v.to_owned()));
         }
     }
-    if body.is_empty() {
+    if form.is_empty() {
         return Ok(
             serde_json::json!({ "success": false, "message": "No fields provided to update." }),
         );
@@ -74,7 +74,7 @@ pub async fn update_page(state: &AppState, args: &Map<String, Value>) -> Result<
         .client
         .post(format!("{FB_API}/{pid}"))
         .bearer_auth(&tok)
-        .json(&body)
+        .form(&form)
         .send()
         .await?;
     Ok(ensure_ok(resp).await?.json().await?)
