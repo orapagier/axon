@@ -587,6 +587,21 @@ function removeCollectionItem(propName, index) {
   }
 }
 
+// Filter an options-field's choices by another field's current value.
+// A subProp may declare `filterBy: 'dataType'`; each option may declare
+// `show: ['string','number',...]`. Used by IF/Switch so the operator list
+// only shows operators valid for the chosen data type (n8n parity). The
+// filter key is read from the current collection row first, then falls back
+// to the node config (Switch keeps a single top-level dataType).
+function filteredOptions(subProp, item = null) {
+  const opts = subProp.options || []
+  if (!subProp.filterBy) return opts
+  let current = item && item[subProp.filterBy] !== undefined
+    ? item[subProp.filterBy]
+    : props.node.data.config[subProp.filterBy]
+  return opts.filter(o => !o.show || (current !== undefined && o.show.includes(current)))
+}
+
 const nodeDefinition = computed(() => {
   const type = props.node.data.node_type === 'trigger' ? 'trigger' : props.node.data.node_type
   const base = NODE_TYPES[type] || { properties: [], displayName: 'Neuron', icon: '📦' }
@@ -1170,21 +1185,21 @@ watch(() => props.node.data.config.tool_name, (newTool) => {
                                 <label v-if="idx === 0" class="fc-header-label" style="display: block; margin-bottom: 4px;">{{ subProp.displayName }}</label>
                                 <div class="input-with-preview">
                                   <template v-if="subProp.type === 'options'">
-                                    <SearchableSelect 
+                                    <SearchableSelect
                                       v-if="subProp.searchable || subProp.allowCustomValue"
                                       v-model="item[subProp.name]"
-                                      :options="subProp.options"
+                                      :options="filteredOptions(subProp, item)"
                                       :allow-custom-value="!!subProp.allowCustomValue"
                                       :placeholder="subProp.placeholder || (subProp.allowCustomValue ? 'Select or type...' : 'Search...')"
                                     />
-                                    <select 
+                                    <select
                                       v-else
                                       v-model="item[subProp.name]"
                                       :class="{ 'has-expression': hasExpression(item[subProp.name]), 'focused-exp': isFieldFocused({ collection: prop.name, index: idx, subName: subProp.name }) }"
                                       @focus="handleFocus($event, { collection: prop.name, index: idx, subName: subProp.name })"
                                       @blur="handleBlur"
                                     >
-                                      <option v-for="opt in subProp.options" :key="opt.value" :value="opt.value">{{ optionDisplayName(opt) }}</option>
+                                      <option v-for="opt in filteredOptions(subProp, item)" :key="opt.value" :value="opt.value">{{ optionDisplayName(opt) }}</option>
                                     </select>
                                   </template>
                                   <template v-else-if="subProp.type === 'boolean'">

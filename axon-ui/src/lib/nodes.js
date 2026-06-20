@@ -1,3 +1,60 @@
+// ── n8n-style condition primitives (shared by IF + Switch) ───────────────────
+// Data types and operators mirror n8n's Filter component. The operator
+// dropdown is filtered per-row by the chosen data type using `filterBy` +
+// each option's `show` list (see filteredOptions in NodeDetails.vue).
+export const CONDITION_DATA_TYPES = [
+    { name: 'String', value: 'string' },
+    { name: 'Number', value: 'number' },
+    { name: 'Boolean', value: 'boolean' },
+    { name: 'Date & Time', value: 'dateTime' },
+    { name: 'Array', value: 'array' },
+    { name: 'Object', value: 'object' },
+]
+
+const ALL_TYPES = ['string', 'number', 'boolean', 'dateTime', 'array', 'object']
+
+export const CONDITION_OPERATIONS = [
+    // ── String ──
+    { name: 'Equals', value: 'equals', show: ['string', 'number', 'boolean', 'dateTime'] },
+    { name: 'Not Equals', value: 'notEquals', show: ['string', 'number', 'boolean', 'dateTime'] },
+    { name: 'Contains', value: 'contains', show: ['string', 'array'] },
+    { name: 'Not Contains', value: 'notContains', show: ['string', 'array'] },
+    { name: 'Starts With', value: 'startsWith', show: ['string'] },
+    { name: 'Does Not Start With', value: 'notStartsWith', show: ['string'] },
+    { name: 'Ends With', value: 'endsWith', show: ['string'] },
+    { name: 'Does Not End With', value: 'notEndsWith', show: ['string'] },
+    { name: 'Matches Regex', value: 'regex', show: ['string'] },
+    { name: 'Does Not Match Regex', value: 'notRegex', show: ['string'] },
+    // ── Number ──
+    { name: 'Greater Than', value: 'gt', show: ['number'] },
+    { name: 'Less Than', value: 'lt', show: ['number'] },
+    { name: 'Greater or Equal', value: 'gte', show: ['number'] },
+    { name: 'Less or Equal', value: 'lte', show: ['number'] },
+    // ── Boolean ──
+    { name: 'Is True', value: 'true', show: ['boolean'] },
+    { name: 'Is False', value: 'false', show: ['boolean'] },
+    // ── Date & Time ──
+    { name: 'Is After', value: 'after', show: ['dateTime'] },
+    { name: 'Is Before', value: 'before', show: ['dateTime'] },
+    { name: 'Is After or Equal', value: 'afterOrEquals', show: ['dateTime'] },
+    { name: 'Is Before or Equal', value: 'beforeOrEquals', show: ['dateTime'] },
+    // ── Array ──
+    { name: 'Length Equals', value: 'lengthEquals', show: ['array'] },
+    { name: 'Length Not Equals', value: 'lengthNotEquals', show: ['array'] },
+    { name: 'Length Greater Than', value: 'lengthGt', show: ['array'] },
+    { name: 'Length Less Than', value: 'lengthLt', show: ['array'] },
+    { name: 'Length Greater or Equal', value: 'lengthGte', show: ['array'] },
+    { name: 'Length Less or Equal', value: 'lengthLte', show: ['array'] },
+    // ── Universal (every type) ──
+    { name: 'Exists', value: 'exists', show: ALL_TYPES },
+    { name: 'Does Not Exist', value: 'notExists', show: ALL_TYPES },
+    { name: 'Is Empty', value: 'empty', show: ALL_TYPES },
+    { name: 'Is Not Empty', value: 'notEmpty', show: ALL_TYPES },
+]
+
+// Operators that take no comparison value — Value 2 / Rule Value is hidden.
+const UNARY_OPERATIONS = ['exists', 'notExists', 'empty', 'notEmpty', 'true', 'false']
+
 export const NODE_TYPES = {
     stimulus: {
         displayName: 'Stimulus',
@@ -555,7 +612,7 @@ export const NODE_TYPES = {
         name: 'ifCondition',
         icon: '/icons/ifCondition.png',
         outputs: ['true', 'false'],
-        description: 'Route items based on a condition — outputs to True or False branch',
+        description: 'Route items based on one or more conditions — outputs to the True or False branch (n8n-style filters)',
         properties: [
             {
                 displayName: 'Combine',
@@ -577,38 +634,26 @@ export const NODE_TYPES = {
                 options: [
                     {
                         name: 'dataType', displayName: 'Data Type', type: 'options', default: 'string',
-                        options: [
-                            { name: 'String', value: 'string' },
-                            { name: 'Number', value: 'number' },
-                            { name: 'Boolean', value: 'boolean' },
-                        ],
+                        options: CONDITION_DATA_TYPES,
                     },
                     { name: 'value1', displayName: 'Value 1', type: 'string', default: '', placeholder: '{{ $node["NodeName"].data.field }}' },
                     {
                         name: 'operation', displayName: 'Operation', type: 'options', default: 'equals',
-                        options: [
-                            // ── String operations ──
-                            { name: 'Equals', value: 'equals' },
-                            { name: 'Not Equals', value: 'notEquals' },
-                            { name: 'Contains', value: 'contains' },
-                            { name: 'Not Contains', value: 'notContains' },
-                            { name: 'Starts With', value: 'startsWith' },
-                            { name: 'Ends With', value: 'endsWith' },
-                            { name: 'Is Empty', value: 'isEmpty' },
-                            { name: 'Is Not Empty', value: 'isNotEmpty' },
-                            { name: 'Regex Match', value: 'regex' },
-                            // ── Number operations ──
-                            { name: 'Greater Than', value: 'greater' },
-                            { name: 'Less Than', value: 'less' },
-                            { name: 'Greater or Equal', value: 'greaterEqual' },
-                            { name: 'Less or Equal', value: 'lessEqual' },
-                            // ── Boolean operations ──
-                            { name: 'Is True', value: 'isTrue' },
-                            { name: 'Is False', value: 'isFalse' },
-                        ],
+                        filterBy: 'dataType',
+                        options: CONDITION_OPERATIONS,
                     },
-                    { name: 'value2', displayName: 'Value 2', type: 'string', default: '', placeholder: 'Compare value' },
+                    {
+                        name: 'value2', displayName: 'Value 2', type: 'string', default: '', placeholder: 'Compare value',
+                        displayOptions: { hide: { operation: UNARY_OPERATIONS } },
+                    },
                 ],
+            },
+            {
+                displayName: 'Case Sensitive',
+                name: 'caseSensitive',
+                type: 'boolean',
+                default: true,
+                hint: 'When off, string comparisons ignore upper/lower case.',
             },
         ],
     },
@@ -617,18 +662,15 @@ export const NODE_TYPES = {
         name: 'switch',
         icon: '/icons/switch.png',
         outputs: ['case 1', 'case 2', 'case 3', 'case 4', 'case 5', 'default'],
-        description: 'Route data to one of multiple branches (n8n-style switch)',
+        description: 'Route data to one of multiple branches — first matching rule wins (n8n-style switch with full filters)',
         properties: [
             {
-                displayName: 'Data Type',
+                displayName: 'Default Data Type',
                 name: 'dataType',
                 type: 'options',
-                options: [
-                    { name: 'String', value: 'string' },
-                    { name: 'Number', value: 'number' },
-                    { name: 'Boolean', value: 'boolean' },
-                ],
+                options: CONDITION_DATA_TYPES,
                 default: 'string',
+                hint: 'Fallback type for rules that do not set their own.',
             },
             {
                 displayName: 'Value to Test',
@@ -642,32 +684,22 @@ export const NODE_TYPES = {
                 displayName: 'Rules (first match wins)',
                 name: 'rules',
                 type: 'fixedCollection',
-                default: { parameters: [{ operation: 'equals', value2: '' }] },
+                default: { parameters: [{ dataType: 'string', operation: 'equals', value2: '' }] },
                 placeholder: 'Add Rule',
                 typeOptions: { multipleValues: true },
                 hint: 'Only the first 5 rules are mapped to outputs. Unmatched values go to Default.',
                 options: [
                     {
+                        name: 'dataType', displayName: 'Type', type: 'options', default: 'string',
+                        options: CONDITION_DATA_TYPES,
+                    },
+                    {
                         name: 'operation',
                         displayName: 'Operation',
                         type: 'options',
                         default: 'equals',
-                        options: [
-                            { name: 'Equals', value: 'equals' },
-                            { name: 'Not Equals', value: 'notEquals' },
-                            { name: 'Contains', value: 'contains' },
-                            { name: 'Not Contains', value: 'notContains' },
-                            { name: 'Starts With', value: 'startsWith' },
-                            { name: 'Ends With', value: 'endsWith' },
-                            { name: 'Greater Than', value: 'greater' },
-                            { name: 'Less Than', value: 'less' },
-                            { name: 'Greater or Equal', value: 'greaterEqual' },
-                            { name: 'Less or Equal', value: 'lessEqual' },
-                            { name: 'Is Empty', value: 'isEmpty' },
-                            { name: 'Is Not Empty', value: 'isNotEmpty' },
-                            { name: 'Is True', value: 'isTrue' },
-                            { name: 'Is False', value: 'isFalse' },
-                        ],
+                        filterBy: 'dataType',
+                        options: CONDITION_OPERATIONS,
                     },
                     {
                         name: 'value2',
@@ -675,8 +707,16 @@ export const NODE_TYPES = {
                         type: 'string',
                         default: '',
                         placeholder: 'Compare value',
+                        displayOptions: { hide: { operation: UNARY_OPERATIONS } },
                     },
                 ],
+            },
+            {
+                displayName: 'Case Sensitive',
+                name: 'caseSensitive',
+                type: 'boolean',
+                default: true,
+                hint: 'When off, string comparisons ignore upper/lower case.',
             },
         ],
     },
