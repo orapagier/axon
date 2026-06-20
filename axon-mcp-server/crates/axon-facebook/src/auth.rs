@@ -1,6 +1,6 @@
 use anyhow::Result;
 use axon_core::storage::FacebookToken;
-use axon_core::{oauth, AppState};
+use axon_core::{ensure_ok, oauth, AppState};
 use serde_json::{json, Value};
 
 pub const FB_API: &str = "https://graph.facebook.com/v25.0";
@@ -90,7 +90,7 @@ pub async fn exchange_code(state: &AppState, code: &str, _service: Option<&str>)
     let redir = oauth::callback_uri("facebook");
 
     // Step 1 — short-lived user token
-    let short: Value = state
+    let resp = state
         .client
         .get(format!("{FB_API}/oauth/access_token"))
         .query(&[
@@ -100,17 +100,15 @@ pub async fn exchange_code(state: &AppState, code: &str, _service: Option<&str>)
             ("code", &code.to_owned()),
         ])
         .send()
-        .await?
-        .error_for_status()?
-        .json()
         .await?;
+    let short: Value = ensure_ok(resp).await?.json().await?;
 
     let short_token = short["access_token"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("No access_token in short-lived response: {short}"))?;
 
     // Step 2 — long-lived user token (~60 days)
-    let long: Value = state
+    let resp = state
         .client
         .get(format!("{FB_API}/oauth/access_token"))
         .query(&[
@@ -120,17 +118,15 @@ pub async fn exchange_code(state: &AppState, code: &str, _service: Option<&str>)
             ("fb_exchange_token", short_token),
         ])
         .send()
-        .await?
-        .error_for_status()?
-        .json()
         .await?;
+    let long: Value = ensure_ok(resp).await?.json().await?;
 
     let long_token = long["access_token"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("No access_token in long-lived response: {long}"))?;
 
     // Step 3 — permanent page token
-    let page_data: Value = state
+    let resp = state
         .client
         .get(format!("{FB_API}/{page_id}"))
         .query(&[
@@ -138,10 +134,8 @@ pub async fn exchange_code(state: &AppState, code: &str, _service: Option<&str>)
             ("access_token", long_token),
         ])
         .send()
-        .await?
-        .error_for_status()?
-        .json()
         .await?;
+    let page_data: Value = ensure_ok(resp).await?.json().await?;
 
     let page_token = page_data["access_token"].as_str()
         .ok_or_else(|| anyhow::anyhow!("No page access_token. Make sure the page_id is correct and you're an admin of the page."))?;
@@ -197,7 +191,7 @@ pub async fn debug_token(state: &AppState) -> Result<Value> {
         let c = s.facebook_creds()?;
         (c.app_id.clone(), c.app_secret.clone())
     };
-    let resp: Value = state
+    let resp = state
         .client
         .get(format!("{FB_API}/debug_token"))
         .query(&[
@@ -205,10 +199,8 @@ pub async fn debug_token(state: &AppState) -> Result<Value> {
             ("access_token", &format!("{}|{}", creds.0, creds.1)),
         ])
         .send()
-        .await?
-        .error_for_status()?
-        .json()
         .await?;
+    let resp: Value = ensure_ok(resp).await?.json().await?;
     Ok(resp)
 }
 

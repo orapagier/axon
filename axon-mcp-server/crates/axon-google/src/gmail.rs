@@ -1,5 +1,5 @@
 use anyhow::Result;
-use axon_core::AppState;
+use axon_core::{AppState, EnsureOk};
 use base64::{
     engine::general_purpose::{URL_SAFE, URL_SAFE_NO_PAD},
     Engine as _,
@@ -24,7 +24,7 @@ pub async fn list(state: &AppState, max_results: u32, query: Option<&str>) -> Re
         .query(&params)
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
 
@@ -58,9 +58,11 @@ pub async fn list(state: &AppState, max_results: u32, query: Option<&str>) -> Re
                 ])
                 .send()
                 .await?
-                .error_for_status()?
+                .ensure_ok()
+                .await?
                 .json::<Value>()
                 .await
+                .map_err(anyhow::Error::from)
         }));
     }
 
@@ -103,7 +105,7 @@ pub async fn get(state: &AppState, id: &str) -> Result<Value> {
         .query(&[("format", "full")])
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
 
@@ -190,7 +192,7 @@ pub async fn send(
         .json(&json!({ "raw": raw }))
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -249,7 +251,7 @@ Content-Transfer-Encoding: base64\r\n\r\n\
         .json(&json!({ "raw": raw }))
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -289,7 +291,7 @@ pub async fn reply(
         .json(&json!({ "raw": raw, "threadId": thread_id }))
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -307,7 +309,7 @@ pub async fn trash(state: &AppState, id: &str) -> Result<Value> {
         .bearer_auth(&tok)
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -322,7 +324,7 @@ pub async fn mark_read(state: &AppState, ids: Vec<&str>) -> Result<Value> {
         .json(&json!({ "ids": ids, "removeLabelIds": ["UNREAD"] }))
         .send()
         .await?
-        .error_for_status()?;
+        .ensure_ok().await?;
     Ok(json!({ "success": true, "count": ids.len() }))
 }
 
@@ -335,7 +337,7 @@ pub async fn add_label(state: &AppState, id: &str, label_id: &str) -> Result<Val
         .json(&json!({ "addLabelIds": [label_id] }))
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -350,7 +352,7 @@ pub async fn remove_label(state: &AppState, id: &str, label_id: &str) -> Result<
         .json(&json!({ "removeLabelIds": [label_id] }))
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -364,7 +366,7 @@ pub async fn list_labels(state: &AppState) -> Result<Value> {
         .bearer_auth(&tok)
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -379,7 +381,7 @@ pub async fn mark_unread(state: &AppState, ids: Vec<&str>) -> Result<Value> {
         .json(&json!({ "ids": ids, "addLabelIds": ["UNREAD"] }))
         .send()
         .await?
-        .error_for_status()?;
+        .ensure_ok().await?;
     Ok(json!({ "success": true, "count": ids.len() }))
 }
 
@@ -391,7 +393,7 @@ pub async fn untrash(state: &AppState, id: &str) -> Result<Value> {
         .bearer_auth(&tok)
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -406,7 +408,7 @@ pub async fn delete(state: &AppState, id: &str) -> Result<Value> {
         .bearer_auth(&tok)
         .send()
         .await?
-        .error_for_status()?;
+        .ensure_ok().await?;
     Ok(json!({ "success": true, "deletedId": id }))
 }
 
@@ -481,7 +483,7 @@ pub async fn create_draft(
         .json(&json!({ "message": { "raw": raw } }))
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -496,7 +498,7 @@ pub async fn list_drafts(state: &AppState, max_results: u32) -> Result<Value> {
         .query(&[("maxResults", max_results.to_string())])
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -511,7 +513,7 @@ pub async fn get_draft(state: &AppState, draft_id: &str) -> Result<Value> {
         .query(&[("format", "full")])
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -536,7 +538,7 @@ pub async fn update_draft(
         .json(&json!({ "message": { "raw": raw } }))
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -551,7 +553,7 @@ pub async fn send_draft(state: &AppState, draft_id: &str) -> Result<Value> {
         .json(&json!({ "id": draft_id }))
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -565,7 +567,7 @@ pub async fn delete_draft(state: &AppState, draft_id: &str) -> Result<Value> {
         .bearer_auth(&tok)
         .send()
         .await?
-        .error_for_status()?;
+        .ensure_ok().await?;
     Ok(json!({ "success": true, "deletedDraftId": draft_id }))
 }
 
@@ -619,7 +621,7 @@ pub async fn download_attachment(
         .bearer_auth(&tok)
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
 

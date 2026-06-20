@@ -1,6 +1,6 @@
 use crate::auth::{page_id, page_token};
 use anyhow::Result;
-use axon_core::AppState;
+use axon_core::{ensure_ok, AppState};
 use serde_json::{json, Value};
 
 const FB_API: &str = "https://graph.facebook.com/v25.0";
@@ -8,7 +8,7 @@ const FB_API: &str = "https://graph.facebook.com/v25.0";
 pub async fn list_conversations(state: &AppState, limit: u32, unread_only: bool) -> Result<Value> {
     let tok = page_token(state).await?;
     let pid = page_id(state).await?;
-    let mut resp: Value = state
+    let resp = state
         .client
         .get(format!("{FB_API}/{pid}/conversations"))
         .bearer_auth(&tok)
@@ -21,10 +21,8 @@ pub async fn list_conversations(state: &AppState, limit: u32, unread_only: bool)
             ("platform", "messenger"),
         ])
         .send()
-        .await?
-        .error_for_status()?
-        .json()
         .await?;
+    let mut resp: Value = ensure_ok(resp).await?.json().await?;
 
     if unread_only {
         if let Some(arr) = resp.get_mut("data").and_then(|d| d.as_array_mut()) {
@@ -40,7 +38,7 @@ pub async fn get_conversation(
     limit: u32,
 ) -> Result<Value> {
     let tok = page_token(state).await?;
-    let resp: Value = state
+    let resp = state
         .client
         .get(format!("{FB_API}/{conversation_id}/messages"))
         .bearer_auth(&tok)
@@ -50,17 +48,14 @@ pub async fn get_conversation(
             ("order", "reverse_chronological"),
         ])
         .send()
-        .await?
-        .error_for_status()?
-        .json()
         .await?;
-    Ok(resp)
+    Ok(ensure_ok(resp).await?.json().await?)
 }
 
 pub async fn send_text(state: &AppState, recipient_id: &str, message: &str) -> Result<Value> {
     let tok = page_token(state).await?;
     let pid = page_id(state).await?;
-    let resp: Value = state
+    let resp = state
         .client
         .post(format!("{FB_API}/{pid}/messages"))
         .bearer_auth(&tok)
@@ -70,17 +65,14 @@ pub async fn send_text(state: &AppState, recipient_id: &str, message: &str) -> R
             "messaging_type": "RESPONSE"
         }))
         .send()
-        .await?
-        .error_for_status()?
-        .json()
         .await?;
-    Ok(resp)
+    Ok(ensure_ok(resp).await?.json().await?)
 }
 
 pub async fn send_image(state: &AppState, recipient_id: &str, image_url: &str) -> Result<Value> {
     let tok = page_token(state).await?;
     let pid = page_id(state).await?;
-    let resp: Value = state
+    let resp = state
         .client
         .post(format!("{FB_API}/{pid}/messages"))
         .bearer_auth(&tok)
@@ -95,9 +87,6 @@ pub async fn send_image(state: &AppState, recipient_id: &str, image_url: &str) -
             "messaging_type": "RESPONSE"
         }))
         .send()
-        .await?
-        .error_for_status()?
-        .json()
         .await?;
-    Ok(resp)
+    Ok(ensure_ok(resp).await?.json().await?)
 }

@@ -1,6 +1,6 @@
 use crate::auth::access_token;
 use anyhow::Result;
-use axon_core::AppState;
+use axon_core::{AppState, EnsureOk};
 use serde_json::{json, Value};
 
 const BASE: &str = "https://people.googleapis.com/v1";
@@ -23,7 +23,7 @@ pub async fn list_contacts(state: &AppState, max_results: u32) -> Result<Value> 
         ])
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -42,7 +42,7 @@ pub async fn get_contact(state: &AppState, name: &str) -> Result<Value> {
         )])
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -85,7 +85,7 @@ pub async fn create_contact(
         .json(&person)
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -154,7 +154,7 @@ pub async fn update_contact(
         .json(&person)
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -180,7 +180,7 @@ pub async fn search_contacts(state: &AppState, query: &str, max_results: u32) ->
         ])
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -195,6 +195,6 @@ pub async fn delete_contact(state: &AppState, name: &str) -> Result<Value> {
         .bearer_auth(&tok)
         .send()
         .await?
-        .error_for_status()?;
+        .ensure_ok().await?;
     Ok(json!({ "success": true, "resourceName": name }))
 }

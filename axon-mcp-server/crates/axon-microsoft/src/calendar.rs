@@ -1,7 +1,7 @@
 // calendar.rs
 use crate::auth::access_token;
 use anyhow::{bail, Result};
-use axon_core::AppState;
+use axon_core::{AppState, EnsureOk};
 use chrono::Utc;
 use serde_json::{json, Value};
 
@@ -19,7 +19,7 @@ pub async fn list_calendars(state: &AppState) -> Result<Value> {
         .query(&[("$select", "id,name,color,isDefaultCalendar,canEdit,owner")])
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -96,7 +96,7 @@ pub async fn list_events(
         .query(&params)
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -116,7 +116,7 @@ pub async fn get_event(state: &AppState, event_id: &str) -> Result<Value> {
         )])
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -160,7 +160,7 @@ pub async fn create_event(
         .json(&ev)
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -202,7 +202,7 @@ pub async fn update_event(
         .json(&patch)
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -218,7 +218,7 @@ pub async fn delete_event(state: &AppState, event_id: &str) -> Result<Value> {
         .bearer_auth(&tok)
         .send()
         .await?
-        .error_for_status()?;
+        .ensure_ok().await?;
     Ok(json!({ "success": true }))
 }
 
@@ -237,7 +237,7 @@ pub async fn cancel_event(
         .json(&json!({"comment": comment.unwrap_or("")}))
         .send()
         .await?
-        .error_for_status()?;
+        .ensure_ok().await?;
     Ok(json!({ "success": true, "cancelledEventId": event_id }))
 }
 
@@ -262,7 +262,7 @@ pub async fn respond_event(
         .json(&json!({"comment": comment.unwrap_or(""), "sendResponse": true}))
         .send()
         .await?
-        .error_for_status()?;
+        .ensure_ok().await?;
     Ok(json!({ "success": true, "action": action }))
 }
 
@@ -292,7 +292,7 @@ pub async fn get_schedule(
         .json(&body)
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -333,7 +333,7 @@ pub async fn find_meeting_times(
         .json(&body)
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)

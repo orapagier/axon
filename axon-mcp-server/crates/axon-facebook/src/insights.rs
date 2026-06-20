@@ -1,6 +1,6 @@
 use crate::auth::{page_id, page_token};
 use anyhow::Result;
-use axon_core::AppState;
+use axon_core::{ensure_ok, AppState};
 use serde_json::Value;
 
 const FB_API: &str = "https://graph.facebook.com/v25.0";
@@ -26,22 +26,19 @@ pub async fn page_insights(
         params.push(("until".to_owned(), u.to_owned()));
     }
 
-    let resp: Value = state
+    let resp = state
         .client
         .get(format!("{FB_API}/{pid}/insights"))
         .bearer_auth(&tok)
         .query(&params)
         .send()
-        .await?
-        .error_for_status()?
-        .json()
         .await?;
-    Ok(resp)
+    Ok(ensure_ok(resp).await?.json().await?)
 }
 
 pub async fn post_insights(state: &AppState, post_id: &str) -> Result<Value> {
     let tok = page_token(state).await?;
-    let resp: Value = state
+    let resp = state
         .client
         .get(format!("{FB_API}/{post_id}/insights"))
         .bearer_auth(&tok)
@@ -52,9 +49,6 @@ pub async fn post_insights(state: &AppState, post_id: &str) -> Result<Value> {
              post_reactions_by_type_total",
         )])
         .send()
-        .await?
-        .error_for_status()?
-        .json()
         .await?;
-    Ok(resp)
+    Ok(ensure_ok(resp).await?.json().await?)
 }

@@ -1,6 +1,6 @@
 use crate::auth::access_token;
 use anyhow::Result;
-use axon_core::AppState;
+use axon_core::{AppState, EnsureOk};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -18,7 +18,7 @@ pub async fn create_presentation(state: &AppState, title: &str) -> Result<Value>
         .json(&json!({ "title": title }))
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -33,7 +33,7 @@ pub async fn get_presentation(state: &AppState, presentation_id: &str) -> Result
         .bearer_auth(&tok)
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -48,7 +48,7 @@ pub async fn get_slide(state: &AppState, presentation_id: &str, slide_id: &str) 
         .bearer_auth(&tok)
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -325,7 +325,7 @@ pub async fn batch_update(
         .json(&json!({ "requests": requests }))
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)

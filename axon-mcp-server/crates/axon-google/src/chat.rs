@@ -1,6 +1,6 @@
 use crate::auth::access_token;
 use anyhow::Result;
-use axon_core::AppState;
+use axon_core::{AppState, EnsureOk};
 use serde_json::{json, Value};
 
 const BASE: &str = "https://chat.googleapis.com/v1";
@@ -17,7 +17,7 @@ pub async fn list_spaces(state: &AppState, max_results: u32) -> Result<Value> {
         .query(&[("pageSize", max_results.to_string())])
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -33,7 +33,7 @@ pub async fn get_space(state: &AppState, space_name: &str) -> Result<Value> {
         .bearer_auth(&tok)
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -49,7 +49,7 @@ pub async fn list_members(state: &AppState, space_name: &str, max_results: u32) 
         .query(&[("pageSize", max_results.to_string())])
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -80,7 +80,7 @@ pub async fn list_messages(
         .query(&params)
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -96,7 +96,7 @@ pub async fn get_message(state: &AppState, message_name: &str) -> Result<Value> 
         .bearer_auth(&tok)
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -130,7 +130,7 @@ pub async fn send_message(
         .json(&body)
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -158,7 +158,7 @@ pub async fn send_card_message(
         .json(&body)
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -175,7 +175,7 @@ pub async fn update_message(state: &AppState, message_name: &str, new_text: &str
         .json(&json!({ "text": new_text }))
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -190,7 +190,7 @@ pub async fn delete_message(state: &AppState, message_name: &str) -> Result<Valu
         .bearer_auth(&tok)
         .send()
         .await?
-        .error_for_status()?;
+        .ensure_ok().await?;
     Ok(json!({ "success": true, "deletedMessage": message_name }))
 }
 
@@ -207,7 +207,7 @@ pub async fn add_reaction(state: &AppState, message_name: &str, emoji: &str) -> 
         .json(&json!({ "emoji": { "unicode": emoji } }))
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -222,7 +222,7 @@ pub async fn list_reactions(state: &AppState, message_name: &str) -> Result<Valu
         .bearer_auth(&tok)
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -238,6 +238,6 @@ pub async fn delete_reaction(state: &AppState, reaction_name: &str) -> Result<Va
         .bearer_auth(&tok)
         .send()
         .await?
-        .error_for_status()?;
+        .ensure_ok().await?;
     Ok(json!({ "success": true, "deletedReaction": reaction_name }))
 }

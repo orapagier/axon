@@ -1,6 +1,6 @@
 use crate::auth::{page_id, page_token};
 use anyhow::Result;
-use axon_core::AppState;
+use axon_core::{ensure_ok, AppState};
 use serde_json::{json, Map, Value};
 
 const FB_API: &str = "https://graph.facebook.com/v25.0";
@@ -9,7 +9,7 @@ pub async fn get_page(state: &AppState) -> Result<Value> {
     let tok = page_token(state).await?;
     let pid = page_id(state).await?;
 
-    let page_info: Value = state
+    let resp = state
         .client
         .get(format!("{FB_API}/{pid}"))
         .bearer_auth(&tok)
@@ -21,12 +21,12 @@ pub async fn get_page(state: &AppState) -> Result<Value> {
              description,cover,picture",
         )])
         .send()
-        .await?
-        .error_for_status()?
-        .json()
         .await?;
+    let page_info: Value = ensure_ok(resp).await?.json().await?;
 
-    // Fetch insights (reach, follows, unfollows)
+    // Fetch insights (reach, follows, unfollows). These are best-effort: some
+    // pages lack the metrics, and we don't want a secondary failure to mask the
+    // primary page info we already have.
     let insights: Value = match state
         .client
         .get(format!("{FB_API}/{pid}/insights"))
@@ -41,7 +41,7 @@ pub async fn get_page(state: &AppState) -> Result<Value> {
         .send()
         .await
     {
-        Ok(resp) => match resp.error_for_status() {
+        Ok(resp) => match ensure_ok(resp).await {
             Ok(r) => r.json().await.unwrap_or(json!(null)),
             Err(_) => json!(null),
         },
@@ -70,15 +70,12 @@ pub async fn update_page(state: &AppState, args: &Map<String, Value>) -> Result<
         );
     }
 
-    let resp: Value = state
+    let resp = state
         .client
         .post(format!("{FB_API}/{pid}"))
         .bearer_auth(&tok)
         .json(&body)
         .send()
-        .await?
-        .error_for_status()?
-        .json()
         .await?;
-    Ok(resp)
+    Ok(ensure_ok(resp).await?.json().await?)
 }

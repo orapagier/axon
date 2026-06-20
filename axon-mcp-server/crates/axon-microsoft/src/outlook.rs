@@ -1,6 +1,6 @@
 use crate::auth::access_token;
 use anyhow::Result;
-use axon_core::AppState;
+use axon_core::{AppState, EnsureOk};
 use serde_json::{json, Value};
 
 const BASE: &str = "https://graph.microsoft.com/v1.0";
@@ -33,7 +33,7 @@ pub async fn list(
         .query(&params)
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -49,7 +49,7 @@ pub async fn get(state: &AppState, message_id: &str) -> Result<Value> {
         .query(&[("$select", sel)])
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -84,7 +84,7 @@ pub async fn send(
         .json(&json!({"message": msg}))
         .send()
         .await?
-        .error_for_status()?;
+        .ensure_ok().await?;
     Ok(json!({ "success": true }))
 }
 
@@ -126,7 +126,7 @@ pub async fn send_with_attachment(
         .json(&json!({"message": msg}))
         .send()
         .await?
-        .error_for_status()?;
+        .ensure_ok().await?;
     Ok(json!({ "success": true }))
 }
 
@@ -145,7 +145,7 @@ pub async fn reply(
         .json(&json!({"message": {}, "comment": body}))
         .send()
         .await?
-        .error_for_status()?;
+        .ensure_ok().await?;
     Ok(json!({ "success": true }))
 }
 
@@ -162,7 +162,7 @@ pub async fn search(state: &AppState, query: &str, max_items: u32) -> Result<Val
         ])
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -176,7 +176,7 @@ pub async fn delete(state: &AppState, message_id: &str) -> Result<Value> {
         .bearer_auth(&tok)
         .send()
         .await?
-        .error_for_status()?;
+        .ensure_ok().await?;
     Ok(json!({ "success": true }))
 }
 
@@ -189,7 +189,7 @@ pub async fn mark_read(state: &AppState, message_id: &str, is_read: bool) -> Res
         .json(&json!({"isRead": is_read}))
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -207,7 +207,7 @@ pub async fn list_folders(state: &AppState) -> Result<Value> {
         )])
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -228,7 +228,7 @@ pub async fn download_attachment(
         .bearer_auth(&tok)
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
 

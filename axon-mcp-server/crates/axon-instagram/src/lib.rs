@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use axon_core::{err_json, ok_json, schema, AppState};
+use axon_core::{err_json, ok_json, schema, AppState, EnsureOk};
 use axon_facebook::auth::{instagram_id, page_token, FB_API};
 use rmcp::model::{CallToolResult, Tool};
 use serde_json::{json, Map, Value};
@@ -570,7 +570,7 @@ impl InstagramService {
             )])
             .send()
             .await?
-            .error_for_status()?
+            .ensure_ok().await?
             .json()
             .await?;
         Ok(resp)
@@ -593,7 +593,7 @@ impl InstagramService {
             ])
             .send()
             .await?
-            .error_for_status()?
+            .ensure_ok().await?
             .json()
             .await?;
         Ok(resp)
@@ -691,7 +691,7 @@ impl InstagramService {
             ])
             .send()
             .await?
-            .error_for_status()?
+            .ensure_ok().await?
             .json()
             .await?;
         Ok(resp)
@@ -707,7 +707,7 @@ impl InstagramService {
             .form(&[("message", message)])
             .send()
             .await?
-            .error_for_status()?
+            .ensure_ok().await?
             .json()
             .await?;
         Ok(resp)
@@ -752,7 +752,7 @@ impl InstagramService {
             ])
             .send()
             .await?
-            .error_for_status()?
+            .ensure_ok().await?
             .json()
             .await?;
         Ok(resp)
@@ -771,7 +771,7 @@ impl InstagramService {
             ])
             .send()
             .await?
-            .error_for_status()?
+            .ensure_ok().await?
             .json()
             .await?;
         Ok(resp)
@@ -791,7 +791,7 @@ impl InstagramService {
             }))
             .send()
             .await?
-            .error_for_status()?
+            .ensure_ok().await?
             .json()
             .await?;
         Ok(resp)

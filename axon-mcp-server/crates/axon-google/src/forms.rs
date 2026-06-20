@@ -1,6 +1,6 @@
 use crate::auth::access_token;
 use anyhow::Result;
-use axon_core::AppState;
+use axon_core::{AppState, EnsureOk};
 use serde_json::{json, Value};
 
 const BASE: &str = "https://forms.googleapis.com/v1/forms";
@@ -27,7 +27,7 @@ pub async fn create_form(
         }))
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -42,7 +42,7 @@ pub async fn get_form(state: &AppState, form_id: &str) -> Result<Value> {
         .bearer_auth(&tok)
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -328,7 +328,7 @@ pub async fn list_responses(state: &AppState, form_id: &str, page_size: u32) -> 
         .query(&[("pageSize", page_size.to_string())])
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -343,7 +343,7 @@ pub async fn get_response(state: &AppState, form_id: &str, response_id: &str) ->
         .bearer_auth(&tok)
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -361,7 +361,7 @@ pub async fn batch_update(state: &AppState, form_id: &str, requests: Vec<Value>)
         .json(&json!({ "requests": requests }))
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)

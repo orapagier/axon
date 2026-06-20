@@ -1,6 +1,6 @@
 use crate::auth::access_token;
 use anyhow::Result;
-use axon_core::AppState;
+use axon_core::{AppState, EnsureOk};
 use serde_json::{json, Value};
 
 const BASE: &str = "https://meet.googleapis.com/v2";
@@ -28,7 +28,7 @@ pub async fn list_conference_records(
         .query(&params)
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -47,7 +47,7 @@ pub async fn get_conference_record(
         .bearer_auth(&tok)
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -69,7 +69,7 @@ pub async fn list_participants(
         .query(&[("pageSize", max_results.to_string())])
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -85,7 +85,7 @@ pub async fn get_participant(state: &AppState, participant_name: &str) -> Result
         .bearer_auth(&tok)
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -106,7 +106,7 @@ pub async fn list_participant_sessions(
         .query(&[("pageSize", max_results.to_string())])
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -130,7 +130,7 @@ pub async fn list_recordings(
         .query(&[("pageSize", max_results.to_string())])
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -146,7 +146,7 @@ pub async fn get_recording(state: &AppState, recording_name: &str) -> Result<Val
         .bearer_auth(&tok)
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -170,7 +170,7 @@ pub async fn list_transcripts(
         .query(&[("pageSize", max_results.to_string())])
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -186,7 +186,7 @@ pub async fn get_transcript(state: &AppState, transcript_name: &str) -> Result<V
         .bearer_auth(&tok)
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -207,7 +207,7 @@ pub async fn list_transcript_entries(
         .query(&[("pageSize", max_results.to_string())])
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)

@@ -3,6 +3,7 @@ use chrono::Utc;
 use reqwest::Client;
 use serde_json::Value;
 
+use crate::ensure_ok;
 use crate::storage::OAuthToken;
 
 /// Exchange an authorization code for tokens at a standard token endpoint.
@@ -24,14 +25,8 @@ pub async fn exchange_code(
     ];
     params.extend_from_slice(extra);
 
-    let resp: Value = client
-        .post(token_url)
-        .form(&params)
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
+    let resp = client.post(token_url).form(&params).send().await?;
+    let resp: Value = ensure_ok(resp).await?.json().await?;
 
     parse_token_response(resp)
 }
@@ -53,14 +48,8 @@ pub async fn refresh_token(
     ];
     params.extend_from_slice(extra);
 
-    let resp: Value = client
-        .post(token_url)
-        .form(&params)
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
+    let resp = client.post(token_url).form(&params).send().await?;
+    let resp: Value = ensure_ok(resp).await?.json().await?;
 
     // Microsoft refresh may not return a new refresh_token — keep the old one
     let new_refresh = resp["refresh_token"]

@@ -1,6 +1,6 @@
 use crate::auth::access_token;
 use anyhow::{anyhow, bail, Result};
-use axon_core::AppState;
+use axon_core::{AppState, EnsureOk};
 use rmcp::model::Tool;
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
@@ -881,7 +881,7 @@ async fn call_action(
                 .header("Content-Type", mime)
                 .body(bytes)
         };
-        req.send().await?.error_for_status()?
+        req.send().await?.ensure_ok().await?
     } else {
         let mut req = match spec.method {
             "GET" => state.client.get(&url),
@@ -900,7 +900,7 @@ async fn call_action(
             }
         }
 
-        req.send().await?.error_for_status()?
+        req.send().await?.ensure_ok().await?
     };
 
     if spec.returns_binary {

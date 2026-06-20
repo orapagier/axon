@@ -1,6 +1,6 @@
 use crate::auth::access_token;
 use anyhow::{anyhow, bail, Result};
-use axon_core::AppState;
+use axon_core::{AppState, EnsureOk};
 use rmcp::model::Tool;
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
@@ -227,7 +227,7 @@ async fn call_action(
         req = req.json(&body_json);
     }
 
-    let response = req.send().await?.error_for_status()?;
+    let response = req.send().await?.ensure_ok().await?;
 
     if !spec.returns_binary {
         if response.status().as_u16() == 204 {

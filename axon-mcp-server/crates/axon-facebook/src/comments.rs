@@ -1,13 +1,13 @@
 use crate::auth::{page_id, page_token};
 use anyhow::Result;
-use axon_core::AppState;
+use axon_core::{ensure_ok, AppState};
 use serde_json::{json, Value};
 
 const FB_API: &str = "https://graph.facebook.com/v25.0";
 
 pub async fn list(state: &AppState, object_id: &str, limit: u32) -> Result<Value> {
     let tok = page_token(state).await?;
-    let resp: Value = state
+    let resp = state
         .client
         .get(format!("{FB_API}/{object_id}/comments"))
         .bearer_auth(&tok)
@@ -22,10 +22,8 @@ pub async fn list(state: &AppState, object_id: &str, limit: u32) -> Result<Value
             ),
         ])
         .send()
-        .await?
-        .error_for_status()?
-        .json()
         .await?;
+    let resp: Value = ensure_ok(resp).await?.json().await?;
 
     // Format response to make commenter names easily accessible
     let comments = resp.get("data").and_then(|d| d.as_array());
@@ -79,41 +77,31 @@ pub async fn reply(state: &AppState, comment_id: &str, message: &str) -> Result<
         .json(&json!({ "message": message }))
         .send()
         .await?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(anyhow::anyhow!("FB API Error {}: {}", status, body));
-    }
-
-    Ok(resp.json().await?)
+    Ok(ensure_ok(resp).await?.json().await?)
 }
 
 pub async fn delete(state: &AppState, comment_id: &str) -> Result<Value> {
     let tok = page_token(state).await?;
-    state
+    let resp = state
         .client
         .delete(format!("{FB_API}/{comment_id}"))
         .bearer_auth(&tok)
         .send()
-        .await?
-        .error_for_status()?;
+        .await?;
+    ensure_ok(resp).await?;
     Ok(json!({ "success": true, "deleted_comment_id": comment_id }))
 }
 
 pub async fn set_hidden(state: &AppState, comment_id: &str, hide: bool) -> Result<Value> {
     let tok = page_token(state).await?;
-    let resp: Value = state
+    let resp = state
         .client
         .post(format!("{FB_API}/{comment_id}"))
         .bearer_auth(&tok)
         .json(&json!({ "is_hidden": hide }))
         .send()
-        .await?
-        .error_for_status()?
-        .json()
         .await?;
-    Ok(resp)
+    Ok(ensure_ok(resp).await?.json().await?)
 }
 
 pub async fn like(state: &AppState, object_id: &str) -> Result<Value> {
@@ -125,21 +113,17 @@ pub async fn like(state: &AppState, object_id: &str) -> Result<Value> {
         .send()
         .await?;
 
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(anyhow::anyhow!("FB API Error {}: {}", status, body));
-    }
-
+    // Like endpoints return plain text ("true") or empty bodies on success,
+    // so we must read the body once and then interpret it.
+    let status = resp.status();
     let text = resp.text().await.unwrap_or_default();
-    if text.is_empty() {
+    if !status.is_success() {
+        anyhow::bail!("{status} from {FB_API}/{object_id}/likes: {}", text.trim());
+    }
+    if text.is_empty() || text.trim() == "true" {
         return Ok(json!({"success": true}));
     }
-    if text.trim() == "true" {
-        return Ok(json!({"success": true}));
-    }
-
-    match serde_json::from_str(&text) {
+    match serde_json::from_str::<Value>(&text) {
         Ok(v) => Ok(v),
         Err(_) => Ok(json!({"response": text})),
     }
@@ -167,7 +151,7 @@ pub async fn react(
         format!("{}/{}/reactions", FB_API, object_id)
     };
 
-    let mut req = state.client.post(url).bearer_auth(&tok);
+    let mut req = state.client.post(url.clone()).bearer_auth(&tok);
     if !is_like {
         if let Some(r) = r_type {
             req = req.query(&[("type", r)]);
@@ -175,18 +159,15 @@ pub async fn react(
     }
 
     let resp = req.send().await?;
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(anyhow::anyhow!("FB API Error {}: {}", status, body));
-    }
-
+    let status = resp.status();
     let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        anyhow::bail!("{status} from {url}: {}", text.trim());
+    }
     if text.is_empty() || text.trim() == "true" {
         return Ok(json!({"success": true}));
     }
-
-    match serde_json::from_str(&text) {
+    match serde_json::from_str::<Value>(&text) {
         Ok(v) => Ok(v),
         Err(_) => Ok(json!({"response": text})),
     }
@@ -194,7 +175,7 @@ pub async fn react(
 
 pub async fn get(state: &AppState, comment_id: &str) -> Result<Value> {
     let tok = page_token(state).await?;
-    let resp: Value = state
+    let resp = state
         .client
         .get(format!("{FB_API}/{comment_id}"))
         .bearer_auth(&tok)
@@ -203,11 +184,8 @@ pub async fn get(state: &AppState, comment_id: &str) -> Result<Value> {
             "id,message,from{id,name},created_time,like_count,can_reply_privately,attachment",
         )])
         .send()
-        .await?
-        .error_for_status()?
-        .json()
         .await?;
-    Ok(resp)
+    Ok(ensure_ok(resp).await?.json().await?)
 }
 
 pub async fn unreact(
@@ -223,13 +201,8 @@ pub async fn unreact(
         format!("{}/{}/likes", FB_API, object_id)
     };
 
-    state
-        .client
-        .delete(url)
-        .bearer_auth(&tok)
-        .send()
-        .await?
-        .error_for_status()?;
+    let resp = state.client.delete(url).bearer_auth(&tok).send().await?;
+    ensure_ok(resp).await?;
     Ok(json!({ "success": true }))
 }
 
@@ -244,7 +217,7 @@ pub async fn recent_comments(
     let pid = page_id(state).await?;
 
     // Step 1: Get recent posts
-    let posts_resp: Value = state
+    let resp = state
         .client
         .get(format!("{FB_API}/{pid}/feed"))
         .bearer_auth(&tok)
@@ -253,10 +226,8 @@ pub async fn recent_comments(
             ("limit", post_count.to_string()),
         ])
         .send()
-        .await?
-        .error_for_status()?
-        .json()
         .await?;
+    let posts_resp: Value = ensure_ok(resp).await?.json().await?;
 
     let posts = posts_resp.get("data").and_then(|d| d.as_array());
     let mut results = Vec::new();

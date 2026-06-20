@@ -1,6 +1,6 @@
 use crate::auth::{page_id, page_token};
 use anyhow::Result;
-use axon_core::AppState;
+use axon_core::{ensure_ok, AppState};
 use serde_json::{json, Value};
 
 const FB_API: &str = "https://graph.facebook.com/v25.0";
@@ -20,32 +20,26 @@ pub async fn list(state: &AppState, limit: u32, after: Option<&str>) -> Result<V
         params.push(("after".to_owned(), cursor.to_owned()));
     }
 
-    let resp: Value = state
+    let resp = state
         .client
         .get(format!("{FB_API}/{pid}/feed"))
         .bearer_auth(&tok)
         .query(&params)
         .send()
-        .await?
-        .error_for_status()?
-        .json()
         .await?;
-    Ok(resp)
+    Ok(ensure_ok(resp).await?.json().await?)
 }
 
 pub async fn get(state: &AppState, post_id: &str) -> Result<Value> {
     let tok = page_token(state).await?;
-    let resp: Value = state
+    let resp = state
         .client
         .get(format!("{FB_API}/{post_id}"))
         .bearer_auth(&tok)
         .query(&[("fields", POST_FIELDS)])
         .send()
-        .await?
-        .error_for_status()?
-        .json()
         .await?;
-    Ok(resp)
+    Ok(ensure_ok(resp).await?.json().await?)
 }
 
 /// Create a post. If `publish_time` is Some, it will be scheduled (published=false).
@@ -73,18 +67,15 @@ pub async fn create(
         body["link"] = json!(l);
     }
 
-    let resp: Value = state
+    let resp = state
         .client
         .post(format!("{FB_API}/{pid}/feed"))
         .bearer_auth(&tok)
         .query(&[("fields", "id,permalink_url")])
         .json(&body)
         .send()
-        .await?
-        .error_for_status()?
-        .json()
         .await?;
-    Ok(resp)
+    Ok(ensure_ok(resp).await?.json().await?)
 }
 
 pub async fn create_with_image(state: &AppState, message: &str, image_url: &str) -> Result<Value> {
@@ -93,16 +84,14 @@ pub async fn create_with_image(state: &AppState, message: &str, image_url: &str)
 
     // Step 1 — stage the photo without publishing
     let photo: Value = if image_url.starts_with("http://") || image_url.starts_with("https://") {
-        state
+        let resp = state
             .client
             .post(format!("{FB_API}/{pid}/photos"))
             .bearer_auth(&tok)
             .json(&json!({ "url": image_url, "published": false, "temporary": true }))
             .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?
+            .await?;
+        ensure_ok(resp).await?.json().await?
     } else {
         // Local file upload
         let content = std::fs::read(image_url)
@@ -123,71 +112,64 @@ pub async fn create_with_image(state: &AppState, message: &str, image_url: &str)
             .text("temporary", "true")
             .part("source", part);
 
-        state
+        let resp = state
             .client
             .post(format!("{FB_API}/{pid}/photos"))
             .bearer_auth(&tok)
             .multipart(form)
             .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?
+            .await?;
+        ensure_ok(resp).await?.json().await?
     };
 
     let photo_id = photo["id"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("No photo id returned from staging step"))?;
 
-    // Step 2 — create the post with the staged photo attached
-    let resp: Value = state
+    // Step 2 — create the post with the staged photo attached.
+    // Graph API expects `attached_media` as indexed, form-encoded fields whose
+    // values are JSON strings. Sending the array inside an `application/json`
+    // body is a known source of opaque 500s on /{page}/feed, so we form-encode.
+    let attached = serde_json::to_string(&json!({ "media_fbid": photo_id }))?;
+    let resp = state
         .client
         .post(format!("{FB_API}/{pid}/feed"))
         .bearer_auth(&tok)
         .query(&[("fields", "id,permalink_url")])
-        .json(&json!({
-            "message":        message,
-            "attached_media": [{ "media_fbid": photo_id }],
-        }))
+        .form(&[("message", message), ("attached_media[0]", attached.as_str())])
         .send()
-        .await?
-        .error_for_status()?
-        .json()
         .await?;
-    Ok(resp)
+    Ok(ensure_ok(resp).await?.json().await?)
 }
 
 pub async fn update(state: &AppState, post_id: &str, message: &str) -> Result<Value> {
     let tok = page_token(state).await?;
-    let resp: Value = state
+    let resp = state
         .client
         .post(format!("{FB_API}/{post_id}"))
         .bearer_auth(&tok)
         .json(&json!({ "message": message }))
         .send()
-        .await?
-        .error_for_status()?
-        .json()
         .await?;
-    Ok(resp)
+    Ok(ensure_ok(resp).await?.json().await?)
 }
 
 pub async fn delete(state: &AppState, post_id: &str) -> Result<Value> {
     let tok = page_token(state).await?;
-    state
+    let resp = state
         .client
         .delete(format!("{FB_API}/{post_id}"))
         .bearer_auth(&tok)
         .send()
-        .await?
-        .error_for_status()?;
+        .await?;
+    ensure_ok(resp).await?;
     Ok(json!({ "success": true, "deleted_post_id": post_id }))
 }
 
 pub async fn get_scheduled(state: &AppState, limit: u32) -> Result<Value> {
     let tok = page_token(state).await?;
     let pid = page_id(state).await?;
-    let resp: Value = state
+    let resp = state
         .client
         .get(format!("{FB_API}/{pid}/feed"))
         .bearer_auth(&tok)
@@ -200,28 +182,25 @@ pub async fn get_scheduled(state: &AppState, limit: u32) -> Result<Value> {
             ),
         ])
         .send()
-        .await?
-        .error_for_status()?
-        .json()
         .await?;
-    Ok(resp)
+    Ok(ensure_ok(resp).await?.json().await?)
 }
 pub async fn create_with_video(state: &AppState, message: &str, video_url: &str) -> Result<Value> {
     let tok = page_token(state).await?;
     let pid = page_id(state).await?;
 
-    let resp: Value = if video_url.starts_with("http://") || video_url.starts_with("https://") {
-        state
+    let resp_value: Value = if video_url.starts_with("http://")
+        || video_url.starts_with("https://")
+    {
+        let resp = state
             .client
             .post(format!("{FB_API}/{pid}/videos"))
             .bearer_auth(&tok)
             .query(&[("fields", "id,permalink_url")])
             .json(&json!({ "file_url": video_url, "description": message }))
             .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?
+            .await?;
+        ensure_ok(resp).await?.json().await?
     } else {
         // Local file upload
         let content = std::fs::read(video_url)
@@ -241,18 +220,16 @@ pub async fn create_with_video(state: &AppState, message: &str, video_url: &str)
             .text("description", message.to_string())
             .part("source", part);
 
-        state
+        let resp = state
             .client
             .post(format!("{FB_API}/{pid}/videos"))
             .bearer_auth(&tok)
             .query(&[("fields", "id,permalink_url")])
             .multipart(form)
             .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?
+            .await?;
+        ensure_ok(resp).await?.json().await?
     };
 
-    Ok(resp)
+    Ok(resp_value)
 }

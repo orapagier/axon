@@ -1,6 +1,6 @@
 use crate::auth::access_token;
 use anyhow::Result;
-use axon_core::AppState;
+use axon_core::{AppState, EnsureOk};
 use serde_json::{json, Value};
 
 const BASE: &str = "https://tasks.googleapis.com/tasks/v1";
@@ -17,7 +17,7 @@ pub async fn list_task_lists(state: &AppState, max_results: u32) -> Result<Value
         .query(&[("maxResults", max_results.to_string())])
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -33,7 +33,7 @@ pub async fn create_task_list(state: &AppState, title: &str) -> Result<Value> {
         .json(&json!({ "title": title }))
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -49,7 +49,7 @@ pub async fn rename_task_list(state: &AppState, tasklist_id: &str, title: &str) 
         .json(&json!({ "title": title }))
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -64,7 +64,7 @@ pub async fn delete_task_list(state: &AppState, tasklist_id: &str) -> Result<Val
         .bearer_auth(&tok)
         .send()
         .await?
-        .error_for_status()?;
+        .ensure_ok().await?;
     Ok(json!({ "success": true, "deletedTaskListId": tasklist_id }))
 }
 
@@ -100,7 +100,7 @@ pub async fn list_tasks(
         .query(&params)
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -115,7 +115,7 @@ pub async fn get_task(state: &AppState, tasklist_id: &str, task_id: &str) -> Res
         .bearer_auth(&tok)
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -153,7 +153,7 @@ pub async fn create_task(
         .json(&body)
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -191,7 +191,7 @@ pub async fn update_task(
         .json(&patch)
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)
@@ -234,7 +234,7 @@ pub async fn delete_task(state: &AppState, tasklist_id: &str, task_id: &str) -> 
         .bearer_auth(&tok)
         .send()
         .await?
-        .error_for_status()?;
+        .ensure_ok().await?;
     Ok(json!({ "success": true, "deletedTaskId": task_id }))
 }
 
@@ -247,7 +247,7 @@ pub async fn clear_completed(state: &AppState, tasklist_id: &str) -> Result<Valu
         .bearer_auth(&tok)
         .send()
         .await?
-        .error_for_status()?;
+        .ensure_ok().await?;
     Ok(json!({ "success": true, "taskListId": tasklist_id }))
 }
 
@@ -275,7 +275,7 @@ pub async fn move_task(
         .query(&params)
         .send()
         .await?
-        .error_for_status()?
+        .ensure_ok().await?
         .json()
         .await?;
     Ok(resp)

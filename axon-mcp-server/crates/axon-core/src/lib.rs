@@ -6,7 +6,7 @@ pub use storage::*;
 
 use anyhow::Result;
 use chrono::Utc;
-use reqwest::{header, Client};
+use reqwest::{header, Client, Response};
 use std::{
     collections::HashMap,
     hash::{Hash, Hasher},
@@ -110,16 +110,9 @@ impl AppState {
 
     /// Convenience: GET with Bearer token.
     pub async fn get(&self, token: &str, url: &str) -> Result<serde_json::Value> {
-        let resp = self
-            .client
-            .get(url)
-            .bearer_auth(token)
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
-        Ok(resp)
+        let resp = self.client.get(url).bearer_auth(token).send().await?;
+        let resp = ensure_ok(resp).await?;
+        Ok(resp.json().await?)
     }
 
     /// Convenience: GET with Bearer token + query params.
@@ -135,11 +128,9 @@ impl AppState {
             .bearer_auth(token)
             .query(params)
             .send()
-            .await?
-            .error_for_status()?
-            .json()
             .await?;
-        Ok(resp)
+        let resp = ensure_ok(resp).await?;
+        Ok(resp.json().await?)
     }
 
     /// Convenience: POST JSON with Bearer token.
@@ -155,8 +146,8 @@ impl AppState {
             .bearer_auth(token)
             .json(&body)
             .send()
-            .await?
-            .error_for_status()?;
+            .await?;
+        let resp = ensure_ok(resp).await?;
 
         // Some endpoints return 204 No Content
         if resp.status().as_u16() == 204 {
@@ -178,8 +169,8 @@ impl AppState {
             .bearer_auth(token)
             .json(&body)
             .send()
-            .await?
-            .error_for_status()?;
+            .await?;
+        let resp = ensure_ok(resp).await?;
         if resp.status().as_u16() == 204 {
             return Ok(serde_json::json!({ "success": true }));
         }
@@ -188,17 +179,59 @@ impl AppState {
 
     /// Convenience: DELETE with Bearer token.
     pub async fn delete(&self, token: &str, url: &str) -> Result<serde_json::Value> {
-        self.client
+        let resp = self
+            .client
             .delete(url)
             .bearer_auth(token)
             .send()
-            .await?
-            .error_for_status()?;
+            .await?;
+        ensure_ok(resp).await?;
         Ok(serde_json::json!({ "success": true }))
     }
 }
 
 // ── MCP tool helpers ──────────────────────────────────────────────────────────
+
+/// Check a `reqwest::Response` for HTTP errors while preserving the upstream
+/// error body in the returned `anyhow::Error`.
+///
+/// The default `Response::error_for_status()` discards the body, which leaves
+/// upstream API failures (Facebook, Google, Microsoft) opaque — e.g.
+/// "HTTP status server error (500 Internal Server Error) for url ..." with no
+/// hint about *why* it was rejected. This reads the body and surfaces it so the
+/// agent/operator can actually act on the failure.
+pub async fn ensure_ok(resp: Response) -> Result<Response> {
+    let status = resp.status();
+    if status.is_success() {
+        return Ok(resp);
+    }
+
+    let url = resp.url().to_string();
+    // Best-effort body capture. Some upstreams return non-UTF-8 or empty
+    // bodies; we never want error formatting itself to mask the real cause.
+    let body = resp.text().await.unwrap_or_default();
+    let body = body.trim();
+    if body.is_empty() {
+        anyhow::bail!("{status} from {url}");
+    }
+    anyhow::bail!("{status} from {url}: {body}");
+}
+
+/// Method-chaining form of [`ensure_ok`] for `reqwest::Response`.
+///
+/// Import [`EnsureOk`] to turn `.send().await?.error_for_status()?` chains into
+/// `.send().await?.ensure_ok().await?`, which preserves the upstream error body.
+#[async_trait::async_trait]
+pub trait EnsureOk {
+    async fn ensure_ok(self) -> Result<Response>;
+}
+
+#[async_trait::async_trait]
+impl EnsureOk for Response {
+    async fn ensure_ok(self) -> Result<Response> {
+        ensure_ok(self).await
+    }
+}
 
 /// Build a `Tool` input_schema map from a JSON literal.
 #[macro_export]
