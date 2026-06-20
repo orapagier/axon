@@ -44,6 +44,13 @@ const nodeTypeName = computed(() => {
   const type = props.data.node_type || props.data.type
   return NODE_TYPES[type]?.displayName || type
 })
+// The Stimulus node is the workflow entry point — running it executes the
+// whole workflow, not a single step. We show a persistent "play" affordance
+// on it so the workflow is runnable straight from its start node.
+const isEntryNode = computed(() => {
+  const type = props.data.node_type || props.data.type
+  return type === 'trigger' || type === 'circadian' || type === 'stimulus'
+})
 const selectedRef = toRef(props, 'selected')
 const readOnlyRef = toRef(props, 'readOnly')
 
@@ -259,16 +266,38 @@ function cancelRename() {
         @replace:node="$emit('replace:node', id)"
       />
 
-      <!-- Floating Run Button on Hover -->
+      <!-- Floating Run Button on Hover (non-entry nodes only; the entry node
+           gets its own persistent play button below) -->
       <Transition name="fade-scale">
         <button
-          v-if="hovered && !readOnly && !data.execution?.running"
+          v-if="hovered && !readOnly && !isEntryNode && !data.execution?.running"
           class="node-run-button"
           title="Run this node"
           @click.stop="onRun"
         >
           <svg viewBox="0 0 24 24" width="20" height="20">
             <path fill="currentColor" d="M8 5v14l11-7z"/>
+          </svg>
+        </button>
+      </Transition>
+
+      <!-- Persistent Play Button on the Stimulus/trigger entry node.
+           Running it executes the whole workflow (not a single step), so it's
+           always visible and labeled accordingly. -->
+      <Transition name="fade-scale">
+        <button
+          v-if="isEntryNode && !readOnly"
+          class="node-run-button node-workflow-run"
+          :class="{ 'is-running': data.execution?.running }"
+          :title="data.execution?.running ? 'Workflow running…' : 'Run workflow'"
+          :disabled="!!data.execution?.running"
+          @click.stop="onRun"
+        >
+          <svg v-if="!data.execution?.running" viewBox="0 0 24 24" width="20" height="20">
+            <path fill="currentColor" d="M8 5v14l11-7z"/>
+          </svg>
+          <svg v-else class="spin" viewBox="0 0 24 24" width="18" height="18">
+            <path fill="currentColor" d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/>
           </svg>
         </button>
       </Transition>
@@ -439,6 +468,40 @@ function cancelRename() {
 
 .node-run-button:active {
   transform: scale(0.95);
+}
+
+/* Persistent play button on the Stimulus/trigger entry node */
+.node-workflow-run {
+  top: -14px;
+  right: -14px;
+  width: 30px;
+  height: 30px;
+  /* No hover gate — this one is always shown so the workflow is runnable. */
+  opacity: 1;
+  background: linear-gradient(135deg, #22c55e, #16a34a);
+  border-color: #0f1117;
+}
+
+.node-workflow-run:hover {
+  transform: scale(1.12);
+  background: linear-gradient(135deg, #4ade80, #22c55e);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5), 0 0 22px rgba(80, 250, 123, 0.6);
+}
+
+.node-workflow-run.is-running,
+.node-workflow-run:disabled {
+  background: linear-gradient(135deg, #64748b, #475569);
+  cursor: progress;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.node-workflow-run .spin {
+  animation: node-run-spin 0.9s linear infinite;
+}
+
+@keyframes node-run-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 /* Run Button Transition */

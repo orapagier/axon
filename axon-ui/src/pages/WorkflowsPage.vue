@@ -9,6 +9,23 @@ import NodeDetails from '../components/NodeDetails.vue'
 import { NODE_TYPES } from '../lib/nodes.js'
 import { useCanvasMapping, createNodeData, createEdgeData } from '../composables/useCanvasMapping.js'
 import { NodeConnectionTypes } from '../lib/canvas/constants.js'
+import { renameNodeInExpressions } from '../lib/expressionUpdates.js'
+
+// Ensure a node label is unique across the canvas. Duplicate labels break
+// $node["Name"] resolution (the resolver returns the first match) and
+// collide in the backend $node map, so this is load-bearing for
+// drag-and-drop variables. Append " 2", " 3", ... until free.
+function makeUniqueLabel(baseName, excludeId = null) {
+  const taken = new Set(
+    nodes.value
+      .filter(n => n.id !== excludeId)
+      .map(n => (n.data?.label || '').toLowerCase())
+  )
+  if (!taken.has(baseName.toLowerCase())) return baseName
+  let counter = 2
+  while (taken.has(`${baseName} ${counter}`.toLowerCase())) counter++
+  return `${baseName} ${counter}`
+}
 
 // MCP Tools (loaded from API for dynamic MCP node properties)
 const mcpTools = ref([])
@@ -540,10 +557,12 @@ function createNew() {
 function addNode(type, position = { x: 250, y: 150 }) {
   const id = `node_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`
   const isTrigger = type === 'trigger' || nodes.value.length === 0
-  const count = nodes.value.filter(n => n.data?.node_type === type).length
-  const displayName = isTrigger
+  const baseName = isTrigger
     ? 'When clicked'
-    : `${NODE_TYPES[type]?.displayName || 'Neuron'} ${count + 1}`
+    : `${NODE_TYPES[type]?.displayName || 'Neuron'} ${nodes.value.filter(n => n.data?.node_type === type).length + 1}`
+  // Guard against post-delete collisions (e.g. delete "Synapse 1" then add
+  // another Synapse would otherwise both be "Synapse 2").
+  const displayName = makeUniqueLabel(baseName, id)
 
   const newNode = {
     id,
@@ -681,12 +700,44 @@ function handleHandleAdd({ nodeId, handleId }) {
 }
 
 function handleNodeSelect(node) {
-  selectedNode.value = node
+  // Resolve to the source-of-truth node in nodes.value. Vue Flow passes its
+  // own internal node clone through these events; storing that clone in
+  // selectedNode would make NodeDetails edit a copy that save()/getWorkflowPayload
+  // never reads, so renames and config changes silently never persist.
+  selectedNode.value = resolveSelectedNode(node)
 }
 
 function handleNodeActivate(node) {
-  selectedNode.value = node
-  isNodeDetailsOpen.value = true
+  const resolved = resolveSelectedNode(node)
+  selectedNode.value = resolved
+  isNodeDetailsOpen.value = !!resolved
+}
+
+// Map any node-shaped object (Vue Flow clone or source node) back to the
+// corresponding entry in nodes.value, which is the array save() serializes.
+function resolveSelectedNode(node) {
+  if (!node) return null
+  const id = typeof node === 'string' ? node : node.id
+  return nodes.value.find(n => n.id === id) || node
+}
+
+// Toggle a node's enabled state from the canvas toolbar. Previously the toolbar
+// emitted an event that no handler listened to, so the eye button did nothing.
+// Keep `enabled` and `disabled` (used by CanvasNodeDefault for the strike-through)
+// in sync, then persist.
+function handleToggleNodeEnabled(nodeId) {
+  const node = nodes.value.find(n => n.id === nodeId)
+  if (!node) return
+  const nextEnabled = node.data?.enabled === false
+  node.data = {
+    ...node.data,
+    enabled: nextEnabled,
+    disabled: !nextEnabled,
+  }
+  if (selectedNode.value && selectedNode.value.id === nodeId) {
+    selectedNode.value = node
+  }
+  save()
 }
 
 function closeNodeDetails() {
@@ -698,9 +749,21 @@ function handleNodeDeselect() {
   closeNodeDetails()
 }
 
+// A node counts as the workflow entry point if it's a Stimulus/trigger node.
+// Used to decide whether "Run" executes just that node (executeNodeStep) or
+// kicks off the whole workflow (runActive). Centralized here because the same
+// check was duplicated (and inconsistently) in runActive, getWorkflowPayload,
+// and handleRunNode — the Stimulus starting node was missed in handleRunNode,
+// so clicking run on it only stepped the node.
+function isWorkflowEntryNode(node) {
+  if (!node) return false
+  const type = node.data?.node_type || node.data?.type
+  return type === 'trigger' || type === 'circadian' || type === 'stimulus'
+}
+
 function handleRunNode(nodeId) {
   const node = nodes.value.find(n => n.id === nodeId)
-  if (node && (node.data?.node_type === 'trigger' || node.data?.type === 'trigger')) {
+  if (node && isWorkflowEntryNode(node)) {
     runActive()
   } else {
     executeNodeStep(nodeId)
@@ -1532,12 +1595,24 @@ async function handleContextRename() {
 function handleNodeRename({ id, name }) {
   const node = nodes.value.find(n => n.id === id)
   if (node) {
-    node.data.label = name
-    node.data.name = name
-    // Keep active node details editor in sync 
+    const oldLabel = node.data.label
+    // Enforce uniqueness — duplicate labels break $node["Name"] resolution
+    // (the resolver returns the first match). Mirrors the NodeDetails modal.
+    const finalLabel = makeUniqueLabel((name || '').trim() || node.data.label, id)
+
+    node.data.label = finalLabel
+    node.data.name = finalLabel
+    // Keep active node details editor in sync
     if (selectedNode.value && selectedNode.value.id === id) {
-      selectedNode.value.data.name = name
-      selectedNode.value.data.label = name
+      selectedNode.value.data.name = finalLabel
+      selectedNode.value.data.label = finalLabel
+    }
+
+    // Sync {{ $node["OldName"]... }} references in other nodes so they don't
+    // permanently miss after a rename. The NodeDetails modal already does this;
+    // the right-click rename path previously didn't, leaving stale references.
+    if (oldLabel && oldLabel !== finalLabel) {
+      renameNodeInExpressions(nodes.value, oldLabel, finalLabel)
     }
     save()
   }
@@ -1879,6 +1954,7 @@ onUnmounted(() => {
             @delete-node="removeNode"
             @rename="handleNodeRename"
             @run-node="handleRunNode"
+            @toggle-node="handleToggleNodeEnabled"
             @activate-node="handleNodeActivate"
             @tidy-up="handleTidyUp"
             @viewport-change="closeContextMenu"

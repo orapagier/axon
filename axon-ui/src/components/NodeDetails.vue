@@ -198,9 +198,11 @@ function localToIso(val) {
 }
 
 function hasExpression(val) {
-
+  // Recognize both the legacy {{ }} wrapped form and the bare n8n-style
+  // $node["Name"].field form emitted by drag-and-drop.
   if (typeof val !== 'string') return false
-  return val.includes('{{')
+  if (val.includes('{{')) return true
+  return /\$node(\.|\[['"])[A-Za-z0-9 _-]/.test(val)
 }
 
 const focusedRawValue = computed(() => {
@@ -254,10 +256,19 @@ async function copyWebhookUrl() {
   }
 }
 
+// Persist a settings toggle immediately. The settings checkboxes bind directly
+// to node.data via v-model, so the in-memory state updates instantly — but
+// without emitting save here the change never reaches the backend, which is why
+// toggling Enable felt like it "didn't take effect". Keep `disabled` in sync so
+// the canvas strike-through reflects the new state right away.
+function onSettingsChange() {
+  props.node.data.disabled = props.node.data.enabled === false
+  emit('save')
+}
+
 function finishRename() {
   const oldLabel = originalLabel.value;
   isRenaming.value = false;
-  
   let newLabel = props.node.data.label?.trim();
   if (!newLabel) {
     newLabel = nodeDefinition.value.displayName || 'Neuron';
@@ -457,8 +468,8 @@ function getSchema(data, path = '', currentDepth = 0) {
 }
 
 function onDragStart(event, nodeId, fullPath) {
-  // Use a cleaner expression format
-  event.dataTransfer.setData('variable', `{{ $node["${nodeId}"].data.${fullPath} }}`)
+  // Bare expression form (no {{ }}), n8n-style.
+  event.dataTransfer.setData('variable', `$node["${nodeId}"].data.${fullPath}`)
   event.dataTransfer.effectAllowed = 'copy'
 }
 
@@ -479,14 +490,17 @@ function getByPath(root, path) {
   return current
 }
 
-// Resolve {{ $node["Label"].data.path }} expressions against the most recent
-// upstream output, so the field shows the real value just like n8n. Accepts the
-// .data / .output / .json aliases and a bare reference (whole output).
+// Resolve $node["Label"].data.path expressions against the most recent
+// upstream output, so the field shows the real value just like n8n. Accepts
+// the legacy {{ }}-wrapped form AND the bare form emitted by drag-and-drop,
+// plus the .data / .output / .json aliases and a bare reference (whole output).
 // Returns null when nothing could be resolved (preview shows "Waiting for data...").
 function resolveExpression(expr) {
-  if (!expr || typeof expr !== 'string' || !expr.includes('{{')) return null
+  if (!expr || typeof expr !== 'string') return null
+  if (!hasExpression(expr)) return null
 
-  const regex = /\{\{\s*\$?node\[['"](.+?)['"]\]\.(?:data|output|json)\.?([a-zA-Z0-9_\-\.\[\]]*)\s*\}\}/g
+  // Matches both: {{ $node["X"].data.path }} and bare $node["X"].data.path
+  const regex = /\{?\{?\s*\$?node\[['"](.+?)['"]\]\.(?:data|output|json)\.?([a-zA-Z0-9_\-\.\[\]]*)\s*\}?\}?/g
   let resolved = expr
   let match
 
@@ -1369,7 +1383,7 @@ watch(() => props.node.data.config.tool_name, (newTool) => {
                 <label class="field-label">Enabled</label>
                 <div class="toggle-field">
                   <label class="toggle-switch">
-                    <input type="checkbox" v-model="node.data.enabled" />
+                    <input type="checkbox" v-model="node.data.enabled" @change="onSettingsChange" />
                     <span class="toggle-track"><span class="toggle-thumb"></span></span>
                   </label>
                   <span class="toggle-label">{{ node.data.enabled !== false ? 'Node Enabled' : 'Node Disabled' }}</span>
@@ -1379,7 +1393,7 @@ watch(() => props.node.data.config.tool_name, (newTool) => {
                 <label class="field-label">Output</label>
                 <div class="toggle-field">
                   <label class="toggle-switch">
-                    <input type="checkbox" v-model="node.data.alwaysOutputData" />
+                    <input type="checkbox" v-model="node.data.alwaysOutputData" @change="onSettingsChange" />
                     <span class="toggle-track"><span class="toggle-thumb"></span></span>
                   </label>
                   <span class="toggle-label">{{ node.data.alwaysOutputData ? 'Always Output Data' : 'Only on Success' }}</span>
@@ -1389,7 +1403,7 @@ watch(() => props.node.data.config.tool_name, (newTool) => {
                 <label class="field-label">On Fail</label>
                 <div class="toggle-field">
                   <label class="toggle-switch">
-                    <input type="checkbox" v-model="node.data.continueOnFail" />
+                    <input type="checkbox" v-model="node.data.continueOnFail" @change="onSettingsChange" />
                     <span class="toggle-track"><span class="toggle-thumb"></span></span>
                   </label>
                   <span class="toggle-label">{{ node.data.continueOnFail ? 'Continue On Fail' : 'Stop On Fail' }}</span>

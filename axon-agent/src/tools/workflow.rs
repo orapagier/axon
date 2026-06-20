@@ -1100,22 +1100,24 @@ fn resolve_value(s: &str, results: &std::collections::HashMap<String, NodeResult
     static RE_DOT: Lazy<Regex> = Lazy::new(|| {
         Regex::new(r#"\{\{\s*\$?node\.([a-zA-Z0-9_\-]+)\.([a-zA-Z0-9_\-\.\[\]]+)\s*\}\}"#).unwrap()
     });
+    // Pure-expression regexes (no {{ }}). Anchored with ^...$ so they only
+    // match when the WHOLE trimmed field value is a single expression — this
+    // is the form the drag-and-drop now emits (n8n-style, no brackets).
     static RE_PURE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r#"\$?node\[['"](.+?)['"]\]\.([a-zA-Z0-9_\-\.\[\]]+)$"#).unwrap()
+        Regex::new(r#"^\$?node\[['"](.+?)['"]\]\.([a-zA-Z0-9_\-\.\[\]]+)$"#).unwrap()
     });
     static RE_PURE_DOT: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r#"\$?node\.([a-zA-Z0-9_\-]+)\.([a-zA-Z0-9_\-\.\[\]]+)$"#).unwrap()
+        Regex::new(r#"^\$?node\.([a-zA-Z0-9_\-]+)\.([a-zA-Z0-9_\-\.\[\]]+)$"#).unwrap()
     });
     static RE_ANY: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(?s)\{\{(.+?)\}\}"#).unwrap());
     let re = &*RE;
     let re_dot = &*RE_DOT;
 
-    // Check if the input is JUST an expression. If so, return the raw Value.
-    if s.trim().starts_with("{{") && s.trim().ends_with("}}") && s.matches("{{").count() == 1 {
-        let clean = s.trim();
-        let expression = &clean[2..clean.len() - 2].trim();
-
-        // Match bracketed form: $node["Name"].field
+    // Resolve a bare or unwrapped pure expression to its raw Value.
+    // Returns Some(value) on a hit; Some(Null) on a recognized-but-missing
+    // reference; None when the expression isn't a $node reference at all.
+    let resolve_pure = |expression: &str| -> Option<Value> {
+        // Bracketed form: $node["Name"].field
         if let Some(cap) = RE_PURE.captures(expression) {
             let identifier = &cap[1];
             let field = &cap[2];
@@ -1124,15 +1126,17 @@ fn resolve_value(s: &str, results: &std::collections::HashMap<String, NodeResult
                     .values()
                     .find(|r| r.node_name.to_lowercase() == identifier.to_lowercase())
             });
-            if let Some(res) = res {
-                let val = get_raw_field(res, field);
+            return Some(match res {
                 // Preserve null so downstream nodes see the real value.
                 // Previously this converted null -> "" which hid missing data.
-                return val;
-            }
+                Some(res) => get_raw_field(res, field),
+                // Recognized reference but node not run / wrong branch: emit
+                // Null instead of leaking the literal token into the request.
+                None => Value::Null,
+            });
         }
 
-        // Match dot form: $node.id.field
+        // Dot form: $node.id.field
         if let Some(cap) = RE_PURE_DOT.captures(expression) {
             let identifier = &cap[1];
             let field = &cap[2];
@@ -1141,16 +1145,33 @@ fn resolve_value(s: &str, results: &std::collections::HashMap<String, NodeResult
                     .values()
                     .find(|r| r.node_name.to_lowercase() == identifier.to_lowercase())
             });
-            if let Some(res) = res {
-                let val = get_raw_field(res, field);
-                // null is preserved as-is (no silent conversion to empty string)
-                return val;
-            }
+            return Some(match res {
+                Some(res) => get_raw_field(res, field),
+                None => Value::Null,
+            });
         }
+        None
+    };
 
-        // Fallback: Full JS evaluation
+    let trimmed = s.trim();
+
+    // Wrapped pure expression: {{ $node["Name"].field }} (whole field is one expr)
+    if trimmed.starts_with("{{") && trimmed.ends_with("}}") && s.matches("{{").count() == 1 {
+        let expression = &trimmed[2..trimmed.len() - 2].trim();
+        if let Some(val) = resolve_pure(expression) {
+            return val;
+        }
+        // Fallback: full JS evaluation of whatever is inside {{ }}
         if let Some(val) = evaluate_js_expression(expression, results) {
-            // null is preserved as-is (no silent conversion to empty string)
+            return val;
+        }
+    }
+
+    // Bare pure expression: $node["Name"].field (no {{ }}, n8n drag style).
+    // Only resolve when the ENTIRE field value is the expression so we never
+    // accidentally rewrite plain prose that happens to mention "$node".
+    if !trimmed.contains("{{") {
+        if let Some(val) = resolve_pure(trimmed) {
             return val;
         }
     }

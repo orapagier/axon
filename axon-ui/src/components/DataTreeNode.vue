@@ -39,7 +39,9 @@ const props = defineProps({
 })
 
 function onDragStart(event, fullPath) {
-  event.dataTransfer.setData('variable', `{{ $node["${props.nodeLabel}"].data.${fullPath} }}`)
+  // Bare expression form (no {{ }}), n8n-style: the resolver treats a
+  // whole-field bare $node[...] reference exactly like a {{ }}-wrapped one.
+  event.dataTransfer.setData('variable', `$node["${props.nodeLabel}"].data.${fullPath}`)
   event.dataTransfer.effectAllowed = 'copy'
 }
 </script>

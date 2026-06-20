@@ -148,7 +148,7 @@ function onMouseLeave() {
     <!-- Edge toolbar (visible on hover/selection) -->
     <EdgeLabelRenderer v-if="!readOnly">
       <div
-        class="edge-toolbar diode-container"
+        class="edge-toolbar edge-controls"
         :class="{ 'is-active': localHovered || selected }"
         :style="{
           transform: `translate(-50%, -50%) translate(${edgeCenter.x}px, ${edgeCenter.y}px)`,
@@ -157,25 +157,23 @@ function onMouseLeave() {
         @mouseenter="onMouseEnter"
         @mouseleave="onMouseLeave"
       >
-        <!-- The "Focus Dot" that appears when not hovered -->
+        <!-- Small dot shown at rest so the connection is discoverable -->
         <div class="focus-handle"></div>
 
-        <!-- The full Diode UI that scales up -->
-        <div class="diode-body">
+        <!-- Minimal +/× controls. Kept small visually but the hit area is
+             generous (transparent padding around each button) so they stay
+             easy to click. -->
+        <div class="controls-body">
           <button
-            class="edge-btn diode-anode add"
+            class="edge-btn edge-btn-add"
             title="Add node between"
             @click="onAddClick"
           >
             <span class="symbol">+</span>
           </button>
-          
-          <div class="diode-glass">
-            <div class="diode-filament"></div>
-          </div>
 
           <button
-            class="edge-btn diode-cathode delete"
+            class="edge-btn edge-btn-delete"
             title="Delete connection"
             @click="onDeleteClick"
           >
@@ -202,17 +200,18 @@ function onMouseLeave() {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 .focus-handle {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   background: #6366f1;
   border-radius: 50%;
-  opacity: 0.3;
-  box-shadow: 0 0 8px rgba(99, 102, 241, 0.4);
-  transition: all 0.2s ease;
+  opacity: 0.35;
+  box-shadow: 0 0 6px rgba(99, 102, 241, 0.4);
+  transition: all 0.18s ease;
+  position: absolute;
 }
 
 .is-active .focus-handle {
@@ -220,103 +219,66 @@ function onMouseLeave() {
   opacity: 0;
 }
 
-.diode-body {
+.controls-body {
   display: flex;
   align-items: center;
-  background: rgba(18, 29, 36, 0.95);
-  backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 20px;
-  padding: 3px;
-  box-shadow:
-    0 8px 32px rgba(0, 0, 0, 0.8),
-    0 0 15px rgba(99, 102, 241, 0.15);
-  height: 32px;
+  gap: 3px;
+  background: rgba(18, 29, 36, 0.9);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 2px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
   transform: scale(0);
   opacity: 0;
-  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
   position: absolute;
 }
 
-.is-active .diode-body {
+.is-active .controls-body {
   transform: scale(1);
   opacity: 1;
-}
-
-.diode-glass {
-  width: 28px;
-  height: 14px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.14));
-  margin: 0 6px;
-  border-radius: 3px;
-  position: relative;
-  overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.diode-filament {
-  position: absolute;
-  top: 50%;
-  left: 0;
-  width: 100%;
-  height: 2px;
-  background: linear-gradient(90deg, 
-    rgba(6, 182, 212, 0.2), 
-    #06b6d4, 
-    #6366f1, 
-    #f43f5e,
-    rgba(244, 63, 94, 0.2)
-  );
-  filter: blur(0.5px);
-  box-shadow: 0 0 10px rgba(99, 102, 241, 0.6);
-  opacity: 0.8;
 }
 
 .edge-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  /* Visual size kept small (16px), but generous transparent padding extends
+     the hit area so the button stays easy to click. */
+  width: 16px;
+  height: 16px;
+  padding: 7px;
+  box-sizing: content-box;
   background: transparent;
   border: none;
-  border-radius: 50%;
+  border-radius: 8px;
   cursor: pointer;
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-  color: var(--text);
+  transition: background 0.15s ease, color 0.15s ease, transform 0.1s ease;
+  color: rgba(255, 255, 255, 0.85);
 }
 
-.diode-anode {
-  background: linear-gradient(135deg, #22d3ee, #0891b2);
-  box-shadow: 0 0 12px rgba(34, 211, 238, 0.4);
+.edge-btn-add:hover {
+  background: rgba(34, 211, 238, 0.2);
+  color: #67e8f9;
+  transform: scale(1.08);
 }
 
-.diode-anode:hover {
-  transform: scale(1.2) rotate(90deg);
-  box-shadow: 0 0 20px rgba(34, 211, 238, 0.8);
-  background: linear-gradient(135deg, #67e8f9, #22d3ee);
-}
-
-.diode-cathode {
-  background: linear-gradient(135deg, #fb7185, #e11d48);
-  box-shadow: 0 0 12px rgba(251, 113, 133, 0.4);
-}
-
-.diode-cathode:hover {
-  transform: scale(1.2) rotate(-90deg);
-  box-shadow: 0 0 20px rgba(251, 113, 133, 0.8);
-  background: linear-gradient(135deg, #fda4af, #fb7185);
-}
-
-.symbol {
-  font-size: 20px;
-  line-height: 1;
-  font-weight: 700;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+.edge-btn-delete:hover {
+  background: rgba(251, 113, 133, 0.2);
+  color: #fda4af;
+  transform: scale(1.08);
 }
 
 .edge-btn:active {
-  transform: scale(0.9);
+  transform: scale(0.92);
+}
+
+.symbol {
+  font-size: 13px;
+  line-height: 1;
+  font-weight: 700;
+  pointer-events: none;
 }
 
 /* Neuro-Flow Animation Styles - Premium Discrete Pulse Wave */

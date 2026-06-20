@@ -49,3 +49,8 @@ Thumbs.db
 *.swp
 .idea/
 .vscode/
+
+# Windows reserved device names that can't be indexed by git
+nul
+con
+aux

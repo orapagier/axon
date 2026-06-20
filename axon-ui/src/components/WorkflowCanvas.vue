@@ -48,6 +48,7 @@ const emit = defineEmits([
   'insert-node',
   'delete-node',
   'run-node',
+  'toggle-node',
   'activate-node',
   'tidy-up',
   'viewport-change',
@@ -659,7 +660,7 @@ defineExpose({
           @delete="emit('delete-node', $event)"
           @run="emit('run-node', $event)"
           @select="emit('node-select', findNode($event))"
-          @toggle="emit('update:node:enabled', $event)"
+          @toggle="emit('toggle-node', $event)"
           @activate="emit('activate-node', findNode($event))"
           @rename="emit('rename', $event)"
           @open:contextmenu="handleNodeCustomContextMenu"

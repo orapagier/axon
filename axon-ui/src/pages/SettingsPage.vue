@@ -9,6 +9,7 @@ const patternsText = ref('[\n]')
 const testMsg = ref('')
 const testResult = ref(null)
 const activeSection = ref('')
+const loaded = ref(false)
 
 const CATEGORY_META = {
   auth: { title: 'Authentication', description: 'Access control, tokens, and session security.' },
@@ -68,6 +69,10 @@ watch(
       activeSection.value = ''
       return
     }
+    // Only default once the real settings have loaded. Otherwise, on mount the
+    // categories are still empty and `sections` only contains the router
+    // entries, which would incorrectly default the selection to Router Patterns.
+    if (!loaded.value) return
     if (!next.some((item) => item.id === activeSection.value)) {
       activeSection.value = next[0].id
     }
@@ -98,6 +103,8 @@ async function load() {
     null,
     2
   )
+
+  loaded.value = true
 }
 
 async function savePatterns() {
