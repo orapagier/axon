@@ -181,16 +181,41 @@ impl InstagramService {
             (Some(_), Some(_)) => Err(anyhow::anyhow!(
                 "Provide either {kind}_url or {kind}_path, not both"
             )),
-            (Some(url), None) => Ok(Some(url.to_owned())),
+            // A value in the *_url field may still be a local filesystem path.
+            // fb_create_post_with_image accepts either form, so mirror that here.
+            // Instagram's Graph API can't ingest raw file bytes, so any non-HTTP
+            // value is re-served at a public URL exactly like *_path is.
+            (Some(value), None) => {
+                if Self::looks_like_remote_url(value) {
+                    Ok(Some(value.to_owned()))
+                } else {
+                    Ok(Some(self.local_path_to_public_url(value, is_video).await?))
+                }
+            }
             (None, Some(path)) => Ok(Some(self.local_path_to_public_url(path, is_video).await?)),
             (None, None) => Ok(None),
         }
     }
 
+    fn looks_like_remote_url(value: &str) -> bool {
+        let v = value.trim();
+        v.starts_with("http://") || v.starts_with("https://")
+    }
+
     async fn local_path_to_public_url(&self, raw_path: &str, is_video: bool) -> Result<String> {
         let path = Self::parse_local_path(raw_path)?;
-        let canonical = std::fs::canonicalize(&path)
-            .with_context(|| format!("Local media path not found: {}", path.display()))?;
+        let canonical = std::fs::canonicalize(&path).with_context(|| {
+            let cwd = std::env::current_dir()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|_| "?".to_string());
+            format!(
+                "Local media path not found: {} (resolved relative to working dir {cwd}). \
+                 Pass an absolute path or a public http(s) URL. Note: Instagram cannot \
+                 upload local file bytes like Facebook does — the file is re-served at a \
+                 public URL, which requires AXON_PUBLIC_BASE_URL to be set.",
+                path.display()
+            )
+        })?;
 
         let metadata = std::fs::metadata(&canonical)
             .with_context(|| format!("Cannot access local media file: {}", canonical.display()))?;
