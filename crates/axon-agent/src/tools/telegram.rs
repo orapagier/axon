@@ -366,6 +366,170 @@ fn flatten_additional_fields(config: &Value) -> Value {
     merged
 }
 
+/// Resolve the effective parse mode, honouring values nested in `additionalFields`.
+fn resolve_parse_mode(config: &Value) -> String {
+    str_val(&flatten_additional_fields(config), "parse_mode")
+        .unwrap_or_else(|| "Markdown".to_string())
+}
+
+fn is_html_parse_mode(config: &Value) -> bool {
+    resolve_parse_mode(config).eq_ignore_ascii_case("html")
+}
+
+/// Tags Telegram's HTML parse mode understands. Anything else that looks like a
+/// tag (e.g. an email address `<noreply@example.com>`) gets escaped so the Bot
+/// API doesn't reject the whole message with "Unsupported start tag".
+const TELEGRAM_HTML_TAGS: &[&str] = &[
+    "b",
+    "strong",
+    "i",
+    "em",
+    "u",
+    "ins",
+    "s",
+    "strike",
+    "del",
+    "span",
+    "tg-spoiler",
+    "tg-emoji",
+    "a",
+    "code",
+    "pre",
+    "blockquote",
+];
+
+/// Escape stray `<`, `>`, and `&` for Telegram's HTML parse mode while leaving
+/// valid Telegram tags and HTML entities intact. Telegram requires that any of
+/// these three characters not forming part of a tag/entity be escaped, otherwise
+/// it aborts with `can't parse entities`.
+fn escape_html_for_telegram(input: &str) -> String {
+    let chars: Vec<char> = input.chars().collect();
+    let mut out = String::with_capacity(input.len() + 16);
+    let mut i = 0;
+    while i < chars.len() {
+        match chars[i] {
+            '<' => match valid_tag_end(&chars, i) {
+                Some(end) => {
+                    out.extend(chars[i..end].iter());
+                    i = end;
+                }
+                None => {
+                    out.push_str("&lt;");
+                    i += 1;
+                }
+            },
+            '>' => {
+                out.push_str("&gt;");
+                i += 1;
+            }
+            '&' => match entity_end(&chars, i) {
+                Some(end) => {
+                    out.extend(chars[i..end].iter());
+                    i = end;
+                }
+                None => {
+                    out.push_str("&amp;");
+                    i += 1;
+                }
+            },
+            c => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+/// If a valid Telegram HTML tag starts at `start` (where `chars[start] == '<'`),
+/// return the index just past its closing `>`; otherwise `None`.
+fn valid_tag_end(chars: &[char], start: usize) -> Option<usize> {
+    let mut j = start + 1;
+    let closing = chars.get(j) == Some(&'/');
+    if closing {
+        j += 1;
+    }
+    // Tag name: ASCII letters/digits plus '-' (for tg-spoiler / tg-emoji).
+    let name_start = j;
+    while matches!(chars.get(j), Some(c) if c.is_ascii_alphanumeric() || *c == '-') {
+        j += 1;
+    }
+    let name: String = chars[name_start..j].iter().collect::<String>().to_lowercase();
+    if name.is_empty() || !TELEGRAM_HTML_TAGS.contains(&name.as_str()) {
+        return None;
+    }
+
+    // Closing tag: optional spaces, then '>'.
+    if closing {
+        while chars.get(j) == Some(&' ') {
+            j += 1;
+        }
+        return (chars.get(j) == Some(&'>')).then_some(j + 1);
+    }
+
+    match chars.get(j) {
+        // Opening tag with no attributes.
+        Some('>') => Some(j + 1),
+        // Attributes are only valid on a subset of tags; scan to the matching
+        // '>', skipping over quoted attribute values so a '>' inside a value
+        // (e.g. an href) doesn't end the tag early.
+        Some(c) if c.is_whitespace() => {
+            const ATTR_TAGS: &[&str] = &["a", "span", "code", "pre", "blockquote", "tg-emoji"];
+            if !ATTR_TAGS.contains(&name.as_str()) {
+                return None;
+            }
+            let mut quote: Option<char> = None;
+            while let Some(&c) = chars.get(j) {
+                match quote {
+                    Some(q) if c == q => quote = None,
+                    Some(_) => {}
+                    None => match c {
+                        '"' | '\'' => quote = Some(c),
+                        '<' => return None,
+                        '>' => return Some(j + 1),
+                        _ => {}
+                    },
+                }
+                j += 1;
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// If a valid HTML entity starts at `start` (where `chars[start] == '&'`),
+/// return the index just past its `;`; otherwise `None`.
+fn entity_end(chars: &[char], start: usize) -> Option<usize> {
+    let mut j = start + 1;
+    if chars.get(j) == Some(&'#') {
+        // Numeric: &#123; (decimal) or &#x1F600; (hex).
+        j += 1;
+        let hex = matches!(chars.get(j), Some('x') | Some('X'));
+        if hex {
+            j += 1;
+        }
+        let digits_start = j;
+        while matches!(chars.get(j), Some(c) if if hex { c.is_ascii_hexdigit() } else { c.is_ascii_digit() })
+        {
+            j += 1;
+        }
+        if j == digits_start {
+            return None;
+        }
+    } else {
+        // Named: &amp; &lt; …
+        let name_start = j;
+        while matches!(chars.get(j), Some(c) if c.is_ascii_alphanumeric()) {
+            j += 1;
+        }
+        if j == name_start {
+            return None;
+        }
+    }
+    (chars.get(j) == Some(&';')).then_some(j + 1)
+}
+
 /// Merge `parse_mode`, `disable_web_page_preview`, reply markup, and the
 /// optional attribution footer into `body` — mirrors `addAdditionalFields`.
 fn apply_additional_fields(body: &mut serde_json::Map<String, Value>, config: &Value) {
@@ -375,6 +539,15 @@ fn apply_additional_fields(body: &mut serde_json::Map<String, Value>, config: &V
     let parse_mode = str_val(config, "parse_mode").unwrap_or_else(|| "Markdown".to_string());
     if parse_mode.to_lowercase() != "none" {
         body.insert("parse_mode".into(), json!(parse_mode));
+    }
+
+    // In HTML parse mode, escape stray markup in captions so the Bot API doesn't
+    // reject media messages. (Message `text` is escaped before chunking in
+    // send_message / edit_message_text so the length check sees the final text.)
+    if parse_mode.eq_ignore_ascii_case("html") {
+        if let Some(caption) = body.get("caption").and_then(|v| v.as_str()).map(str::to_string) {
+            body.insert("caption".into(), json!(escape_html_for_telegram(&caption)));
+        }
     }
 
     // disable_web_page_preview (default true)
@@ -477,7 +650,14 @@ const TELEGRAM_MAX_TEXT: usize = 4096;
 
 async fn send_message(client: &TelegramClient, config: &Value) -> Result<Value, String> {
     let chat_id = require_str(config, "chat_id")?;
-    let text = require_str(config, "text")?;
+    let mut text = require_str(config, "text")?;
+
+    // In HTML parse mode, escape stray '<', '>', '&' (e.g. "<noreply@x.com>")
+    // up front so the length check and chunk boundaries operate on the final,
+    // escaped text rather than splitting it after the fact.
+    if is_html_parse_mode(config) {
+        text = escape_html_for_telegram(&text);
+    }
 
     // Auto-chunk messages exceeding Telegram's 4096-char limit.
     if text.len() > TELEGRAM_MAX_TEXT {
@@ -490,9 +670,11 @@ async fn send_message(client: &TelegramClient, config: &Value) -> Result<Value, 
             if i == 0 {
                 apply_additional_fields(&mut body, config);
             } else {
-                // Inherit parse_mode for continuations
-                let pm = str_val(config, "parse_mode").unwrap_or_else(|| "Markdown".to_string());
-                body.insert("parse_mode".into(), json!(pm));
+                // Inherit parse_mode for continuations (text is already escaped).
+                let pm = resolve_parse_mode(config);
+                if !pm.eq_ignore_ascii_case("none") {
+                    body.insert("parse_mode".into(), json!(pm));
+                }
             }
             last_result = client.post("sendMessage", Value::Object(body)).await?;
         }
@@ -869,7 +1051,10 @@ async fn edit_message_text(client: &TelegramClient, config: &Value) -> Result<Va
         .get("message_id")
         .and_then(|v| v.as_i64())
         .ok_or("Missing 'message_id' for editMessageText")?;
-    let text = require_str(config, "text")?;
+    let mut text = require_str(config, "text")?;
+    if is_html_parse_mode(config) {
+        text = escape_html_for_telegram(&text);
+    }
 
     let mut body = serde_json::Map::new();
     body.insert("chat_id".into(), json!(chat_id));
@@ -2083,6 +2268,55 @@ mod tests {
             }
             other => panic!("expected AcceptedForTrigger webhook payload, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_escape_html_escapes_stray_angle_brackets() {
+        // The reported failure: an email address looks like an unsupported tag.
+        assert_eq!(
+            escape_html_for_telegram("You have a new email from ChatGPT <noreply@email.openai.com>"),
+            "You have a new email from ChatGPT &lt;noreply@email.openai.com&gt;"
+        );
+    }
+
+    #[test]
+    fn test_escape_html_preserves_valid_tags() {
+        assert_eq!(
+            escape_html_for_telegram("<b>Bold</b> and <i>italic</i>"),
+            "<b>Bold</b> and <i>italic</i>"
+        );
+        assert_eq!(
+            escape_html_for_telegram("<a href=\"https://x.com/?a=1&b=2\">link</a>"),
+            "<a href=\"https://x.com/?a=1&b=2\">link</a>"
+        );
+        assert_eq!(
+            escape_html_for_telegram("<tg-spoiler>hidden</tg-spoiler>"),
+            "<tg-spoiler>hidden</tg-spoiler>"
+        );
+    }
+
+    #[test]
+    fn test_escape_html_mixes_tags_and_stray_markup() {
+        assert_eq!(
+            escape_html_for_telegram("<b>From</b> ChatGPT <noreply@openai.com> & co"),
+            "<b>From</b> ChatGPT &lt;noreply@openai.com&gt; &amp; co"
+        );
+    }
+
+    #[test]
+    fn test_escape_html_keeps_entities_and_escapes_stray_amp() {
+        assert_eq!(
+            escape_html_for_telegram("Tom &amp; Jerry &#39;hi&#39; AT&T"),
+            "Tom &amp; Jerry &#39;hi&#39; AT&amp;T"
+        );
+    }
+
+    #[test]
+    fn test_escape_html_rejects_unknown_and_attributed_plain_tags() {
+        // Unknown tag → escaped.
+        assert_eq!(escape_html_for_telegram("<div>x</div>"), "&lt;div&gt;x&lt;/div&gt;");
+        // A tag that takes no attributes but has trailing text → escaped.
+        assert_eq!(escape_html_for_telegram("<i am here>"), "&lt;i am here&gt;");
     }
 
     #[test]

@@ -85,10 +85,10 @@ pub async fn list(state: &AppState, max_results: u32, query: Option<&str>) -> Re
                 "id":        msg["id"],
                 "threadId":  msg["threadId"],
                 "labelIds":  msg["labelIds"],
-                "snippet":   msg["snippet"],
-                "subject":   headers.get("subject"),
-                "from":      headers.get("from"),
-                "to":        headers.get("to"),
+                "snippet":   decoded_value(&msg["snippet"]),
+                "subject":   decoded_header(headers.get("subject")),
+                "from":      decoded_header(headers.get("from")),
+                "to":        decoded_header(headers.get("to")),
                 "date":      headers.get("date"),
             }));
         }
@@ -149,10 +149,10 @@ pub async fn get(state: &AppState, id: &str) -> Result<Value> {
         "id":        msg["id"],
         "threadId":  msg["threadId"],
         "labelIds":  msg["labelIds"],
-        "snippet":   msg["snippet"],
-        "subject":   headers.get("subject"),
-        "from":      headers.get("from"),
-        "to":        headers.get("to"),
+        "snippet":   decoded_value(&msg["snippet"]),
+        "subject":   decoded_header(headers.get("subject")),
+        "from":      decoded_header(headers.get("from")),
+        "to":        decoded_header(headers.get("to")),
         "date":      headers.get("date"),
         "messageId": headers.get("message-id"),
         "body":      body,
@@ -747,6 +747,22 @@ fn matches_ci(chars: &[char], idx: usize, needle: &str) -> bool {
         .all(|(k, nc)| chars[idx + k].to_ascii_lowercase() == *nc)
 }
 
+/// Decode HTML entities in an optional header value (e.g. `subject`, `from`),
+/// preserving JSON `null` when the header is absent. Gmail occasionally returns
+/// header values containing entities like `&#39;` / `&amp;`.
+fn decoded_header(value: Option<&String>) -> Value {
+    value.map_or(Value::Null, |s| json!(decode_html_entities(s)))
+}
+
+/// Decode HTML entities in a string-valued JSON field. Gmail's `snippet` is
+/// always HTML-escaped (e.g. `what&#39;s` / `&amp;`), so decode it before
+/// surfacing it to workflow expressions. Non-string values pass through.
+fn decoded_value(value: &Value) -> Value {
+    value
+        .as_str()
+        .map_or_else(|| value.clone(), |s| json!(decode_html_entities(s)))
+}
+
 /// Decode the HTML entities commonly found in email bodies (named + numeric).
 fn decode_html_entities(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
@@ -949,5 +965,24 @@ mod tests {
     #[test]
     fn unknown_entity_is_preserved() {
         assert_eq!(html_to_text("a &notareal; b"), "a &notareal; b");
+    }
+
+    #[test]
+    fn snippet_entities_are_decoded() {
+        let snippet = json!("Scope out what&#39;s changed. Upload files &amp; ask about");
+        assert_eq!(
+            decoded_value(&snippet),
+            json!("Scope out what's changed. Upload files & ask about")
+        );
+    }
+
+    #[test]
+    fn subject_header_entities_are_decoded() {
+        let subject = "Tom &amp; Jerry &#39;news&#39;".to_string();
+        assert_eq!(
+            decoded_header(Some(&subject)),
+            json!("Tom & Jerry 'news'")
+        );
+        assert_eq!(decoded_header(None), Value::Null);
     }
 }
