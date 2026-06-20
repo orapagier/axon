@@ -1046,6 +1046,17 @@ async fn execute_gmail_trigger(
                 max_results
             );
 
+            // Flatten to a top-level array so manual "Execute Step" emits the
+            // EXACT same shape as the background poller (check_and_trigger_gmail).
+            // gmail_list returns { messages: [...] }; older paths returned a bare
+            // array — accept both so downstream `data.emails[0]` always works.
+            let emails: Vec<Value> = data
+                .as_array()
+                .or_else(|| data.get("messages").and_then(|v| v.as_array()))
+                .or_else(|| data.get("emails").and_then(|v| v.as_array()))
+                .cloned()
+                .unwrap_or_default();
+
             // Mark as read if configured
             let mark_read = config
                 .get("gmail_mark_read")
@@ -1056,12 +1067,10 @@ async fn execute_gmail_trigger(
                 .unwrap_or(false);
 
             if mark_read {
-                if let Some(emails) = data.as_array() {
-                    for email in emails {
-                        if let Some(msg_id) = email.get("id").and_then(|v| v.as_str()) {
-                            let mark_args = json!({ "ids": vec![msg_id] });
-                            let _ = state.tools.run("gmail_mark_read", mark_args).await;
-                        }
+                for email in &emails {
+                    if let Some(msg_id) = email.get("id").and_then(|v| v.as_str()) {
+                        let mark_args = json!({ "ids": vec![msg_id] });
+                        let _ = state.tools.run("gmail_mark_read", mark_args).await;
                     }
                 }
             }
@@ -1069,7 +1078,8 @@ async fn execute_gmail_trigger(
             Ok(json!({
                 "trigger": "gmail",
                 "label": label,
-                "emails": data,
+                "new_email_count": emails.len(),
+                "emails": emails,
             }))
         }
         Err(e) => Err(format!("Gmail trigger failed: {}", e)),
@@ -1143,6 +1153,17 @@ fn resolve_value(s: &str, results: &std::collections::HashMap<String, NodeResult
         Regex::new(r#"^\$?node\.([a-zA-Z0-9_\-]+)\.([a-zA-Z0-9_\-\.\[\]]+)$"#).unwrap()
     });
     static RE_ANY: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(?s)\{\{(.+?)\}\}"#).unwrap());
+    // Bare (unwrapped) references embedded inside a larger string — the form
+    // drag-and-drop emits when dropped into prose. NOT anchored, so they match
+    // mid-string. The bracketed form (node["Name"].field) is distinctive enough
+    // to be safe in prose; the dot form requires a leading $ so it never
+    // clobbers ordinary text like "file.name.ext".
+    static RE_BARE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r#"\$?node\[['"](.+?)['"]\]\.([a-zA-Z0-9_\-\.\[\]]+)"#).unwrap()
+    });
+    static RE_BARE_DOT: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r#"\$node\.([a-zA-Z0-9_\-]+)\.([a-zA-Z0-9_\-\.\[\]]+)"#).unwrap()
+    });
     let re = &*RE;
     let re_dot = &*RE_DOT;
 
@@ -1273,6 +1294,38 @@ fn resolve_value(s: &str, results: &std::collections::HashMap<String, NodeResult
                 val_str
             };
             result = result.replace(&cap[0], &final_str);
+        }
+    }
+
+    // Bare references embedded in prose: $node["Name"].field and $node.id.field
+    // (no {{ }}). The whole-field bare form already returned above; this handles
+    // the drag-into-text case so a downstream node receives the value, not the
+    // literal token. Mirrors the editor's live preview (resolveExpression).
+    for re_bare in [&*RE_BARE, &*RE_BARE_DOT] {
+        let snapshot = result.clone();
+        for cap in re_bare.captures_iter(&snapshot) {
+            let whole = &cap[0];
+            let identifier = &cap[1];
+            // Drop any trailing '.' the greedy field class swept up from prose
+            // (e.g. a sentence-ending period), and shrink the token to match so
+            // we don't also eat the punctuation out of the surrounding text.
+            let field = cap[2].trim_end_matches('.');
+            if field.is_empty() {
+                continue;
+            }
+            let token = &whole[..whole.len() - (cap[2].len() - field.len())];
+            let res = results.get(identifier).or_else(|| {
+                results
+                    .values()
+                    .find(|r| r.node_name.to_lowercase() == identifier.to_lowercase())
+            });
+            // Found -> stringified value; recognized but missing (not yet run /
+            // wrong branch) -> empty, so the literal token never leaks downstream.
+            let replacement = match res {
+                Some(res) => extract_field(res, field),
+                None => String::new(),
+            };
+            result = result.replace(token, &replacement);
         }
     }
 
@@ -3517,5 +3570,86 @@ mod condition_tests {
         assert!(ev("object", "empty", &json!({}), &json!(null), true));
         assert!(ev("object", "notEmpty", &json!({"a": 1}), &json!(null), true));
         assert!(ev("number", "empty", &json!(null), &json!(null), true));
+    }
+}
+
+#[cfg(test)]
+mod resolve_tests {
+    use super::{resolve_value, NodeResult};
+    use serde_json::{json, Value};
+    use std::collections::HashMap;
+
+    fn node(name: &str, output: Value) -> NodeResult {
+        NodeResult {
+            node_id: format!("id_{name}"),
+            node_name: name.to_string(),
+            node_type: "test".to_string(),
+            position: 0,
+            status: "success".to_string(),
+            output,
+            duration_ms: 0,
+            error: None,
+        }
+    }
+
+    fn results() -> HashMap<String, NodeResult> {
+        let mut m = HashMap::new();
+        let get = node(
+            "Get Email",
+            json!({ "from": "alice@example.com", "body": "Hello there" }),
+        );
+        m.insert(get.node_id.clone(), get);
+        let trig = node(
+            "When clicked",
+            json!({ "emails": [ { "id": "msg_1" }, { "id": "msg_2" } ] }),
+        );
+        m.insert(trig.node_id.clone(), trig);
+        m
+    }
+
+    // The original bug: a dragged-in $node[...] reference sitting inside prose
+    // was sent verbatim instead of being resolved.
+    #[test]
+    fn bare_reference_in_prose_resolves() {
+        let out = resolve_value(
+            "Boss, new email from $node[\"Get Email\"].data.from\n\n$node[\"Get Email\"].data.body",
+            &results(),
+        );
+        assert_eq!(
+            out,
+            Value::String("Boss, new email from alice@example.com\n\nHello there".to_string())
+        );
+    }
+
+    // A sentence-ending period must survive — only the reference is replaced.
+    #[test]
+    fn bare_reference_keeps_trailing_punctuation() {
+        let out = resolve_value("from $node[\"Get Email\"].data.from. Thanks", &results());
+        assert_eq!(
+            out,
+            Value::String("from alice@example.com. Thanks".to_string())
+        );
+    }
+
+    // Whole-field bare reference still returns the raw typed value (not a string),
+    // so downstream nodes can index arrays/objects.
+    #[test]
+    fn whole_field_bare_preserves_type() {
+        let out = resolve_value("$node[\"When clicked\"].data.emails[0].id", &results());
+        assert_eq!(out, json!("msg_1"));
+    }
+
+    // Legacy {{ }}-wrapped form is unaffected.
+    #[test]
+    fn wrapped_form_still_works() {
+        let out = resolve_value("Hi {{ $node[\"Get Email\"].data.from }} !", &results());
+        assert_eq!(out, Value::String("Hi alice@example.com !".to_string()));
+    }
+
+    // A reference to a node that didn't run resolves to empty — never leaks the token.
+    #[test]
+    fn missing_node_does_not_leak_token() {
+        let out = resolve_value("x $node[\"Ghost\"].data.foo y", &results());
+        assert_eq!(out, Value::String("x  y".to_string()));
     }
 }
