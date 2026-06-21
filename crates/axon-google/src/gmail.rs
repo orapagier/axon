@@ -15,6 +15,15 @@ pub async fn list(state: &AppState, max_results: u32, query: Option<&str>) -> Re
     let mut params = vec![("maxResults", max_results.to_string())];
     if let Some(q) = query {
         params.push(("q", q.to_string()));
+        // Gmail's messages.list hides SPAM/TRASH unless explicitly opted in, so a
+        // query like `in:spam` / `in:trash` returns nothing without this flag.
+        let ql = q.to_lowercase();
+        if ["in:spam", "in:trash", "in:anywhere", "label:spam", "label:trash"]
+            .iter()
+            .any(|needle| ql.contains(needle))
+        {
+            params.push(("includeSpamTrash", "true".to_string()));
+        }
     }
 
     let list: Value = state

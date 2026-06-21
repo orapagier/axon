@@ -999,6 +999,26 @@ fn record_telegram_reply_route(state: &AppState, workflow_id: &str, output: &Val
 
 // ── Gmail Trigger Executor ────────────────────────────────────────────────────
 
+/// Map a Gmail Stimulus "Label" selection to a proper Gmail search query.
+///
+/// Mirrors n8n's Gmail trigger: filter by folder/label WITHOUT forcing
+/// `is:unread`, so already-read mail is still listed. Whether a message counts
+/// as "new" is decided by ID de-duplication (background poll) or a plain listing
+/// (manual Execute Step) — never by its read state. System folders use the
+/// canonical `in:`/`is:` operators; anything else falls back to `label:`.
+fn gmail_query_for_label(label: &str) -> String {
+    match label.trim().to_ascii_uppercase().as_str() {
+        "" | "INBOX" => "in:inbox".to_string(),
+        "UNREAD" => "is:unread".to_string(),
+        "STARRED" => "is:starred".to_string(),
+        "IMPORTANT" => "is:important".to_string(),
+        "SENT" => "in:sent".to_string(),
+        "SPAM" => "in:spam".to_string(),
+        "TRASH" => "in:trash".to_string(),
+        other => format!("label:{}", other.to_lowercase().replace(' ', "-")),
+    }
+}
+
 async fn execute_gmail_trigger(
     config: &Value,
     state: &AppState,
@@ -1030,7 +1050,7 @@ async fn execute_gmail_trigger(
         })
         .unwrap_or(10);
 
-    let query = format!("is:unread label:{}", label.to_lowercase());
+    let query = gmail_query_for_label(label);
     let args = json!({
         "query": query,
         "max_results": max_results,
@@ -1041,8 +1061,9 @@ async fn execute_gmail_trigger(
     match state.tools.run("gmail_list", args).await {
         Ok(data) => {
             tracing::info!(
-                "Gmail trigger (manual): fetched emails from label={}, max={}",
+                "Gmail trigger (manual): fetched emails from label={} (q='{}'), max={}",
                 label,
+                query,
                 max_results
             );
 
@@ -1057,23 +1078,11 @@ async fn execute_gmail_trigger(
                 .cloned()
                 .unwrap_or_default();
 
-            // Mark as read if configured
-            let mark_read = config
-                .get("gmail_mark_read")
-                .and_then(|v| {
-                    v.as_bool()
-                        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
-                })
-                .unwrap_or(false);
-
-            if mark_read {
-                for email in &emails {
-                    if let Some(msg_id) = email.get("id").and_then(|v| v.as_str()) {
-                        let mark_args = json!({ "ids": vec![msg_id] });
-                        let _ = state.tools.run("gmail_mark_read", mark_args).await;
-                    }
-                }
-            }
+            // NOTE: a manual "Execute Step" is a non-destructive test fetch, just
+            // like n8n's "Fetch Test Event" — it must NOT mark mail as read.
+            // Marking-as-read only happens on real background triggers
+            // (check_and_trigger_gmail), so re-running this step keeps listing the
+            // same emails instead of silently emptying the result on the 2nd run.
 
             Ok(json!({
                 "trigger": "gmail",
@@ -3204,7 +3213,7 @@ async fn check_and_trigger_gmail(
         })
         .unwrap_or(10);
 
-    let query = format!("is:unread label:{}", label.to_lowercase());
+    let query = gmail_query_for_label(label);
     let args = json!({
         "query": query,
         "max_results": max_results,
