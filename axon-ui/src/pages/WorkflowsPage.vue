@@ -1606,6 +1606,9 @@ function handleNodeRename({ id, name }) {
     // (the resolver returns the first match). Mirrors the NodeDetails modal.
     const finalLabel = makeUniqueLabel((name || '').trim() || node.data.label, id)
 
+    // A non-empty rename is an explicit user choice; flag it so the auto-label
+    // logic in NodeDetails won't overwrite it when the action field changes.
+    node.data.labelEdited = !!(name || '').trim()
     node.data.label = finalLabel
     node.data.name = finalLabel
     // Keep active node details editor in sync

@@ -283,6 +283,9 @@ function finishRename() {
     finalLabel = `${newLabel} ${counter++}`;
   }
   
+  // Remember an explicit rename so auto-labelling won't clobber it; a blank
+  // entry clears the flag and reverts to the action-derived label below.
+  props.node.data.labelEdited = !!props.node.data.label?.trim();
   props.node.data.label = finalLabel;
 
   if (oldLabel && oldLabel !== finalLabel && props.nodes.length > 0) {
@@ -291,6 +294,9 @@ function finishRename() {
     // Explicitly emit save to persist all changed nodes
     emit('save');
   }
+
+  // Name cleared → fall back to an automatic, action-derived label.
+  if (!props.node.data.labelEdited) applyAutoLabel();
 }
 
 // Logic for current node
@@ -845,39 +851,119 @@ watch(() => props.node.data.config?.tool_name, (newTool) => {
   }
 })
 
-// Auto-update Trigger node label when type changes
-watch(() => props.node.data.config.type, (newType) => {
-  if (props.node.data.node_type === 'trigger') {
-    const currentLabel = props.node.data.label;
-    const isDefault = !currentLabel || currentLabel === 'When clicked' || currentLabel === 'Schedule' || currentLabel === 'Trigger' || currentLabel === 'Manual' || currentLabel === 'Scheduled' || currentLabel === 'Gmail Monitor';
-    
-    if (isDefault) {
-      if (newType === 'cron') {
-        props.node.data.label = 'Schedule'
-      } else if (newType === 'manual') {
-        props.node.data.label = 'Manual'
-      } else if (newType === 'gmail') {
-        props.node.data.label = 'Gmail Monitor'
-      }
-      emit('save')
-    }
-  }
-}, { immediate: true })
+// ── Automatic node labels ──────────────────────────────────────────────────
+// A node's label tracks its primary "action" field — operation / tool action /
+// action / trigger type — so changing what a node does keeps its label honest
+// (e.g. a Gmail node relabels from "Send Email" to "Add Label" when you switch
+// the action). We only ever overwrite a label the user hasn't hand-edited:
+// `labelEdited` guards the active session, and isAutoLabel() recognises any
+// label we could have generated so this still holds after a reload, where the
+// flag isn't persisted.
+const ACTION_FIELDS = ['operation', 'tool_name', 'action', 'type']
 
-// Auto-update MCP node label when tool selected.
-// Also re-label when the current label still matches the *previous* tool name
-// (i.e. it was auto-set and never customized) — otherwise switching the action
-// leaves a stale label, so errors/logs reference the wrong tool.
-watch(() => props.node.data.config.tool_name, (newTool, oldTool) => {
-  if (props.node.data.node_type?.startsWith('mcp') && newTool) {
-    const currentLabel = props.node.data.label;
-    const isDefault = !currentLabel || currentLabel === 'MCP Tool' || currentLabel === 'Neuron' || currentLabel.includes('Tool') || currentLabel === oldTool;
-    if (isDefault) {
-      props.node.data.label = newTool;
-      emit('save');
+function autoLabelDef() {
+  const def = nodeDefinition.value
+  // Legacy 'trigger' node_type has no NODE_TYPES entry (it is keyed 'stimulus').
+  if ((!def?.properties || def.properties.length === 0) && props.node.data.node_type === 'trigger') {
+    return NODE_TYPES.stimulus
+  }
+  return def
+}
+
+function primaryActionProp(def) {
+  if (!def?.properties) return null
+  for (const fieldName of ACTION_FIELDS) {
+    const prop = def.properties.find(p => p.name === fieldName && p.type === 'options')
+    if (prop) return prop
+  }
+  return null
+}
+
+function humanizeLabel(value) {
+  const bare = String(value).split(/[.:/]/).pop() || String(value)
+  const words = bare.replace(/_/g, ' ').trim()
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : String(value)
+}
+
+// Human-readable label for one value of the action field. For MCP nodes the
+// dropdown "name" is the tool's long description, so derive from the tool id and
+// strip the service prefix instead (mcp_gmail + gmail_send_email -> "Send email").
+function deriveActionLabel(prop, value) {
+  if (value === undefined || value === null || value === '') return ''
+  if (prop.name === 'tool_name') {
+    const nodeType = props.node.data.node_type || ''
+    const service = nodeType.startsWith('mcp_') ? nodeType.slice(4) : ''
+    let bare = String(value).split(/[.:/]/).pop() || String(value)
+    if (service && bare.toLowerCase().startsWith(`${service.toLowerCase()}_`)) {
+      bare = bare.slice(service.length + 1)
+    }
+    return humanizeLabel(bare)
+  }
+  const opt = (prop.options || []).find(o => o.value === value)
+  return opt?.name || humanizeLabel(value)
+}
+
+// True when the current label is one we generated, so it is safe to replace.
+function isAutoLabel(currentLabel, def, prop) {
+  if (props.node.data.labelEdited) return false
+  if (!currentLabel) return true
+  const stripped = currentLabel.replace(/\s+\d+$/, '')
+  if (stripped === (def?.displayName || 'Neuron')) return true
+  if (currentLabel === 'Neuron' || currentLabel === 'MCP Tool') return true
+  if (currentLabel.includes('Tool')) return true
+  // Labels emitted by the previous hand-coded trigger logic.
+  if (['When clicked', 'Schedule', 'Trigger', 'Scheduled', 'Gmail Monitor'].includes(currentLabel)) return true
+  if (prop) {
+    for (const opt of (prop.options || [])) {
+      if (currentLabel === opt.value) return true            // older raw-value labels
+      if (stripped === deriveActionLabel(prop, opt.value)) return true
     }
   }
-}, { immediate: true })
+  return false
+}
+
+function uniqueLabel(base, excludeId) {
+  let finalLabel = base
+  let counter = 1
+  const others = props.nodes.filter(n => n.id !== excludeId)
+  while (others.some(n => n.data.label === finalLabel)) {
+    finalLabel = `${base} ${counter++}`
+  }
+  return finalLabel
+}
+
+// Re-derive the label from the node's action field when it is still automatic.
+function applyAutoLabel() {
+  const def = autoLabelDef()
+  const prop = primaryActionProp(def)
+  if (!prop) return
+  const currentLabel = props.node.data.label
+  if (!isAutoLabel(currentLabel, def, prop)) return
+  const base = deriveActionLabel(prop, props.node.data.config?.[prop.name])
+  if (!base) return
+  const finalLabel = uniqueLabel(base, props.node.id)
+  if (finalLabel === currentLabel) return
+  // Follow the rename in sibling $node["..."] expressions, but only on an
+  // unambiguous rename — if a counter was appended for a name collision we must
+  // not hijack references that pointed at the other node.
+  if (finalLabel === base && currentLabel && props.nodes.length > 0) {
+    renameNodeInExpressions(props.nodes, currentLabel, finalLabel)
+  }
+  props.node.data.label = finalLabel
+  emit('save')
+}
+
+// Heal placeholder/stale labels when a node opens, and keep the label in sync as
+// its action field changes.
+watch(() => props.node.id, applyAutoLabel, { immediate: true })
+watch(
+  () => {
+    const prop = primaryActionProp(autoLabelDef())
+    return prop ? props.node.data.config?.[prop.name] : undefined
+  },
+  applyAutoLabel,
+)
+
 </script>
 
 <template>
