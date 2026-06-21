@@ -1389,9 +1389,15 @@ impl TelegramGateway {
                 .and_then(|v| v.as_i64())
                 .unwrap_or(0);
             if replied_msg_id > 0 {
-                if let Some(stored_wf) =
-                    Self::lookup_reply_route(&state, &chat_id, replied_msg_id)
-                {
+                let route = Self::lookup_reply_route(&state, &chat_id, replied_msg_id);
+                if route.is_none() {
+                    tracing::debug!(
+                        "[TELEGRAM] Reply to message {} in chat {} has no recorded workflow route — handling as a normal message (agent)",
+                        replied_msg_id,
+                        chat_id
+                    );
+                }
+                if let Some(stored_wf) = route {
                     // Confirm the workflow still exists & is enabled, and the
                     // chat is allowed to run workflows; otherwise fall through.
                     if let Ok(Some((wf_id, wf_name))) =

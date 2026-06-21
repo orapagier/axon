@@ -972,29 +972,54 @@ fn try_parse_json_value(val: Value) -> Value {
 /// node output is the Telegram `Message` result containing `message_id` + `chat`.
 /// No-ops for operations that return no message (e.g. deleteMessage).
 fn record_telegram_reply_route(state: &AppState, workflow_id: &str, output: &Value) {
-    let (Some(message_id), Some(chat_id)) = (
-        output.get("message_id").and_then(|v| v.as_i64()),
-        output.pointer("/chat/id").and_then(|v| v.as_i64()),
-    ) else {
-        return;
+    // A telegram node's output is usually a single Message, but sendMediaGroup
+    // returns an *array* of Messages. Record every message so a reply to any of
+    // them routes back to this workflow (previously an array output matched
+    // neither `message_id` nor `/chat/id` and was silently dropped).
+    let messages: Vec<&Value> = match output {
+        Value::Array(arr) => arr.iter().collect(),
+        other => vec![other],
     };
+
     let Ok(conn) = state.db.get() else {
         return;
     };
-    if let Err(e) = conn.execute(
-        "INSERT INTO telegram_reply_routes (chat_id, message_id, workflow_id, created_at)
-         VALUES (?1, ?2, ?3, datetime('now'))
-         ON CONFLICT(chat_id, message_id)
-         DO UPDATE SET workflow_id = excluded.workflow_id, created_at = excluded.created_at",
-        rusqlite::params![chat_id.to_string(), message_id, workflow_id],
-    ) {
-        tracing::warn!("Failed to record telegram reply route: {}", e);
+
+    let mut recorded = 0u32;
+    for msg in messages {
+        let (Some(message_id), Some(chat_id)) = (
+            msg.get("message_id").and_then(|v| v.as_i64()),
+            msg.pointer("/chat/id").and_then(|v| v.as_i64()),
+        ) else {
+            continue;
+        };
+        match conn.execute(
+            "INSERT INTO telegram_reply_routes (chat_id, message_id, workflow_id, created_at)
+             VALUES (?1, ?2, ?3, datetime('now'))
+             ON CONFLICT(chat_id, message_id)
+             DO UPDATE SET workflow_id = excluded.workflow_id, created_at = excluded.created_at",
+            rusqlite::params![chat_id.to_string(), message_id, workflow_id],
+        ) {
+            Ok(_) => {
+                recorded += 1;
+                tracing::info!(
+                    "[TELEGRAM] Recorded reply route chat_id={} message_id={} -> workflow={}",
+                    chat_id,
+                    message_id,
+                    workflow_id
+                );
+            }
+            Err(e) => tracing::warn!("Failed to record telegram reply route: {}", e),
+        }
     }
-    // Opportunistic TTL prune so the table can't grow unbounded.
-    let _ = conn.execute(
-        "DELETE FROM telegram_reply_routes WHERE created_at < datetime('now','-30 days')",
-        [],
-    );
+
+    if recorded > 0 {
+        // Opportunistic TTL prune so the table can't grow unbounded.
+        let _ = conn.execute(
+            "DELETE FROM telegram_reply_routes WHERE created_at < datetime('now','-30 days')",
+            [],
+        );
+    }
 }
 
 // ── Gmail Trigger Executor ────────────────────────────────────────────────────
