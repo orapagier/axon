@@ -2406,6 +2406,21 @@ impl Drop for CancellationCleanup {
     }
 }
 
+/// Merge a single-node run's fresh results onto the previous run's full chain,
+/// replacing matching nodes in place and preserving order. Lets an "Execute
+/// Step" save keep every upstream node's data instead of just the one it ran.
+fn merge_single_node_results(prior: &[NodeResult], fresh: &[NodeResult]) -> Vec<NodeResult> {
+    let mut merged: Vec<NodeResult> = prior.to_vec();
+    for nr in fresh {
+        if let Some(slot) = merged.iter_mut().find(|p| p.node_id == nr.node_id) {
+            *slot = nr.clone();
+        } else {
+            merged.push(nr.clone());
+        }
+    }
+    merged
+}
+
 pub struct WorkflowEngine;
 impl WorkflowEngine {
     pub async fn run(
@@ -2414,7 +2429,7 @@ impl WorkflowEngine {
         target_node_id: Option<String>,
         run_id: Option<String>,
     ) -> anyhow::Result<WorkflowRunResult> {
-        Self::run_with_trigger(workflow_id, state, "manual", target_node_id, run_id).await
+        Self::run_with_trigger(workflow_id, state, "manual", target_node_id, false, run_id).await
     }
 
     pub async fn run_with_trigger(
@@ -2422,6 +2437,7 @@ impl WorkflowEngine {
         state: &AppState,
         trigger_source: &str,
         target_node_id: Option<String>,
+        single_node: bool,
         external_run_id: Option<String>,
     ) -> anyhow::Result<WorkflowRunResult> {
         tracing::info!(
@@ -2480,6 +2496,10 @@ impl WorkflowEngine {
         };
 
         let mut node_results = std::collections::HashMap::new();
+        // Ordered copy of the previous run's results. Kept so a single-node run
+        // can persist the whole chain (prior nodes + the re-executed one) instead
+        // of collapsing the saved run down to just the one node it actually ran.
+        let mut prior_ordered: Vec<NodeResult> = Vec::new();
 
         // [New feature]: Load latest results from DB as fallback for expressions for skipped/unconnected nodes.
         if let Ok(conn) = state.db.get() {
@@ -2489,9 +2509,10 @@ impl WorkflowEngine {
                 |r| r.get::<_, String>(0)
             ) {
                 if let Ok(last_results) = serde_json::from_str::<Vec<NodeResult>>(&last_results_str) {
-                    for r in last_results {
-                        node_results.insert(r.node_id.clone(), r);
+                    for r in &last_results {
+                        node_results.insert(r.node_id.clone(), r.clone());
                     }
+                    prior_ordered = last_results;
                 }
             }
         }
@@ -2511,23 +2532,44 @@ impl WorkflowEngine {
             *in_degree.entry(e.target_id.clone()).or_insert(0) += 1;
         }
 
+        // Single-node mode ("Execute Step" when upstream nodes already have data):
+        // run ONLY the target, feeding it the cached results loaded into
+        // node_results above. Only honoured when every immediate upstream node
+        // actually has a cached result — otherwise the node would run with stale
+        // or missing inputs, so we fall back to the full ancestor run.
+        let single_node_ready = single_node
+            && target_node_id.as_ref().is_some_and(|tid| {
+                edges
+                    .iter()
+                    .filter(|e| &e.target_id == tid)
+                    .all(|e| node_results.contains_key(&e.source_id))
+            });
+
         // Logic for partial run: Identification of ancestors
         let mut required_node_ids = std::collections::HashSet::new();
         if let Some(ref target_id) = target_node_id {
-            let mut stack = vec![target_id.clone()];
-            while let Some(current) = stack.pop() {
-                if required_node_ids.insert(current.clone()) {
-                    // Find all sources that lead to this node
-                    for e in edges.iter().filter(|e| e.target_id == current) {
-                        stack.push(e.source_id.clone());
+            if single_node_ready {
+                required_node_ids.insert(target_id.clone());
+                tracing::info!(
+                    "Single-node run: executing only {} (using cached upstream data)",
+                    target_id
+                );
+            } else {
+                let mut stack = vec![target_id.clone()];
+                while let Some(current) = stack.pop() {
+                    if required_node_ids.insert(current.clone()) {
+                        // Find all sources that lead to this node
+                        for e in edges.iter().filter(|e| e.target_id == current) {
+                            stack.push(e.source_id.clone());
+                        }
                     }
                 }
+                tracing::info!(
+                    "Partial run: Required nodes for {}: {:?}",
+                    target_id,
+                    required_node_ids
+                );
             }
-            tracing::info!(
-                "Partial run: Required nodes for {}: {:?}",
-                target_id,
-                required_node_ids
-            );
         }
 
         let has_triggers = nodes
@@ -2538,16 +2580,18 @@ impl WorkflowEngine {
             .iter()
             .filter(|n| {
                 let deg = *in_degree.get(&n.id).unwrap_or(&0) == 0;
-                if target_node_id.is_some() {
+                if single_node_ready {
+                    // Force just the target into the queue regardless of in-degree;
+                    // its inputs come from cached upstream results, not a fresh run.
+                    target_node_id.as_deref() == Some(n.id.as_str())
+                } else if target_node_id.is_some() {
                     deg && required_node_ids.contains(&n.id)
+                } else if has_triggers {
+                    // Strict pipeline definition: Only start from Trigger nodes if they exist.
+                    // This prevents separated, orphaned subgraphs from running accidentally.
+                    deg && matches!(n.node_type.as_str(), "trigger" | "circadian" | "stimulus")
                 } else {
-                    if has_triggers {
-                        // Strict pipeline definition: Only start from Trigger nodes if they exist.
-                        // This prevents separated, orphaned subgraphs from running accidentally.
-                        deg && matches!(n.node_type.as_str(), "trigger" | "circadian" | "stimulus")
-                    } else {
-                        deg
-                    }
+                    deg
                 }
             })
             .map(|n| n.id.clone())
@@ -2916,8 +2960,15 @@ impl WorkflowEngine {
                 }
             }
 
-            // Incremental Progress Update for Polling (Sync the ordered sequence)
-            if let Ok(res_json) = serde_json::to_string(&ordered_results) {
+            // Incremental Progress Update for Polling (Sync the ordered sequence).
+            // Single-node runs persist the merged chain so polling never wipes the
+            // upstream nodes' data off the editor mid-step.
+            let res_json = if single_node_ready {
+                serde_json::to_string(&merge_single_node_results(&prior_ordered, &ordered_results))
+            } else {
+                serde_json::to_string(&ordered_results)
+            };
+            if let Ok(res_json) = res_json {
                 if let Ok(conn) = state.db.get() {
                     let _ = conn.execute(
                         "UPDATE workflow_runs SET node_results = ? WHERE id = ?",
@@ -2942,7 +2993,15 @@ impl WorkflowEngine {
 
         {
             let conn = state.db.get()?;
-            let res_json = serde_json::to_string(&results_vec).unwrap_or_default();
+            // Single-node runs save the merged chain (prior cached results + the
+            // node we just re-ran) so reloads, expression fallbacks, and later
+            // steps keep every upstream node's data.
+            let res_json = if single_node_ready {
+                serde_json::to_string(&merge_single_node_results(&prior_ordered, &results_vec))
+                    .unwrap_or_default()
+            } else {
+                serde_json::to_string(&results_vec).unwrap_or_default()
+            };
             conn.execute("UPDATE workflow_runs SET status = ?, finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), node_results = ? WHERE id = ?", [status, &res_json, &run_id])?;
             conn.execute("UPDATE workflows SET last_status = ?, last_run_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?", [status, workflow_id])?;
         }
@@ -3022,6 +3081,29 @@ impl WorkflowEngine {
         state: &AppState,
         target_node_id: Option<String>,
     ) -> anyhow::Result<String> {
+        Self::run_in_background_inner(workflow_id, state, target_node_id, false)
+    }
+
+    /// Single-node variant of `run_in_background`: when `single_node` is true,
+    /// run ONLY `node_id` using cached upstream results from the previous run
+    /// (the "Execute Step" button once upstream nodes already have data) instead
+    /// of re-running its ancestors. Falls back to a full ancestor run if any
+    /// immediate upstream node has no cached result.
+    pub fn run_node_in_background(
+        workflow_id: &str,
+        state: &AppState,
+        node_id: String,
+        single_node: bool,
+    ) -> anyhow::Result<String> {
+        Self::run_in_background_inner(workflow_id, state, Some(node_id), single_node)
+    }
+
+    fn run_in_background_inner(
+        workflow_id: &str,
+        state: &AppState,
+        target_node_id: Option<String>,
+        single_node: bool,
+    ) -> anyhow::Result<String> {
         let run_id = uuid::Uuid::new_v4().to_string();
 
         // Pre-create the run record as 'running' so the very first frontend poll
@@ -3046,7 +3128,7 @@ impl WorkflowEngine {
             // Pass the pre-created run_id so run_with_trigger reuses it rather
             // than inserting a duplicate record.
             if let Err(e) =
-                Self::run_with_trigger(&wf_id, &s, "manual", target_node_id, Some(rid.clone()))
+                Self::run_with_trigger(&wf_id, &s, "manual", target_node_id, single_node, Some(rid.clone()))
                     .await
             {
                 tracing::error!("Background workflow run failed: {}", e);
@@ -3228,8 +3310,15 @@ impl WorkflowEngine {
                         let s = state.clone();
                         tokio::spawn(async move {
                             let _ =
-                                Self::run_with_trigger(&wf.id, &s, &wf.trigger_type, None, None)
-                                    .await;
+                                Self::run_with_trigger(
+                                    &wf.id,
+                                    &s,
+                                    &wf.trigger_type,
+                                    None,
+                                    false,
+                                    None,
+                                )
+                                .await;
                         });
                     }
                 }
@@ -3375,7 +3464,7 @@ async fn check_and_trigger_gmail(
     }
 
     // Trigger the workflow
-    WorkflowEngine::run_with_trigger(workflow_id, state, "gmail", None, None)
+    WorkflowEngine::run_with_trigger(workflow_id, state, "gmail", None, false, None)
         .await
         .map_err(|e| e.to_string())?;
 

@@ -1113,7 +1113,7 @@ watch(
               <button class="header-tab" :class="{ active: activeTab === 'settings' }" @click="activeTab = 'settings'">SETTINGS</button>
               <button class="header-tab" v-if="nodeResult" @click="emit('clear-execution', node.id)" title="Clear execution data">CLEAR</button>
             </div>
-            <button class="btn-execute" :class="{ 'is-executing': executing }" @click="emit('execute', node.id)">
+            <button class="btn-execute" :class="{ 'is-executing': executing }" @click="emit('execute', node.id, { single: true })">
               <span class="btn-content">⚡ Execute Step</span>
             </button>
           </div>

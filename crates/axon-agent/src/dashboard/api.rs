@@ -2055,8 +2055,15 @@ pub async fn run_workflow(State(state): State<AppState>, Path(id): Path<String>)
 pub async fn run_workflow_node(
     State(state): State<AppState>,
     Path((id, node_id)): Path<(String, String)>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> Json<Value> {
-    match crate::tools::workflow::WorkflowEngine::run_in_background(&id, &state, Some(node_id)) {
+    // ?single=true → run ONLY this node, reusing cached upstream results from the
+    // last run (the "Execute Step" button when upstream nodes already have data).
+    // Without it, the node plus all its ancestors are re-run (the play button).
+    let single = matches!(params.get("single").map(String::as_str), Some("true" | "1"));
+    match crate::tools::workflow::WorkflowEngine::run_node_in_background(
+        &id, &state, node_id, single,
+    ) {
         Ok(run_id) => Json(json!({"ok": true, "run_id": run_id})),
         Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
     }

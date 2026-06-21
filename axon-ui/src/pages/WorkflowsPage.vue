@@ -773,14 +773,36 @@ function handleRunNode(nodeId) {
   }
 }
 
-async function executeNodeStep(nodeId) {
+// True when every immediate upstream node of `nodeId` already has output data
+// from the last run. Used to decide whether "Execute Step" can run just this
+// node (reusing that cached data) instead of re-running the whole chain.
+function immediateUpstreamHaveData(nodeId) {
+  const parentIds = edges.value
+    .filter(e => edgeTarget(e) === nodeId)
+    .map(e => edgeSource(e))
+  if (parentIds.length === 0) return true // no upstream → nothing to wait on
+  const haveData = new Set(
+    (lastRunResult.value?.node_results || [])
+      .filter(r => r.status !== 'error')
+      .map(r => String(r.node_id))
+  )
+  return parentIds.every(pid => haveData.has(String(pid)))
+}
+
+async function executeNodeStep(nodeId, opts = {}) {
   if (!wfId.value || wfId.value === 'new') {
     toast('Save workflow first to execute steps', false)
     return
   }
 
+  // "Execute Step" (opts.single) runs ONLY this node using the data its upstream
+  // nodes already produced. If that upstream data isn't there yet, fall back to
+  // running the full chain so the node still receives fresh inputs. The play
+  // button never sets opts.single, so it always runs the chain.
+  const single = !!opts.single && immediateUpstreamHaveData(nodeId)
+
   isExecuting.value = true
-  toast(`Executing ${nodeId}...`, true)
+  toast(single ? `Executing ${nodeId} (step only)...` : `Executing ${nodeId}...`, true)
 
   // IMMEDIATE FEEDBACK: Start spinning the node being executed.
   // Note: waiting:false here is intentional — this node is directly clicked, not
@@ -804,18 +826,35 @@ async function executeNodeStep(nodeId) {
     // Without this, runLivePlayback reads old node_results, exhausts processedCount
     // against them, then exits immediately when the new (shorter) run completes —
     // leaving the clicked node stuck in the running:true state forever.
-    lastRunResult.value = { node_results: [] }
+    // In single mode keep the other nodes' data on screen and clear only this
+    // node's slot, so upstream panels stay populated while its fresh result plays.
+    if (single) {
+      lastRunResult.value = {
+        ...(lastRunResult.value || {}),
+        node_results: (lastRunResult.value?.node_results || []).filter(
+          rr => String(rr.node_id) !== String(nodeId)
+        ),
+      }
+    } else {
+      lastRunResult.value = { node_results: [] }
+    }
 
-    // SELECTIVE EXECUTION: Run only this node and its dependencies
-    const r = await post(`/workflows/${wfId.value}/run/${nodeId}`)
+    // SELECTIVE EXECUTION: run this node alone (single) using cached upstream
+    // data, or this node plus its dependencies (the chain up to it).
+    const r = await post(`/workflows/${wfId.value}/run/${nodeId}${single ? '?single=true' : ''}`)
     if (r.ok) {
       console.log('[Flow] Step execution started:', r.run_id)
       startPolling(r.run_id)
-      
-      // TRIGGER LIVE PLAYBACK
+
+      // TRIGGER LIVE PLAYBACK. In single mode, animate ONLY the clicked node even
+      // though the run record carries the whole (merged) chain — so the rest of
+      // the workflow doesn't replay.
       if (canvasRef.value) {
         canvasRef.value.runLivePlayback(
-          () => lastRunResult.value?.node_results || [],
+          () => {
+            const all = lastRunResult.value?.node_results || []
+            return single ? all.filter(rr => String(rr.node_id) === String(nodeId)) : all
+          },
           () => isExecuting.value,
           () => backendDone.value
         ).then(() => {
