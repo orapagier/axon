@@ -324,7 +324,7 @@ pub async fn trash(state: &AppState, id: &str) -> Result<Value> {
     Ok(resp)
 }
 
-pub async fn mark_read(state: &AppState, ids: Vec<&str>) -> Result<Value> {
+pub async fn mark_read(state: &AppState, ids: Vec<String>) -> Result<Value> {
     let tok = access_token(state).await?;
     state
         .client
@@ -381,7 +381,7 @@ pub async fn list_labels(state: &AppState) -> Result<Value> {
     Ok(resp)
 }
 
-pub async fn mark_unread(state: &AppState, ids: Vec<&str>) -> Result<Value> {
+pub async fn mark_unread(state: &AppState, ids: Vec<String>) -> Result<Value> {
     let tok = access_token(state).await?;
     state
         .client

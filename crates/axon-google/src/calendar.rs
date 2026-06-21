@@ -125,7 +125,7 @@ pub async fn create_event(
     time_zone: Option<&str>,
     create_meet_link: bool,
     calendar_id: &str,
-    recurrence: Option<Vec<&str>>,
+    recurrence: Option<Vec<String>>,
 ) -> Result<Value> {
     let tok = access_token(state).await?;
     let cal = urlenc(calendar_id);
@@ -188,7 +188,7 @@ pub async fn update_event(
     time_zone: Option<&str>,
     calendar_id: &str,
     attendees: Option<Vec<&str>>,
-    recurrence: Option<Vec<&str>>,
+    recurrence: Option<Vec<String>>,
 ) -> Result<Value> {
     let tok = access_token(state).await?;
     let cal = urlenc(calendar_id);
@@ -343,7 +343,7 @@ pub async fn quick_add(state: &AppState, text: &str, calendar_id: &str) -> Resul
 /// Query free/busy blocks for one or more calendars over a time range.
 pub async fn get_freebusy(
     state: &AppState,
-    calendar_ids: Vec<&str>,
+    calendar_ids: Vec<String>,
     time_min: &str,
     time_max: &str,
 ) -> Result<Value> {

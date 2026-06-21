@@ -1078,11 +1078,32 @@ async fn execute_gmail_trigger(
                 .cloned()
                 .unwrap_or_default();
 
-            // NOTE: a manual "Execute Step" is a non-destructive test fetch, just
-            // like n8n's "Fetch Test Event" — it must NOT mark mail as read.
-            // Marking-as-read only happens on real background triggers
-            // (check_and_trigger_gmail), so re-running this step keeps listing the
-            // same emails instead of silently emptying the result on the 2nd run.
+            // A manual "Execute Step" is normally a non-destructive test fetch
+            // (like n8n's "Fetch Test Event"). But if the user explicitly enabled
+            // "Mark as read", honor it here too — otherwise the toggle silently
+            // does nothing when testing the node, which is what it looks like to
+            // the user. The label query (e.g. `in:inbox`) lists read mail as well,
+            // so the same emails still appear on a re-run.
+            let mark_read = config
+                .get("gmail_mark_read")
+                .and_then(|v| v.as_bool().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+                .unwrap_or(false);
+            if mark_read {
+                let ids: Vec<String> = emails
+                    .iter()
+                    .filter_map(|e| {
+                        e.get("id")
+                            .or_else(|| e.get("message_id"))
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string())
+                    })
+                    .collect();
+                if !ids.is_empty() {
+                    if let Err(e) = state.tools.run("gmail_mark_read", json!({ "ids": ids })).await {
+                        tracing::warn!("Gmail trigger (manual): mark-as-read failed: {}", e);
+                    }
+                }
+            }
 
             Ok(json!({
                 "trigger": "gmail",
@@ -3345,10 +3366,17 @@ async fn check_and_trigger_gmail(
         })
         .unwrap_or(false);
     if mark_read {
-        for email in &new_emails {
-            if let Some(msg_id) = email.get("id").and_then(|v| v.as_str()) {
-                let mark_args = json!({ "ids": vec![msg_id] });
-                let _ = state.tools.run("gmail_mark_read", mark_args).await;
+        let ids: Vec<&str> = new_emails
+            .iter()
+            .filter_map(|e| {
+                e.get("id")
+                    .or_else(|| e.get("message_id"))
+                    .and_then(|v| v.as_str())
+            })
+            .collect();
+        if !ids.is_empty() {
+            if let Err(e) = state.tools.run("gmail_mark_read", json!({ "ids": ids })).await {
+                tracing::warn!("Gmail trigger '{}': mark-as-read failed: {}", workflow_name, e);
             }
         }
     }

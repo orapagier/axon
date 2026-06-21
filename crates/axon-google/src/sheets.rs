@@ -40,12 +40,12 @@ pub async fn list_spreadsheets(state: &AppState, max_results: u32) -> Result<Val
 pub async fn create_spreadsheet(
     state: &AppState,
     title: &str,
-    sheet_names: Option<Vec<&str>>,
+    sheet_names: Option<Vec<String>>,
 ) -> Result<Value> {
     let tok = access_token(state).await?;
 
     let sheets = sheet_names
-        .unwrap_or_else(|| vec!["Sheet1"])
+        .unwrap_or_else(|| vec!["Sheet1".to_string()])
         .iter()
         .map(|name| json!({ "properties": { "title": name } }))
         .collect::<Vec<_>>();
@@ -106,7 +106,7 @@ pub async fn read_range(state: &AppState, spreadsheet_id: &str, range: &str) -> 
 pub async fn batch_read(
     state: &AppState,
     spreadsheet_id: &str,
-    ranges: Vec<&str>,
+    ranges: Vec<String>,
 ) -> Result<Value> {
     let tok = access_token(state).await?;
     let mut params: Vec<(&str, String)> =

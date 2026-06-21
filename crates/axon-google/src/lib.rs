@@ -960,22 +960,51 @@ impl GoogleService {
 
 // ── Small arg-extraction helpers ──────────────────────────────────────────────
 
-fn json_arr<'a>(args: &'a Map<String, Value>, key: &str) -> Result<Vec<&'a str>> {
-    args.get(key)
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| anyhow::anyhow!("missing required param '{key}'"))?
-        .iter()
-        .map(|v| {
-            v.as_str()
-                .ok_or_else(|| anyhow::anyhow!("non-string in '{key}' array"))
-        })
-        .collect()
+/// Coerce a JSON value into a list of strings, tolerating the shapes the UI and
+/// agents actually send: a real array (`["a","b"]`), a JSON-encoded array string
+/// from the UI's "(JSON array)" text box (`"[\"a\",\"b\"]"`), or a single bare
+/// value (`"abc"` → `["abc"]`). Commas are NOT treated as separators — values
+/// like calendar RRULEs legitimately contain them.
+fn coerce_str_vec(v: &Value) -> Vec<String> {
+    match v {
+        Value::Array(arr) => arr.iter().filter_map(scalar_to_string).collect(),
+        Value::String(s) => {
+            let t = s.trim();
+            if t.is_empty() {
+                return Vec::new();
+            }
+            if t.starts_with('[') {
+                if let Ok(Value::Array(arr)) = serde_json::from_str::<Value>(t) {
+                    return arr.iter().filter_map(scalar_to_string).collect();
+                }
+            }
+            vec![t.to_string()]
+        }
+        Value::Number(_) | Value::Bool(_) => scalar_to_string(v).into_iter().collect(),
+        _ => Vec::new(),
+    }
 }
 
-fn json_arr_opt<'a>(args: &'a Map<String, Value>, key: &str) -> Option<Vec<&'a str>> {
-    args.get(key)?
-        .as_array()
-        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+fn scalar_to_string(v: &Value) -> Option<String> {
+    match v {
+        Value::String(s) => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        Value::Bool(b) => Some(b.to_string()),
+        _ => None,
+    }
+}
+
+fn json_arr(args: &Map<String, Value>, key: &str) -> Result<Vec<String>> {
+    let items = args.get(key).map(coerce_str_vec).unwrap_or_default();
+    if items.is_empty() {
+        return Err(anyhow::anyhow!("missing required param '{key}'"));
+    }
+    Ok(items)
+}
+
+fn json_arr_opt(args: &Map<String, Value>, key: &str) -> Option<Vec<String>> {
+    let items = args.get(key).map(coerce_str_vec).unwrap_or_default();
+    (!items.is_empty()).then_some(items)
 }
 
 /// Extract attendee emails from either:

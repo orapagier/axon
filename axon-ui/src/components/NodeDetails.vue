@@ -864,11 +864,14 @@ watch(() => props.node.data.config.type, (newType) => {
   }
 }, { immediate: true })
 
-// Auto-update MCP node label when tool selected
-watch(() => props.node.data.config.tool_name, (newTool) => {
+// Auto-update MCP node label when tool selected.
+// Also re-label when the current label still matches the *previous* tool name
+// (i.e. it was auto-set and never customized) — otherwise switching the action
+// leaves a stale label, so errors/logs reference the wrong tool.
+watch(() => props.node.data.config.tool_name, (newTool, oldTool) => {
   if (props.node.data.node_type?.startsWith('mcp') && newTool) {
     const currentLabel = props.node.data.label;
-    const isDefault = !currentLabel || currentLabel === 'MCP Tool' || currentLabel === 'Neuron' || currentLabel.includes('Tool');
+    const isDefault = !currentLabel || currentLabel === 'MCP Tool' || currentLabel === 'Neuron' || currentLabel.includes('Tool') || currentLabel === oldTool;
     if (isDefault) {
       props.node.data.label = newTool;
       emit('save');

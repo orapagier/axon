@@ -322,7 +322,9 @@ function schemaToProperties(tool, nodeConfig = {}) {
       } else {
         prop.type = 'string'
         prop.typeOptions = { rows: 4 }
-        prop.hint = (schema.description || '') + ' (JSON array)'
+        const desc = schema.description ? schema.description + ' ' : ''
+        prop.hint = `${desc}Enter one value, or a JSON array for multiple (e.g. ["a","b"]).`
+        prop.placeholder = '["id1","id2"] or a single value'
         prop.default = ''
       }
     } else if (schema.type === 'object') {
