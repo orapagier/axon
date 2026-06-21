@@ -47,6 +47,7 @@ const showHistory = ref(false)
 const isNodeDetailsOpen = ref(false)
 const lastRunResult = ref(null)
 const pollTimer = ref(null)
+const activeRunId = ref(null) // run_id currently executing — used to cancel only this run
 const backendDone = ref(false) // Set true only after the last run result batch is received
 const isNodePickerOpen = ref(false)
 const nodeSearchQuery = ref('')
@@ -869,7 +870,9 @@ function clearNodeExecution(nodeId) {
 async function stopWorkflow() {
   if (!wfId.value) return
   try {
-    await post(`/workflows/${wfId.value}/stop`)
+    // Cancel only the active run so we don't poison future runs of this workflow.
+    const q = activeRunId.value ? `?run_id=${encodeURIComponent(activeRunId.value)}` : ''
+    await post(`/workflows/${wfId.value}/stop${q}`)
     toast('Stop requested', true)
     isExecuting.value = false
     stopPolling()
@@ -1262,6 +1265,7 @@ async function removeWorkflow() {
 function startPolling(runId) {
   if (pollTimer.value) clearInterval(pollTimer.value)
   isExecuting.value = true
+  activeRunId.value = runId
 
   let isPolling = false // In-flight guard
   let pollCount = 0

@@ -2056,6 +2056,7 @@ async fn execute_node_by_type(
     state: &AppState,
     trigger_source: &str,
     workflow_id: &str,
+    run_id: &str,
     node_results: &std::collections::HashMap<String, NodeResult>,
 ) -> Result<Value, String> {
     match node.node_type.as_str() {
@@ -2294,7 +2295,7 @@ async fn execute_node_by_type(
 
                 let cancelled = {
                     let cancellations = state.workflow_cancellations.lock().await;
-                    cancellations.contains(workflow_id)
+                    cancellations.contains(workflow_id) || cancellations.contains(run_id)
                 };
                 if cancelled {
                     return Err("Workflow cancelled during wait".to_string());
@@ -2325,6 +2326,31 @@ async fn execute_node_by_type(
 
 // ── Workflow Engine Impl ──────────────────────────────────────────────────────
 
+/// Clears a run's cancellation flags from the shared set when a workflow run
+/// finishes by ANY path — success, error propagated via `?`, or the early
+/// "cancelled" return. Without this, a Stop request leaves an entry in the set
+/// forever; with workflow_id-keyed cancellation that silently cancels every
+/// subsequent run, poisoning the workflow until the process restarts.
+struct CancellationCleanup {
+    set: std::sync::Arc<tokio::sync::Mutex<std::collections::HashSet<String>>>,
+    keys: Vec<String>,
+}
+impl Drop for CancellationCleanup {
+    fn drop(&mut self) {
+        let set = self.set.clone();
+        let keys = std::mem::take(&mut self.keys);
+        // The set is behind an async mutex; remove on a detached task. Each
+        // run_id is unique, so a slightly-delayed removal can never affect a
+        // different run.
+        tokio::spawn(async move {
+            let mut guard = set.lock().await;
+            for k in keys {
+                guard.remove(&k);
+            }
+        });
+    }
+}
+
 pub struct WorkflowEngine;
 impl WorkflowEngine {
     pub async fn run(
@@ -2350,6 +2376,14 @@ impl WorkflowEngine {
         );
         let start = std::time::Instant::now();
         let run_id = external_run_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+        // Clear this run's cancellation flags on every exit path so a Stop press
+        // never lingers to cancel a future run. Bound to `_cancel_cleanup` (not
+        // `_`) so it lives for the whole function.
+        let _cancel_cleanup = CancellationCleanup {
+            set: state.workflow_cancellations.clone(),
+            keys: vec![run_id.clone(), workflow_id.to_string()],
+        };
 
         let (workflow_name, nodes, edges) = {
             let conn = state.db.get()?;
@@ -2572,6 +2606,7 @@ impl WorkflowEngine {
                                     state,
                                     trigger_source,
                                     workflow_id,
+                                    &run_id,
                                     &temp_results,
                                 )
                                 .await
@@ -2617,6 +2652,7 @@ impl WorkflowEngine {
                                 state,
                                 trigger_source,
                                 workflow_id,
+                                &run_id,
                                 &node_results,
                             )
                             .await
@@ -2629,6 +2665,7 @@ impl WorkflowEngine {
                             state,
                             trigger_source,
                             workflow_id,
+                            &run_id,
                             &node_results,
                         )
                         .await
@@ -2641,6 +2678,7 @@ impl WorkflowEngine {
                         state,
                         trigger_source,
                         workflow_id,
+                        &run_id,
                         &node_results,
                     )
                     .await
@@ -2653,6 +2691,7 @@ impl WorkflowEngine {
                     state,
                     trigger_source,
                     workflow_id,
+                    &run_id,
                     &node_results,
                 )
                 .await

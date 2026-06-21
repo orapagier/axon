@@ -2117,8 +2117,25 @@ pub async fn get_workflow_run_by_id(
         Json(json!({ "error": "DB error" }))
     }
 }
-pub async fn stop_workflow(State(state): State<AppState>, Path(id): Path<String>) -> Json<Value> {
-    state.workflow_cancellations.lock().await.insert(id);
+pub async fn stop_workflow(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Json<Value> {
+    // Prefer cancelling the specific run: precise, and it can't poison the
+    // workflow or affect other concurrent/future runs. Fall back to the
+    // workflow_id only when no run_id is supplied. Either entry is cleared when
+    // the run finishes (see CancellationCleanup), so the set never accumulates
+    // stale flags that would silently cancel later runs.
+    let mut set = state.workflow_cancellations.lock().await;
+    match params.get("run_id") {
+        Some(run_id) if !run_id.is_empty() => {
+            set.insert(run_id.clone());
+        }
+        _ => {
+            set.insert(id);
+        }
+    }
     Json(json!({"ok": true}))
 }
 
