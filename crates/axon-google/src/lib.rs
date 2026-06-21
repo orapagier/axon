@@ -685,28 +685,7 @@ impl GoogleService {
                 sheets::write_range(&self.0, s("spreadsheet_id")?, s("range")?, values).await
             }
             "gsheets_batch_write" => {
-                let data_v = a.get("data");
-                let data_arr = data_v
-                    .and_then(|v| {
-                        if let Some(obj) = v.as_object() {
-                            if let Some(params) = obj.get("parameters") {
-                                return params.as_array();
-                            }
-                        }
-                        v.as_array()
-                    })
-                    .cloned()
-                    .unwrap_or_default();
-                let data: Vec<(String, Vec<Vec<Value>>)> = data_arr
-                    .into_iter()
-                    .filter_map(|entry| {
-                        let obj = entry.as_object()?;
-                        let range = obj.get("range")?.as_str()?.to_string();
-                        // re-use parse_2d_values logic inside batch parsing
-                        let values = parse_2d_values(obj);
-                        Some((range, values))
-                    })
-                    .collect();
+                let data = parse_batch_write_data(a.get("data"));
                 sheets::batch_write(&self.0, s("spreadsheet_id")?, data).await
             }
             "gsheets_append_rows" => {
@@ -1083,6 +1062,73 @@ fn parse_2d_values(a: &Map<String, Value>) -> Vec<Vec<Value>> {
         // Single value not an array -> [[value]]
         other => vec![vec![other]],
     }
+}
+
+/// Parse the `data` argument for `gsheets_batch_write` into `(range, values)`
+/// pairs. This is deliberately permissive because `data` reaches us in several
+/// shapes depending on the caller:
+///   • a JSON array of `{range, values}` objects (LLM tool call)
+///   • a `{"parameters": [...]}` fixedCollection wrapper (workflow UI node)
+///   • a JSON *string* of either of the above (some LLM/tool serializers)
+///   • entries that are themselves JSON-encoded object strings
+/// Rows whose `range` is missing/blank/non-stringifiable are skipped (this is
+/// what stops a leftover empty UI row, or an expression that resolved to null,
+/// from poisoning or silently emptying the whole batch). `batch_write` then
+/// errors if *nothing* survives, so the failure is visible instead of a no-op.
+fn parse_batch_write_data(data_v: Option<&Value>) -> Vec<(String, Vec<Vec<Value>>)> {
+    let Some(v) = data_v else {
+        return vec![];
+    };
+
+    // Resolve the top-level value to a list of entry Values.
+    let entries: Vec<Value> = match v {
+        Value::Array(arr) => arr.clone(),
+        Value::Object(obj) => obj
+            .get("parameters")
+            .and_then(|p| p.as_array())
+            .cloned()
+            .unwrap_or_default(),
+        Value::String(s) => match serde_json::from_str::<Value>(s) {
+            Ok(Value::Array(arr)) => arr,
+            Ok(Value::Object(obj)) => obj
+                .get("parameters")
+                .and_then(|p| p.as_array())
+                .cloned()
+                .unwrap_or_default(),
+            _ => vec![],
+        },
+        _ => vec![],
+    };
+
+    entries
+        .into_iter()
+        .filter_map(|entry| {
+            // An entry may itself be a JSON-encoded object string.
+            let entry = match &entry {
+                Value::String(s) => serde_json::from_str::<Value>(s).unwrap_or_else(|_| entry.clone()),
+                _ => entry,
+            };
+            let obj = entry.as_object()?;
+
+            // Accept a string range, or a number we can stringify; trim it.
+            let range = match obj.get("range") {
+                Some(Value::String(s)) => s.trim().to_string(),
+                Some(Value::Number(n)) => n.to_string(),
+                _ => return None,
+            };
+            if range.is_empty() {
+                return None;
+            }
+
+            // A row with no values writes nothing; skip it rather than emit an
+            // empty ValueRange that contributes a silent no-op.
+            let values = parse_2d_values(obj);
+            if values.is_empty() {
+                return None;
+            }
+            Some((range, values))
+        })
+        .collect()
 }
 
 /// Parse a hex color string like "#FF0000" or "4285F4" into (r, g, b) floats 0.0–1.0.

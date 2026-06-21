@@ -157,6 +157,16 @@ pub async fn batch_write(
     spreadsheet_id: &str,
     data: Vec<(String, Vec<Vec<Value>>)>,
 ) -> Result<Value> {
+    // Guard against the silent no-op: Google's values:batchUpdate happily returns
+    // HTTP 200 for an empty `data` array, so an unparseable / blank `data` field
+    // would otherwise report "success" while writing nothing. Fail loudly instead.
+    if data.is_empty() {
+        anyhow::bail!(
+            "gsheets_batch_write: no valid ranges to write. Each item in 'data' needs a non-empty \
+             'range' and 'values'. Check that the rows are filled in and that any range/values \
+             expressions resolve to real values (a range that resolves to null/blank is skipped)."
+        );
+    }
     let tok = access_token(state).await?;
     let value_ranges: Vec<Value> = data
         .into_iter()
