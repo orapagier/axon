@@ -227,6 +227,148 @@ fn scalar_string_val(value: &Value) -> Option<String> {
     }
 }
 
+// ── Binary file handling ────────────────────────────────────────────────────
+//
+// The "binary file object" passed between workflow nodes is NOT standardized.
+// Producers in this codebase emit two different shapes:
+//   • Telegram trigger download + Myelin → camelCase: localPath / fileName / mimeType
+//   • getFile + AttachedFile + UI download → snake_case: local_path / original_name / mime_type
+// On top of that a user may type a literal server path string (e.g.
+// "/data/files/report.pdf") into the "File" field, or reference a whole upstream
+// node output where the file object is nested under `binary` / `data` / `file`.
+//
+// `extract_file_descriptor` accepts every one of those shapes and returns
+// (local_path, file_name?, mime_type?). `binary_descriptor` is the inverse: it
+// builds an output object carrying BOTH naming conventions so any downstream
+// consumer (old or new) resolves it.
+
+struct ResolvedFile {
+    bytes: Vec<u8>,
+    file_name: String,
+    mime_type: String,
+}
+
+/// Pull (local_path, file_name?, mime_type?) out of a `file` config value,
+/// tolerating string paths, camelCase, snake_case, and nested wrappers.
+fn extract_file_descriptor(file_val: &Value) -> Option<(String, Option<String>, Option<String>)> {
+    // 1. A bare string is the path itself.
+    if let Some(s) = file_val.as_str() {
+        let s = s.trim();
+        if s.is_empty() {
+            return None;
+        }
+        // A reference that resolved through string-interpolation can arrive as a
+        // JSON-stringified object — recover it rather than treating it as a path.
+        if s.starts_with('{') && s.ends_with('}') {
+            if let Ok(parsed) = serde_json::from_str::<Value>(s) {
+                if parsed.is_object() {
+                    return extract_file_descriptor(&parsed);
+                }
+            }
+        }
+        return Some((s.to_string(), None, None));
+    }
+
+    let obj = file_val.as_object()?;
+
+    // 2. The metadata may be nested under a wrapper key when the user references
+    //    a whole upstream node output (e.g. {{ $node["Trigger"] }}).
+    if let Some(inner) = ["binary", "data", "file"]
+        .iter()
+        .find_map(|k| obj.get(*k).filter(|v| v.is_object() || v.is_string()))
+    {
+        if let Some(found) = extract_file_descriptor(inner) {
+            return Some(found);
+        }
+    }
+
+    let pick = |keys: &[&str]| -> Option<String> {
+        keys.iter()
+            .find_map(|k| obj.get(*k).and_then(|v| v.as_str()))
+            .map(|s| s.to_string())
+    };
+
+    let local_path = pick(&["local_path", "localPath", "path", "file_path", "filePath"])?;
+    let file_name = pick(&["original_name", "fileName", "file_name", "name"]);
+    let mime_type = pick(&["mime_type", "mimeType", "mime", "content_type", "contentType"]);
+    Some((local_path, file_name, mime_type))
+}
+
+/// Resolve and read the binary referenced by `config["file"]`.
+/// Returns Ok(None) when no usable `file` value is present (lets callers such as
+/// sendDocument fall back to base64 `file_bytes`).
+async fn try_read_binary_file(
+    config: &Value,
+    default_name: &str,
+) -> Result<Option<ResolvedFile>, String> {
+    let Some((local_path, name, mime)) = config.get("file").and_then(extract_file_descriptor)
+    else {
+        return Ok(None);
+    };
+
+    let bytes = tokio::fs::read(&local_path)
+        .await
+        .map_err(|e| format!("Failed to read file '{local_path}': {e}"))?;
+
+    // Prefer the supplied name, then the path's basename, then the type default.
+    let file_name = name
+        .or_else(|| {
+            std::path::Path::new(&local_path)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+        })
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| default_name.to_string());
+
+    let mime_type = mime.unwrap_or_else(|| {
+        mime_guess::from_path(&file_name)
+            .first_or_octet_stream()
+            .to_string()
+    });
+
+    Ok(Some(ResolvedFile {
+        bytes,
+        file_name,
+        mime_type,
+    }))
+}
+
+/// Same as `try_read_binary_file` but errors when no `file` is provided.
+async fn read_binary_file(config: &Value, default_name: &str) -> Result<ResolvedFile, String> {
+    try_read_binary_file(config, default_name)
+        .await?
+        .ok_or_else(|| {
+            "Binary Data is enabled but the 'File' field is empty or unrecognized. Provide a \
+             server file path (e.g. /data/files/your-file.pdf) or a binary object from a \
+             previous node (containing local_path / localPath)."
+                .to_string()
+        })
+}
+
+/// Build a multipart part with an explicit filename and MIME type.
+fn file_part(bytes: Vec<u8>, file_name: String, mime_type: &str) -> Result<multipart::Part, String> {
+    multipart::Part::bytes(bytes)
+        .file_name(file_name)
+        .mime_str(mime_type)
+        .map_err(|e| format!("Invalid MIME type '{mime_type}': {e}"))
+}
+
+/// Standardized binary-file descriptor emitted by producer operations, carrying
+/// both snake_case and camelCase keys so every downstream consumer resolves it.
+fn binary_descriptor(local_path: &str, file_name: &str, mime: &str, size: usize) -> Value {
+    json!({
+        "local_path": local_path,
+        "localPath": local_path,
+        "original_name": file_name,
+        "file_name": file_name,
+        "fileName": file_name,
+        "mime_type": mime,
+        "mimeType": mime,
+        "size": size,
+        "fileSize": size,
+    })
+}
+
 fn button_string_field(button: &Value, key: &str) -> Option<String> {
     button
         .get(key)
@@ -712,22 +854,8 @@ async fn send_photo(client: &TelegramClient, config: &Value) -> Result<Value, St
     let chat_id = require_str(config, "chat_id")?;
 
     if bool_val(config, "binary_data") {
-        let file_val = config
-            .get("file")
-            .ok_or("Missing 'file' object for binary upload")?;
-        let local_path = file_val
-            .as_str()
-            .or_else(|| file_val.get("local_path").and_then(|v| v.as_str()))
-            .ok_or("Missing 'local_path' in file object")?;
-        let file_name = file_val
-            .get("original_name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("photo.jpg");
-
-        let bytes = tokio::fs::read(local_path)
-            .await
-            .map_err(|e| format!("Failed to read file: {e}"))?;
-        let part = multipart::Part::bytes(bytes).file_name(file_name.to_string());
+        let file = read_binary_file(config, "photo.jpg").await?;
+        let part = file_part(file.bytes, file.file_name, &file.mime_type)?;
 
         let mut form = multipart::Form::new()
             .text("chat_id", chat_id)
@@ -757,22 +885,8 @@ async fn send_video(client: &TelegramClient, config: &Value) -> Result<Value, St
     let chat_id = require_str(config, "chat_id")?;
 
     if bool_val(config, "binary_data") {
-        let file_val = config
-            .get("file")
-            .ok_or("Missing 'file' object for binary upload")?;
-        let local_path = file_val
-            .as_str()
-            .or_else(|| file_val.get("local_path").and_then(|v| v.as_str()))
-            .ok_or("Missing 'local_path' in file object")?;
-        let file_name = file_val
-            .get("original_name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("video.mp4");
-
-        let bytes = tokio::fs::read(local_path)
-            .await
-            .map_err(|e| format!("Failed to read file: {e}"))?;
-        let part = multipart::Part::bytes(bytes).file_name(file_name.to_string());
+        let file = read_binary_file(config, "video.mp4").await?;
+        let part = file_part(file.bytes, file.file_name, &file.mime_type)?;
 
         let mut form = multipart::Form::new()
             .text("chat_id", chat_id)
@@ -818,22 +932,8 @@ async fn send_audio(client: &TelegramClient, config: &Value) -> Result<Value, St
     let chat_id = require_str(config, "chat_id")?;
 
     if bool_val(config, "binary_data") {
-        let file_val = config
-            .get("file")
-            .ok_or("Missing 'file' object for binary upload")?;
-        let local_path = file_val
-            .as_str()
-            .or_else(|| file_val.get("local_path").and_then(|v| v.as_str()))
-            .ok_or("Missing 'local_path' in file object")?;
-        let file_name = file_val
-            .get("original_name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("audio.mp3");
-
-        let bytes = tokio::fs::read(local_path)
-            .await
-            .map_err(|e| format!("Failed to read file: {e}"))?;
-        let part = multipart::Part::bytes(bytes).file_name(file_name.to_string());
+        let file = read_binary_file(config, "audio.mp3").await?;
+        let part = file_part(file.bytes, file.file_name, &file.mime_type)?;
 
         let mut form = multipart::Form::new()
             .text("chat_id", chat_id)
@@ -864,38 +964,27 @@ async fn send_document(client: &TelegramClient, config: &Value) -> Result<Value,
     let chat_id = require_str(config, "chat_id")?;
 
     if bool_val(config, "binary_data") {
-        let (file_bytes, file_name, mime) = if let Some(file_val) = config.get("file") {
-            let local_path = file_val
-                .as_str()
-                .or_else(|| file_val.get("local_path").and_then(|v| v.as_str()))
-                .ok_or("Missing 'local_path' in file object")?;
-            let name = file_val
-                .get("original_name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("document.pdf");
-            let m = file_val
-                .get("mime_type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("application/octet-stream");
-            let bytes = tokio::fs::read(local_path)
-                .await
-                .map_err(|e| format!("Failed to read file: {e}"))?;
-            (bytes, name.to_string(), m.to_string())
-        } else {
+        // Prefer the resolved file path/object; fall back to inline base64 bytes.
+        let part = if let Some(file) = try_read_binary_file(config, "document.pdf").await? {
+            file_part(file.bytes, file.file_name, &file.mime_type)?
+        } else if config.get("file_bytes").is_some() {
             let file_bytes_b64 = require_str(config, "file_bytes")?;
             let bytes = base64::engine::general_purpose::STANDARD
                 .decode(file_bytes_b64)
                 .map_err(|e| format!("Failed to decode file_bytes: {e}"))?;
             let name = str_val(config, "file_name").unwrap_or_else(|| "document".to_string());
-            let m = str_val(config, "mime_type")
+            let mime = str_val(config, "mime_type")
                 .unwrap_or_else(|| "application/octet-stream".to_string());
-            (bytes, name, m)
+            file_part(bytes, name, &mime)?
+        } else {
+            return Err(
+                "Binary Data is enabled but no file was provided. Set the 'File' field to a \
+                 server path (e.g. /data/files/your-file.pdf) or a binary object from a \
+                 previous node, or supply base64 'file_bytes'."
+                    .to_string(),
+            );
         };
 
-        let part = multipart::Part::bytes(file_bytes)
-            .file_name(file_name)
-            .mime_str(&mime)
-            .map_err(|e| format!("Invalid MIME type: {e}"))?;
         let mut form = multipart::Form::new()
             .text("chat_id", chat_id)
             .part("document", part);
@@ -921,22 +1010,8 @@ async fn send_animation(client: &TelegramClient, config: &Value) -> Result<Value
     let chat_id = require_str(config, "chat_id")?;
 
     if bool_val(config, "binary_data") {
-        let file_val = config
-            .get("file")
-            .ok_or("Missing 'file' object for binary upload")?;
-        let local_path = file_val
-            .as_str()
-            .or_else(|| file_val.get("local_path").and_then(|v| v.as_str()))
-            .ok_or("Missing 'local_path' in file object")?;
-        let file_name = file_val
-            .get("original_name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("animation.gif");
-
-        let bytes = tokio::fs::read(local_path)
-            .await
-            .map_err(|e| format!("Failed to read file: {e}"))?;
-        let part = multipart::Part::bytes(bytes).file_name(file_name.to_string());
+        let file = read_binary_file(config, "animation.gif").await?;
+        let part = file_part(file.bytes, file.file_name, &file.mime_type)?;
 
         let mut form = multipart::Form::new()
             .text("chat_id", chat_id)
@@ -967,22 +1042,8 @@ async fn send_sticker(client: &TelegramClient, config: &Value) -> Result<Value, 
     let chat_id = require_str(config, "chat_id")?;
 
     if bool_val(config, "binary_data") {
-        let file_val = config
-            .get("file")
-            .ok_or("Missing 'file' object for binary upload")?;
-        let local_path = file_val
-            .as_str()
-            .or_else(|| file_val.get("local_path").and_then(|v| v.as_str()))
-            .ok_or("Missing 'local_path' in file object")?;
-        let file_name = file_val
-            .get("original_name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("sticker.webp");
-
-        let bytes = tokio::fs::read(local_path)
-            .await
-            .map_err(|e| format!("Failed to read file: {e}"))?;
-        let part = multipart::Part::bytes(bytes).file_name(file_name.to_string());
+        let file = read_binary_file(config, "sticker.webp").await?;
+        let part = file_part(file.bytes, file.file_name, &file.mime_type)?;
 
         let mut form = multipart::Form::new()
             .text("chat_id", chat_id)
@@ -1185,22 +1246,8 @@ async fn set_chat_photo(client: &TelegramClient, config: &Value) -> Result<Value
     let chat_id = require_str(config, "chat_id")?;
 
     if bool_val(config, "binary_data") {
-        let file_val = config
-            .get("file")
-            .ok_or("Missing 'file' object for binary upload")?;
-        let local_path = file_val
-            .get("local_path")
-            .and_then(|v| v.as_str())
-            .ok_or("Missing 'local_path' in file object")?;
-        let file_name = file_val
-            .get("original_name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("photo.jpg");
-
-        let bytes = tokio::fs::read(local_path)
-            .await
-            .map_err(|e| format!("Failed to read file: {e}"))?;
-        let part = multipart::Part::bytes(bytes).file_name(file_name.to_string());
+        let file = read_binary_file(config, "photo.jpg").await?;
+        let part = file_part(file.bytes, file.file_name, &file.mime_type)?;
 
         let form = multipart::Form::new()
             .text("chat_id", chat_id)
@@ -1759,12 +1806,12 @@ async fn try_download_attachment(config: &Value, msg: &Value, image_size: &str) 
     let staged_path = crate::files::stage_bytes(&bytes, file_name).ok()?;
 
     Some(json!({
-        "binary": {
-            "fileName": file_name,
-            "mimeType": mime,
-            "localPath": staged_path.to_string_lossy(),
-            "fileSize": bytes.len(),
-        }
+        "binary": binary_descriptor(
+            &staged_path.to_string_lossy(),
+            file_name,
+            &mime,
+            bytes.len(),
+        )
     }))
 }
 
@@ -2027,12 +2074,12 @@ async fn download_message_file(client: &TelegramClient, config: &Value) -> Resul
         .to_string();
 
     Ok(json!({
-        "binary": {
-            "original_name": original_name,
-            "local_path": staged_path.to_string_lossy(),
-            "mime_type": mime,
-            "size": bytes.len()
-        }
+        "binary": binary_descriptor(
+            &staged_path.to_string_lossy(),
+            &original_name,
+            &mime,
+            bytes.len(),
+        )
     }))
 }
 
@@ -2081,6 +2128,88 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_extract_file_descriptor_plain_string_path() {
+        let v = json!("/data/files/report.pdf");
+        let (path, name, mime) = extract_file_descriptor(&v).unwrap();
+        assert_eq!(path, "/data/files/report.pdf");
+        assert_eq!(name, None);
+        assert_eq!(mime, None);
+    }
+
+    #[test]
+    fn test_extract_file_descriptor_snake_case() {
+        // Shape emitted by getFile / AttachedFile / UI.
+        let v = json!({
+            "local_path": "/data/files/a.pdf",
+            "original_name": "a.pdf",
+            "mime_type": "application/pdf",
+            "size": 10
+        });
+        let (path, name, mime) = extract_file_descriptor(&v).unwrap();
+        assert_eq!(path, "/data/files/a.pdf");
+        assert_eq!(name.as_deref(), Some("a.pdf"));
+        assert_eq!(mime.as_deref(), Some("application/pdf"));
+    }
+
+    #[test]
+    fn test_extract_file_descriptor_camel_case() {
+        // Shape emitted by the Telegram trigger download + Myelin — the case
+        // that used to fail with "Missing 'local_path' in file object".
+        let v = json!({
+            "localPath": "/data/files/b.jpg",
+            "fileName": "b.jpg",
+            "mimeType": "image/jpeg",
+            "fileSize": 20
+        });
+        let (path, name, mime) = extract_file_descriptor(&v).unwrap();
+        assert_eq!(path, "/data/files/b.jpg");
+        assert_eq!(name.as_deref(), Some("b.jpg"));
+        assert_eq!(mime.as_deref(), Some("image/jpeg"));
+    }
+
+    #[test]
+    fn test_extract_file_descriptor_nested_under_binary() {
+        // User references the whole upstream node output ({{ $node["Trigger"] }}).
+        let v = json!({
+            "json": { "message_id": 1 },
+            "binary": { "localPath": "/data/files/c.png", "fileName": "c.png" }
+        });
+        let (path, name, _mime) = extract_file_descriptor(&v).unwrap();
+        assert_eq!(path, "/data/files/c.png");
+        assert_eq!(name.as_deref(), Some("c.png"));
+    }
+
+    #[test]
+    fn test_extract_file_descriptor_stringified_object() {
+        let v = json!(r#"{"local_path":"/data/files/d.txt","original_name":"d.txt"}"#);
+        let (path, name, _mime) = extract_file_descriptor(&v).unwrap();
+        assert_eq!(path, "/data/files/d.txt");
+        assert_eq!(name.as_deref(), Some("d.txt"));
+    }
+
+    #[test]
+    fn test_extract_file_descriptor_rejects_empty_and_pathless() {
+        assert!(extract_file_descriptor(&json!("")).is_none());
+        assert!(extract_file_descriptor(&json!("   ")).is_none());
+        // An object with no recognizable path key yields None (caller then gives
+        // a helpful error instead of the cryptic "Missing 'local_path'").
+        assert!(extract_file_descriptor(&json!({ "file_id": "abc" })).is_none());
+    }
+
+    #[test]
+    fn test_binary_descriptor_carries_both_conventions() {
+        let d = binary_descriptor("/data/files/e.pdf", "e.pdf", "application/pdf", 5);
+        // Re-reading it back must succeed regardless of which convention a
+        // downstream consumer expects.
+        assert_eq!(d["local_path"], json!("/data/files/e.pdf"));
+        assert_eq!(d["localPath"], json!("/data/files/e.pdf"));
+        let (path, name, mime) = extract_file_descriptor(&d).unwrap();
+        assert_eq!(path, "/data/files/e.pdf");
+        assert_eq!(name.as_deref(), Some("e.pdf"));
+        assert_eq!(mime.as_deref(), Some("application/pdf"));
+    }
 
     #[test]
     fn test_derive_secret_token_strips_invalid_chars() {
