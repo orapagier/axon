@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, onMounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import Pill from './Pill.vue'
 import SearchableSelect from './SearchableSelect.vue'
 import DataTreeNode from './DataTreeNode.vue'
@@ -964,6 +964,47 @@ watch(
   applyAutoLabel,
 )
 
+// ── Autosave ────────────────────────────────────────────────────────────────
+// Parameter fields bind straight to node.data.config via v-model, so on their
+// own they only mutated in-memory state — edits were silently lost on reload or
+// when switching workflows unless some *other* action happened to trigger a
+// save. Debounce-persist any config change so editing "just saves" (n8n-style).
+// Saves are silent here (no toast) — the explicit Save button and structural
+// canvas actions stay loud.
+let autosaveTimer = null
+
+// Disarm across a node switch so the defaults normalizeConfig() backfills for the
+// newly-opened node don't fire a spurious save. Declared BEFORE the config
+// watcher so it runs first in the same flush and the guard is already false.
+const autosaveArmed = ref(false)
+watch(() => props.node.id, () => {
+  autosaveArmed.value = false
+  nextTick(() => { autosaveArmed.value = true })
+}, { immediate: true })
+
+watch(
+  () => props.node.data.config,
+  () => {
+    if (!autosaveArmed.value) return
+    if (autosaveTimer) clearTimeout(autosaveTimer)
+    autosaveTimer = setTimeout(() => {
+      autosaveTimer = null
+      emit('save', { silent: true })
+    }, 800)
+  },
+  { deep: true },
+)
+
+// Flush a pending autosave when the panel closes (unmounts), so a quick
+// edit-then-close inside the debounce window still persists.
+onUnmounted(() => {
+  if (autosaveTimer) {
+    clearTimeout(autosaveTimer)
+    autosaveTimer = null
+    emit('save', { silent: true })
+  }
+})
+
 </script>
 
 <template>
@@ -1113,9 +1154,14 @@ watch(
               <button class="header-tab" :class="{ active: activeTab === 'settings' }" @click="activeTab = 'settings'">SETTINGS</button>
               <button class="header-tab" v-if="nodeResult" @click="emit('clear-execution', node.id)" title="Clear execution data">CLEAR</button>
             </div>
-            <button class="btn-execute" :class="{ 'is-executing': executing }" @click="emit('execute', node.id, { single: true })">
-              <span class="btn-content">⚡ Execute Step</span>
-            </button>
+            <div class="header-actions">
+              <button class="btn-save" @click="emit('save')" title="Save workflow">
+                <span class="btn-content">💾 Save</span>
+              </button>
+              <button class="btn-execute" :class="{ 'is-executing': executing }" @click="emit('execute', node.id, { single: true })">
+                <span class="btn-content">⚡ Execute Step</span>
+              </button>
+            </div>
           </div>
           
           <div class="col-content">
@@ -1870,6 +1916,27 @@ watch(
   margin-left: 4px; transition: all 0.15s; text-transform: uppercase;
 }
 .btn-tab-action:hover { color: #f2f7ff; background: rgba(255, 255, 255, 0.05); }
+
+.header-actions { display: flex; align-items: center; gap: 8px; }
+
+.btn-save {
+  padding: 7px 14px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #d7dbe8;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  font-size: 12px; font-weight: 600;
+  cursor: pointer; white-space: nowrap;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex; align-items: center; gap: 6px;
+}
+.btn-save:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.24);
+  color: #f2f7ff;
+  transform: translateY(-1px);
+}
+.btn-save:active { transform: translateY(0); }
 
 .btn-execute {
   padding: 7px 16px;

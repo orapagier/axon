@@ -1288,19 +1288,28 @@ async function pasteWorkflow(pastedData = null) {
   }
 }
 
-async function save() {
-  if (!wfName.value.trim()) return toast('Workflow name is required', false)
+async function save(opts = {}) {
+  // Silent saves (autosave from NodeDetails / field blur) skip the success toast
+  // so editing doesn't spam notifications; errors always surface.
+  const silent = opts?.silent === true
+
+  if (!wfName.value.trim()) {
+    if (!silent) toast('Workflow name is required', false)
+    return
+  }
 
   const payload = getWorkflowPayload()
 
   try {
     const r = await post('/workflows', payload)
-    toast(r.ok ? 'Workflow saved' : r.error, r.ok)
     if (r.ok) {
+      if (!silent) toast('Workflow saved', true)
       if (!wfId.value && r.id) {
         wfId.value = r.id
       }
       load()
+    } else {
+      toast(r.error, false)
     }
   } catch (e) {
     toast('Failed to save workflow', false)
@@ -2010,6 +2019,7 @@ onUnmounted(() => {
               type="text"
               class="wf-title-input"
               placeholder="Workflow Name"
+              @change="save({ silent: true })"
             />
           </div>
           <div class="toolbar-right">
