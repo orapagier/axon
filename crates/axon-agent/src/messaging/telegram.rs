@@ -44,6 +44,37 @@ fn normalized_equals(left: Option<&str>, right: Option<&str>) -> bool {
     }
 }
 
+/// True if a telegram trigger node's `chat_ids` config matches `chat_id`.
+/// `chat_ids` may be a comma/space-separated string or an array. An empty or
+/// missing `chat_ids` means "listen to every chat" → always matches.
+fn chat_ids_match(chat_ids: Option<&Value>, chat_id: &str) -> bool {
+    let target = chat_id.trim();
+    if target.is_empty() {
+        return false;
+    }
+    let sep = |c: char| matches!(c, ',' | ';' | ' ' | '\n' | '\t');
+    match chat_ids {
+        None | Some(Value::Null) => true,
+        Some(Value::String(s)) => {
+            let s = s.trim();
+            s.is_empty()
+                || s.split(sep)
+                    .map(|p| p.trim())
+                    .filter(|p| !p.is_empty())
+                    .any(|p| p == target)
+        }
+        Some(Value::Array(arr)) => {
+            arr.is_empty()
+                || arr.iter().any(|v| match v {
+                    Value::String(s) => s.trim() == target,
+                    Value::Number(n) => n.to_string() == target,
+                    _ => false,
+                })
+        }
+        _ => false,
+    }
+}
+
 fn score_saved_callback_route(
     config: &Value,
     callback_data: &str,
@@ -628,6 +659,43 @@ impl TelegramGateway {
         }
 
         Ok(None)
+    }
+
+    /// True if `workflow_id` has an *enabled* telegram trigger (stimulus) node
+    /// whose configured chat_ids match `chat_id` (empty chat_ids = any chat).
+    /// Used to gate reply-to-message routing: a reply is only re-fed into the
+    /// sending workflow when that workflow can actually receive it on a telegram
+    /// trigger for this chat — otherwise re-running it would just restart the
+    /// workflow from its real entry node (e.g. a Gmail search), not "reprocess".
+    fn workflow_has_telegram_trigger_for_chat(
+        state: &crate::state::AppState,
+        workflow_id: &str,
+        chat_id: &str,
+    ) -> bool {
+        let Ok(conn) = state.db.get() else {
+            return false;
+        };
+        let Ok(mut stmt) = conn.prepare(
+            "SELECT config FROM workflow_nodes \
+             WHERE workflow_id = ?1 AND node_type = 'stimulus' AND enabled = 1",
+        ) else {
+            return false;
+        };
+        let Ok(rows) = stmt.query_map([workflow_id], |r| r.get::<_, String>(0)) else {
+            return false;
+        };
+        for cfg_str in rows.flatten() {
+            let Ok(cfg) = serde_json::from_str::<Value>(&cfg_str) else {
+                continue;
+            };
+            if cfg.get("type").and_then(|v| v.as_str()) != Some("telegram") {
+                continue;
+            }
+            if chat_ids_match(cfg.get("chat_ids"), chat_id) {
+                return true;
+            }
+        }
+        false
     }
 
     /// If `message_id` (in `chat_id`) was sent by a workflow, return its
@@ -1383,6 +1451,11 @@ impl TelegramGateway {
         // main agent. Slash commands were already handled above, so they are
         // unaffected. Replies to non-workflow messages have no route entry and
         // continue to the normal handling below (ending at the main agent).
+        //
+        // Set when a reply targets a workflow-sent message but that workflow has
+        // no telegram trigger node able to receive it — carries the workflow name
+        // so the agent fall-through can explain why nothing was reprocessed.
+        let mut reply_workflow_hint: Option<String> = None;
         if let Some(reply) = msg.get("reply_to_message") {
             let replied_msg_id = reply
                 .get("message_id")
@@ -1404,51 +1477,68 @@ impl TelegramGateway {
                         Self::resolve_workflow_id_by_name_or_id(&state, &stored_wf)
                     {
                         if Self::workflow_access_allowed(&state, &chat_id, user_id.as_deref()) {
-                            let replied_text = reply
-                                .get("text")
-                                .and_then(|v| v.as_str())
-                                .or_else(|| reply.get("caption").and_then(|v| v.as_str()))
-                                .unwrap_or("");
-                            let trigger_data = json!({
-                                "trigger": "telegram",
-                                "events": [{
-                                    "type": "reply",
-                                    "chat_id": chat_id,
-                                    "text": text.clone(),
-                                    "caption": caption.clone(),
-                                    "from": msg.get("from").cloned().unwrap_or_else(|| json!({})),
-                                    "message": msg.clone(),
-                                    "reply_to_message": reply.clone(),
-                                    "replied_text": replied_text,
-                                }]
-                            });
-                            tracing::info!(
-                                "[TELEGRAM] Reply to workflow message → routing to workflow '{}' (id={})",
-                                wf_name,
-                                wf_id
-                            );
-                            let state_clone = Arc::clone(&state);
-                            tokio::spawn(async move {
-                                crate::tools::workflow::WorkflowEngine::set_telegram_trigger_data(
-                                    wf_id.clone(),
-                                    trigger_data,
-                                )
-                                .await;
-                                if let Err(e) =
-                                    crate::tools::workflow::WorkflowEngine::run_in_background(
-                                        &wf_id,
-                                        &state_clone,
-                                        None,
+                            // Only re-feed the reply into the workflow if it can
+                            // actually receive it: it must have an enabled telegram
+                            // trigger (stimulus) node for this chat. Otherwise the
+                            // reply is meant for "reprocessing" but there is nothing
+                            // to receive it — fall through to the agent with a hint.
+                            if Self::workflow_has_telegram_trigger_for_chat(
+                                &state, &wf_id, &chat_id,
+                            ) {
+                                let replied_text = reply
+                                    .get("text")
+                                    .and_then(|v| v.as_str())
+                                    .or_else(|| reply.get("caption").and_then(|v| v.as_str()))
+                                    .unwrap_or("");
+                                let trigger_data = json!({
+                                    "trigger": "telegram",
+                                    "events": [{
+                                        "type": "reply",
+                                        "chat_id": chat_id,
+                                        "text": text.clone(),
+                                        "caption": caption.clone(),
+                                        "from": msg.get("from").cloned().unwrap_or_else(|| json!({})),
+                                        "message": msg.clone(),
+                                        "reply_to_message": reply.clone(),
+                                        "replied_text": replied_text,
+                                    }]
+                                });
+                                tracing::info!(
+                                    "[TELEGRAM] Reply to workflow message → routing to workflow '{}' (id={})",
+                                    wf_name,
+                                    wf_id
+                                );
+                                let state_clone = Arc::clone(&state);
+                                tokio::spawn(async move {
+                                    crate::tools::workflow::WorkflowEngine::set_telegram_trigger_data(
+                                        wf_id.clone(),
+                                        trigger_data,
                                     )
-                                {
-                                    tracing::error!(
-                                        "[TELEGRAM] reply→workflow run failed (id={}): {}",
-                                        wf_id,
-                                        e
-                                    );
-                                }
-                            });
-                            return;
+                                    .await;
+                                    if let Err(e) =
+                                        crate::tools::workflow::WorkflowEngine::run_in_background(
+                                            &wf_id,
+                                            &state_clone,
+                                            None,
+                                        )
+                                    {
+                                        tracing::error!(
+                                            "[TELEGRAM] reply→workflow run failed (id={}): {}",
+                                            wf_id,
+                                            e
+                                        );
+                                    }
+                                });
+                                return;
+                            } else {
+                                tracing::info!(
+                                    "[TELEGRAM] Reply targets workflow '{}' (id={}) which has no enabled telegram trigger node for chat {} — falling through to agent with hint",
+                                    wf_name,
+                                    wf_id,
+                                    chat_id
+                                );
+                                reply_workflow_hint = Some(wf_name.clone());
+                            }
                         }
                     }
                 }
@@ -1613,6 +1703,24 @@ impl TelegramGateway {
             );
         }
 
+        // The reply was meant for a workflow that has no telegram trigger node to
+        // receive it. Don't act on the content — instruct the agent to explain and
+        // tell the user to add a telegram trigger (stimulus) node.
+        if let Some(wf_name) = &reply_workflow_hint {
+            effective_text = format!(
+                "[SYSTEM INSTRUCTION — Do NOT act on or process the user's message content below. \
+The user replied to a Telegram message that was sent by the workflow \"{wf}\", expecting that \
+workflow to reprocess or edit it. That workflow has no enabled Telegram trigger (stimulus) node \
+for this chat, so it cannot receive the reply. Reply briefly: tell the user their reply to the \
+\"{wf}\" workflow could not be processed because it has no Telegram trigger (stimulus) node set \
+for this chat, and that they should add a Telegram trigger (stimulus) node (configured for this \
+chat) to the \"{wf}\" workflow so it can receive replies. Do not attempt the task itself.]\n\n\
+User's reply was:\n{body}",
+                wf = wf_name,
+                body = effective_text,
+            );
+        }
+
         let mut ctx = crate::agent::RunContext::new(
             &effective_text,
             "telegram",
@@ -1762,9 +1870,49 @@ impl MessageGateway for TelegramGateway {
 
 #[cfg(test)]
 mod tests {
+    use super::chat_ids_match;
     use super::infer_callback_route_from_configs;
     use super::TelegramGateway;
     use serde_json::json;
+
+    #[test]
+    fn chat_ids_match_single_string() {
+        let cfg = json!({ "chat_ids": "6967671873" });
+        assert!(chat_ids_match(cfg.get("chat_ids"), "6967671873"));
+        assert!(!chat_ids_match(cfg.get("chat_ids"), "123"));
+    }
+
+    #[test]
+    fn chat_ids_match_comma_separated() {
+        let cfg = json!({ "chat_ids": "111, 6967671873 ,222" });
+        assert!(chat_ids_match(cfg.get("chat_ids"), "6967671873"));
+        assert!(chat_ids_match(cfg.get("chat_ids"), "222"));
+        assert!(!chat_ids_match(cfg.get("chat_ids"), "333"));
+    }
+
+    #[test]
+    fn chat_ids_match_array_of_numbers_and_strings() {
+        let cfg = json!({ "chat_ids": [111, "6967671873"] });
+        assert!(chat_ids_match(cfg.get("chat_ids"), "111"));
+        assert!(chat_ids_match(cfg.get("chat_ids"), "6967671873"));
+        assert!(!chat_ids_match(cfg.get("chat_ids"), "222"));
+    }
+
+    #[test]
+    fn chat_ids_match_empty_means_any_chat() {
+        let empty_str = json!({ "chat_ids": "" });
+        let empty_arr = json!({ "chat_ids": [] });
+        let missing = json!({});
+        assert!(chat_ids_match(empty_str.get("chat_ids"), "6967671873"));
+        assert!(chat_ids_match(empty_arr.get("chat_ids"), "6967671873"));
+        assert!(chat_ids_match(missing.get("chat_ids"), "6967671873"));
+    }
+
+    #[test]
+    fn chat_ids_match_blank_target_never_matches() {
+        let cfg = json!({ "chat_ids": "" });
+        assert!(!chat_ids_match(cfg.get("chat_ids"), "  "));
+    }
 
     #[test]
     fn parse_slash_command_basic() {
