@@ -567,7 +567,13 @@ function createNew() {
   selectedNode.value = null
 }
 
-function addNode(type, position = { x: 250, y: 150 }) {
+// `opts.save` (default true) lets composite operations (splice / add-from-handle)
+// add the node WITHOUT triggering an immediate save, so they can push the
+// accompanying edges and persist everything in a single atomic POST. Saving
+// here while the caller is still mutating edges fires a second, concurrent
+// /workflows request whose DELETE+INSERT of edges races the caller's save —
+// the source of the duplicated / mis-routed wires after inserting a node.
+function addNode(type, position = { x: 250, y: 150 }, { save: shouldSave = true } = {}) {
   const id = `node_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`
   const isTrigger = type === 'trigger' || nodes.value.length === 0
   const baseName = isTrigger
@@ -586,7 +592,7 @@ function addNode(type, position = { x: 250, y: 150 }) {
 
   nodes.value.push(newNode)
   isNodePickerOpen.value = false
-  save()
+  if (shouldSave) save()
   return id
 }
 
@@ -610,7 +616,9 @@ function addNodeFromPalette(type) {
   if (pendingSource.value && canvasRef.value) {
     const sNode = nodes.value.find(n => n.id === pendingSource.value.nodeId)
     if (sNode) {
-      const newNodeId = addNode(type, { x: sNode.position.x + 250, y: sNode.position.y })
+      // save:false — the connecting edge is pushed below; save once afterwards
+      // so the node and its edge persist in a single, non-racing POST.
+      const newNodeId = addNode(type, { x: sNode.position.x + 250, y: sNode.position.y }, { save: false })
       const edgeId = `e-${pendingSource.value.nodeId}-${newNodeId}`
       const sourceId = pendingSource.value.nodeId
       const sourceHandle = pendingSource.value.handleId
@@ -667,7 +675,11 @@ function addNodeFromPalette(type) {
 }
 
 function handleSpliceNode({ type, position, edge }) {
-  const newNodeId = addNode(type, position)
+  // save:false — the two replacement edges are created below; the single save()
+  // at the end of this function persists the node + both edges atomically.
+  // Letting addNode save here would race that save and leave the old edge
+  // behind (duplicate wire) or drop the new edges (mis-routed wire).
+  const newNodeId = addNode(type, position, { save: false })
 
   // Splicing: replace 1 edge with 2
   const sourceId = edge.source
