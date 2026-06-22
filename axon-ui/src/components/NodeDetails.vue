@@ -1920,7 +1920,9 @@ onUnmounted(() => {
 .header-actions { display: flex; align-items: center; gap: 8px; }
 
 .btn-save {
-  padding: 7px 14px;
+  height: 34px;
+  padding: 0 14px;
+  box-sizing: border-box;
   background: rgba(255, 255, 255, 0.05);
   color: #d7dbe8;
   border: 1px solid rgba(255, 255, 255, 0.14);
@@ -1939,7 +1941,9 @@ onUnmounted(() => {
 .btn-save:active { transform: translateY(0); }
 
 .btn-execute {
-  padding: 7px 16px;
+  height: 34px;
+  padding: 0 16px;
+  box-sizing: border-box;
   background: linear-gradient(135deg, #4f46e5 0%, #6366f1 100%);
   color: #fff;
   border: 1px solid rgba(99,102,241,0.4);
