@@ -67,7 +67,9 @@ const filteredNodeTypes = computed(() => {
   )
 })
 const pendingSplice = ref(null)
+const pendingReplace = ref(null) // node being replaced via right-click → Replace
 const nodePickerRef = ref(null)
+const nodeSearchInputRef = ref(null)
 const historyRef = ref(null)
 const workflowMenuRef = ref(null)
 const isExecuting = ref(false)
@@ -80,6 +82,14 @@ const pendingSource = ref(null) // { nodeId, handleId }
 
 // Canvas ref for calling methods
 const canvasRef = ref(null)
+
+// Auto-focus the neuron search field whenever the node picker opens so the
+// user can start typing a keyword immediately (n8n-style).
+watch(isNodePickerOpen, (open) => {
+  if (open) {
+    nextTick(() => nodeSearchInputRef.value?.focus())
+  }
+})
 
 const filteredWorkflows = computed(() => {
   const query = workflowMenuSearch.value.trim().toLowerCase()
@@ -590,6 +600,13 @@ function handleAddNode({ type, position }) {
 }
 
 function addNodeFromPalette(type) {
+  if (pendingReplace.value) {
+    replaceNode(pendingReplace.value.id, type)
+    pendingReplace.value = null
+    isNodePickerOpen.value = false
+    return
+  }
+
   if (pendingSource.value && canvasRef.value) {
     const sNode = nodes.value.find(n => n.id === pendingSource.value.nodeId)
     if (sNode) {
@@ -1688,6 +1705,43 @@ function handleContextSettings() {
   closeContextMenu()
 }
 
+function handleContextReplace() {
+  if (contextMenuNode.value) {
+    // Stash the node to swap, then open the picker. The actual replacement
+    // runs in addNodeFromPalette once the user chooses a new neuron type.
+    pendingReplace.value = contextMenuNode.value
+    isNodePickerOpen.value = true
+  }
+  closeContextMenu()
+}
+
+// Swap a node's type in place. Keeping the same id preserves every edge that
+// references it, so the node's connections survive the replacement. The config
+// is reset to the new type's defaults (configs aren't portable between types).
+function replaceNode(oldNodeId, newType) {
+  const idx = nodes.value.findIndex(n => n.id === oldNodeId)
+  if (idx === -1) return
+  const oldNode = nodes.value[idx]
+
+  const baseName = newType === 'trigger'
+    ? 'When clicked'
+    : `${NODE_TYPES[newType]?.displayName || 'Neuron'} ${nodes.value.filter(n => n.data?.node_type === newType && n.id !== oldNodeId).length + 1}`
+  const displayName = makeUniqueLabel(baseName, oldNodeId)
+
+  nodes.value[idx] = {
+    ...oldNode,
+    type: 'canvas-node',
+    data: createNodeData(oldNodeId, newType, displayName, getInitialConfig(newType)),
+  }
+
+  // Keep the editor in sync if the replaced node was open/selected.
+  if (selectedNode.value && selectedNode.value.id === oldNodeId) {
+    selectedNode.value = nodes.value[idx]
+  }
+
+  save()
+}
+
 function handleKeydown(e) {
   if (['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return
 
@@ -1762,6 +1816,7 @@ function handleClickOutside(e) {
     const isClickInside = nodePickerRef.value.contains(e.target)
     if (!isClickInside) {
       isNodePickerOpen.value = false
+      pendingReplace.value = null
     }
   }
 
@@ -1950,7 +2005,7 @@ onUnmounted(() => {
               <div v-if="isNodePickerOpen" class="floating-palette">
                 <div class="palette-label">Neurons</div>
                 <div class="palette-search">
-                  <input type="text" v-model="nodeSearchQuery" @blur="nodeSearchQuery = ''" placeholder="Search neurons..." class="palette-search-input" />
+                  <input ref="nodeSearchInputRef" type="text" v-model="nodeSearchQuery" @blur="nodeSearchQuery = ''" placeholder="Search neurons..." class="palette-search-input" />
                 </div>
                 <div class="palette-list">
                   <div
@@ -2022,6 +2077,9 @@ onUnmounted(() => {
             <div class="context-divider"></div>
             <div class="context-item" @click="handleContextSettings">
               <span class="c-icon">⚙</span> Settings
+            </div>
+            <div class="context-item" @click="handleContextReplace">
+              <span class="c-icon">⇄</span> Replace
             </div>
             <div class="context-item" @click="handleContextRename">
               <span class="c-icon">✏</span> Rename
