@@ -2086,35 +2086,40 @@ onUnmounted(() => {
             @viewport-change="closeContextMenu"
           />
 
-          <!-- Node Context Menu -->
-          <div 
-            v-if="contextMenuVisible" 
-            ref="contextMenuRef"
-            class="node-context-menu"
-            :style="{ top: `${contextMenuPos.y}px`, left: `${contextMenuPos.x}px` }"
-            @click.stop
-          >
-            <div class="context-item" @click="handleContextExecute">
-              <span class="c-icon">▶</span> Run Node
+          <!-- Node Context Menu — teleported to <body> so position:fixed is
+               relative to the viewport. Inside the canvas it would inherit a
+               transformed/backdrop-filtered ancestor as its containing block,
+               which broke the off-screen clamp. -->
+          <Teleport to="body">
+            <div
+              v-if="contextMenuVisible"
+              ref="contextMenuRef"
+              class="node-context-menu"
+              :style="{ top: `${contextMenuPos.y}px`, left: `${contextMenuPos.x}px` }"
+              @click.stop
+            >
+              <div class="context-item" @click="handleContextExecute">
+                <span class="c-icon">▶</span> Run Node
+              </div>
+              <div class="context-divider"></div>
+              <div class="context-item" @click="handleContextSettings">
+                <span class="c-icon">⚙</span> Settings
+              </div>
+              <div class="context-item" @click="handleContextReplace">
+                <span class="c-icon">⇄</span> Replace
+              </div>
+              <div class="context-item" @click="handleContextRename">
+                <span class="c-icon">✏</span> Rename
+              </div>
+              <div class="context-divider"></div>
+              <div class="context-item" @click="handleContextCopy">
+                <span class="c-icon">❐</span> Copy
+              </div>
+              <div class="context-item delete" @click="handleContextDelete">
+                <span class="c-icon">🗑</span> Delete
+              </div>
             </div>
-            <div class="context-divider"></div>
-            <div class="context-item" @click="handleContextSettings">
-              <span class="c-icon">⚙</span> Settings
-            </div>
-            <div class="context-item" @click="handleContextReplace">
-              <span class="c-icon">⇄</span> Replace
-            </div>
-            <div class="context-item" @click="handleContextRename">
-              <span class="c-icon">✏</span> Rename
-            </div>
-            <div class="context-divider"></div>
-            <div class="context-item" @click="handleContextCopy">
-              <span class="c-icon">❐</span> Copy
-            </div>
-            <div class="context-item delete" @click="handleContextDelete">
-              <span class="c-icon">🗑</span> Delete
-            </div>
-          </div>
+          </Teleport>
 
 
           <!-- Advanced Node Editor Modal -->
