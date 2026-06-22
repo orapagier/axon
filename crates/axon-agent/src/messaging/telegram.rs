@@ -1210,11 +1210,14 @@ impl TelegramGateway {
                         )
                         .await;
 
-                        if let Err(e) = crate::tools::workflow::WorkflowEngine::run_in_background(
-                            &wf_id,
-                            &state_clone,
-                            None,
-                        ) {
+                        if let Err(e) =
+                            crate::tools::workflow::WorkflowEngine::run_in_background_with_source(
+                                &wf_id,
+                                &state_clone,
+                                "telegram",
+                                None,
+                            )
+                        {
                             tracing::error!(
                                 "[TELEGRAM] WorkflowEngine failed for '{}' (id={}): {}",
                                 wf_name,
@@ -1516,9 +1519,10 @@ impl TelegramGateway {
                                     )
                                     .await;
                                     if let Err(e) =
-                                        crate::tools::workflow::WorkflowEngine::run_in_background(
+                                        crate::tools::workflow::WorkflowEngine::run_in_background_with_source(
                                             &wf_id,
                                             &state_clone,
+                                            "telegram",
                                             None,
                                         )
                                     {

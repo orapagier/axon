@@ -2576,6 +2576,16 @@ impl WorkflowEngine {
             .iter()
             .any(|n| matches!(n.node_type.as_str(), "trigger" | "circadian" | "stimulus"));
 
+        // When a run is initiated by a specific event source (a Telegram reply/
+        // callback, a Gmail poll, etc.), only start from trigger nodes OF THAT
+        // TYPE. This isolates trigger branches in a multi-trigger workflow: e.g.
+        // a Telegram reply must NOT also fire a Gmail trigger sitting in the same
+        // workflow. "manual"/scheduled runs (None) start from every trigger node.
+        let entry_trigger_type: Option<&str> = match trigger_source {
+            "telegram" | "gmail" | "whatsapp" | "webhook" => Some(trigger_source),
+            _ => None,
+        };
+
         let mut queue: std::collections::VecDeque<_> = nodes
             .iter()
             .filter(|n| {
@@ -2589,7 +2599,12 @@ impl WorkflowEngine {
                 } else if has_triggers {
                     // Strict pipeline definition: Only start from Trigger nodes if they exist.
                     // This prevents separated, orphaned subgraphs from running accidentally.
+                    // When the run is source-scoped, also require the trigger node's
+                    // config.type to match so other trigger branches stay dormant.
                     deg && matches!(n.node_type.as_str(), "trigger" | "circadian" | "stimulus")
+                        && entry_trigger_type.map_or(true, |want| {
+                            n.config.get("type").and_then(|v| v.as_str()) == Some(want)
+                        })
                 } else {
                     deg
                 }
@@ -3081,7 +3096,19 @@ impl WorkflowEngine {
         state: &AppState,
         target_node_id: Option<String>,
     ) -> anyhow::Result<String> {
-        Self::run_in_background_inner(workflow_id, state, target_node_id, false)
+        Self::run_in_background_inner(workflow_id, state, "manual", target_node_id, false)
+    }
+
+    /// Like `run_in_background` but tags the run with a specific trigger source
+    /// (e.g. "telegram") so the engine starts ONLY from trigger nodes of that
+    /// type — isolating trigger branches in a multi-trigger workflow.
+    pub fn run_in_background_with_source(
+        workflow_id: &str,
+        state: &AppState,
+        trigger_source: &str,
+        target_node_id: Option<String>,
+    ) -> anyhow::Result<String> {
+        Self::run_in_background_inner(workflow_id, state, trigger_source, target_node_id, false)
     }
 
     /// Single-node variant of `run_in_background`: when `single_node` is true,
@@ -3095,12 +3122,13 @@ impl WorkflowEngine {
         node_id: String,
         single_node: bool,
     ) -> anyhow::Result<String> {
-        Self::run_in_background_inner(workflow_id, state, Some(node_id), single_node)
+        Self::run_in_background_inner(workflow_id, state, "manual", Some(node_id), single_node)
     }
 
     fn run_in_background_inner(
         workflow_id: &str,
         state: &AppState,
+        trigger_source: &str,
         target_node_id: Option<String>,
         single_node: bool,
     ) -> anyhow::Result<String> {
@@ -3123,12 +3151,13 @@ impl WorkflowEngine {
         let s = state.clone();
         let wf_id = workflow_id.to_string();
         let rid = run_id.clone();
+        let src = trigger_source.to_string();
 
         tokio::spawn(async move {
             // Pass the pre-created run_id so run_with_trigger reuses it rather
             // than inserting a duplicate record.
             if let Err(e) =
-                Self::run_with_trigger(&wf_id, &s, "manual", target_node_id, single_node, Some(rid.clone()))
+                Self::run_with_trigger(&wf_id, &s, &src, target_node_id, single_node, Some(rid.clone()))
                     .await
             {
                 tracing::error!("Background workflow run failed: {}", e);
