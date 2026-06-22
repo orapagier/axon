@@ -21,6 +21,31 @@ export const TOOL_ICONS = {
     'crm': '/icons/crm.png',
 };
 
+// Maps an MCP service prefix (the part after "mcp_" in a node_type, e.g.
+// "mcp_gsheets" -> "gsheets") to its icon. Lets getToolIcon resolve an MCP
+// node's icon synchronously from its node_type, instead of waiting for
+// loadMcpTools() to async-populate NODE_TYPES (which caused the 📦 flash).
+// Keep in sync with MCP_SERVICE_META in WorkflowsPage.vue until icons move to SVG.
+export const MCP_SERVICE_ICONS = {
+    crm: '/icons/crm.png',
+    gsheets: '/icons/google_sheets.png',
+    gmail: '/icons/gmail.png',
+    gdrive: '/icons/google_drive.png',
+    gcal: '/icons/google_calendar.png',
+    gdocs: '/icons/google_docs.png',
+    gslides: '/icons/slides.png',
+    gcon: '/icons/google_contacts.png',
+    gyoutube: '/icons/youtube.png',
+    gplaces: '/icons/google_places.png',
+    gmeet: '/icons/google_meet.png',
+    fb: '/icons/facebook.png',
+    ig: '/icons/instagram.png',
+    outlook: '/icons/outlook.png',
+    mscal: '/icons/ms_calendar.png',
+    onedrive: '/icons/onedrive.png',
+    mscontacts: '/icons/outlook.png',
+};
+
 export function getToolIcon(type, parameters) {
     // 1. Handle Stimulus (Trigger) subtypes
     if (type === 'stimulus' && parameters?.type) {
@@ -30,7 +55,14 @@ export function getToolIcon(type, parameters) {
         if (triggerType === 'whatsapp') return TOOL_ICONS.whatsapp;
     }
 
-    // 2. Handle MCP nodes based on their selected tool name
+    // 2a. Service-specific MCP nodes (mcp_<service>) — resolve straight from the
+    // node_type so the icon paints immediately, before /mcp/tools returns.
+    if (type && type.startsWith('mcp_')) {
+        const service = type.slice(4);
+        if (MCP_SERVICE_ICONS[service]) return MCP_SERVICE_ICONS[service];
+    }
+
+    // 2b. Legacy monolithic MCP node — resolve from its selected tool name.
     if (type === 'mcp' && parameters?.tool_name) {
         const toolName = parameters.tool_name.toLowerCase();
 
