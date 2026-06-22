@@ -1564,6 +1564,16 @@ onUnmounted(() => {
                   <span class="toggle-label">{{ node.data.continueOnFail ? 'Continue On Fail' : 'Stop On Fail' }}</span>
                 </div>
               </div>
+              <div class="form-row row-boolean-field" v-if="node.data && node.data.config">
+                <label class="field-label">Loop Items</label>
+                <div class="toggle-field">
+                  <label class="toggle-switch">
+                    <input type="checkbox" v-model="node.data.config.execute_once" @change="onSettingsChange" />
+                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                  </label>
+                  <span class="toggle-label">{{ node.data.config.execute_once ? 'Run Once (aggregate all items)' : 'Run Per Item' }}</span>
+                </div>
+              </div>
             </div>
           </div>
         </section>

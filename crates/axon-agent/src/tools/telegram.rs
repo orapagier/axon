@@ -250,7 +250,10 @@ struct ResolvedFile {
 
 /// Pull (local_path, file_name?, mime_type?) out of a `file` config value,
 /// tolerating string paths, camelCase, snake_case, and nested wrappers.
-fn extract_file_descriptor(file_val: &Value) -> Option<(String, Option<String>, Option<String>)> {
+/// Shared with the Myelin node so file objects resolve identically everywhere.
+pub(crate) fn extract_file_descriptor(
+    file_val: &Value,
+) -> Option<(String, Option<String>, Option<String>)> {
     // 1. A bare string is the path itself.
     if let Some(s) = file_val.as_str() {
         let s = s.trim();
@@ -355,7 +358,13 @@ fn file_part(bytes: Vec<u8>, file_name: String, mime_type: &str) -> Result<multi
 
 /// Standardized binary-file descriptor emitted by producer operations, carrying
 /// both snake_case and camelCase keys so every downstream consumer resolves it.
-fn binary_descriptor(local_path: &str, file_name: &str, mime: &str, size: usize) -> Value {
+/// Shared with the Myelin node so stored/retrieved files use the same shape.
+pub(crate) fn binary_descriptor(
+    local_path: &str,
+    file_name: &str,
+    mime: &str,
+    size: usize,
+) -> Value {
     json!({
         "local_path": local_path,
         "localPath": local_path,

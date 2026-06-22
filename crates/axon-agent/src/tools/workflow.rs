@@ -1608,6 +1608,17 @@ fn parse_path_pointer(path: &str) -> String {
     )
 }
 
+/// Parse a positive integer from a config field that may arrive as a JSON
+/// number or a string (the UI emits both depending on the widget).
+fn cfg_usize(config: &Value, key: &str) -> Option<usize> {
+    config.get(key).and_then(|v| {
+        v.as_u64()
+            .map(|n| n as usize)
+            .or_else(|| v.as_f64().map(|f| f as usize))
+            .or_else(|| v.as_str().and_then(|s| s.trim().parse::<usize>().ok()))
+    })
+}
+
 fn extract_items_for_loop(
     raw_items: &Value,
     array_path: Option<&str>,
@@ -2030,7 +2041,15 @@ fn execute_switch_node(config: &Value) -> Result<Value, String> {
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
     // Tested value keeps its resolved JSON type.
-    let value = config.get("value1").cloned().unwrap_or(Value::Null);
+    let top_value = config.get("value1").cloned().unwrap_or(Value::Null);
+
+    // matchMode beyond n8n: "first" (n8n parity — first matching rule wins) or
+    // "all" (route the value to EVERY matching output simultaneously — a fan-out
+    // switch n8n's standard node can't do without extra nodes).
+    let match_mode = config
+        .get("matchMode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("first");
 
     let rules = config
         .get("rules")
@@ -2041,7 +2060,7 @@ fn execute_switch_node(config: &Value) -> Result<Value, String> {
 
     // Static UI outputs: Case1..Case5 + Default (index 5)
     let max_cases = 5usize;
-    let mut matched_index: Option<usize> = None;
+    let mut matched: Vec<usize> = Vec::new();
 
     for (idx, rule) in rules.iter().enumerate().take(max_cases) {
         let data_type = rule
@@ -2053,6 +2072,13 @@ fn execute_switch_node(config: &Value) -> Result<Value, String> {
             .get("operation")
             .and_then(|v| v.as_str())
             .unwrap_or("equals");
+        // Per-rule subject override beyond n8n: a rule may test its OWN value1
+        // (e.g. route on a different field per case). Empty/absent → fall back
+        // to the node-level value.
+        let subject = match rule.get("value1") {
+            Some(v) if !(v.is_null() || (v.is_string() && v.as_str() == Some(""))) => v.clone(),
+            _ => top_value.clone(),
+        };
         let case_value = rule
             .get("value2")
             .or_else(|| rule.get("value"))
@@ -2063,20 +2089,34 @@ fn execute_switch_node(config: &Value) -> Result<Value, String> {
             .and_then(|v| v.as_bool())
             .unwrap_or(default_cs);
 
-        if evaluate_condition_typed(data_type, op, &value, &case_value, cs) {
-            matched_index = Some(idx);
-            break;
+        if evaluate_condition_typed(data_type, op, &subject, &case_value, cs) {
+            matched.push(idx);
+            if match_mode != "all" {
+                break;
+            }
         }
     }
 
-    let output_index = matched_index.unwrap_or(max_cases);
+    // No rule matched → the Default output (index = max_cases).
+    let indices: Vec<usize> = if matched.is_empty() {
+        vec![max_cases]
+    } else {
+        matched.clone()
+    };
+    let first = *indices.first().unwrap_or(&max_cases);
+
     Ok(json!({
-        "value": value,
-        "outputIndex": output_index,
-        "branch": if let Some(i) = matched_index {
-            format!("case_{}", i + 1)
-        } else {
+        "value": top_value,
+        // outputIndex: first active output (back-compat + UI run animation).
+        "outputIndex": first,
+        // outputIndices: every active output (drives multi-output routing).
+        "outputIndices": indices,
+        "matchMode": match_mode,
+        "matched": !matched.is_empty(),
+        "branch": if matched.is_empty() {
             "default".to_string()
+        } else {
+            format!("case_{}", first + 1)
         }
     }))
 }
@@ -2311,30 +2351,66 @@ async fn execute_node_by_type(
             }
         }
         "wait" => {
-            let amount = config
-                .get("amount")
-                .and_then(|v| {
-                    if let Some(n) = v.as_f64() {
-                        Some(n)
-                    } else if let Some(s) = v.as_str() {
-                        s.parse::<f64>().ok()
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or(1.0);
-            let unit = config
-                .get("unit")
+            let mode = config
+                .get("mode")
                 .and_then(|v| v.as_str())
-                .unwrap_or("seconds");
+                .unwrap_or("interval");
 
-            let seconds = match unit {
-                "minutes" => amount * 60.0,
-                "hours" => amount * 3600.0,
-                "days" => amount * 86400.0,
-                _ => amount,
-            }
-            .max(0.0);
+            // How long to sleep, in seconds.
+            let seconds = if mode == "until" {
+                // Absolute resume time (n8n "At Specified Time"). A time already in
+                // the past resolves to zero wait rather than erroring.
+                let until_raw = config
+                    .get("until")
+                    .or_else(|| config.get("datetime"))
+                    .or_else(|| config.get("resume_at"))
+                    .cloned()
+                    .unwrap_or(Value::Null);
+                match val_to_datetime(&until_raw) {
+                    Some(dt) => {
+                        let now = chrono::Utc::now().fixed_offset();
+                        (((dt - now).num_milliseconds()) as f64 / 1000.0).max(0.0)
+                    }
+                    None => {
+                        return Err("Wait node: 'until' is not a valid date/time \
+                             (use ISO 8601, e.g. 2026-06-23T15:30:00Z)"
+                            .to_string())
+                    }
+                }
+            } else {
+                let amount = config
+                    .get("amount")
+                    .and_then(|v| {
+                        if let Some(n) = v.as_f64() {
+                            Some(n)
+                        } else if let Some(s) = v.as_str() {
+                            s.trim().parse::<f64>().ok()
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(1.0);
+                let unit = config
+                    .get("unit")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("seconds");
+
+                (match unit {
+                    "milliseconds" | "ms" => amount / 1000.0,
+                    "minutes" => amount * 60.0,
+                    "hours" => amount * 3600.0,
+                    "days" => amount * 86400.0,
+                    "weeks" => amount * 604_800.0,
+                    _ => amount,
+                })
+                .max(0.0)
+            };
+
+            // Surface the computed resume time so the UI/run log can show when the
+            // workflow will continue (and so a downstream node can read it).
+            let resume_at = (chrono::Utc::now()
+                + chrono::Duration::milliseconds((seconds * 1000.0) as i64))
+            .to_rfc3339();
 
             // Sleep in short slices so workflow cancellation takes effect
             // promptly instead of after the full (possibly days-long) wait.
@@ -2356,7 +2432,7 @@ async fn execute_node_by_type(
                     return Err("Workflow cancelled during wait".to_string());
                 }
             }
-            Ok(json!({ "waited_seconds": seconds }))
+            Ok(json!({ "waited_seconds": seconds, "resume_at": resume_at, "mode": mode }))
         }
         "ifCondition" => execute_if_condition_node(config),
         "switch" => execute_switch_node(config),
@@ -2364,13 +2440,37 @@ async fn execute_node_by_type(
             let raw_items = config.get("items").cloned().unwrap_or(Value::Null);
             let array_path = config.get("array_path").and_then(|v| v.as_str());
             let items = extract_items_for_loop(&raw_items, array_path)?;
+
+            // Concurrency + batching knobs the engine reads when fanning the
+            // downstream body out over these items. parallelism>1 runs iterations
+            // concurrently (a real win over n8n's single-threaded JS executor);
+            // batch_size>1 hands each iteration a slice of items at once.
+            let parallelism = cfg_usize(config, "parallelism").unwrap_or(1).max(1);
+            let batch_size = cfg_usize(config, "batch_size").unwrap_or(1).max(1);
+            // Safety cap so a malformed expression can't fan out millions of runs.
+            // Default 100k; 0 (or unset) keeps the default, any positive overrides.
+            let max_iterations = cfg_usize(config, "max_iterations")
+                .filter(|n| *n > 0)
+                .unwrap_or(100_000);
+
+            if items.len() > max_iterations {
+                return Err(format!(
+                    "Loop node: {} items exceeds max_iterations ({}). Raise 'Max Iterations' if this is intentional.",
+                    items.len(),
+                    max_iterations
+                ));
+            }
+
             Ok(json!({
                 "_axon_loop": {
                     "enabled": true,
-                    "count": items.len()
+                    "count": items.len(),
+                    "parallelism": parallelism,
+                    "batch_size": batch_size
                 },
                 "items": items,
                 "count": items.len(),
+                "total": items.len(),
                 "index": -1,
                 "current": Value::Null
             }))
@@ -2685,10 +2785,21 @@ impl WorkflowEngine {
             let n_start = std::time::Instant::now();
             let iteration_source_id =
                 find_iteration_source_node_id(&current_id, &edges, &node_results);
-            let can_iterate = !matches!(
-                node.node_type.as_str(),
-                "loop" | "ifCondition" | "switch" | "trigger" | "circadian" | "stimulus"
-            );
+            // "Execute Once" (n8n's "Run Once for All Items"): when set, the node
+            // does NOT fan out over a loop collection — it runs a single time with
+            // the full `items` array visible via {{ $node["Loop"].items }}. This is
+            // the clean aggregation/"collect after loop" boundary the old engine
+            // lacked, letting a JS/HTTP/Axon node reduce a loop's results.
+            let execute_once = node
+                .config
+                .get("execute_once")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let can_iterate = !execute_once
+                && !matches!(
+                    node.node_type.as_str(),
+                    "loop" | "ifCondition" | "switch" | "trigger" | "circadian" | "stimulus"
+                );
 
             let result = if can_iterate {
                 if let Some(source_node_id) = iteration_source_id {
@@ -2696,44 +2807,123 @@ impl WorkflowEngine {
                         if let Some(items) =
                             source_result.output.get("items").and_then(|v| v.as_array())
                         {
-                            let mut iteration_outputs = Vec::new();
-                            let mut iteration_errors = Vec::new();
+                            // Concurrency/batch knobs the Loop node embedded in its
+                            // marker (defaults: sequential, one item per iteration).
+                            let loop_meta = source_result.output.get("_axon_loop");
+                            let parallelism = loop_meta
+                                .and_then(|m| m.get("parallelism"))
+                                .and_then(|v| v.as_u64())
+                                .map(|n| n as usize)
+                                .unwrap_or(1)
+                                .max(1);
+                            let batch_size = loop_meta
+                                .and_then(|m| m.get("batch_size"))
+                                .and_then(|v| v.as_u64())
+                                .map(|n| n as usize)
+                                .unwrap_or(1)
+                                .max(1);
 
-                            for (idx, item) in items.iter().enumerate() {
+                            // Work units: one per item, or one per batch slice when
+                            // batch_size > 1 (n8n SplitInBatches style — each unit's
+                            // `current` is then the array of items in that batch).
+                            let units: Vec<(usize, Value)> = if batch_size > 1 {
+                                items
+                                    .chunks(batch_size)
+                                    .enumerate()
+                                    .map(|(i, c)| (i, Value::Array(c.to_vec())))
+                                    .collect()
+                            } else {
+                                items
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, it)| (i, it.clone()))
+                                    .collect()
+                            };
+                            let unit_count = units.len();
+                            let run_id_ref = run_id.as_str();
+
+                            // Inject loop context onto the iteration source's result
+                            // so the body can read {{ $node["Loop"].current/index/... }}.
+                            let build_unit = |idx: usize, current: &Value| {
                                 let mut temp_results = node_results.clone();
                                 if let Some(source_mut) = temp_results.get_mut(&source_node_id) {
                                     if let Some(out_obj) = source_mut.output.as_object_mut() {
-                                        out_obj.insert("current".to_string(), item.clone());
+                                        out_obj.insert("current".to_string(), current.clone());
                                         out_obj.insert("index".to_string(), json!(idx));
+                                        out_obj.insert("is_first".to_string(), json!(idx == 0));
                                         out_obj.insert(
                                             "is_last".to_string(),
-                                            json!(idx + 1 == items.len()),
+                                            json!(idx + 1 == unit_count),
                                         );
+                                        out_obj.insert("total".to_string(), json!(unit_count));
                                     }
                                 }
-
                                 let item_config =
                                     interpolate_config(&node.config, &temp_results, state);
-                                match execute_node_by_type(
-                                    node,
-                                    &item_config,
-                                    state,
-                                    trigger_source,
-                                    workflow_id,
-                                    &run_id,
-                                    &temp_results,
-                                )
-                                .await
-                                {
-                                    Ok(v) => iteration_outputs.push(v),
-                                    Err(e) => {
-                                        iteration_errors.push(json!({
-                                            "index": idx,
-                                            "item": item,
-                                            "error": e
-                                        }));
-                                        if !node.continue_on_fail {
-                                            break;
+                                (item_config, temp_results)
+                            };
+
+                            let mut iteration_outputs = Vec::new();
+                            let mut iteration_errors = Vec::new();
+
+                            if parallelism > 1 {
+                                // Concurrent fan-out — a real edge over n8n's
+                                // single-threaded executor. buffered() preserves
+                                // input order, so outputs stay item-aligned.
+                                use futures::StreamExt;
+                                let futs = units.into_iter().map(|(idx, current)| {
+                                    let (item_config, temp_results) = build_unit(idx, &current);
+                                    async move {
+                                        let r = execute_node_by_type(
+                                            node,
+                                            &item_config,
+                                            state,
+                                            trigger_source,
+                                            workflow_id,
+                                            run_id_ref,
+                                            &temp_results,
+                                        )
+                                        .await;
+                                        (idx, current, r)
+                                    }
+                                });
+                                let collected: Vec<(usize, Value, Result<Value, String>)> =
+                                    futures::stream::iter(futs)
+                                        .buffered(parallelism)
+                                        .collect()
+                                        .await;
+                                for (idx, item, r) in collected {
+                                    match r {
+                                        Ok(v) => iteration_outputs.push(v),
+                                        Err(e) => iteration_errors.push(json!({
+                                            "index": idx, "item": item, "error": e
+                                        })),
+                                    }
+                                }
+                            } else {
+                                // Sequential: honours stop-on-first-error (n8n parity)
+                                // unless continue_on_fail is set.
+                                for (idx, current) in units {
+                                    let (item_config, temp_results) = build_unit(idx, &current);
+                                    match execute_node_by_type(
+                                        node,
+                                        &item_config,
+                                        state,
+                                        trigger_source,
+                                        workflow_id,
+                                        run_id_ref,
+                                        &temp_results,
+                                    )
+                                    .await
+                                    {
+                                        Ok(v) => iteration_outputs.push(v),
+                                        Err(e) => {
+                                            iteration_errors.push(json!({
+                                                "index": idx, "item": current, "error": e
+                                            }));
+                                            if !node.continue_on_fail {
+                                                break;
+                                            }
                                         }
                                     }
                                 }
@@ -2749,11 +2939,14 @@ impl WorkflowEngine {
                                 Ok(json!({
                                     "_axon_loop": {
                                         "enabled": true,
-                                        "count": items.len(),
-                                        "source_node_id": source_node_id
+                                        "count": unit_count,
+                                        "source_node_id": source_node_id,
+                                        "parallelism": parallelism,
+                                        "batch_size": batch_size
                                     },
                                     "items": iteration_outputs,
-                                    "count": items.len(),
+                                    "count": unit_count,
+                                    "total": unit_count,
                                     "error_count": iteration_errors.len(),
                                     "errors": iteration_errors
                                 }))
@@ -2874,36 +3067,56 @@ impl WorkflowEngine {
                     continue;
                 }
 
-                // Branch routing for IF/Switch nodes: only follow matching output handle.
+                // Branch routing for IF/Switch nodes: only follow matching output
+                // handle(s). A Switch in "all" mode reports several active outputs
+                // (outputIndices); an edge is live if its handle matches ANY of them.
                 let mut live = true;
                 if node.node_type == "ifCondition" || node.node_type == "switch" {
                     if let Some(nr) = node_results.get(&current_id) {
-                        let output_index = nr
+                        // Prefer outputIndices (multi-match); fall back to the single
+                        // outputIndex for IF and legacy results.
+                        let active: Vec<i64> = nr
                             .output
-                            .get("outputIndex")
-                            .and_then(|v| {
-                                v.as_i64()
-                                    .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
+                            .get("outputIndices")
+                            .and_then(|v| v.as_array())
+                            .map(|a| {
+                                a.iter()
+                                    .filter_map(|x| {
+                                        x.as_i64().or_else(|| {
+                                            x.as_str().and_then(|s| s.parse::<i64>().ok())
+                                        })
+                                    })
+                                    .collect()
                             })
-                            .unwrap_or(0);
-
-                        let expected_handle = format!("output_main_{}", output_index);
-                        let is_true = output_index == 0;
+                            .filter(|v: &Vec<i64>| !v.is_empty())
+                            .unwrap_or_else(|| {
+                                vec![nr
+                                    .output
+                                    .get("outputIndex")
+                                    .and_then(|v| {
+                                        v.as_i64().or_else(|| {
+                                            v.as_str().and_then(|s| s.parse::<i64>().ok())
+                                        })
+                                    })
+                                    .unwrap_or(0)]
+                            });
 
                         if let Some(ref sh) = e.source_handle {
                             let lower = sh.to_lowercase();
-                            let matches = sh == &expected_handle
-                                || (node.node_type == "ifCondition"
-                                    && ((is_true && lower == "true")
-                                        || (!is_true && lower == "false")));
+                            let matches = active.iter().any(|&oi| {
+                                sh == &format!("output_main_{}", oi)
+                                    || (node.node_type == "ifCondition"
+                                        && ((oi == 0 && lower == "true")
+                                            || (oi == 1 && lower == "false")))
+                            });
 
                             if !matches {
                                 tracing::info!(
-                                    "Branch node {}: skipping edge to {} (handle '{}' != output {})",
+                                    "Branch node {}: skipping edge to {} (handle '{}' not in active outputs {:?})",
                                     current_id,
                                     e.target_id,
                                     sh,
-                                    output_index
+                                    active
                                 );
                                 live = false;
                             } else {
