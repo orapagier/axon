@@ -1,27 +1,31 @@
 use crate::error_reporting::send_global_error_notification;
 use crate::state::AppState;
-use crate::tools::http::{HttpAuth, HttpRequestParams, HttpRequestTool};
 use boa_engine::{Context, JsString, JsValue, NativeFunction, Source};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::time::Duration;
 
+// Per-node executors live in submodules; the engine's `execute_node_by_type`
+// dispatches to them. `nodes` is a child module so it can reach this module's
+// shared helpers/statics (exposed as `pub(crate)`).
+pub(crate) mod nodes;
+
 // Gmail trigger data: holds new email data between the background poll check
 // and the actual workflow execution so the stimulus node can inject it.
-static GMAIL_TRIGGER_DATA: once_cell::sync::Lazy<
+pub(crate) static GMAIL_TRIGGER_DATA: once_cell::sync::Lazy<
     tokio::sync::Mutex<std::collections::HashMap<String, Value>>,
 > = once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
 
-static WHATSAPP_TRIGGER_DATA: once_cell::sync::Lazy<
+pub(crate) static WHATSAPP_TRIGGER_DATA: once_cell::sync::Lazy<
     tokio::sync::Mutex<std::collections::HashMap<String, Value>>,
 > = once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
 
-static TELEGRAM_TRIGGER_DATA: once_cell::sync::Lazy<
+pub(crate) static TELEGRAM_TRIGGER_DATA: once_cell::sync::Lazy<
     tokio::sync::Mutex<std::collections::HashMap<String, Value>>,
 > = once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
 
-static EXTERNAL_TRIGGER_DATA: once_cell::sync::Lazy<
+pub(crate) static EXTERNAL_TRIGGER_DATA: once_cell::sync::Lazy<
     tokio::sync::Mutex<std::collections::HashMap<String, Value>>,
 > = once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
 
@@ -101,359 +105,6 @@ pub struct WorkflowRunResult {
 
 // ── Node executors ────────────────────────────────────────────────────────────
 
-async fn execute_http_node(config: &Value) -> Result<Value, String> {
-    let method = config
-        .get("method")
-        .and_then(|v| v.as_str())
-        .unwrap_or("GET")
-        .to_string();
-    let url = config
-        .get("url")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-
-    if url.is_empty() {
-        return Err("URL is empty".to_string());
-    }
-
-    let authentication = config
-        .get("authentication")
-        .and_then(|v| v.as_str())
-        .unwrap_or("none");
-
-    let auth = if authentication != "none" {
-        Some(HttpAuth {
-            auth_type: authentication.to_string(),
-            user: config
-                .get("user")
-                .and_then(|v| v.as_str())
-                .map(String::from),
-            password: config
-                .get("password")
-                .and_then(|v| v.as_str())
-                .map(String::from),
-            header_name: config
-                .get("authHeaderName")
-                .and_then(|v| v.as_str())
-                .map(String::from),
-            header_value: config
-                .get("authHeaderValue")
-                .and_then(|v| v.as_str())
-                .map(String::from),
-        })
-    } else {
-        None
-    };
-
-    let mut headers_obj = serde_json::Map::new();
-    if config
-        .get("sendHeaders")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
-    {
-        let specify = config
-            .get("specifyHeaders")
-            .and_then(|v| v.as_str())
-            .unwrap_or("keypair");
-        if specify == "json" {
-            if let Some(json_s) = config.get("jsonHeaders").and_then(|v| v.as_str()) {
-                if let Ok(Value::Object(map)) = serde_json::from_str(json_s) {
-                    for (k, v) in map {
-                        headers_obj.insert(k, v);
-                    }
-                }
-            }
-        } else {
-            if let Some(params) = config
-                .get("headerParameters")
-                .and_then(|v| v.get("parameters"))
-                .and_then(|v| v.as_array())
-            {
-                for p in params {
-                    if let (Some(name), Some(value)) =
-                        (p.get("name").and_then(|v| v.as_str()), p.get("value"))
-                    {
-                        if !name.is_empty() {
-                            headers_obj
-                                .insert(name.to_string(), try_parse_json_value(value.clone()));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    let mut query_obj = serde_json::Map::new();
-    if config
-        .get("sendQuery")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
-    {
-        let specify = config
-            .get("specifyQuery")
-            .and_then(|v| v.as_str())
-            .unwrap_or("keypair");
-        if specify == "json" {
-            if let Some(json_s) = config.get("jsonQuery").and_then(|v| v.as_str()) {
-                if let Ok(Value::Object(map)) = serde_json::from_str(json_s) {
-                    for (k, v) in map {
-                        query_obj.insert(k, v);
-                    }
-                }
-            }
-        } else {
-            if let Some(params) = config
-                .get("queryParameters")
-                .and_then(|v| v.get("parameters"))
-                .and_then(|v| v.as_array())
-            {
-                for p in params {
-                    if let (Some(name), Some(value)) =
-                        (p.get("name").and_then(|v| v.as_str()), p.get("value"))
-                    {
-                        if !name.is_empty() {
-                            query_obj.insert(name.to_string(), try_parse_json_value(value.clone()));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    let raw_content_type = config
-        .get("contentType")
-        .or_else(|| config.get("bodyContentType"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("json");
-
-    let content_type = raw_content_type;
-
-    let specify_body = config
-        .get("specifyBody")
-        .and_then(|v| v.as_str())
-        .unwrap_or("keypair");
-
-    // Debug: Log raw config values before body processing
-    tracing::info!("Synapse BEFORE body - specify_body: {:?}, sendBody: {:?}, jsonBody: {:?}, contentType: {:?}",
-        specify_body,
-        config.get("sendBody"),
-        config.get("jsonBody"),
-        config.get("contentType")
-    );
-
-    let has_body_method = ["POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
-        .contains(&method.to_uppercase().as_str());
-
-    let body = if has_body_method
-        && config
-            .get("sendBody")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true)
-    {
-        match content_type {
-            "json" => {
-                if specify_body == "json" {
-                    // jsonBody can be either a String (raw JSON) or already-parsed Object
-                    config.get("jsonBody").and_then(|v| {
-                        if let Some(s) = v.as_str() {
-                            // Raw JSON string - parse it
-                            serde_json::from_str(s).ok()
-                        } else {
-                            // Already parsed JSON value
-                            Some(v.clone())
-                        }
-                    })
-                } else if specify_body == "string" {
-                    config
-                        .get("body")
-                        .and_then(|v| v.as_str())
-                        .map(|b| json!(b))
-                } else {
-                    let mut base_obj = serde_json::Map::new();
-                    if let Some(params) = config
-                        .get("bodyParameters")
-                        .and_then(|v| v.get("parameters"))
-                        .and_then(|v| v.as_array())
-                    {
-                        for p in params {
-                            if let (Some(name), Some(value)) =
-                                (p.get("name").and_then(|v| v.as_str()), p.get("value"))
-                            {
-                                if !name.is_empty() {
-                                    base_obj.insert(
-                                        name.to_string(),
-                                        try_parse_json_value(value.clone()),
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    if base_obj.is_empty() {
-                        None
-                    } else {
-                        Some(Value::Object(base_obj))
-                    }
-                }
-            }
-            "form-urlencoded" | "multipart-form-data" => {
-                if specify_body == "string" {
-                    config
-                        .get("body")
-                        .and_then(|v| v.as_str())
-                        .map(|b| json!(b))
-                } else {
-                    let mut base_obj = serde_json::Map::new();
-                    if let Some(params) = config
-                        .get("bodyParameters")
-                        .and_then(|v| v.get("parameters"))
-                        .and_then(|v| v.as_array())
-                    {
-                        for p in params {
-                            if let (Some(name), Some(value)) =
-                                (p.get("name").and_then(|v| v.as_str()), p.get("value"))
-                            {
-                                if !name.is_empty() {
-                                    if content_type == "multipart-form-data" {
-                                        let p_type = p
-                                            .get("parameterType")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("formData");
-                                        if p_type == "formBinaryData" {
-                                            base_obj.insert(
-                                                name.to_string(),
-                                                json!({ "_axon_file_path": value.clone() }),
-                                            );
-                                        } else {
-                                            base_obj.insert(
-                                                name.to_string(),
-                                                try_parse_json_value(value.clone()),
-                                            );
-                                        }
-                                    } else {
-                                        base_obj.insert(
-                                            name.to_string(),
-                                            try_parse_json_value(value.clone()),
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Some(Value::Object(base_obj))
-                }
-            }
-            "raw" => config
-                .get("body")
-                .and_then(|v| v.as_str())
-                .map(|b| json!(b)),
-            _ => None,
-        }
-    } else {
-        None
-    };
-
-    let options = config.get("options");
-    tracing::info!("Synapse options raw: {:?}", options);
-    tracing::info!("Synapse proxy: {:?}", options.and_then(|o| o.get("proxy")));
-    let timeout_seconds = options
-        .and_then(|o| o.get("timeout"))
-        .and_then(|v| v.as_u64())
-        .map(|v| (v / 1000).max(1)) // ms to sec; sub-second values must not truncate to 0
-        .or_else(|| config.get("timeout").and_then(|v| v.as_u64()))
-        .or(Some(30));
-
-    let allow_unauthorized_certs = options
-        .and_then(|o| o.get("allowUnauthorizedCerts"))
-        .and_then(|v| v.as_bool())
-        .or_else(|| {
-            config
-                .get("allowUnauthorizedCerts")
-                .and_then(|v| v.as_bool())
-        });
-
-    let full_response = options
-        .and_then(|o| o.get("fullResponse"))
-        .or_else(|| config.get("fullResponse"))
-        .and_then(|v| v.as_bool());
-
-    // Debug: Log the body and content type
-    tracing::info!(
-        "Synapse body: {:?}, content_type: {:?}, specify_body: {:?}",
-        body,
-        content_type,
-        specify_body
-    );
-
-    // Debug: Log jsonBody field specifically
-    tracing::info!("Synapse jsonBody raw: {:?}", config.get("jsonBody"));
-
-    let params = HttpRequestParams {
-        method,
-        url,
-        headers: if headers_obj.is_empty() {
-            None
-        } else {
-            Some(Value::Object(headers_obj))
-        },
-        query: if query_obj.is_empty() {
-            None
-        } else {
-            Some(Value::Object(query_obj))
-        },
-        body,
-        auth,
-        timeout_seconds,
-        response_format: config
-            .get("responseFormat")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        limit: None,
-        // Proxy can be at top level or in options
-        proxy: config
-            .get("proxy")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-            .map(String::from)
-            .or_else(|| {
-                options
-                    .and_then(|o| o.get("proxy"))
-                    .and_then(|v| v.as_str())
-                    .filter(|s| !s.is_empty())
-                    .map(String::from)
-            }),
-        send_binary_data: Some(content_type == "binaryData"),
-        binary_property: config
-            .get("inputDataFieldName")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        body_content_type: Some(content_type.to_string()),
-        stealth_headers: config.get("stealthHeaders").and_then(|v| v.as_bool()),
-        raw_content_type: config
-            .get("rawContentType")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        allow_unauthorized_certs,
-        full_response,
-        data_cleaner: options
-            .and_then(|o| o.get("dataCleaner"))
-            .and_then(|v| v.as_bool())
-            .or_else(|| config.get("dataCleaner").and_then(|v| v.as_bool())),
-        always_output_binary: options
-            .and_then(|o| o.get("alwaysOutputBinary"))
-            .and_then(|v| v.as_bool())
-            .or_else(|| config.get("alwaysOutputBinary").and_then(|v| v.as_bool())),
-        json_body: None,
-        specify_body: None,
-        header_parameters: None,
-    };
-
-    let tool = HttpRequestTool::new();
-    match tool.request(params).await {
-        Ok(resp) => serde_json::to_value(resp).map_err(|e| e.to_string()),
-        Err(e) => Err(e.to_string()),
-    }
-}
 
 // ── JS Execution Infrastructure ───────────────────────────────────────────────
 
@@ -729,179 +380,10 @@ var $env = {{}};
     }
 }
 
-fn execute_axon_node<'a>(
-    config: &'a Value,
-    state: &'a AppState,
-    workflow_id: &'a str,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send + 'a>> {
-    Box::pin(async move {
-        // Extract stimulus — handle any value type since interpolation may return Object/Array
-        let stimulus = match config.get("stimulus") {
-            Some(Value::String(s)) => s.trim().to_string(),
-            Some(Value::Null) | None => String::new(),
-            Some(other) => serde_json::to_string_pretty(other).unwrap_or_default(),
-        };
 
-        // Extract cortex — same resilient extraction
-        let cortex = match config.get("cortex") {
-            Some(Value::String(s)) => s.trim().to_string(),
-            Some(Value::Null) | None => String::new(),
-            Some(other) => serde_json::to_string_pretty(other).unwrap_or_default(),
-        };
-
-        if stimulus.is_empty() {
-            return Err("Axon node: stimulus (User Prompt) is empty".to_string());
-        }
-
-        // Extract optional model selection
-        let selected_model = config
-            .get("model")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-            .map(String::from);
-
-        // Per-node memory toggle (default ON for backwards compatibility).
-        let memory_enabled = config
-            .get("memory_enabled")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true);
-
-        // Extract optional tools selection
-        let selected_tools: Vec<String> = config
-            .get("tools")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        // Build system prompt with optional tool injection
-        let mut system_prompt_text = cortex.clone();
-        if !selected_tools.is_empty() {
-            let tool_section = format!(
-                "\n\n[TOOL RESTRICTION]\nYou have access ONLY to the following tools: {}. \
-                 Use only these tools to fulfill the user's request. Do not attempt to use any other tools.",
-                selected_tools.join(", ")
-            );
-            system_prompt_text.push_str(&tool_section);
-        }
-
-        if let Some(ref model) = selected_model {
-            tracing::info!(
-                "Axon node: user selected model '{}' for workflow {}",
-                model,
-                workflow_id
-            );
-        }
-
-        let system_prompt = if system_prompt_text.is_empty() {
-            None
-        } else {
-            Some(system_prompt_text.as_str())
-        };
-
-        // Run through the Axon agent with an isolated session per workflow
-        let session = format!("wf:{}", workflow_id);
-        let mut ctx = crate::agent::RunContext::new(
-            &stimulus,
-            "workflow",
-            Some(&session),
-            None,
-            None,
-            None,
-            system_prompt,
-        );
-        ctx.preferred_model = selected_model;
-        ctx.memory_enabled = memory_enabled;
-
-        if !selected_tools.is_empty() {
-            ctx.allowed_tools = Some(selected_tools);
-        }
-
-        let agent_response = crate::agent::run_task(&stimulus, state, ctx)
-            .await
-            .map_err(|e| format!("Axon agent error: {}", e))?;
-
-        Ok(serde_json::json!({
-            "output": agent_response
-        }))
-    })
-}
-
-async fn execute_nociceptor_node(
-    state: &AppState,
-    previous_results: &[NodeResult],
-) -> Result<Value, String> {
-    use crate::router::model_router::{drain_alerts, format_alerts};
-
-    // 1. Drain recent infrastructure alerts from the Model Router
-    let model_alerts = drain_alerts(&state.router).await;
-    let model_alert_text = format_alerts(&model_alerts);
-
-    // 2. Identify failures in the current workflow's nodes
-    let node_failures: Vec<_> = previous_results
-        .iter()
-        .filter(|r| r.status == "error")
-        .collect();
-
-    if model_alerts.is_empty() && node_failures.is_empty() {
-        return Ok(serde_json::json!({
-            "status": "No alerts or node failures found",
-            "model_alerts": 0,
-            "node_failures": 0,
-            "dispatched": false
-        }));
-    }
-
-    // 3. Construct a unified report
-    let mut report = String::new();
-
-    if !model_alert_text.is_empty() {
-        report.push_str(&model_alert_text);
-        report.push_str("\n\n");
-    }
-
-    if !node_failures.is_empty() {
-        report.push_str("Nociceptor Alert!\n");
-        for f in &node_failures {
-            report.push_str(&format!(
-                "- ❌ Node: '{}' ({}) failed: {}\n",
-                f.node_name,
-                f.node_type,
-                f.error.as_deref().unwrap_or("No error details")
-            ));
-        }
-    }
-
-    let alert_count = model_alerts.len() + node_failures.len();
-
-    match send_global_error_notification(
-        state,
-        "workflow.nociceptor",
-        "Nociceptor captured workflow errors",
-        &report,
-        None,
-        None,
-    )
-    .await
-    {
-        Ok(_) => Ok(serde_json::json!({
-            "status": format!("Dispatched report with {} items", alert_count),
-            "alert_count": alert_count,
-            "dispatched": true
-        })),
-        Err(e) => Ok(serde_json::json!({
-            "status": format!("Errors found but global notification failed: {}", e),
-            "alert_count": alert_count,
-            "dispatched": false
-        })),
-    }
-}
 
 // Helper to try parsing a string as JSON if it looks like an array or object
-fn try_parse_json_value(val: Value) -> Value {
+pub(crate) fn try_parse_json_value(val: Value) -> Value {
     if let Value::String(ref s) = val {
         let trimmed = s.trim();
 
@@ -1044,7 +526,7 @@ fn gmail_query_for_label(label: &str) -> String {
     }
 }
 
-async fn execute_gmail_trigger(
+pub(crate) async fn execute_gmail_trigger(
     config: &Value,
     state: &AppState,
     workflow_id: &str,
@@ -1610,7 +1092,7 @@ fn parse_path_pointer(path: &str) -> String {
 
 /// Parse a positive integer from a config field that may arrive as a JSON
 /// number or a string (the UI emits both depending on the widget).
-fn cfg_usize(config: &Value, key: &str) -> Option<usize> {
+pub(crate) fn cfg_usize(config: &Value, key: &str) -> Option<usize> {
     config.get(key).and_then(|v| {
         v.as_u64()
             .map(|n| n as usize)
@@ -1619,7 +1101,7 @@ fn cfg_usize(config: &Value, key: &str) -> Option<usize> {
     })
 }
 
-fn extract_items_for_loop(
+pub(crate) fn extract_items_for_loop(
     raw_items: &Value,
     array_path: Option<&str>,
 ) -> Result<Vec<Value>, String> {
@@ -1741,7 +1223,7 @@ fn val_is_empty(v: &Value) -> bool {
     }
 }
 
-fn val_to_datetime(v: &Value) -> Option<chrono::DateTime<chrono::FixedOffset>> {
+pub(crate) fn val_to_datetime(v: &Value) -> Option<chrono::DateTime<chrono::FixedOffset>> {
     use chrono::{DateTime, NaiveDate, NaiveDateTime, TimeZone, Utc};
     match v {
         Value::Number(n) => {
@@ -1849,7 +1331,7 @@ fn num_cmp(a: &Value, b: &Value, f: impl Fn(f64, f64) -> bool) -> bool {
 
 /// Evaluate a single n8n-style condition. `left` is the tested value, `right`
 /// the comparison value (ignored by unary operators).
-fn evaluate_condition_typed(
+pub(crate) fn evaluate_condition_typed(
     data_type: &str,
     op_raw: &str,
     left: &Value,
@@ -1972,154 +1454,7 @@ fn evaluate_condition_typed(
     }
 }
 
-fn execute_if_condition_node(config: &Value) -> Result<Value, String> {
-    let conditions = config
-        .get("conditions")
-        .and_then(|v| v.get("parameters"))
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
 
-    let combine = config
-        .get("combineOperation")
-        .and_then(|v| v.as_str())
-        .unwrap_or("all");
-
-    // Node-level default; each condition may override with its own flag.
-    let default_cs = config
-        .get("caseSensitive")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
-
-    let mut results = Vec::new();
-    for cond in &conditions {
-        let data_type = cond
-            .get("dataType")
-            .and_then(|v| v.as_str())
-            .unwrap_or("string");
-        let op = cond
-            .get("operation")
-            .and_then(|v| v.as_str())
-            .unwrap_or("equals");
-        // Values arrive already expression-resolved, so keep their JSON type.
-        let v1 = cond.get("value1").cloned().unwrap_or(Value::Null);
-        let v2 = cond.get("value2").cloned().unwrap_or(Value::Null);
-        let cs = cond
-            .get("caseSensitive")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(default_cs);
-
-        results.push(evaluate_condition_typed(data_type, op, &v1, &v2, cs));
-    }
-
-    let final_result = if combine == "any" {
-        results.iter().any(|&r| r)
-    } else if results.is_empty() {
-        // No conditions defined: route to the false branch (n8n parity).
-        false
-    } else {
-        results.iter().all(|&r| r)
-    };
-
-    Ok(json!({
-        "condition": final_result,
-        "branch": if final_result { "true" } else { "false" },
-        "outputIndex": if final_result { 0 } else { 1 },
-        "results": results
-    }))
-}
-
-fn execute_switch_node(config: &Value) -> Result<Value, String> {
-    // Top-level type/case-sensitivity act as defaults; each rule may override
-    // its own dataType (n8n v3 routes each rule with its own condition type).
-    let top_data_type = config
-        .get("dataType")
-        .and_then(|v| v.as_str())
-        .unwrap_or("string");
-    let default_cs = config
-        .get("caseSensitive")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
-    // Tested value keeps its resolved JSON type.
-    let top_value = config.get("value1").cloned().unwrap_or(Value::Null);
-
-    // matchMode beyond n8n: "first" (n8n parity — first matching rule wins) or
-    // "all" (route the value to EVERY matching output simultaneously — a fan-out
-    // switch n8n's standard node can't do without extra nodes).
-    let match_mode = config
-        .get("matchMode")
-        .and_then(|v| v.as_str())
-        .unwrap_or("first");
-
-    let rules = config
-        .get("rules")
-        .and_then(|v| v.get("parameters"))
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-
-    // Static UI outputs: Case1..Case5 + Default (index 5)
-    let max_cases = 5usize;
-    let mut matched: Vec<usize> = Vec::new();
-
-    for (idx, rule) in rules.iter().enumerate().take(max_cases) {
-        let data_type = rule
-            .get("dataType")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-            .unwrap_or(top_data_type);
-        let op = rule
-            .get("operation")
-            .and_then(|v| v.as_str())
-            .unwrap_or("equals");
-        // Per-rule subject override beyond n8n: a rule may test its OWN value1
-        // (e.g. route on a different field per case). Empty/absent → fall back
-        // to the node-level value.
-        let subject = match rule.get("value1") {
-            Some(v) if !(v.is_null() || (v.is_string() && v.as_str() == Some(""))) => v.clone(),
-            _ => top_value.clone(),
-        };
-        let case_value = rule
-            .get("value2")
-            .or_else(|| rule.get("value"))
-            .cloned()
-            .unwrap_or(Value::Null);
-        let cs = rule
-            .get("caseSensitive")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(default_cs);
-
-        if evaluate_condition_typed(data_type, op, &subject, &case_value, cs) {
-            matched.push(idx);
-            if match_mode != "all" {
-                break;
-            }
-        }
-    }
-
-    // No rule matched → the Default output (index = max_cases).
-    let indices: Vec<usize> = if matched.is_empty() {
-        vec![max_cases]
-    } else {
-        matched.clone()
-    };
-    let first = *indices.first().unwrap_or(&max_cases);
-
-    Ok(json!({
-        "value": top_value,
-        // outputIndex: first active output (back-compat + UI run animation).
-        "outputIndex": first,
-        // outputIndices: every active output (drives multi-output routing).
-        "outputIndices": indices,
-        "matchMode": match_mode,
-        "matched": !matched.is_empty(),
-        "branch": if matched.is_empty() {
-            "default".to_string()
-        } else {
-            format!("case_{}", first + 1)
-        }
-    }))
-}
 
 fn find_iteration_source_node_id(
     current_node_id: &str,
@@ -2156,78 +1491,13 @@ async fn execute_node_by_type(
 ) -> Result<Value, String> {
     match node.node_type.as_str() {
         "trigger" | "circadian" | "stimulus" => {
-            if config.get("type").and_then(|v| v.as_str()) == Some("gmail") {
-                match execute_gmail_trigger(config, state, workflow_id).await {
-                    Ok(data) => Ok(data),
-                    Err(e) => {
-                        tracing::warn!("Gmail trigger fetch failed: {}", e);
-                        Ok(json!({"trigger": trigger_source, "gmail_error": e}))
-                    }
-                }
-            } else if config.get("type").and_then(|v| v.as_str()) == Some("whatsapp") {
-                let mut data = WHATSAPP_TRIGGER_DATA.lock().await;
-                if let Some(val) = data.remove(workflow_id) {
-                    Ok(val)
-                } else {
-                    Ok(json!({"trigger": trigger_source}))
-                }
-            } else if config.get("type").and_then(|v| v.as_str()) == Some("telegram") {
-                let mut data = TELEGRAM_TRIGGER_DATA.lock().await;
-                if let Some(val) = data.remove(workflow_id) {
-                    Ok(val)
-                } else {
-                    Ok(json!({"trigger": trigger_source}))
-                }
-            } else if config.get("type").and_then(|v| v.as_str()) == Some("webhook") {
-                let mut data = EXTERNAL_TRIGGER_DATA.lock().await;
-                if let Some(val) = data.remove(workflow_id) {
-                    Ok(val)
-                } else {
-                    Ok(json!({"trigger": trigger_source}))
-                }
-            } else {
-                Ok(json!({"trigger": trigger_source}))
-            }
+            nodes::trigger::execute(config, state, trigger_source, workflow_id).await
         }
-        "synapse" => execute_http_node(config).await,
+        "synapse" => nodes::synapse::execute_http_node(config).await,
         "myelin" => crate::tools::myelin::execute_myelin_node(state, config).await,
         "telegram" => crate::tools::telegram::execute_telegram_node(config).await,
         "whatsapp" => crate::tools::whatsapp::execute_whatsapp_node(config).await,
-        "shell" => {
-            let cmd = config.get("command").and_then(|v| v.as_str()).unwrap_or("");
-            if cmd.trim().is_empty() {
-                return Err("Shell node: command is empty".to_string());
-            }
-            let (shell, arg) = if cfg!(target_os = "windows") {
-                ("cmd", "/C")
-            } else {
-                ("sh", "-c")
-            };
-            let fut = tokio::process::Command::new(shell).arg(arg).arg(cmd).output();
-            // Bound execution so a hung command can't stall the whole workflow run.
-            match tokio::time::timeout(Duration::from_secs(600), fut).await {
-                Ok(Ok(o)) => {
-                    let stdout = String::from_utf8_lossy(&o.stdout).to_string();
-                    let stderr = String::from_utf8_lossy(&o.stderr).to_string();
-                    if o.status.success() {
-                        Ok(json!({
-                            "stdout": stdout,
-                            "stderr": stderr,
-                            "exit_code": o.status.code()
-                        }))
-                    } else {
-                        let detail = if stderr.trim().is_empty() { &stdout } else { &stderr };
-                        Err(format!(
-                            "Command failed (exit code {:?}): {}",
-                            o.status.code(),
-                            detail
-                        ))
-                    }
-                }
-                Ok(Err(e)) => Err(e.to_string()),
-                Err(_) => Err("Shell command timed out after 600s".to_string()),
-            }
-        }
+        "shell" => nodes::shell::execute(config).await,
         "javascript" => {
             // Sort by position for deterministic $results[N] ordering.
             // HashMap iteration order is random, which caused the JS node
@@ -2246,235 +1516,17 @@ async fn execute_node_by_type(
                 .unwrap_or("");
             execute_js_node(raw_script, node, &vec, workflow_id).await
         }
-        "axon" => execute_axon_node(config, state, workflow_id).await,
+        "axon" => nodes::axon::execute_axon_node(config, state, workflow_id).await,
         "nociceptor" => {
             let vec: Vec<_> = node_results.values().cloned().collect();
-            execute_nociceptor_node(state, &vec).await
+            nodes::nociceptor::execute_nociceptor_node(state, &vec).await
         }
-        "fovea" => {
-            let mut args = serde_json::Map::new();
-            if let Some(obj) = config.as_object() {
-                for (k, v) in obj {
-                    args.insert(k.clone(), v.clone());
-                }
-            }
-            match crate::agent::r#loop::execute_internal_tool_from_workflow(
-                "image_tool",
-                Value::Object(args),
-                state.clone(),
-            )
-            .await
-            {
-                Ok(v) => Ok(v),
-                Err(e) => Err(e.to_string()),
-            }
-        }
-        t if t == "mcp" || t.starts_with("mcp_") => {
-            let tool_name = config
-                .get("tool_name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            if tool_name.is_empty() {
-                return Err("MCP node: tool_name is required".into());
-            }
-
-            let mut args = serde_json::Map::new();
-            if let Some(obj) = config.as_object() {
-                for (k, v) in obj {
-                    // credential_id is workflow plumbing, not a tool argument
-                    if k != "tool_name" && k != "mcp_server" && k != "credential_id" {
-                        args.insert(k.clone(), v.clone());
-                    }
-                }
-            }
-
-            let server = config
-                .get("mcp_server")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-
-            let all_tools = state.tools.all().await;
-            let is_internal = all_tools
-                .iter()
-                .find(|t| t.name == tool_name)
-                .map(|t| t.source == crate::tools::schema::ToolSource::Internal)
-                .unwrap_or(false);
-
-            if is_internal {
-                match crate::agent::r#loop::execute_internal_tool_from_workflow(
-                    tool_name,
-                    Value::Object(args),
-                    state.clone(),
-                )
-                .await
-                {
-                    Ok(v) => Ok(v),
-                    Err(e) => Err(e.to_string()),
-                }
-            } else {
-                let server_name = if !server.is_empty() {
-                    server.to_string()
-                } else {
-                    all_tools
-                        .iter()
-                        .find(|t| t.name == tool_name)
-                        .and_then(|t| match &t.source {
-                            crate::tools::schema::ToolSource::Mcp { server_name, .. } => {
-                                Some(server_name.clone())
-                            }
-                            _ => None,
-                        })
-                        .unwrap_or_else(|| "axon-mcp".to_string())
-                };
-
-                match state
-                    .mcp
-                    .call(&server_name, tool_name, Value::Object(args))
-                    .await
-                {
-                    // normalize_mcp_output converts MCP isError responses into
-                    // {"error":true,"message":...} — surface those as node
-                    // failures instead of reporting success.
-                    Ok(v) => {
-                        if v.get("error").and_then(|b| b.as_bool()).unwrap_or(false) {
-                            let msg = v
-                                .get("message")
-                                .and_then(|m| m.as_str())
-                                .unwrap_or("MCP tool returned an error");
-                            Err(format!("MCP tool '{}' failed: {}", tool_name, msg))
-                        } else {
-                            Ok(v)
-                        }
-                    }
-                    Err(e) => Err(e.to_string()),
-                }
-            }
-        }
-        "wait" => {
-            let mode = config
-                .get("mode")
-                .and_then(|v| v.as_str())
-                .unwrap_or("interval");
-
-            // How long to sleep, in seconds.
-            let seconds = if mode == "until" {
-                // Absolute resume time (n8n "At Specified Time"). A time already in
-                // the past resolves to zero wait rather than erroring.
-                let until_raw = config
-                    .get("until")
-                    .or_else(|| config.get("datetime"))
-                    .or_else(|| config.get("resume_at"))
-                    .cloned()
-                    .unwrap_or(Value::Null);
-                match val_to_datetime(&until_raw) {
-                    Some(dt) => {
-                        let now = chrono::Utc::now().fixed_offset();
-                        (((dt - now).num_milliseconds()) as f64 / 1000.0).max(0.0)
-                    }
-                    None => {
-                        return Err("Wait node: 'until' is not a valid date/time \
-                             (use ISO 8601, e.g. 2026-06-23T15:30:00Z)"
-                            .to_string())
-                    }
-                }
-            } else {
-                let amount = config
-                    .get("amount")
-                    .and_then(|v| {
-                        if let Some(n) = v.as_f64() {
-                            Some(n)
-                        } else if let Some(s) = v.as_str() {
-                            s.trim().parse::<f64>().ok()
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(1.0);
-                let unit = config
-                    .get("unit")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("seconds");
-
-                (match unit {
-                    "milliseconds" | "ms" => amount / 1000.0,
-                    "minutes" => amount * 60.0,
-                    "hours" => amount * 3600.0,
-                    "days" => amount * 86400.0,
-                    "weeks" => amount * 604_800.0,
-                    _ => amount,
-                })
-                .max(0.0)
-            };
-
-            // Surface the computed resume time so the UI/run log can show when the
-            // workflow will continue (and so a downstream node can read it).
-            let resume_at = (chrono::Utc::now()
-                + chrono::Duration::milliseconds((seconds * 1000.0) as i64))
-            .to_rfc3339();
-
-            // Sleep in short slices so workflow cancellation takes effect
-            // promptly instead of after the full (possibly days-long) wait.
-            let deadline =
-                tokio::time::Instant::now() + tokio::time::Duration::from_secs_f64(seconds);
-            loop {
-                let now = tokio::time::Instant::now();
-                if now >= deadline {
-                    break;
-                }
-                let slice = (deadline - now).min(tokio::time::Duration::from_secs(1));
-                tokio::time::sleep(slice).await;
-
-                let cancelled = {
-                    let cancellations = state.workflow_cancellations.lock().await;
-                    cancellations.contains(workflow_id) || cancellations.contains(run_id)
-                };
-                if cancelled {
-                    return Err("Workflow cancelled during wait".to_string());
-                }
-            }
-            Ok(json!({ "waited_seconds": seconds, "resume_at": resume_at, "mode": mode }))
-        }
-        "ifCondition" => execute_if_condition_node(config),
-        "switch" => execute_switch_node(config),
-        "loop" => {
-            let raw_items = config.get("items").cloned().unwrap_or(Value::Null);
-            let array_path = config.get("array_path").and_then(|v| v.as_str());
-            let items = extract_items_for_loop(&raw_items, array_path)?;
-
-            // Concurrency + batching knobs the engine reads when fanning the
-            // downstream body out over these items. parallelism>1 runs iterations
-            // concurrently (a real win over n8n's single-threaded JS executor);
-            // batch_size>1 hands each iteration a slice of items at once.
-            let parallelism = cfg_usize(config, "parallelism").unwrap_or(1).max(1);
-            let batch_size = cfg_usize(config, "batch_size").unwrap_or(1).max(1);
-            // Safety cap so a malformed expression can't fan out millions of runs.
-            // Default 100k; 0 (or unset) keeps the default, any positive overrides.
-            let max_iterations = cfg_usize(config, "max_iterations")
-                .filter(|n| *n > 0)
-                .unwrap_or(100_000);
-
-            if items.len() > max_iterations {
-                return Err(format!(
-                    "Loop node: {} items exceeds max_iterations ({}). Raise 'Max Iterations' if this is intentional.",
-                    items.len(),
-                    max_iterations
-                ));
-            }
-
-            Ok(json!({
-                "_axon_loop": {
-                    "enabled": true,
-                    "count": items.len(),
-                    "parallelism": parallelism,
-                    "batch_size": batch_size
-                },
-                "items": items,
-                "count": items.len(),
-                "total": items.len(),
-                "index": -1,
-                "current": Value::Null
-            }))
-        }
+        "fovea" => nodes::fovea::execute(config, state).await,
+        t if t == "mcp" || t.starts_with("mcp_") => nodes::mcp::execute(config, state).await,
+        "wait" => nodes::wait::execute(config, state, workflow_id, run_id).await,
+        "ifCondition" => nodes::condition::execute_if_condition_node(config),
+        "switch" => nodes::condition::execute_switch_node(config),
+        "loop" => nodes::iterate::execute(config),
         _ => Err(format!("Unknown type: {}", node.node_type)),
     }
 }
