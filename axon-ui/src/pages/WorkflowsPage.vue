@@ -1622,6 +1622,21 @@ function handleNodeContextMenu({ event, node }) {
   contextMenuVisible.value = true
   contextMenuPos.value = { x: event.clientX, y: event.clientY }
   contextMenuNode.value = node
+
+  // Clamp the menu inside the viewport once it has rendered, so it's never
+  // clipped off the right/bottom edge of the screen (flips back toward the click).
+  nextTick(() => {
+    const el = contextMenuRef.value
+    if (!el) return
+    const margin = 8
+    const w = el.offsetWidth
+    const h = el.offsetHeight
+    let x = event.clientX
+    let y = event.clientY
+    if (x + w + margin > window.innerWidth) x = Math.max(margin, window.innerWidth - w - margin)
+    if (y + h + margin > window.innerHeight) y = Math.max(margin, window.innerHeight - h - margin)
+    contextMenuPos.value = { x, y }
+  })
 }
 
 function closeContextMenu() {
@@ -1667,6 +1682,10 @@ function handleNodeRename({ id, name }) {
     node.data.labelEdited = !!(name || '').trim()
     node.data.label = finalLabel
     node.data.name = finalLabel
+    // Mirror into Vue Flow's store so the new label renders immediately. After a
+    // run, execution updates sever the shared data reference, so mutating the
+    // page array alone wouldn't reach the canvas until a reload.
+    canvasRef.value?.updateNodeData(id, { labelEdited: node.data.labelEdited, label: finalLabel, name: finalLabel })
     // Keep active node details editor in sync
     if (selectedNode.value && selectedNode.value.id === id) {
       selectedNode.value.data.name = finalLabel
@@ -1728,11 +1747,15 @@ function replaceNode(oldNodeId, newType) {
     : `${NODE_TYPES[newType]?.displayName || 'Neuron'} ${nodes.value.filter(n => n.data?.node_type === newType && n.id !== oldNodeId).length + 1}`
   const displayName = makeUniqueLabel(baseName, oldNodeId)
 
+  const newData = createNodeData(oldNodeId, newType, displayName, getInitialConfig(newType))
   nodes.value[idx] = {
     ...oldNode,
     type: 'canvas-node',
-    data: createNodeData(oldNodeId, newType, displayName, getInitialConfig(newType)),
+    data: newData,
   }
+
+  // Mirror into Vue Flow's store so the swapped node renders without a reload.
+  canvasRef.value?.updateNodeData(oldNodeId, newData, { replace: true })
 
   // Keep the editor in sync if the replaced node was open/selected.
   if (selectedNode.value && selectedNode.value.id === oldNodeId) {

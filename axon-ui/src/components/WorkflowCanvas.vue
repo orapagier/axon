@@ -513,6 +513,16 @@ defineExpose({
   updateNodeExecution,
   // Batch update all nodes' execution states
   updateAllNodesExecution,
+  // Push a data change into Vue Flow's internal store so it renders immediately.
+  // The parent's nodes array stays the save source of truth, but Vue Flow keeps
+  // its own node objects (and execution updates sever the shared data reference),
+  // so rename/replace must be mirrored here or they won't show until a reload.
+  updateNodeData(nodeId, data, { replace = false } = {}) {
+    const node = findNode(nodeId)
+    if (!node) return false
+    node.data = replace ? data : { ...node.data, ...data }
+    return true
+  },
   // Internal method to animate a single node result
   processNodeResult,
 
