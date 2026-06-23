@@ -3399,4 +3399,24 @@ mod resolve_tests {
         );
         assert_eq!(out, Value::String("Manila to Cebu".to_string()));
     }
+
+    // Generality: the fix is not Sheets- or node-specific. Any field on any node
+    // can combine 2+ references from *different* nodes with arbitrary text between
+    // them. Three refs across three node types, one field.
+    #[test]
+    fn multiple_references_across_different_nodes() {
+        let mut m = HashMap::new();
+        for n in [
+            node("HTTP Request", json!({ "city": "Tokyo" })),
+            node("Set 2", json!({ "temp": "18" })),
+            node("Code", json!({ "unit": "C" })),
+        ] {
+            m.insert(n.node_id.clone(), n);
+        }
+        let out = resolve_value(
+            "$node[\"HTTP Request\"].data.city: $node[\"Set 2\"].data.temp°$node[\"Code\"].data.unit",
+            &m,
+        );
+        assert_eq!(out, Value::String("Tokyo: 18°C".to_string()));
+    }
 }
