@@ -1690,6 +1690,16 @@ async function handleContextRename() {
   closeContextMenu()
 }
 
+// Rename initiated from the NodeDetails modal. NodeDetails already edits the
+// page node in place (same array ref) and syncs $node["..."] expressions itself,
+// so this only mirrors the final label into Vue Flow's internal store — without
+// it the canvas keeps the old name until a reload. Mirrors handleNodeRename.
+function handleDetailsRename({ id, name }) {
+  const node = nodes.value.find(n => n.id === id)
+  if (!node) return
+  canvasRef.value?.updateNodeData(id, { label: name, name, labelEdited: node.data.labelEdited })
+}
+
 function handleNodeRename({ id, name }) {
   const node = nodes.value.find(n => n.id === id)
   if (node) {
@@ -2158,6 +2168,7 @@ onUnmounted(() => {
               :mcp-dynamic-props="getMcpDynamicProps"
               @close="closeNodeDetails"
               @save="save"
+              @rename="handleDetailsRename"
               @execute="executeNodeStep"
               @delete="removeNode"
               @switch="switchNode"

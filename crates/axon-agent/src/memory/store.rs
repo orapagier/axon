@@ -26,6 +26,14 @@ impl MemoryStore {
     pub fn add_assistant(&self, s: &str, t: &str) -> anyhow::Result<()> {
         self.short.store_message(s, "assistant", t, None)
     }
+    /// Store a user turn, trimming this session to `cap` most-recent messages.
+    pub fn add_user_capped(&self, s: &str, t: &str, cap: usize) -> anyhow::Result<()> {
+        self.short.store_message_capped(s, "user", t, None, cap)
+    }
+    /// Store an assistant turn, trimming this session to `cap` most-recent messages.
+    pub fn add_assistant_capped(&self, s: &str, t: &str, cap: usize) -> anyhow::Result<()> {
+        self.short.store_message_capped(s, "assistant", t, None, cap)
+    }
     pub fn get_session(&self, s: &str) -> anyhow::Result<Vec<ShortTermRow>> {
         self.short.get_messages(s)
     }

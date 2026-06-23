@@ -32,6 +32,21 @@ impl ShortTermMemory {
         content: &str,
         tool_name: Option<&str>,
     ) -> anyhow::Result<()> {
+        self.store_message_capped(session_id, role, content, tool_name, self.max_msgs)
+    }
+
+    /// Like `store_message` but trims the session to `cap` most-recent rows
+    /// instead of the global `max_msgs`. Lets a caller (e.g. an Axon workflow
+    /// node) pick a per-session sliding-window size. `cap` is clamped to >= 1.
+    pub fn store_message_capped(
+        &self,
+        session_id: &str,
+        role: &str,
+        content: &str,
+        tool_name: Option<&str>,
+        cap: usize,
+    ) -> anyhow::Result<()> {
+        let cap = cap.max(1);
         let conn = self.db.get().context("DB pool")?;
         conn.execute(
             "INSERT INTO short_term (session_id,role,content,tool_name) VALUES (?1,?2,?3,?4)",
@@ -39,7 +54,7 @@ impl ShortTermMemory {
         )?;
         conn.execute(
             "DELETE FROM short_term WHERE session_id=?1 AND id NOT IN (SELECT id FROM short_term WHERE session_id=?1 ORDER BY id DESC LIMIT ?2)",
-            rusqlite::params![session_id, self.max_msgs as i64])?;
+            rusqlite::params![session_id, cap as i64])?;
         Ok(())
     }
 
@@ -65,6 +80,28 @@ impl ShortTermMemory {
     pub fn to_messages(&self, session_id: &str) -> anyhow::Result<Vec<Message>> {
         Ok(self
             .get_messages(session_id)?
+            .into_iter()
+            .map(|r| match r.role.as_str() {
+                "assistant" => Message::assistant(r.content),
+                _ => Message::user(r.content),
+            })
+            .collect())
+    }
+
+    /// Same as `to_messages` but returns only the last `limit` rows, so a caller
+    /// can feed a bounded sliding window to the model even if the stored history
+    /// is longer (e.g. left over from a previous, larger window).
+    pub fn to_messages_limited(
+        &self,
+        session_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<Message>> {
+        let mut rows = self.get_messages(session_id)?;
+        let limit = limit.max(1);
+        if rows.len() > limit {
+            rows = rows.split_off(rows.len() - limit);
+        }
+        Ok(rows
             .into_iter()
             .map(|r| match r.role.as_str() {
                 "assistant" => Message::assistant(r.content),

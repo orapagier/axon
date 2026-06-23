@@ -5,6 +5,7 @@ pub(crate) fn execute_axon_node<'a>(
     config: &'a Value,
     state: &'a AppState,
     workflow_id: &'a str,
+    node_id: &'a str,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send + 'a>> {
     Box::pin(async move {
         // Extract stimulus — handle any value type since interpolation may return Object/Array
@@ -37,6 +38,15 @@ pub(crate) fn execute_axon_node<'a>(
             .get("memory_enabled")
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
+
+        // Per-node sliding-window size: how many recent messages this node keeps.
+        // Accept a number or a numeric string (interpolation may stringify it).
+        // Defaults to 20 to match the UI default; clamped to >= 1.
+        let memory_window = config
+            .get("memory_window")
+            .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())))
+            .map(|n| n.max(1) as usize)
+            .unwrap_or(20);
 
         // Extract optional tools selection
         let selected_tools: Vec<String> = config
@@ -74,8 +84,10 @@ pub(crate) fn execute_axon_node<'a>(
             Some(system_prompt_text.as_str())
         };
 
-        // Run through the Axon agent with an isolated session per workflow
-        let session = format!("wf:{}", workflow_id);
+        // Isolated session PER NODE (not per workflow) so each Axon node keeps
+        // its own dedicated, persistent conversation memory — multiple Axon nodes
+        // in the same workflow no longer share one history.
+        let session = format!("wf:{}:node:{}", workflow_id, node_id);
         let mut ctx = crate::agent::RunContext::new(
             &stimulus,
             "workflow",
@@ -87,6 +99,7 @@ pub(crate) fn execute_axon_node<'a>(
         );
         ctx.preferred_model = selected_model;
         ctx.memory_enabled = memory_enabled;
+        ctx.memory_window = Some(memory_window);
 
         if !selected_tools.is_empty() {
             ctx.allowed_tools = Some(selected_tools);

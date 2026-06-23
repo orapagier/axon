@@ -32,13 +32,22 @@ pub(crate) async fn build_run_context(
     let is_conversational = crate::router::tool_router::CONVERSATIONAL.is_match(task);
     let should_search_memory = memory_enabled && !is_conversational && task.len() > 10;
 
-    // Load short-term history
+    // Load short-term history. A per-run memory_window (set by the Axon node)
+    // bounds how many recent messages feed the model; otherwise use the full
+    // session (already capped by the global short-term limit on write).
     let mut messages: Vec<Message> = if memory_enabled {
-        state
-            .memory
-            .short
-            .to_messages(&ctx.session_id)
-            .unwrap_or_default()
+        match ctx.memory_window {
+            Some(window) => state
+                .memory
+                .short
+                .to_messages_limited(&ctx.session_id, window)
+                .unwrap_or_default(),
+            None => state
+                .memory
+                .short
+                .to_messages(&ctx.session_id)
+                .unwrap_or_default(),
+        }
     } else {
         Vec::new()
     };
@@ -55,7 +64,14 @@ pub(crate) async fn build_run_context(
         messages.push(Message::user(task));
     }
     if memory_enabled {
-        let _ = state.memory.add_user(&ctx.session_id, task);
+        match ctx.memory_window {
+            Some(window) => {
+                let _ = state.memory.add_user_capped(&ctx.session_id, task, window);
+            }
+            None => {
+                let _ = state.memory.add_user(&ctx.session_id, task);
+            }
+        }
     }
 
     // Parallel: memory search + initial tool routing

@@ -876,11 +876,19 @@ export const NODE_TYPES = {
                 description: 'Specific tools the agent is allowed to use. Leave empty for all enabled tools.',
             },
             {
-                displayName: 'Memory Access',
+                displayName: 'Memory',
                 name: 'memory_enabled',
                 type: 'boolean',
                 default: true,
-                description: 'When disabled, this Axon run will not read from or write to memory.',
+                description: 'Give this Axon node its own persistent conversation memory. Each node remembers its own history across runs; disable to make the node stateless.',
+            },
+            {
+                displayName: 'Messages to Remember',
+                name: 'memory_window',
+                type: 'number',
+                default: 20,
+                description: 'How many recent messages (user + assistant) this node keeps. Older messages drop off like a sliding window — same idea as n8n Simple Memory.',
+                displayOptions: { show: { memory_enabled: [true] } },
             },
             {
                 displayName: 'User Prompt',

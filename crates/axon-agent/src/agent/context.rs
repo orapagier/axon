@@ -23,6 +23,11 @@ pub struct RunContext {
     pub allowed_tools: Option<Vec<String>>,
     #[serde(default = "default_memory_enabled")]
     pub memory_enabled: bool,
+    /// Max number of recent short-term messages to read/retain for this run's
+    /// session. `None` falls back to the global short-term cap. Used by the Axon
+    /// workflow node to give each node its own sliding-window memory size.
+    #[serde(default)]
+    pub memory_window: Option<usize>,
 }
 
 impl RunContext {
@@ -52,6 +57,7 @@ impl RunContext {
             preferred_model: None,
             allowed_tools: None,
             memory_enabled: true,
+            memory_window: None,
         }
     }
 }

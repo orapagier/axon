@@ -18,7 +18,7 @@ const props = defineProps({
   mcpDynamicProps: { type: Function, default: null },
 })
 
-const emit = defineEmits(['close', 'save', 'execute', 'delete', 'switch', 'clear-execution'])
+const emit = defineEmits(['close', 'save', 'execute', 'delete', 'switch', 'clear-execution', 'rename'])
 
 const activeTab = ref('parameters')
 const inputMode = ref('schema')
@@ -287,11 +287,17 @@ function finishRename() {
   // entry clears the flag and reverts to the action-derived label below.
   props.node.data.labelEdited = !!props.node.data.label?.trim();
   props.node.data.label = finalLabel;
+  props.node.data.name = finalLabel;
 
-  if (oldLabel && oldLabel !== finalLabel && props.nodes.length > 0) {
-    console.log(`[Rename] Syncing expressions: "${oldLabel}" -> "${finalLabel}"`);
-    renameNodeInExpressions(props.nodes, oldLabel, finalLabel);
-    // Explicitly emit save to persist all changed nodes
+  if (oldLabel !== finalLabel) {
+    if (oldLabel && props.nodes.length > 0) {
+      console.log(`[Rename] Syncing expressions: "${oldLabel}" -> "${finalLabel}"`);
+      renameNodeInExpressions(props.nodes, oldLabel, finalLabel);
+    }
+    // Mirror the new label into Vue Flow's internal store — the canvas keeps its
+    // own node objects, so mutating the page array alone never reaches it (the
+    // label only updated after a reload). Then persist all changed nodes.
+    emit('rename', { id: props.node.id, name: finalLabel });
     emit('save');
   }
 
@@ -950,6 +956,10 @@ function applyAutoLabel() {
     renameNodeInExpressions(props.nodes, currentLabel, finalLabel)
   }
   props.node.data.label = finalLabel
+  props.node.data.name = finalLabel
+  // Mirror into Vue Flow's store so the canvas shows the auto-derived label
+  // without a reload (see finishRename).
+  emit('rename', { id: props.node.id, name: finalLabel })
   emit('save')
 }
 

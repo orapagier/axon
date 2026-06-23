@@ -1153,7 +1153,18 @@ pub(crate) async fn run_inner(
                 ValidationDecision::Pass => {
                     // Memory write (only for useful, tool-backed results)
                     if memory_enabled {
-                        let _ = state.memory.add_assistant(&ctx.session_id, &text);
+                        match ctx.memory_window {
+                            Some(window) => {
+                                let _ = state.memory.add_assistant_capped(
+                                    &ctx.session_id,
+                                    &text,
+                                    window,
+                                );
+                            }
+                            None => {
+                                let _ = state.memory.add_assistant(&ctx.session_id, &text);
+                            }
+                        }
                         let text_lower = text.to_lowercase();
                         let is_useful = text.len() > 100
                             && !text_lower.contains("i'm unable")
