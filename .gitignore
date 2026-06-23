@@ -40,6 +40,9 @@ graphify-out/
 **/graphify-out/
 .graphify_*.json
 
+# ── Claude Code personal/local settings ──
+.claude/settings.local.json
+
 # ── Logs ──
 *.log
 
