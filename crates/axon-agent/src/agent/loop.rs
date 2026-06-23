@@ -1463,7 +1463,12 @@ pub(crate) async fn run_inner(
                         rusqlite::params![uuid::Uuid::new_v4().to_string(), run_id, tc.name, serde_json::to_string(&tc.input).ok(), serde_json::to_string(&val).ok(), if ok { None } else { Some(val.to_string()) }, duration_ms as i64, is_parallel as i32]
                     );
                 }
-                spawn_compress(run_id.clone(), tc.name.clone(), tc.input.clone(), val.clone(), Arc::clone(&state.router), Arc::clone(&state.settings), Arc::clone(&state.db));
+                // Isolated runs (Axon nodes) keep their tool calls node-local:
+                // skip the shared observation pool so the main agent never sees
+                // which tools an individual node used.
+                if !ctx.isolated_memory {
+                    spawn_compress(run_id.clone(), tc.name.clone(), tc.input.clone(), val.clone(), Arc::clone(&state.router), Arc::clone(&state.settings), Arc::clone(&state.db));
+                }
                 (tc.id, tc.name, val)
             }));
         }
@@ -1568,15 +1573,20 @@ pub(crate) async fn run_inner(
                             serde_json::to_string(&res.output).ok(), res.error, res.duration_ms as i64, (results.len() > 1) as i32]
                     );
                 }
-                spawn_compress(
-                    run_id.clone(),
-                    res.tool_name.clone(),
-                    res.input.clone(),
-                    res.output.clone(),
-                    Arc::clone(&state.router),
-                    Arc::clone(&state.settings),
-                    Arc::clone(&state.db),
-                );
+                // Isolated runs (Axon nodes) keep their tool calls node-local:
+                // skip the shared observation pool so the main agent never sees
+                // which tools an individual node used.
+                if !ctx.isolated_memory {
+                    spawn_compress(
+                        run_id.clone(),
+                        res.tool_name.clone(),
+                        res.input.clone(),
+                        res.output.clone(),
+                        Arc::clone(&state.router),
+                        Arc::clone(&state.settings),
+                        Arc::clone(&state.db),
+                    );
+                }
 
                 if res.error.is_some() {
                     let enriched = serde_json::json!({
