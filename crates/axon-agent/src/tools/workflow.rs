@@ -3419,4 +3419,27 @@ mod resolve_tests {
         );
         assert_eq!(out, Value::String("Tokyo: 18°C".to_string()));
     }
+
+    // Inline JS: a {{ }} block runs through the boa engine with $node injected,
+    // so any field on any node can transform/clean data with real JavaScript.
+    #[test]
+    fn inline_js_transform_in_any_field() {
+        let mut m = HashMap::new();
+        let js = node("JavaScript 1", json!({ "routeOrigin": "  manila, ph " }));
+        m.insert(js.node_id.clone(), js);
+
+        // method chain
+        let out = resolve_value(
+            "{{ $node[\"JavaScript 1\"].data.routeOrigin.trim().toUpperCase() }}",
+            &m,
+        );
+        assert_eq!(out, Value::String("MANILA, PH".to_string()));
+
+        // split + transform, embedded in surrounding text
+        let out2 = resolve_value(
+            "From: {{ $node[\"JavaScript 1\"].data.routeOrigin.split(\",\")[0].trim() }}",
+            &m,
+        );
+        assert_eq!(out2, Value::String("From: manila".to_string()));
+    }
 }
