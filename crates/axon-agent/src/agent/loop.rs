@@ -1175,7 +1175,9 @@ pub(crate) async fn run_inner(
                             && !text_lower.contains("max iterations")
                             && !text_lower.contains("router alert")
                             && !tools_used.is_empty();
-                        if is_useful {
+                        // Isolated runs (Axon nodes) never write to the shared
+                        // long-term store — their memory stays node-local.
+                        if is_useful && !ctx.isolated_memory {
                             let _ = state
                                 .memory
                                 .remember(

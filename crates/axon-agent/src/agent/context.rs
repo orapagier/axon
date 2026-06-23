@@ -28,6 +28,13 @@ pub struct RunContext {
     /// workflow node to give each node its own sliding-window memory size.
     #[serde(default)]
     pub memory_window: Option<usize>,
+    /// When true, this run's memory is fully isolated to its own short-term
+    /// session window: it does NOT read the global long-term memory or recent
+    /// tool observations, and does NOT write its results into long-term memory.
+    /// Used by the Axon workflow node so each node starts blank and only ever
+    /// knows its own last N interactions — never the rest of the system.
+    #[serde(default)]
+    pub isolated_memory: bool,
 }
 
 impl RunContext {
@@ -58,6 +65,7 @@ impl RunContext {
             allowed_tools: None,
             memory_enabled: true,
             memory_window: None,
+            isolated_memory: false,
         }
     }
 }

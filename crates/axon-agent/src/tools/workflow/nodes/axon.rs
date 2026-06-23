@@ -102,6 +102,11 @@ pub(crate) fn execute_axon_node<'a>(
         ctx.memory_enabled = memory_enabled;
         // Short-term memory caps individual messages, so a pair == 2 rows.
         ctx.memory_window = Some(memory_pairs.saturating_mul(2));
+        // Each Axon node's memory is fully isolated: it starts blank and only
+        // ever sees its own sliding window of recent turns. Never the global
+        // long-term memory or the system-wide tool-observation log, and it does
+        // not write its outputs back into that shared long-term store.
+        ctx.isolated_memory = true;
 
         if !selected_tools.is_empty() {
             ctx.allowed_tools = Some(selected_tools);

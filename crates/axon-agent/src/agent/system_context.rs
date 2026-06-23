@@ -29,8 +29,11 @@ pub(crate) async fn build_run_context(
 ) -> RunSystemContext {
     let top_k = state.settings.long_term_top_k();
     let memory_enabled = ctx.memory_enabled;
+    // Isolated runs (Axon workflow nodes) keep ONLY their own short-term window;
+    // they never reach into the global long-term store or observation log.
+    let isolated = ctx.isolated_memory;
     let is_conversational = crate::router::tool_router::CONVERSATIONAL.is_match(task);
-    let should_search_memory = memory_enabled && !is_conversational && task.len() > 10;
+    let should_search_memory = memory_enabled && !isolated && !is_conversational && task.len() > 10;
 
     // Load short-term history. A per-run memory_window (set by the Axon node)
     // bounds how many recent messages feed the model; otherwise use the full
@@ -115,8 +118,8 @@ pub(crate) async fn build_run_context(
         .unwrap_or("unknown")
         .to_string();
 
-    // Long-term observations
-    let observations = if memory_enabled {
+    // Long-term observations (skipped for isolated runs)
+    let observations = if memory_enabled && !isolated {
         search_recent_observations(task, 5, &state.db)
     } else {
         Vec::new()
