@@ -1252,11 +1252,33 @@ async function pasteWorkflow(pastedData = null) {
 
     console.log('[Paste] Importing nodes:', data.nodes.length)
 
-    // Offset for pasted nodes
-    const offset = 60;
     const idMap = {};
 
-    const newNodes = data.nodes.map(n => {
+    // Original positions of the copied nodes.
+    const srcPositions = data.nodes.map(n => ({
+      x: (n.position_x !== undefined ? n.position_x : (n.position?.x || 0)),
+      y: (n.position_y !== undefined ? n.position_y : (n.position?.y || 0)),
+    }));
+
+    // Decide where to drop the group. Prefer the last mouse position in the
+    // canvas so the paste lands under the cursor; otherwise nudge by a small
+    // offset so it doesn't sit exactly on top of the originals.
+    const target = canvasRef.value?.getLastFlowPosition?.();
+    let dx, dy;
+    if (target) {
+      const xs = srcPositions.map(p => p.x);
+      const ys = srcPositions.map(p => p.y);
+      // Center the pasted group's bounding box on the cursor.
+      const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+      const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+      dx = target.x - cx;
+      dy = target.y - cy;
+    } else {
+      dx = 60;
+      dy = 60;
+    }
+
+    const newNodes = data.nodes.map((n, i) => {
       const oldId = n.id;
       const newId = `node_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
       idMap[oldId] = newId;
@@ -1264,9 +1286,9 @@ async function pasteWorkflow(pastedData = null) {
       return {
         id: newId,
         type: 'canvas-node',
-        position: { 
-          x: (n.position_x !== undefined ? n.position_x : (n.position?.x || 0)) + offset, 
-          y: (n.position_y !== undefined ? n.position_y : (n.position?.y || 0)) + offset 
+        position: {
+          x: srcPositions[i].x + dx,
+          y: srcPositions[i].y + dy,
         },
         data: createNodeData(newId, n.node_type, n.name, n.config, n.enabled !== false)
       };
@@ -1295,9 +1317,12 @@ async function pasteWorkflow(pastedData = null) {
     toast(`Pasted ${newNodes.length} nodes successfully`, true)
     save()
 
-    // Select the first pasted node to give focus
+    // Keep the freshly pasted nodes selected (and deselect everything else) so
+    // the user can immediately drag the whole group. Wait for Vue Flow to
+    // register the new nodes before touching its selection state.
     if (newNodes.length > 0) {
-      selectedNode.value = newNodes[0]
+      await nextTick()
+      canvasRef.value?.selectNodes?.(newNodes.map(n => n.id))
     }
   } catch (e) {
     console.error('Paste error:', e)

@@ -111,6 +111,19 @@ const edgesBringToFrontById = ref({})
 const nodesHoveredById = ref({})
 const connectingHandle = ref(null)
 
+// Last pointer position over the canvas, in flow coordinates.
+// Used so paste drops nodes under the cursor instead of at a fixed offset.
+const lastFlowPosition = ref(null)
+
+function trackPointer(event) {
+  const bounds = viewportRef.value?.getBoundingClientRect()
+  if (!bounds) return
+  lastFlowPosition.value = project({
+    x: event.clientX - bounds.left,
+    y: event.clientY - bounds.top,
+  })
+}
+
 // Minimap visibility management (n8n-style)
 const isMinimapVisible = ref(false)
 const minimapHideTimeout = ref(null)
@@ -504,6 +517,17 @@ defineExpose({
   getEdges: () => getEdges.value,
   getSelectedNodes: () => getSelectedNodes.value,
   getSelectedEdges: () => getSelectedEdges.value,
+  // Last pointer position over the canvas, in flow coordinates (or null).
+  getLastFlowPosition: () => lastFlowPosition.value,
+  // Replace the current selection with the given node ids. Deselects
+  // everything else so a freshly pasted group becomes the active selection
+  // and can be dragged as one.
+  selectNodes(nodeIds) {
+    const current = getSelectedNodes.value
+    if (current.length) removeSelectedNodes(current)
+    const toSelect = nodeIds.map((id) => findNode(id)).filter(Boolean)
+    if (toSelect.length) addSelectedNodes(toSelect)
+  },
   fitView: onFitView,
   resetZoom: onResetZoom,
   zoomTo,
@@ -633,6 +657,8 @@ defineExpose({
     @drop="onDrop"
     @dragover.prevent="onDragOver"
     @keydown="handleKeyDown"
+    @pointermove="trackPointer"
+    @pointerdown="trackPointer"
     tabindex="0"
   >
     <VueFlow
