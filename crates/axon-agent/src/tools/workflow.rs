@@ -646,12 +646,65 @@ fn evaluate_js_expression(
         node_obj.insert("error".to_string(), serde_json::json!(res.error));
         let val = Value::Object(node_obj);
         nodes_map.insert(key.clone(), val.clone());
-        nodes_map.insert(res.node_name.clone(), val);
+        nodes_map.insert(res.node_name.clone(), val.clone());
+        // Lowercase alias so $node["My Node"] works regardless of case.
+        let lower = res.node_name.to_lowercase();
+        if lower != res.node_name {
+            nodes_map.entry(lower).or_insert(val);
+        }
     }
-
     let nodes_json =
         serde_json::to_string(&Value::Object(nodes_map)).unwrap_or_else(|_| "{}".to_string());
-    let setup_script = format!("var $node = {};", nodes_json);
+
+    // Convenience helpers mirroring the JavaScript node, so inline {{ }} field
+    // expressions and full JS-node scripts see the same globals. Identity-bound
+    // helpers ($nodeId/$nodeName/$execution) are intentionally omitted — a field
+    // expression has no "current node" context.
+    let mut ordered: Vec<&NodeResult> = results.values().collect();
+    ordered.sort_by_key(|r| r.position);
+    let prev = ordered.last();
+    let input_json = prev
+        .map(|r| serde_json::to_string(&r.output).unwrap_or_else(|_| "{}".to_string()))
+        .unwrap_or_else(|| "{}".to_string());
+    let prev_node_json = prev
+        .map(|r| {
+            serde_json::to_string(&serde_json::json!({
+                "name": r.node_name, "id": r.node_id, "type": r.node_type,
+                "output": r.output, "data": r.output, "json": r.output,
+            }))
+            .unwrap_or_else(|_| "{}".to_string())
+        })
+        .unwrap_or_else(|| "{}".to_string());
+    let items_json = serde_json::to_string(
+        &ordered
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "json": r.output, "data": r.output, "name": r.node_name,
+                    "id": r.node_id, "type": r.node_type,
+                })
+            })
+            .collect::<Vec<_>>(),
+    )
+    .unwrap_or_else(|_| "[]".to_string());
+    let now = chrono::Utc::now();
+
+    let setup_script = format!(
+        "var $node = {nodes};\
+         var $input = {input};\
+         var $json = $input;\
+         var $items = {items};\
+         var $prevNode = {prev_node};\
+         var $now = \"{now_iso}\";\
+         var $today = \"{today}\";\
+         var $env = {{}};",
+        nodes = nodes_json,
+        input = input_json,
+        items = items_json,
+        prev_node = prev_node_json,
+        now_iso = now.to_rfc3339(),
+        today = now.format("%Y-%m-%d"),
+    );
 
     if context
         .eval(boa_engine::Source::from_bytes(setup_script.as_bytes()))
@@ -837,6 +890,18 @@ fn resolve_value(s: &str, results: &std::collections::HashMap<String, NodeResult
                 val_str
             };
             result = result.replace(&cap[0], &final_str);
+        } else {
+            // A {{ }} block that fails to evaluate (JS error, bad syntax, or a
+            // reference to a node that didn't run) used to leak its literal text
+            // into the output, where it looked like a value that silently
+            // "didn't resolve". Resolve to empty instead — consistent with how
+            // missing bare references already resolve — and warn so the failure
+            // is visible in logs rather than silent in the rendered field.
+            tracing::warn!(
+                "workflow expression failed to evaluate, resolving to empty: {{ {} }}",
+                expression
+            );
+            result = result.replace(&cap[0], "");
         }
     }
 
@@ -3441,5 +3506,46 @@ mod resolve_tests {
             &m,
         );
         assert_eq!(out2, Value::String("From: manila".to_string()));
+    }
+
+    // Inline expressions get the same convenience globals as the JS node:
+    // $json/$input (previous node), $items, $now, $today, $env.
+    #[test]
+    fn inline_js_helpers_match_js_node() {
+        let mut m = HashMap::new();
+        let prev = node("HTTP Request", json!({ "routeOrigin": "manila" }));
+        m.insert(prev.node_id.clone(), prev);
+
+        // $json points at the previous node's output.
+        let out = resolve_value("{{ $json.routeOrigin.toUpperCase() }}", &m);
+        assert_eq!(out, Value::String("MANILA".to_string()));
+
+        // $today is injected and shaped YYYY-MM-DD.
+        let today = resolve_value("{{ $today }}", &m);
+        let today = today.as_str().unwrap();
+        assert_eq!(today.len(), 10);
+        assert_eq!(today.matches('-').count(), 2);
+
+        // $now is a non-empty ISO timestamp.
+        let now = resolve_value("{{ $now }}", &m);
+        assert!(now.as_str().unwrap().contains('T'));
+    }
+
+    // (a) A {{ }} expression that errors resolves to empty instead of leaking
+    // its literal text — no more confusing `{{ ... }}` showing up in output.
+    #[test]
+    fn failed_expression_resolves_to_empty() {
+        let mut m = HashMap::new();
+        let js = node("X", json!({ "present": "ok" }));
+        m.insert(js.node_id.clone(), js);
+
+        // .trim() on an undefined field throws in JS -> empty, not literal.
+        let out = resolve_value("v={{ $node[\"X\"].data.missing.trim() }}", &m);
+        assert_eq!(out, Value::String("v=".to_string()));
+
+        // Reference to a node that didn't run, wrapped in {{ }} -> empty.
+        let out2 = resolve_value("A {{ $node[\"Ghost\"].data.x }} B", &m);
+        assert_eq!(out2, Value::String("A  B".to_string()));
+        assert!(!out2.as_str().unwrap().contains("{{"));
     }
 }
