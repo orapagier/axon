@@ -52,6 +52,12 @@ const MIGRATIONS: &[Migration] = &[
         sql: include_str!("migrations/0004_telegram_reply_routes.sql"),
         tolerant_dup_column: false,
     },
+    Migration {
+        version: 5,
+        name: "durable_wait",
+        sql: include_str!("migrations/0005_durable_wait.sql"),
+        tolerant_dup_column: true,
+    },
 ];
 
 const SEED_SQL: &str = include_str!("seed.sql");
@@ -194,7 +200,7 @@ mod tests {
         let max: i64 = conn
             .query_row("SELECT MAX(version) FROM schema_migrations", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(max, 4, "all migrations should be recorded");
+        assert_eq!(max, 5, "all migrations should be recorded");
 
         for t in [
             "settings",
@@ -214,6 +220,9 @@ mod tests {
         assert!(col_exists(&conn, "watchers", "trigger_condition"));
         assert!(col_exists(&conn, "workflow_nodes", "position_x"));
         assert!(col_exists(&conn, "http_requests", "limit"));
+        // Durable Wait: a suspended run records when/where to resume.
+        assert!(col_exists(&conn, "workflow_runs", "resume_at"));
+        assert!(col_exists(&conn, "workflow_runs", "resume_node_id"));
 
         // Seeds + normalization: parallel-tool default is the lowered 3, and the
         // new quality-check mode is present.

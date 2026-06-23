@@ -2,11 +2,27 @@ use crate::state::AppState;
 use crate::tools::workflow::val_to_datetime;
 use serde_json::{json, Value};
 
+/// Waits longer than this suspend the run to the database instead of blocking an
+/// in-process sleep, so a multi-day wait survives an agent restart (see the
+/// engine's `__axon_wait_suspend` handling). Shorter waits sleep in-process so
+/// the editor's live run animation keeps flowing for quick "wait a few seconds"
+/// steps and so test/partial runs never silently background themselves.
+const DURABLE_WAIT_THRESHOLD_SECS: f64 = 60.0;
+
+/// Sentinel key the Wait node sets on its output to tell the engine "suspend
+/// this run until `resume_at`" rather than treating the node as complete. The
+/// engine strips it before persisting the visible node result.
+pub(crate) const SUSPEND_MARKER: &str = "__axon_wait_suspend";
+
 pub(crate) async fn execute(
     config: &Value,
     state: &AppState,
     workflow_id: &str,
     run_id: &str,
+    // When false (test/partial runs, or a Wait iterated inside a Loop body), the
+    // node always sleeps in-process — it can't durably suspend because there is
+    // no single run to resume. The engine sets this.
+    durable_allowed: bool,
 ) -> Result<Value, String> {
     let mode = config
         .get("mode")
@@ -63,14 +79,26 @@ pub(crate) async fn execute(
         .max(0.0)
     };
 
-    // Surface the computed resume time so the UI/run log can show when the
-    // workflow will continue (and so a downstream node can read it).
+    // Resume time, for the UI/run log and for any downstream node that reads it.
     let resume_at = (chrono::Utc::now()
         + chrono::Duration::milliseconds((seconds * 1000.0) as i64))
     .to_rfc3339();
 
-    // Sleep in short slices so workflow cancellation takes effect
-    // promptly instead of after the full (possibly days-long) wait.
+    // Durable path: hand the wait back to the engine, which persists resume_at
+    // and frees this task instead of holding a (possibly days-long) sleep. The
+    // engine recomputes the stored wake time from `seconds` at suspend instant,
+    // so a brief scheduling delay before this returns can't drift the deadline.
+    if durable_allowed && seconds > DURABLE_WAIT_THRESHOLD_SECS {
+        return Ok(json!({
+            SUSPEND_MARKER: { "seconds": seconds, "resume_at": resume_at, "mode": mode },
+            "mode": mode,
+            "resume_at": resume_at,
+            "waiting": true,
+        }));
+    }
+
+    // Short / non-durable path: sleep in-process in short slices so workflow
+    // cancellation takes effect promptly instead of after the full wait.
     let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs_f64(seconds);
     loop {
         let now = tokio::time::Instant::now();

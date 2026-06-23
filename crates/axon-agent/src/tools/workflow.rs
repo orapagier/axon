@@ -1488,6 +1488,9 @@ async fn execute_node_by_type(
     workflow_id: &str,
     run_id: &str,
     node_results: &std::collections::HashMap<String, NodeResult>,
+    // Whether a Wait node here may durably suspend the whole run (vs sleeping
+    // in-process). False inside Loop iterations and for test/partial runs.
+    durable_allowed: bool,
 ) -> Result<Value, String> {
     match node.node_type.as_str() {
         "trigger" | "circadian" | "stimulus" => {
@@ -1523,7 +1526,7 @@ async fn execute_node_by_type(
         }
         "fovea" => nodes::fovea::execute(config, state).await,
         t if t == "mcp" || t.starts_with("mcp_") => nodes::mcp::execute(config, state).await,
-        "wait" => nodes::wait::execute(config, state, workflow_id, run_id).await,
+        "wait" => nodes::wait::execute(config, state, workflow_id, run_id, durable_allowed).await,
         "ifCondition" => nodes::condition::execute_if_condition_node(config),
         "switch" => nodes::condition::execute_switch_node(config),
         "loop" => nodes::iterate::execute(config),
@@ -1573,6 +1576,14 @@ fn merge_single_node_results(prior: &[NodeResult], fresh: &[NodeResult]) -> Vec<
     merged
 }
 
+/// State handed to the engine when resuming a run that a durable Wait suspended.
+/// `results` are the nodes that already ran in this run (including the Wait);
+/// `completed` is their id set, used to replay-not-re-execute them on resume.
+struct ResumeState {
+    completed: std::collections::HashSet<String>,
+    results: Vec<NodeResult>,
+}
+
 pub struct WorkflowEngine;
 impl WorkflowEngine {
     pub async fn run(
@@ -1592,10 +1603,37 @@ impl WorkflowEngine {
         single_node: bool,
         external_run_id: Option<String>,
     ) -> anyhow::Result<WorkflowRunResult> {
-        tracing::info!(
-            "Starting workflow run for {} (source: {})",
+        Self::run_inner(
             workflow_id,
-            trigger_source
+            state,
+            trigger_source,
+            target_node_id,
+            single_node,
+            external_run_id,
+            None,
+        )
+        .await
+    }
+
+    /// Core engine. `resume` is `Some` only when re-entering a run that a durable
+    /// Wait node suspended: it carries the nodes already completed in that run so
+    /// they are replayed (edges released) but not re-executed, letting the BFS
+    /// continue from the node after the Wait.
+    #[allow(clippy::too_many_arguments)]
+    async fn run_inner(
+        workflow_id: &str,
+        state: &AppState,
+        trigger_source: &str,
+        target_node_id: Option<String>,
+        single_node: bool,
+        external_run_id: Option<String>,
+        resume: Option<ResumeState>,
+    ) -> anyhow::Result<WorkflowRunResult> {
+        tracing::info!(
+            "Starting workflow run for {} (source: {}, resume: {})",
+            workflow_id,
+            trigger_source,
+            resume.is_some()
         );
         let start = std::time::Instant::now();
         let run_id = external_run_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
@@ -1652,24 +1690,49 @@ impl WorkflowEngine {
         // can persist the whole chain (prior nodes + the re-executed one) instead
         // of collapsing the saved run down to just the one node it actually ran.
         let mut prior_ordered: Vec<NodeResult> = Vec::new();
-
-        // [New feature]: Load latest results from DB as fallback for expressions for skipped/unconnected nodes.
-        if let Ok(conn) = state.db.get() {
-            if let Ok(last_results_str) = conn.query_row(
-                "SELECT node_results FROM workflow_runs WHERE workflow_id = ?1 AND id != ?2 AND status IN ('success','error') ORDER BY started_at DESC LIMIT 1",
-                rusqlite::params![workflow_id, run_id],
-                |r| r.get::<_, String>(0)
-            ) {
-                if let Ok(last_results) = serde_json::from_str::<Vec<NodeResult>>(&last_results_str) {
-                    for r in &last_results {
-                        node_results.insert(r.node_id.clone(), r.clone());
-                    }
-                    prior_ordered = last_results;
-                }
-            }
-        }
-
         let mut ordered_results = Vec::new();
+
+        // Nodes already completed *in this run* before a durable Wait suspended
+        // it. On resume these are replayed for edge-routing only (never re-run),
+        // so triggers don't re-fire and the BFS flows straight to the Wait's
+        // downstream nodes. Empty for a normal (non-resumed) run.
+        let resumed_completed: std::collections::HashSet<String> = match resume {
+            Some(rs) => {
+                for r in &rs.results {
+                    node_results.insert(r.node_id.clone(), r.clone());
+                }
+                // Seed the persisted chain so polling/the final save keep every
+                // pre-suspend node, not just the ones run after resume.
+                ordered_results = rs.results;
+                // Flip status back to 'running' and clear the wake fields, so a
+                // concurrent poller tick can't claim this run twice.
+                if let Ok(conn) = state.db.get() {
+                    let _ = conn.execute(
+                        "UPDATE workflow_runs SET status = 'running', resume_at = NULL, resume_node_id = NULL WHERE id = ?1",
+                        [run_id.clone()],
+                    );
+                }
+                rs.completed
+            }
+            None => {
+                // [New feature]: Load latest results from DB as fallback for expressions for skipped/unconnected nodes.
+                if let Ok(conn) = state.db.get() {
+                    if let Ok(last_results_str) = conn.query_row(
+                        "SELECT node_results FROM workflow_runs WHERE workflow_id = ?1 AND id != ?2 AND status IN ('success','error') ORDER BY started_at DESC LIMIT 1",
+                        rusqlite::params![workflow_id, run_id],
+                        |r| r.get::<_, String>(0)
+                    ) {
+                        if let Ok(last_results) = serde_json::from_str::<Vec<NodeResult>>(&last_results_str) {
+                            for r in &last_results {
+                                node_results.insert(r.node_id.clone(), r.clone());
+                            }
+                            prior_ordered = last_results;
+                        }
+                    }
+                }
+                std::collections::HashSet::new()
+            }
+        };
         let mut in_degree = std::collections::HashMap::new();
         // Counts how many *taken* (non-skipped-branch) inputs each node has
         // received. A node whose in-degree reaches 0 with no live inputs sits
@@ -1795,28 +1858,32 @@ impl WorkflowEngine {
                 None => continue,
             };
             if !node.enabled {
-                // Emit a "skipped" result so the frontend can properly transition
-                // the animation instead of leaving this node stuck in waiting state.
-                let nr = NodeResult {
-                    node_id: current_id.clone(),
-                    node_name: node.name.clone(),
-                    node_type: node.node_type.clone(),
-                    position: node.position,
-                    status: "skipped".to_string(),
-                    output: json!({"skipped": true, "reason": "Node is disabled"}),
-                    duration_ms: 0,
-                    error: None,
-                };
-                node_results.insert(current_id.clone(), nr.clone());
-                ordered_results.push(nr);
+                // On resume this disabled node already emitted its skip; replay
+                // only its pass-through routing so the chain isn't duplicated.
+                if !resumed_completed.contains(&current_id) {
+                    // Emit a "skipped" result so the frontend can properly transition
+                    // the animation instead of leaving this node stuck in waiting state.
+                    let nr = NodeResult {
+                        node_id: current_id.clone(),
+                        node_name: node.name.clone(),
+                        node_type: node.node_type.clone(),
+                        position: node.position,
+                        status: "skipped".to_string(),
+                        output: json!({"skipped": true, "reason": "Node is disabled"}),
+                        duration_ms: 0,
+                        error: None,
+                    };
+                    node_results.insert(current_id.clone(), nr.clone());
+                    ordered_results.push(nr);
 
-                // Incremental DB update so the frontend poll sees it immediately
-                if let Ok(res_json) = serde_json::to_string(&ordered_results) {
-                    if let Ok(conn) = state.db.get() {
-                        let _ = conn.execute(
-                            "UPDATE workflow_runs SET node_results = ? WHERE id = ?",
-                            rusqlite::params![res_json, run_id.clone()],
-                        );
+                    // Incremental DB update so the frontend poll sees it immediately
+                    if let Ok(res_json) = serde_json::to_string(&ordered_results) {
+                        if let Ok(conn) = state.db.get() {
+                            let _ = conn.execute(
+                                "UPDATE workflow_runs SET node_results = ? WHERE id = ?",
+                                rusqlite::params![res_json, run_id.clone()],
+                            );
+                        }
                     }
                 }
 
@@ -1834,6 +1901,12 @@ impl WorkflowEngine {
                 continue;
             }
 
+            // Replay-only on resume: a node already completed in THIS run keeps
+            // its stored result and just releases its edges below — it is never
+            // re-executed, so triggers don't re-fire and side effects (Telegram
+            // sends, file registration) don't repeat. Freshly-reached nodes run
+            // normally. The block is closed right before edge routing.
+            if !resumed_completed.contains(&current_id) {
             let n_start = std::time::Instant::now();
             let iteration_source_id =
                 find_iteration_source_node_id(&current_id, &edges, &node_results);
@@ -1934,6 +2007,9 @@ impl WorkflowEngine {
                                             workflow_id,
                                             run_id_ref,
                                             &temp_results,
+                                            // A Wait inside a Loop body can't durably
+                                            // suspend — it sleeps in-process per item.
+                                            false,
                                         )
                                         .await;
                                         (idx, current, r)
@@ -1965,6 +2041,8 @@ impl WorkflowEngine {
                                         workflow_id,
                                         run_id_ref,
                                         &temp_results,
+                                        // Iterated Wait: in-process sleep per item.
+                                        false,
                                     )
                                     .await
                                     {
@@ -2013,6 +2091,7 @@ impl WorkflowEngine {
                                 workflow_id,
                                 &run_id,
                                 &node_results,
+                                target_node_id.is_none(),
                             )
                             .await
                         }
@@ -2026,6 +2105,7 @@ impl WorkflowEngine {
                             workflow_id,
                             &run_id,
                             &node_results,
+                            target_node_id.is_none(),
                         )
                         .await
                     }
@@ -2039,6 +2119,7 @@ impl WorkflowEngine {
                         workflow_id,
                         &run_id,
                         &node_results,
+                        target_node_id.is_none(),
                     )
                     .await
                 }
@@ -2052,6 +2133,7 @@ impl WorkflowEngine {
                     workflow_id,
                     &run_id,
                     &node_results,
+                    target_node_id.is_none(),
                 )
                 .await
             };
@@ -2070,7 +2152,7 @@ impl WorkflowEngine {
                 status
             );
 
-            let nr = NodeResult {
+            let mut nr = NodeResult {
                 node_id: current_id.clone(),
                 node_name: node.name.clone(),
                 node_type: node.node_type.clone(),
@@ -2080,6 +2162,60 @@ impl WorkflowEngine {
                 duration_ms: duration,
                 error,
             };
+
+            // Durable Wait suspension: a long Wait returns a sentinel instead of
+            // blocking an in-process sleep. Persist the chain so far plus WHEN and
+            // WHERE to resume, mark the run 'waiting', and hand the task back. A
+            // background poller re-enters the workflow once resume_at passes, so
+            // the pause survives an agent restart.
+            if let Some(marker) = nr.output.get(nodes::wait::SUSPEND_MARKER).cloned() {
+                let seconds = marker.get("seconds").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                // Anchor the wake time to the suspend instant, in the same
+                // canonical UTC format the poller compares against strftime(now).
+                let resume_at_db = (chrono::Utc::now()
+                    + chrono::Duration::milliseconds((seconds * 1000.0) as i64))
+                .format("%Y-%m-%dT%H:%M:%SZ")
+                .to_string();
+
+                // Drop the internal sentinel from the visible result but keep the
+                // node marked 'waiting' so the editor shows the Wait paused.
+                if let Some(obj) = nr.output.as_object_mut() {
+                    obj.remove(nodes::wait::SUSPEND_MARKER);
+                }
+                nr.status = "waiting".to_string();
+                node_results.insert(current_id.clone(), nr.clone());
+                ordered_results.push(nr.clone());
+
+                let chain_json = serde_json::to_string(&ordered_results).unwrap_or_default();
+                {
+                    let conn = state.db.get()?;
+                    conn.execute(
+                        "UPDATE workflow_runs SET status = 'waiting', resume_at = ?1, \
+                         resume_node_id = ?2, trigger_type = ?3, node_results = ?4 WHERE id = ?5",
+                        rusqlite::params![
+                            resume_at_db,
+                            current_id,
+                            trigger_source,
+                            chain_json,
+                            run_id
+                        ],
+                    )?;
+                }
+                tracing::info!(
+                    "Workflow run {} suspended at Wait node '{}' until {} (durable)",
+                    run_id,
+                    node.name,
+                    resume_at_db
+                );
+                return Ok(WorkflowRunResult {
+                    run_id,
+                    workflow_id: workflow_id.to_string(),
+                    status: "waiting".to_string(),
+                    node_results: ordered_results,
+                    final_output: nr.output,
+                    total_duration_ms: start.elapsed().as_millis() as u64,
+                });
+            }
 
             node_results.insert(current_id.clone(), nr.clone());
             ordered_results.push(nr.clone());
@@ -2111,6 +2247,7 @@ impl WorkflowEngine {
             if reg_ms > 100 {
                 tracing::warn!("File registration for '{}' took {}ms", node.name, reg_ms);
             }
+            } // end: execute fresh node (skipped for replayed-on-resume nodes)
 
             let mut skip_stack: Vec<String> = Vec::new();
             for e in edges.iter().filter(|e| e.source_id == current_id) {
@@ -2484,12 +2621,113 @@ impl WorkflowEngine {
         .unwrap_or(false)
     }
 
+    /// Re-enter any durably-suspended runs whose wake time has arrived. Called on
+    /// each background tick; the first tick fires at startup, so waits that came
+    /// due while the agent was restarting resume promptly.
+    async fn resume_due_waiting_runs(state: &AppState) {
+        // Read the due rows first, then claim each with a status-guarded UPDATE
+        // ('waiting' -> 'running'), so a second tick racing us claims 0 rows and
+        // never resumes the same run twice.
+        let due: Vec<(String, String, String, String, String)> = {
+            let Ok(conn) = state.db.get() else {
+                return;
+            };
+            let Ok(mut stmt) = conn.prepare(
+                "SELECT id, workflow_id, COALESCE(trigger_type, 'manual'), \
+                        COALESCE(resume_node_id, ''), node_results \
+                 FROM workflow_runs \
+                 WHERE status = 'waiting' AND resume_at IS NOT NULL \
+                   AND resume_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now') \
+                 ORDER BY resume_at ASC LIMIT 50",
+            ) else {
+                return;
+            };
+            stmt.query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                ))
+            })
+            .map(|i| i.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default()
+        };
+
+        for (run_id, workflow_id, trigger_source, resume_node_id, results_json) in due {
+            let claimed = {
+                let Ok(conn) = state.db.get() else {
+                    continue;
+                };
+                conn.execute(
+                    "UPDATE workflow_runs SET status = 'running' WHERE id = ?1 AND status = 'waiting'",
+                    [&run_id],
+                )
+                .unwrap_or(0)
+            };
+            if claimed != 1 {
+                continue; // another tick already claimed it
+            }
+
+            let mut results: Vec<NodeResult> = match serde_json::from_str(&results_json) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::error!("Resume {}: corrupt node_results ({}); failing run", run_id, e);
+                    if let Ok(conn) = state.db.get() {
+                        let _ = conn.execute(
+                            "UPDATE workflow_runs SET status = 'failed', finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
+                            [&run_id],
+                        );
+                    }
+                    continue;
+                }
+            };
+
+            // The Wait node we paused on is stored as 'waiting'; flip it to
+            // 'success' now that the run is continuing past it.
+            for r in results.iter_mut() {
+                if r.node_id == resume_node_id || r.status == "waiting" {
+                    r.status = "success".to_string();
+                }
+            }
+
+            let completed: std::collections::HashSet<String> =
+                results.iter().map(|r| r.node_id.clone()).collect();
+            let resume = ResumeState { completed, results };
+
+            let s = state.clone();
+            let wf = workflow_id.clone();
+            let src = trigger_source.clone();
+            let rid = run_id.clone();
+            tracing::info!("Resuming durably-suspended workflow run {}", run_id);
+            tokio::spawn(async move {
+                if let Err(e) =
+                    Self::run_inner(&wf, &s, &src, None, false, Some(rid.clone()), Some(resume)).await
+                {
+                    tracing::error!("Resumed workflow run {} failed: {}", rid, e);
+                    if let Ok(conn) = s.db.get() {
+                        let _ = conn.execute(
+                            "UPDATE workflow_runs SET status = 'failed', finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
+                            [&rid],
+                        );
+                    }
+                }
+            });
+        }
+    }
+
     pub async fn start_background_loop(state: AppState) {
         let state = std::sync::Arc::new(state);
         let mut interval = tokio::time::interval(Duration::from_secs(60));
         tracing::info!("Workflow background loop started (60s interval)");
         loop {
             interval.tick().await;
+
+            // Durable Wait: wake any runs whose suspend deadline has passed
+            // (including ones that came due while the agent was restarting).
+            Self::resume_due_waiting_runs(&state).await;
+
             let workflows = {
                 let Ok(conn) = state.db.get() else {
                     tracing::warn!("Workflow loop: failed to get DB connection");
