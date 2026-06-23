@@ -59,6 +59,15 @@ INSERT OR IGNORE INTO settings VALUES
     ('watcher.quiet_hours_end',        '04:00',     'string', 'Quiet hours end (HH:MM)',                                                   'watcher', datetime('now')),
     ('watcher.timezone_offset_hours',  '8',         'int',    'UTC offset for quiet hours (e.g., 8 for PHT, -5 for EST)',                   'watcher', datetime('now'));
 
+-- Database retention / housekeeping (pruned daily by crate::maintenance).
+INSERT OR IGNORE INTO settings VALUES
+    ('retention.enabled',                     'true', 'bool', 'Prune append-only history tables daily to bound database growth', 'retention', datetime('now')),
+    ('retention.workflow_runs_per_workflow',  '50',   'int',  'Workflow runs kept per workflow (each stores full node-result JSON; biggest growth source)', 'retention', datetime('now')),
+    ('retention.runs_days',                   '30',   'int',  'Days of agent run history kept (runs, run_iterations, tool_calls)', 'retention', datetime('now')),
+    ('retention.observations_days',           '30',   'int',  'Days of compressed tool observations kept (only the last 24h are ever read)', 'retention', datetime('now')),
+    ('retention.webhook_events_days',         '30',   'int',  'Days of inbound webhook events kept', 'retention', datetime('now')),
+    ('retention.vacuum_min_free_mb',          '20',   'int',  'Run VACUUM after a sweep only when at least this many MB are reclaimable', 'retention', datetime('now'));
+
 -- Web search.
 INSERT OR IGNORE INTO settings VALUES
     ('websearch.enabled',             'false', 'bool',   'Enable Web Search tool (requires Tavily accounts below)',      'websearch', datetime('now')),

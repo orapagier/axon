@@ -152,6 +152,26 @@ RESPONSE RULES:
     pub fn long_term_top_k(&self) -> usize {
         self.get_int("memory.long_term_top_k", 5) as usize
     }
+    // Database retention / housekeeping (see `crate::maintenance`).
+    pub fn retention_enabled(&self) -> bool {
+        self.get_bool("retention.enabled", true)
+    }
+    pub fn retention_workflow_runs_per_workflow(&self) -> i64 {
+        self.get_int("retention.workflow_runs_per_workflow", 50)
+    }
+    pub fn retention_runs_days(&self) -> i64 {
+        self.get_int("retention.runs_days", 30)
+    }
+    pub fn retention_observations_days(&self) -> i64 {
+        self.get_int("retention.observations_days", 30)
+    }
+    pub fn retention_webhook_events_days(&self) -> i64 {
+        self.get_int("retention.webhook_events_days", 30)
+    }
+    pub fn retention_vacuum_min_free_mb(&self) -> i64 {
+        self.get_int("retention.vacuum_min_free_mb", 20)
+    }
+
     pub fn websearch_enabled(&self) -> bool {
         self.get_bool("websearch.enabled", false)
     }

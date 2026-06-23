@@ -5,6 +5,7 @@ pub mod db;
 pub mod dashboard;
 pub mod error_reporting;
 pub mod files;
+pub mod maintenance;
 pub mod mcp;
 pub mod memory;
 pub mod messaging;

@@ -418,6 +418,29 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    // Database retention sweep: prune append-only history tables so the DB
+    // stays bounded. Runs immediately on boot, then daily. The work is blocking
+    // SQLite (incl. an occasional VACUUM) so it runs off the async runtime.
+    let retention_db = state.db.clone();
+    let retention_settings = state.settings.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(24 * 3600));
+        loop {
+            interval.tick().await;
+            let db = retention_db.clone();
+            let settings = retention_settings.clone();
+            match tokio::task::spawn_blocking(move || {
+                axon::maintenance::run_retention(&db, &settings)
+            })
+            .await
+            {
+                Ok(Ok(stats)) => tracing::info!("Retention sweep: {}", stats),
+                Ok(Err(e)) => tracing::warn!("Retention sweep failed: {:#}", e),
+                Err(e) => tracing::warn!("Retention sweep task join error: {}", e),
+            }
+        }
+    });
+
     // ── Workflow Agent Processor ──────────────────────────────────────────────
     // This consumer breaks the circular dependency between WorkflowEngine and Agent
     // by handling agent tasks asynchronously when a workflow completes.
