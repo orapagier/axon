@@ -1972,12 +1972,41 @@ impl WorkflowEngine {
                 continue;
             }
 
+            // In a targeted ("Execute Step") run, never re-execute an upstream
+            // node that already produced a successful result on the previous run:
+            // reuse its cached output verbatim and just release its edges below,
+            // exactly like resume replay. This enforces the invariant that
+            // upstream nodes "with data" don't move or change when a downstream
+            // step runs, even on the full-chain fallback path (when single-node
+            // mode wasn't taken). Critically, it protects one-shot trigger
+            // payloads: a Telegram/Gmail/WhatsApp Stimulus consumes (removes) its
+            // live event the first time it's read, so re-running it under the
+            // 'manual' source would overwrite the real payload with
+            // {"trigger":"manual"}. Cached errors are NOT reused — those still
+            // re-run so the node gets a fresh, valid attempt (matches the
+            // frontend's `!r.error` "Has Data" gate).
+            let reuse_cached_upstream = target_node_id.is_some()
+                && target_node_id.as_deref() != Some(current_id.as_str())
+                && node_results
+                    .get(&current_id)
+                    .is_some_and(|r| r.status == "success");
+            if reuse_cached_upstream {
+                // Keep the reused result in this run's persisted chain so a
+                // non-single-node save (which writes ordered_results directly,
+                // unmerged) doesn't drop the upstream node's data.
+                if let Some(cached) = node_results.get(&current_id).cloned() {
+                    if !ordered_results.iter().any(|r| r.node_id == current_id) {
+                        ordered_results.push(cached);
+                    }
+                }
+            }
+
             // Replay-only on resume: a node already completed in THIS run keeps
             // its stored result and just releases its edges below — it is never
             // re-executed, so triggers don't re-fire and side effects (Telegram
             // sends, file registration) don't repeat. Freshly-reached nodes run
             // normally. The block is closed right before edge routing.
-            if !resumed_completed.contains(&current_id) {
+            if !resumed_completed.contains(&current_id) && !reuse_cached_upstream {
             let n_start = std::time::Instant::now();
             let iteration_source_id =
                 find_iteration_source_node_id(&current_id, &edges, &node_results);
