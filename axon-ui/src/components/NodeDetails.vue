@@ -439,7 +439,10 @@ function isImageUrl(icon) {
 
 function getUpstreamData(nodeId) {
   const res = getNodeResult(nodeId)
-  if (!res || !res.output) return null
+  // An errored result is not reusable data: show its error (via getUpstreamError)
+  // and drop the "Has Data" badge, so the panel matches Execute Step's decision to
+  // re-run the whole chain rather than reuse this upstream output.
+  if (!res || res.error || !res.output) return null
   return res.output
 }
 

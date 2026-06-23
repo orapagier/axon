@@ -802,16 +802,16 @@ function handleRunNode(nodeId) {
   }
 }
 
-// True when every immediate upstream node of `nodeId` already has output data
-// from the last run. Used to decide whether "Execute Step" can run just this
-// node (reusing that cached data) instead of re-running the whole chain.
+// True when every immediate upstream node of `nodeId` has REUSABLE output data
+// from the last run. Used to decide whether "Execute Step" can run just this node
+// (reusing that cached data) instead of re-running the whole chain.
 //
-// The predicate MUST match NodeDetails' "Has Data" badge exactly (getUpstreamData:
-// a result counts only when its `output` is truthy). Previously this filtered by
-// `status !== 'error'` and ignored `output`, so a parent that errored but still
-// produced output — or any result whose status drifted from the panel — would show
-// "Has Data" yet fail this check, re-running the whole chain instead of just the
-// open node. Aligning on `!!r.output` keeps the two consistent.
+// A parent only provides reusable data when it produced output AND did not error
+// (`!!r.error` is the canonical error signal, same as updateNodeExecutionStates).
+// If any immediate parent errored or has no output, fall back to re-running the
+// whole chain so this node receives fresh, valid inputs. This matches NodeDetails'
+// "Has Data" badge (getUpstreamData), which is gated on the same two conditions —
+// so what the panel shows and what Execute Step does stay consistent.
 function immediateUpstreamHaveData(nodeId) {
   const parentIds = edges.value
     .filter(e => edgeTarget(e) === nodeId)
@@ -819,7 +819,7 @@ function immediateUpstreamHaveData(nodeId) {
   if (parentIds.length === 0) return true // no upstream → nothing to wait on
   const haveData = new Set(
     (lastRunResult.value?.node_results || [])
-      .filter(r => !!r.output)
+      .filter(r => !!r.output && !r.error)
       .map(r => String(r.node_id))
   )
   return parentIds.every(pid => haveData.has(String(pid)))
