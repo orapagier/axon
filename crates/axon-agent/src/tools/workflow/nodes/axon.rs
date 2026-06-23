@@ -39,14 +39,15 @@ pub(crate) fn execute_axon_node<'a>(
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
 
-        // Per-node sliding-window size: how many recent messages this node keeps.
+        // Per-node memory size, expressed as conversation INTERACTIONS (a pair of
+        // one user message + one assistant reply), matching n8n Simple Memory.
         // Accept a number or a numeric string (interpolation may stringify it).
-        // Defaults to 20 to match the UI default; clamped to >= 1.
-        let memory_window = config
+        // Defaults to 10 pairs; clamped to >= 1.
+        let memory_pairs = config
             .get("memory_window")
             .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())))
             .map(|n| n.max(1) as usize)
-            .unwrap_or(20);
+            .unwrap_or(10);
 
         // Extract optional tools selection
         let selected_tools: Vec<String> = config
@@ -99,7 +100,8 @@ pub(crate) fn execute_axon_node<'a>(
         );
         ctx.preferred_model = selected_model;
         ctx.memory_enabled = memory_enabled;
-        ctx.memory_window = Some(memory_window);
+        // Short-term memory caps individual messages, so a pair == 2 rows.
+        ctx.memory_window = Some(memory_pairs.saturating_mul(2));
 
         if !selected_tools.is_empty() {
             ctx.allowed_tools = Some(selected_tools);

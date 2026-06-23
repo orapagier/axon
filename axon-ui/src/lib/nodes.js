@@ -883,11 +883,11 @@ export const NODE_TYPES = {
                 description: 'Give this Axon node its own persistent conversation memory. Each node remembers its own history across runs; disable to make the node stateless.',
             },
             {
-                displayName: 'Messages to Remember',
+                displayName: 'Interactions to Remember',
                 name: 'memory_window',
                 type: 'number',
-                default: 20,
-                description: 'How many recent messages (user + assistant) this node keeps. Older messages drop off like a sliding window — same idea as n8n Simple Memory.',
+                default: 10,
+                description: "How many recent interactions this node keeps — one interaction is a user message plus the AI's reply. Older ones drop off like a sliding window, same as n8n Simple Memory.",
                 displayOptions: { show: { memory_enabled: [true] } },
             },
             {
