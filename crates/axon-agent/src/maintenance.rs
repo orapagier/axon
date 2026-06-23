@@ -23,7 +23,7 @@ use std::fmt;
 
 use crate::config::RuntimeSettings;
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, serde::Serialize)]
 pub struct RetentionStats {
     pub workflow_runs: usize,
     pub runs: usize,

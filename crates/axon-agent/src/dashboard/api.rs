@@ -661,6 +661,23 @@ pub async fn reload_tools(State(state): State<AppState>) -> Json<Value> {
     }
 }
 
+/// Run the database retention sweep on demand (same routine as the daily one).
+/// Blocking SQLite work runs off the async runtime.
+pub async fn run_retention_now(State(state): State<AppState>) -> Json<Value> {
+    let db = state.db.clone();
+    let settings = state.settings.clone();
+    match tokio::task::spawn_blocking(move || crate::maintenance::run_retention(&db, &settings))
+        .await
+    {
+        Ok(Ok(stats)) => {
+            let summary = stats.to_string();
+            Json(json!({"ok": true, "summary": summary, "stats": stats}))
+        }
+        Ok(Err(e)) => Json(json!({"ok": false, "error": e.to_string()})),
+        Err(e) => Json(json!({"ok": false, "error": format!("task join error: {e}")})),
+    }
+}
+
 pub async fn get_patterns(State(state): State<AppState>) -> Json<Value> {
     let pats = state.tool_router.all_patterns().await.unwrap_or_default();
     Json(json!({"patterns": pats}))

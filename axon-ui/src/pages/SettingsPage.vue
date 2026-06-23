@@ -10,6 +10,8 @@ const testMsg = ref('')
 const testResult = ref(null)
 const activeSection = ref('')
 const loaded = ref(false)
+const retentionRunning = ref(false)
+const retentionResult = ref('')
 
 const CATEGORY_META = {
   auth: { title: 'Authentication', description: 'Access control, tokens, and session security.' },
@@ -147,6 +149,20 @@ async function saveCategory(cat) {
   else toast('No changes to save', true)
 }
 
+async function runRetentionNow() {
+  if (retentionRunning.value) return
+  retentionRunning.value = true
+  retentionResult.value = ''
+  const r = await post('/retention/run')
+  retentionRunning.value = false
+  if (r.ok) {
+    retentionResult.value = r.summary || 'Cleanup complete'
+    toast('Cleanup complete', true)
+  } else {
+    toast(r.error || 'Cleanup failed', false)
+  }
+}
+
 function selectSection(id) {
   activeSection.value = id
 }
@@ -256,6 +272,12 @@ onMounted(load)
             <button class="btn btn-save" @click="saveCategory(activeCategory.key)">
               Save {{ activeCategory.meta.title }}
             </button>
+            <div v-if="activeCategory.key === 'retention'" class="retention-actions">
+              <span v-if="retentionResult" class="retention-result">{{ retentionResult }}</span>
+              <button class="btn" :disabled="retentionRunning" @click="runRetentionNow">
+                {{ retentionRunning ? 'Running…' : 'Run cleanup now' }}
+              </button>
+            </div>
           </div>
         </section>
 
@@ -488,6 +510,21 @@ onMounted(load)
   font-size: 14px;
   font-weight: 600;
   color: var(--muted);
+}
+
+.retention-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+
+.retention-result {
+  font-size: 12.5px;
+  color: var(--muted);
+  text-align: right;
+  max-width: 380px;
+  line-height: 1.4;
 }
 
 .editor-shell,

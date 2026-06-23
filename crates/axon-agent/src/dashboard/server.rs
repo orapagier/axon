@@ -56,6 +56,10 @@ pub fn build_router(state: AppState) -> Router {
             get(api::get_google_sheet_tabs),
         )
         .route("/api/tools/reload", axum::routing::post(api::reload_tools))
+        .route(
+            "/api/retention/run",
+            axum::routing::post(api::run_retention_now),
+        )
         .route("/api/tools/:name", axum::routing::put(api::toggle_tool))
         .route(
             "/api/patterns",
