@@ -1377,7 +1377,7 @@ export const NODE_TYPES = {
                 type: 'string',
                 default: '',
                 placeholder: '{{ $node["node"].file }}',
-                displayOptions: { show: { binary_data: [true] } },
+                displayOptions: { show: { operation: ['sendPhoto', 'sendVideo', 'sendAudio', 'sendDocument', 'sendAnimation', 'sendSticker'], binary_data: [true] } },
                 hint: 'Select the file object from the output of a previous node',
             },
             {
