@@ -684,7 +684,13 @@ fn resolve_value(s: &str, results: &std::collections::HashMap<String, NodeResult
     // match when the WHOLE trimmed field value is a single expression — this
     // is the form the drag-and-drop now emits (n8n-style, no brackets).
     static RE_PURE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r#"^\$?node\[['"](.+?)['"]\]\.([a-zA-Z0-9_\-\.\[\]]+)$"#).unwrap()
+        // Identifier class excludes quotes and `]` on purpose: with a permissive
+        // `(.+?)`, the `^...$` anchor would backtrack and let the identifier span
+        // TWO `$node[...]` refs in one field (e.g. `…routeOrigin to …routeDestination`),
+        // producing a bogus identifier that resolves to Null and silently writes
+        // nothing. Restricting it makes RE_PURE match only a genuine single
+        // expression; multi-ref values fall through to prose interpolation below.
+        Regex::new(r#"^\$?node\[['"]([^"'\]]+?)['"]\]\.([a-zA-Z0-9_\-\.\[\]]+)$"#).unwrap()
     });
     static RE_PURE_DOT: Lazy<Regex> = Lazy::new(|| {
         Regex::new(r#"^\$?node\.([a-zA-Z0-9_\-]+)\.([a-zA-Z0-9_\-\.\[\]]+)$"#).unwrap()
@@ -3373,5 +3379,24 @@ mod resolve_tests {
     fn missing_node_does_not_leak_token() {
         let out = resolve_value("x $node[\"Ghost\"].data.foo y", &results());
         assert_eq!(out, Value::String("x  y".to_string()));
+    }
+
+    // Regression: two whole-field $node[...] refs with text between them must BOTH
+    // resolve. The old anchored RE_PURE backtracked its `(.+?)` identifier across
+    // both refs, captured a bogus node name, and returned Null — so e.g. a Sheets
+    // batch_write cell silently wrote nothing while the action reported success.
+    #[test]
+    fn two_bare_references_both_resolve() {
+        let route = node(
+            "JavaScript 1",
+            json!({ "routeOrigin": "Manila", "routeDestination": "Cebu" }),
+        );
+        let mut m = HashMap::new();
+        m.insert(route.node_id.clone(), route);
+        let out = resolve_value(
+            "$node[\"JavaScript 1\"].data.routeOrigin to $node[\"JavaScript 1\"].data.routeDestination",
+            &m,
+        );
+        assert_eq!(out, Value::String("Manila to Cebu".to_string()));
     }
 }
