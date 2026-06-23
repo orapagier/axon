@@ -15,6 +15,7 @@ const CATEGORY_META = {
   auth: { title: 'Authentication', description: 'Access control, tokens, and session security.' },
   instagram: { title: 'Instagram Publishing', description: 'Media hosting URLs, bind address, TTL, and image/video processing waits.' },
   memory: { title: 'Memory', description: 'Retention, recall, and knowledge persistence behavior.' },
+  retention: { title: 'Database Retention', description: 'How long agent run history, tool observations, workflow runs, and webhook events are kept before the daily housekeeping sweep prunes them. Lower values keep the database smaller.' },
   router: { title: 'Router', description: 'Prompt routing and tool decision behavior.' },
   runtime: { title: 'Runtime', description: 'Execution defaults, timeouts, and runtime controls.' },
   scheduler: { title: 'Scheduler', description: 'Background jobs, polling cadence, and automation timing.' },
@@ -220,6 +221,26 @@ onMounted(load)
                   placeholder="Hidden value"
                 />
 
+                <label v-else-if="s.value_type === 'bool'" class="setting-toggle">
+                  <input
+                    type="checkbox"
+                    class="setting-toggle-input"
+                    :checked="s.draft === 'true'"
+                    @change="s.draft = $event.target.checked ? 'true' : 'false'"
+                  />
+                  <span class="setting-toggle-track"><span class="setting-toggle-thumb"></span></span>
+                  <span class="setting-toggle-text">{{ s.draft === 'true' ? 'On' : 'Off' }}</span>
+                </label>
+
+                <input
+                  v-else-if="s.value_type === 'int'"
+                  type="number"
+                  step="1"
+                  v-model="s.draft"
+                  class="premium-input setting-input"
+                  placeholder="0"
+                />
+
                 <input
                   v-else
                   type="text"
@@ -413,6 +434,60 @@ onMounted(load)
   min-height: 150px;
   resize: vertical;
   font-family: 'Consolas', 'SFMono-Regular', monospace;
+}
+
+.setting-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.setting-toggle-input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.setting-toggle-track {
+  position: relative;
+  width: 42px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--muted);
+  transition: background 0.15s ease;
+  flex-shrink: 0;
+}
+
+.setting-toggle-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.15s ease;
+}
+
+.setting-toggle-input:checked + .setting-toggle-track {
+  background: var(--accent);
+}
+
+.setting-toggle-input:checked + .setting-toggle-track .setting-toggle-thumb {
+  transform: translateX(18px);
+}
+
+.setting-toggle-input:focus-visible + .setting-toggle-track {
+  box-shadow: 0 0 0 3px var(--accentDim);
+}
+
+.setting-toggle-text {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
 }
 
 .editor-shell,
