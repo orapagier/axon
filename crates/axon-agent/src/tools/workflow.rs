@@ -3676,3 +3676,132 @@ mod resolve_tests {
         assert!(!out2.as_str().unwrap().contains("{{"));
     }
 }
+
+#[cfg(test)]
+mod upstream_cache_tests {
+    use super::{fold_prior_run_into_cache, NodeResult};
+    use serde_json::{json, Value};
+    use std::collections::{HashMap, HashSet};
+
+    fn nr(node_id: &str, status: &str, output: Value) -> NodeResult {
+        NodeResult {
+            node_id: node_id.to_string(),
+            node_name: node_id.to_string(),
+            node_type: "test".to_string(),
+            position: 0,
+            status: status.to_string(),
+            output,
+            duration_ms: 0,
+            error: if status == "error" {
+                Some("boom".into())
+            } else {
+                None
+            },
+        }
+    }
+
+    fn build(
+        runs_newest_first: Vec<Vec<NodeResult>>,
+        ids: &HashSet<&str>,
+    ) -> (HashMap<String, NodeResult>, Vec<NodeResult>) {
+        let mut node_results = HashMap::new();
+        let mut prior_ordered = Vec::new();
+        let mut seeded = false;
+        for run in runs_newest_first {
+            let complete = fold_prior_run_into_cache(
+                &mut node_results,
+                &mut prior_ordered,
+                run,
+                !seeded,
+                ids,
+            );
+            seeded = true;
+            if complete {
+                break;
+            }
+        }
+        (node_results, prior_ordered)
+    }
+
+    // THE bug: the immediately-previous run was a partial Execute Step on an
+    // unrelated node, so the newest finished run's node_results is just
+    // `[mcp_gmail]` — the Telegram trigger is absent. Backfill from the older
+    // full run must recover the trigger's real payload, so a following Execute
+    // Step finds it cached and never re-runs the trigger under "manual".
+    #[test]
+    fn partial_newest_run_does_not_strand_trigger() {
+        let ids: HashSet<&str> = ["trigger", "synapse", "telegram"].into_iter().collect();
+        let real_payload = json!({ "message": "hi", "chat": { "id": 42 } });
+        let (cache, prior) = build(
+            vec![
+                // newest: partial run on a since-removed/other-branch node
+                vec![nr("mcp_gmail", "error", json!({}))],
+                // older: the full run that captured the live Telegram payload
+                vec![
+                    nr("trigger", "success", real_payload.clone()),
+                    nr("synapse", "success", json!({ "body": "<html/>" })),
+                    nr("telegram", "success", json!({ "ok": true })),
+                ],
+            ],
+            &ids,
+        );
+        // Trigger recovered with its REAL payload, not {"trigger":"manual"}.
+        let t = cache.get("trigger").expect("trigger backfilled");
+        assert_eq!(t.status, "success");
+        assert_eq!(t.output, real_payload);
+        // And it lands in prior_ordered so a merged single-node save re-persists it.
+        assert!(prior.iter().any(|r| r.node_id == "trigger"));
+    }
+
+    // The newest run wins: a node present in the newest run is never overwritten
+    // by an older run's value for the same node.
+    #[test]
+    fn newest_value_is_not_overwritten_by_older() {
+        let ids: HashSet<&str> = ["trigger"].into_iter().collect();
+        let (cache, _) = build(
+            vec![
+                vec![nr("trigger", "success", json!({ "v": "new" }))],
+                vec![nr("trigger", "success", json!({ "v": "old" }))],
+            ],
+            &ids,
+        );
+        assert_eq!(cache["trigger"].output, json!({ "v": "new" }));
+    }
+
+    // Backfill is conservative: never resurrect an errored result, and never
+    // revive a node that no longer exists in the current graph.
+    #[test]
+    fn backfill_skips_errors_and_deleted_nodes() {
+        let ids: HashSet<&str> = ["trigger"].into_iter().collect();
+        let (cache, _) = build(
+            vec![
+                vec![nr("other", "success", json!({}))], // newest, missing trigger
+                vec![
+                    nr("trigger", "error", json!({})),        // errored -> not backfilled
+                    nr("deleted", "success", json!({ "x": 1 })), // not in graph -> skipped
+                ],
+            ],
+            &ids,
+        );
+        assert!(!cache.contains_key("trigger"));
+        assert!(!cache.contains_key("deleted"));
+    }
+
+    // Healthy path: when the newest run already covers every current node, the
+    // fold reports completion after one run so the caller stops parsing.
+    #[test]
+    fn complete_after_newest_when_all_present() {
+        let ids: HashSet<&str> = ["a", "b"].into_iter().collect();
+        let mut node_results = HashMap::new();
+        let mut prior_ordered = Vec::new();
+        let complete = fold_prior_run_into_cache(
+            &mut node_results,
+            &mut prior_ordered,
+            vec![nr("a", "success", json!({})), nr("b", "success", json!({}))],
+            true,
+            &ids,
+        );
+        assert!(complete);
+        assert_eq!(prior_ordered.len(), 2);
+    }
+}
