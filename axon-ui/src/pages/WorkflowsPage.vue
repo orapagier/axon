@@ -14,7 +14,8 @@ import { renameNodeInExpressions } from '../lib/expressionUpdates.js'
 // Ensure a node label is unique across the canvas. Duplicate labels break
 // $node["Name"] resolution (the resolver returns the first match) and
 // collide in the backend $node map, so this is load-bearing for
-// drag-and-drop variables. Append " 2", " 3", ... until free.
+// drag-and-drop variables. The first node of a name keeps it bare ("Axon");
+// the next ones become "Axon 1", "Axon 2", ... until free.
 function makeUniqueLabel(baseName, excludeId = null) {
   const taken = new Set(
     nodes.value
@@ -22,7 +23,7 @@ function makeUniqueLabel(baseName, excludeId = null) {
       .map(n => (n.data?.label || '').toLowerCase())
   )
   if (!taken.has(baseName.toLowerCase())) return baseName
-  let counter = 2
+  let counter = 1
   while (taken.has(`${baseName} ${counter}`.toLowerCase())) counter++
   return `${baseName} ${counter}`
 }
@@ -578,9 +579,10 @@ function addNode(type, position = { x: 250, y: 150 }, { save: shouldSave = true 
   const isTrigger = type === 'trigger' || nodes.value.length === 0
   const baseName = isTrigger
     ? 'When clicked'
-    : `${NODE_TYPES[type]?.displayName || 'Neuron'} ${nodes.value.filter(n => n.data?.node_type === type).length + 1}`
-  // Guard against post-delete collisions (e.g. delete "Synapse 1" then add
-  // another Synapse would otherwise both be "Synapse 2").
+    : (NODE_TYPES[type]?.displayName || 'Neuron')
+  // First node of a type keeps the bare name ("Axon"); the next ones become
+  // "Axon 1", "Axon 2", ... makeUniqueLabel also guards against post-delete
+  // collisions (e.g. delete "Axon 1" then add another would reuse "Axon 1").
   const displayName = makeUniqueLabel(baseName, id)
 
   const newNode = {
@@ -1278,10 +1280,41 @@ async function pasteWorkflow(pastedData = null) {
       dy = 60;
     }
 
+    // Pasted nodes need fresh UNIQUE names, not just fresh ids: $node["Name"]
+    // resolves by name (and the executor even seeds prior-run results), so a
+    // pasted "Axon" that kept its name would silently route expressions to the
+    // ORIGINAL "Axon". Re-base each pasted name (strip any trailing " N") and
+    // re-number from the bare name — first copy of a free name keeps it, the
+    // rest become "Name 1", "Name 2", ... Track names handed out within this
+    // same paste so a multi-node paste never assigns the same name twice.
+    const takenLabels = new Set(
+      nodes.value.map(n => (n.data?.label || '').toLowerCase())
+    )
+    const uniquePasteName = (rawName, nodeType) => {
+      const base = (rawName || '').replace(/\s+\d+$/, '').trim()
+        || (NODE_TYPES[nodeType]?.displayName || 'Neuron')
+      let name = base
+      if (takenLabels.has(name.toLowerCase())) {
+        let counter = 1
+        while (takenLabels.has(`${base} ${counter}`.toLowerCase())) counter++
+        name = `${base} ${counter}`
+      }
+      takenLabels.add(name.toLowerCase())
+      return name
+    }
+
+    // Renames collected so $node["old"] references can be repointed to the
+    // renamed copies below — and only those; refs to nodes outside the paste
+    // are left untouched.
+    const renames = [];
+
     const newNodes = data.nodes.map((n, i) => {
       const oldId = n.id;
       const newId = `node_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
       idMap[oldId] = newId;
+
+      const newName = uniquePasteName(n.name, n.node_type);
+      if (n.name && newName !== n.name) renames.push({ oldName: n.name, newName });
 
       return {
         id: newId,
@@ -1290,9 +1323,16 @@ async function pasteWorkflow(pastedData = null) {
           x: srcPositions[i].x + dx,
           y: srcPositions[i].y + dy,
         },
-        data: createNodeData(newId, n.node_type, n.name, n.config, n.enabled !== false)
+        data: createNodeData(newId, n.node_type, newName, n.config, n.enabled !== false)
       };
     });
+
+    // Repoint references among the pasted nodes to their renamed copies. Done
+    // in two phases via unique placeholders so a cascade — e.g. "Axon"->"Axon 1"
+    // while another pasted node is itself "Axon 1"->"Axon 2" — can't double-
+    // rewrite the same reference.
+    renames.forEach((r, i) => renameNodeInExpressions(newNodes, r.oldName, `__axonPasteTmp${i}__`));
+    renames.forEach((r, i) => renameNodeInExpressions(newNodes, `__axonPasteTmp${i}__`, r.newName));
 
     const newEdges = (data.edges || []).map(e => {
       const newId = `edge_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
@@ -1807,7 +1847,7 @@ function replaceNode(oldNodeId, newType) {
 
   const baseName = newType === 'trigger'
     ? 'When clicked'
-    : `${NODE_TYPES[newType]?.displayName || 'Neuron'} ${nodes.value.filter(n => n.data?.node_type === newType && n.id !== oldNodeId).length + 1}`
+    : (NODE_TYPES[newType]?.displayName || 'Neuron')
   const displayName = makeUniqueLabel(baseName, oldNodeId)
 
   const newData = createNodeData(oldNodeId, newType, displayName, getInitialConfig(newType))
