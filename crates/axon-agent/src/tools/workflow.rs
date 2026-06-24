@@ -1647,6 +1647,40 @@ fn merge_single_node_results(prior: &[NodeResult], fresh: &[NodeResult]) -> Vec<
     merged
 }
 
+/// Re-stamp each loaded result's `node_name`/`node_type` from the CURRENT graph,
+/// keyed by the stable `node_id`.
+///
+/// Cached upstream results (loaded for targeted / "Execute Step" runs, and reused
+/// verbatim by `reuse_cached_upstream`) carry the name the node had when that
+/// prior run executed. Because `$node["Name"]` references resolve by `node_name`,
+/// a node RENAMED since that run would no longer be found by its current name —
+/// the reference silently resolves to null (e.g. a renamed "Axon 2" caption comes
+/// through empty) even though the editor's preview still shows a value (the
+/// preview keys by current label → id → result, and `node_id` is rename-stable).
+///
+/// Re-stamping from the live `nodes` by id makes backend name resolution agree
+/// with the current graph and the preview. It also keeps the JS node's `$node`
+/// map (which is built from `node_name`) consistent for reused upstream nodes.
+fn restamp_result_identities(
+    results: &mut std::collections::HashMap<String, NodeResult>,
+    prior_ordered: &mut [NodeResult],
+    ordered_results: &mut [NodeResult],
+    nodes: &[WorkflowNode],
+) {
+    let id_to_node: std::collections::HashMap<&str, &WorkflowNode> =
+        nodes.iter().map(|n| (n.id.as_str(), n)).collect();
+    for r in results
+        .values_mut()
+        .chain(prior_ordered.iter_mut())
+        .chain(ordered_results.iter_mut())
+    {
+        if let Some(n) = id_to_node.get(r.node_id.as_str()) {
+            r.node_name = n.name.clone();
+            r.node_type = n.node_type.clone();
+        }
+    }
+}
+
 /// Fold one prior run's results into the upstream cache being assembled for a
 /// targeted ("Execute Step") run / expression fallback.
 ///
@@ -1902,6 +1936,21 @@ impl WorkflowEngine {
                 std::collections::HashSet::new()
             }
         };
+
+        // Align cached/loaded result identities with the CURRENT graph so that
+        // $node["Name"] references (resolved by node_name) still find a node that
+        // was renamed after the cached run produced its result. Without this, a
+        // reused upstream node keeps its stale stored name and references to its
+        // current name resolve to null — e.g. a Telegram caption that reads
+        // $node["Axon 2"].data.output comes through empty even though the editor
+        // preview shows the value.
+        restamp_result_identities(
+            &mut node_results,
+            &mut prior_ordered,
+            &mut ordered_results,
+            &nodes,
+        );
+
         let mut in_degree = std::collections::HashMap::new();
         // Counts how many *taken* (non-skipped-branch) inputs each node has
         // received. A node whose in-degree reaches 0 with no live inputs sits
@@ -3590,6 +3639,51 @@ mod resolve_tests {
             &m,
         );
         assert_eq!(out, Value::String("Manila to Cebu".to_string()));
+    }
+
+    // Repro of the empty-caption bug: a cached/reused upstream result carries the
+    // node_name it had on a PRIOR run; after the node was renamed to "Axon 2",
+    // $node["Axon 2"] no longer matches by name and the caption resolves to null.
+    // restamp_result_identities re-stamps the name from the current graph (by the
+    // stable node_id), after which the reference resolves again — matching what
+    // the editor preview shows.
+    #[test]
+    fn renamed_upstream_caption_resolves_after_restamp() {
+        use super::{restamp_result_identities, WorkflowNode};
+        use serde_json::json as j;
+
+        let node_id = "node_ai".to_string();
+
+        // Cached result stored under the node's OLD name ("Axon").
+        let mut stale = node("Axon", j!({ "output": "Boss Cham, here is the draft." }));
+        stale.node_id = node_id.clone();
+        let mut results = HashMap::new();
+        results.insert(node_id.clone(), stale);
+
+        // Before re-stamping, the current name does not resolve.
+        let before = resolve_value("$node[\"Axon 2\"].data.output", &results);
+        assert_eq!(before, Value::Null);
+
+        // Current graph: the same node id is now named "Axon 2".
+        let nodes = vec![WorkflowNode {
+            id: node_id.clone(),
+            workflow_id: "wf".into(),
+            position: 0,
+            position_x: 0.0,
+            position_y: 0.0,
+            node_type: "axon".into(),
+            name: "Axon 2".into(),
+            config: j!({}),
+            enabled: true,
+            continue_on_fail: false,
+        }];
+        restamp_result_identities(&mut results, &mut [], &mut [], &nodes);
+
+        let after = resolve_value("$node[\"Axon 2\"].data.output", &results);
+        assert_eq!(
+            after,
+            Value::String("Boss Cham, here is the draft.".to_string())
+        );
     }
 
     // Generality: the fix is not Sheets- or node-specific. Any field on any node
