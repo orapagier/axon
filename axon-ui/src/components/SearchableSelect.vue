@@ -1,5 +1,5 @@
 ﻿<script setup>
-import { ref, watch, computed } from 'vue'
+import { ref, watch, computed, nextTick, onBeforeUnmount } from 'vue'
 
 const props = defineProps({
   modelValue: { type: [String, Number], default: '' },
@@ -13,6 +13,58 @@ const emit = defineEmits(['update:modelValue'])
 const isOpen = ref(false)
 const searchTerm = ref('')
 const inputRef = ref(null)
+
+// The dropdown is teleported to <body> and positioned with `fixed` coordinates
+// derived from the input. This escapes the parent panel's `overflow: auto`
+// clipping, which previously buried the list below the edge of the screen. We
+// also flip it upward when there isn't enough room below.
+const dropdownStyle = ref({})
+const dropUp = ref(false)
+const MAX_DROPDOWN_HEIGHT = 260
+
+function positionDropdown() {
+  const el = inputRef.value
+  if (!el) return
+  const rect = el.getBoundingClientRect()
+  const gap = 4
+  const margin = 8
+  const viewportH = window.innerHeight
+  const spaceBelow = viewportH - rect.bottom
+  const spaceAbove = rect.top
+
+  // Open upward only when below is cramped AND above has more room.
+  const up = spaceBelow < Math.min(MAX_DROPDOWN_HEIGHT, 200) && spaceAbove > spaceBelow
+  const avail = up ? spaceAbove : spaceBelow
+  const maxHeight = Math.max(120, Math.min(MAX_DROPDOWN_HEIGHT, avail - margin - gap))
+
+  dropUp.value = up
+  dropdownStyle.value = {
+    position: 'fixed',
+    left: `${rect.left}px`,
+    width: `${rect.width}px`,
+    maxHeight: `${maxHeight}px`,
+    ...(up
+      ? { bottom: `${viewportH - rect.top + gap}px` }
+      : { top: `${rect.bottom + gap}px` }),
+  }
+}
+
+// Keep the dropdown glued to the input while it's open (page/panel scroll, resize).
+watch(isOpen, (open) => {
+  if (open) {
+    nextTick(positionDropdown)
+    window.addEventListener('scroll', positionDropdown, true)
+    window.addEventListener('resize', positionDropdown)
+  } else {
+    window.removeEventListener('scroll', positionDropdown, true)
+    window.removeEventListener('resize', positionDropdown)
+  }
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('scroll', positionDropdown, true)
+  window.removeEventListener('resize', positionDropdown)
+})
 
 const selectedOption = computed(() => props.options.find((o) => o.value === props.modelValue))
 
@@ -133,19 +185,21 @@ function onEnter() {
     />
     <span class="ss-arrow">▼</span>
 
-    <div v-if="isOpen" class="ss-dropdown">
-      <div v-if="filteredOptions.length === 0" class="ss-no-results">No matches found</div>
-      <div
-        v-for="opt in filteredOptions"
-        :key="opt.value"
-        class="ss-option"
-        :class="{ 'ss-selected': opt.value === modelValue }"
-        @mousedown.prevent="selectOption(opt.value, opt.name)"
-      >
-        <div class="ss-option-main">{{ opt.name }}</div>
-        <div v-if="opt.description" class="ss-option-description">{{ opt.description }}</div>
+    <Teleport to="body">
+      <div v-if="isOpen" class="ss-dropdown" :class="{ 'ss-drop-up': dropUp }" :style="dropdownStyle">
+        <div v-if="filteredOptions.length === 0" class="ss-no-results">No matches found</div>
+        <div
+          v-for="opt in filteredOptions"
+          :key="opt.value"
+          class="ss-option"
+          :class="{ 'ss-selected': opt.value === modelValue }"
+          @mousedown.prevent="selectOption(opt.value, opt.name)"
+        >
+          <div class="ss-option-main">{{ opt.name }}</div>
+          <div v-if="opt.description" class="ss-option-description">{{ opt.description }}</div>
+        </div>
       </div>
-    </div>
+    </Teleport>
   </div>
 </template>
 
@@ -180,18 +234,17 @@ function onEnter() {
   color: #8b949e;
   pointer-events: none;
 }
+/* Position (fixed top/left/width/max-height) is supplied inline by
+   positionDropdown(); teleported to <body> so it escapes panel clipping. */
 .ss-dropdown {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  width: 100%;
-  max-height: 250px;
+  position: fixed;
+  max-height: 260px;
   overflow-y: auto;
   background: #1b1b20;
   border: 1px solid #6366f1;
   border-radius: 8px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
-  z-index: 1001;
+  z-index: 13000;
 }
 .ss-option {
   padding: 8px 12px;

@@ -2017,9 +2017,13 @@ onUnmounted(() => {
   font-size: 10px; font-weight: 700;
   color: #a6a6b2; text-transform: uppercase; letter-spacing: 0.07em;
   padding: 0 8px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* Wrap long field names onto multiple lines instead of truncating with an
+     ellipsis — the 120px label column was clipping names so they were
+     unreadable. align-items:center on .form-row keeps the input centered. */
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  line-height: 1.25;
 }
 /* For stacked rows (textarea), let label sit flush left without side padding */
 .form-row.row-string > label {
