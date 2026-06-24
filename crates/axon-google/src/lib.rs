@@ -60,8 +60,8 @@ impl GoogleService {
             // Gmail
             Tool { name: "gmail_list".into(),       description: "List Gmail messages. Returns id, subject, from, date, snippet.".into(),          input_schema: schema!({"max_results":{"type":"integer","default":10,"description":"Max messages (max 10)"},"query":{"type":"string","description":"Gmail search query, e.g. 'is:unread from:boss@co.com'"}}, []) },
             Tool { name: "gmail_get".into(),        description: "Get a full Gmail message including decoded body.".into(),                         input_schema: schema!({"id":{"type":"string","description":"Message ID"}}, ["id"]) },
-            Tool { name: "gmail_send".into(),       description: "Send a Gmail email.".into(),                                                     input_schema: schema!({"to":{"type":"string"},"subject":{"type":"string"},"body":{"type":"string"},"cc":{"type":"string"},"bcc":{"type":"string"}}, ["to","subject","body"]) },
-            Tool { name: "gmail_reply".into(),      description: "Reply to a Gmail message thread.".into(),                                        input_schema: schema!({"thread_id":{"type":"string"},"message_id":{"type":"string"},"to":{"type":"string"},"subject":{"type":"string"},"body":{"type":"string"}}, ["thread_id","message_id","to","subject","body"]) },
+            Tool { name: "gmail_send".into(),       description: "Send a Gmail email, optionally with a file attachment.".into(),                  input_schema: schema!({"to":{"type":"string"},"subject":{"type":"string"},"body":{"type":"string"},"cc":{"type":"string"},"bcc":{"type":"string"},"send_attachment":{"type":"boolean","default":false,"title":"Send Attachment","description":"Toggle on to attach a file from a local/server path"},"attachment_path":{"type":"string","title":"Attachment Path","description":"Local/server file path to attach (e.g. /data/files/quote.pdf)","displayOptions":{"show":{"send_attachment":[true]}}}}, ["to","subject","body"]) },
+            Tool { name: "gmail_reply".into(),      description: "Reply to a Gmail message thread, optionally with a file attachment. Pass the original message_id (Gmail id or RFC Message-ID); thread_id/subject are derived when omitted.".into(), input_schema: schema!({"message_id":{"type":"string"},"to":{"type":"string"},"body":{"type":"string"},"subject":{"type":"string"},"thread_id":{"type":"string"},"send_attachment":{"type":"boolean","default":false,"title":"Send Attachment","description":"Toggle on to attach a file from a local/server path"},"attachment_path":{"type":"string","title":"Attachment Path","description":"Local/server file path to attach","displayOptions":{"show":{"send_attachment":[true]}}}}, ["message_id","to","body"]) },
             Tool { name: "gmail_search".into(),     description: "Search Gmail messages by query string. Limited to 10 results.".into(),           input_schema: schema!({"query":{"type":"string"},"max_results":{"type":"integer","default":10}}, ["query"]) },
             Tool { name: "gmail_trash".into(),      description: "Move a Gmail message to trash.".into(),                                          input_schema: schema!({"id":{"type":"string"}}, ["id"]) },
             Tool { name: "gmail_mark_read".into(),  description: "Mark Gmail messages as read.".into(),                                            input_schema: schema!({"ids":{"type":"array","items":{"type":"string"}}}, ["ids"]) },
@@ -269,24 +269,42 @@ impl GoogleService {
             }
             "gmail_get" => gmail::get(&self.0, s("id")?).await,
             "gmail_send" => {
-                gmail::send(
-                    &self.0,
-                    s("to")?,
-                    s("subject")?,
-                    s("body")?,
-                    a.get("cc").and_then(|v| v.as_str()),
-                    a.get("bcc").and_then(|v| v.as_str()),
-                )
-                .await
+                let cc = a.get("cc").and_then(|v| v.as_str());
+                let bcc = a.get("bcc").and_then(|v| v.as_str());
+                let attach = a
+                    .get("attachment_path")
+                    .and_then(|v| v.as_str())
+                    .filter(|p| !p.is_empty());
+                let want_attach = a.get("send_attachment").map(truthy).unwrap_or(false);
+                match attach.filter(|_| want_attach) {
+                    Some(path) => {
+                        gmail::send_with_attachment(
+                            &self.0,
+                            s("to")?,
+                            s("subject")?,
+                            s("body")?,
+                            path,
+                            cc,
+                            bcc,
+                        )
+                        .await
+                    }
+                    None => gmail::send(&self.0, s("to")?, s("subject")?, s("body")?, cc, bcc).await,
+                }
             }
             "gmail_reply" => {
+                let attach = a
+                    .get("attachment_path")
+                    .and_then(|v| v.as_str())
+                    .filter(|p| !p.is_empty() && a.get("send_attachment").map(truthy).unwrap_or(false));
                 gmail::reply(
                     &self.0,
-                    s("thread_id")?,
+                    a.get("thread_id").and_then(|v| v.as_str()).unwrap_or(""),
                     s("message_id")?,
                     s("to")?,
-                    s("subject")?,
+                    a.get("subject").and_then(|v| v.as_str()).unwrap_or(""),
                     s("body")?,
+                    attach,
                 )
                 .await
             }
@@ -970,6 +988,21 @@ fn scalar_to_string(v: &Value) -> Option<String> {
         Value::Number(n) => Some(n.to_string()),
         Value::Bool(b) => Some(b.to_string()),
         _ => None,
+    }
+}
+
+/// Interpret a config toggle that the UI/LLM may send as a real bool, or as a
+/// string/number ("true"/"1"/"yes"/"on") — workflow nodes and serializers are
+/// inconsistent about boolean encoding.
+fn truthy(v: &Value) -> bool {
+    match v {
+        Value::Bool(b) => *b,
+        Value::Number(n) => n.as_i64() == Some(1),
+        Value::String(s) => matches!(
+            s.trim().to_ascii_lowercase().as_str(),
+            "true" | "1" | "yes" | "on"
+        ),
+        _ => false,
     }
 }
 

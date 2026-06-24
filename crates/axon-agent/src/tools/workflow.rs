@@ -1786,18 +1786,80 @@ impl WorkflowEngine {
                 rs.completed
             }
             None => {
-                // [New feature]: Load latest results from DB as fallback for expressions for skipped/unconnected nodes.
+                // Load cached results from prior runs as the upstream snapshot for
+                // targeted ("Execute Step") runs and as an expression fallback for
+                // skipped/unconnected nodes.
+                //
+                // We deliberately do NOT trust a single "latest run". A targeted run
+                // on a node that is NOT a descendant of the trigger — a different
+                // branch, a disconnected/since-deleted node, or one that errored
+                // before its branch reached the trigger — persists a node_results
+                // array containing only that node, with the trigger ABSENT (verified
+                // in production: partial runs save e.g. just `[mcp_gmail]`). If that
+                // partial run were the sole cache source, the next Execute Step on a
+                // trigger-descendant would find no cached trigger result, fail both
+                // the single_node_ready and reuse_cached_upstream gates, and re-run
+                // the one-shot Telegram/Gmail/WhatsApp Stimulus under
+                // trigger_source="manual" — overwriting its real captured payload
+                // with {"trigger":"manual"}. That is the intermittent "trigger flips
+                // to manual" bug, and it is intermittent precisely because it only
+                // bites when the *previous* run happened to be such a partial run.
+                //
+                // Fix: seed from the newest finished run, then BACKFILL any node
+                // missing from it with that node's most recent *successful* result
+                // from older runs. In the healthy case the newest run already has
+                // every node, the early-exit fires after one parse, and behavior is
+                // unchanged; only when a recent partial run dropped a node (like the
+                // trigger) do we recover its last good payload — so the trigger keeps
+                // its data across Execute Step clicks on unrelated nodes.
                 if let Ok(conn) = state.db.get() {
-                    if let Ok(last_results_str) = conn.query_row(
-                        "SELECT node_results FROM workflow_runs WHERE workflow_id = ?1 AND id != ?2 AND status IN ('success','error') ORDER BY started_at DESC LIMIT 1",
-                        rusqlite::params![workflow_id, run_id],
-                        |r| r.get::<_, String>(0)
+                    if let Ok(mut stmt) = conn.prepare(
+                        "SELECT node_results FROM workflow_runs \
+                         WHERE workflow_id = ?1 AND id != ?2 AND status IN ('success','error') \
+                         ORDER BY started_at DESC LIMIT 25",
                     ) {
-                        if let Ok(last_results) = serde_json::from_str::<Vec<NodeResult>>(&last_results_str) {
-                            for r in &last_results {
-                                node_results.insert(r.node_id.clone(), r.clone());
+                        let rows = stmt
+                            .query_map(rusqlite::params![workflow_id, run_id], |r| {
+                                r.get::<_, String>(0)
+                            })
+                            .map(|m| m.filter_map(|x| x.ok()).collect::<Vec<String>>())
+                            .unwrap_or_default();
+
+                        for (idx, results_str) in rows.iter().enumerate() {
+                            let Ok(results) =
+                                serde_json::from_str::<Vec<NodeResult>>(results_str)
+                            else {
+                                continue;
+                            };
+                            if idx == 0 {
+                                // Newest run: mirror it verbatim (preserves prior
+                                // behavior, including ordering and any error/skipped
+                                // results it carried).
+                                for r in &results {
+                                    node_results.insert(r.node_id.clone(), r.clone());
+                                }
+                                prior_ordered = results;
+                            } else {
+                                // Older runs: only fill gaps, only with successful
+                                // results (never resurrect an errored/skipped node as
+                                // if it had data — matches reuse_cached_upstream's
+                                // success gate), and only for nodes that still exist
+                                // in the current graph (don't revive deleted nodes).
+                                for r in &results {
+                                    if r.status == "success"
+                                        && !node_results.contains_key(&r.node_id)
+                                        && nodes.iter().any(|n| n.id == r.node_id)
+                                    {
+                                        node_results.insert(r.node_id.clone(), r.clone());
+                                        prior_ordered.push(r.clone());
+                                    }
+                                }
                             }
-                            prior_ordered = last_results;
+                            // Once every current node has a cached result, older runs
+                            // can add nothing more — stop parsing.
+                            if nodes.iter().all(|n| node_results.contains_key(&n.id)) {
+                                break;
+                            }
                         }
                     }
                 }

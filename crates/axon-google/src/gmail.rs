@@ -10,6 +10,78 @@ use crate::auth::access_token;
 
 const BASE: &str = "https://gmail.googleapis.com/gmail/v1/users/me";
 
+/// Options for assembling a raw RFC 2822 message. `in_reply_to` must already be
+/// a bracketed RFC Message-ID (`<id@host>`); when set it adds the
+/// In-Reply-To/References headers Gmail needs to thread a reply.
+/// `attachment_path` switches the body to multipart/mixed with the file attached.
+struct MimeOptions<'a> {
+    to: &'a str,
+    subject: &'a str,
+    body: &'a str,
+    cc: Option<&'a str>,
+    bcc: Option<&'a str>,
+    in_reply_to: Option<&'a str>,
+    attachment_path: Option<&'a str>,
+}
+
+/// Build a base64url-encoded raw message for the Gmail `messages.send`/`drafts`
+/// endpoints, with optional Cc/Bcc, reply-threading headers, and a single file
+/// attachment. Centralizes MIME assembly so send, reply, attachment-send and
+/// drafts stay byte-for-byte consistent.
+fn build_raw_message(opts: &MimeOptions) -> Result<String> {
+    let mut headers = vec![
+        format!("To: {}", opts.to),
+        format!("Subject: {}", opts.subject),
+        "MIME-Version: 1.0".to_owned(),
+    ];
+    if let Some(cc) = opts.cc.filter(|s| !s.is_empty()) {
+        headers.push(format!("Cc: {cc}"));
+    }
+    if let Some(bcc) = opts.bcc.filter(|s| !s.is_empty()) {
+        headers.push(format!("Bcc: {bcc}"));
+    }
+    if let Some(irt) = opts.in_reply_to.filter(|s| !s.is_empty()) {
+        headers.push(format!("In-Reply-To: {irt}"));
+        headers.push(format!("References: {irt}"));
+    }
+
+    match opts.attachment_path.filter(|p| !p.is_empty()) {
+        Some(path) => {
+            let data = std::fs::read(path)
+                .map_err(|e| anyhow::anyhow!("Failed to read attachment '{path}': {e}"))?;
+            let filename = std::path::Path::new(path)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy();
+            let encoded_file = base64::engine::general_purpose::STANDARD.encode(data);
+            let boundary = "axon_gmail_boundary";
+            headers.push(format!(
+                "Content-Type: multipart/mixed; boundary=\"{boundary}\""
+            ));
+            let header_block = headers.join("\r\n");
+            let raw = format!(
+                "{header_block}\r\n\r\n\
+--{boundary}\r\n\
+Content-Type: text/plain; charset=utf-8\r\n\r\n\
+{body}\r\n\
+--{boundary}\r\n\
+Content-Type: application/octet-stream\r\n\
+Content-Disposition: attachment; filename=\"{filename}\"\r\n\
+Content-Transfer-Encoding: base64\r\n\r\n\
+{encoded_file}\r\n\
+--{boundary}--",
+                body = opts.body,
+            );
+            Ok(URL_SAFE_NO_PAD.encode(raw))
+        }
+        None => {
+            headers.push("Content-Type: text/plain; charset=utf-8".to_owned());
+            let raw = format!("{}\r\n\r\n{}", headers.join("\r\n"), opts.body);
+            Ok(URL_SAFE_NO_PAD.encode(raw))
+        }
+    }
+}
+
 pub async fn list(state: &AppState, max_results: u32, query: Option<&str>) -> Result<Value> {
     let tok = access_token(state).await?;
     let mut params = vec![("maxResults", max_results.to_string())];
@@ -178,22 +250,15 @@ pub async fn send(
     bcc: Option<&str>,
 ) -> Result<Value> {
     let tok = access_token(state).await?;
-    let mut lines = vec![
-        format!("To: {to}"),
-        format!("Subject: {subject}"),
-        "Content-Type: text/plain; charset=utf-8".to_owned(),
-        "MIME-Version: 1.0".to_owned(),
-    ];
-    if let Some(cc) = cc {
-        lines.push(format!("Cc: {cc}"));
-    }
-    if let Some(bcc) = bcc {
-        lines.push(format!("Bcc: {bcc}"));
-    }
-    lines.push(String::new());
-    lines.push(body.to_owned());
-
-    let raw = URL_SAFE_NO_PAD.encode(lines.join("\r\n"));
+    let raw = build_raw_message(&MimeOptions {
+        to,
+        subject,
+        body,
+        cc,
+        bcc,
+        in_reply_to: None,
+        attachment_path: None,
+    })?;
     let resp: Value = state
         .client
         .post(format!("{BASE}/messages/send"))
@@ -217,42 +282,15 @@ pub async fn send_with_attachment(
     bcc: Option<&str>,
 ) -> Result<Value> {
     let tok = access_token(state).await?;
-    let data = std::fs::read(local_path)?;
-    let filename = std::path::Path::new(local_path)
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy();
-    let encoded_file = base64::engine::general_purpose::STANDARD.encode(data);
-
-    let boundary = "axon_gmail_boundary";
-    let mut header_lines = format!(
-        "To: {to}\r\nSubject: {subject}\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"{boundary}\""
-    );
-    if let Some(cc) = cc {
-        header_lines.push_str(&format!("\r\nCc: {cc}"));
-    }
-    if let Some(bcc) = bcc {
-        header_lines.push_str(&format!("\r\nBcc: {bcc}"));
-    }
-
-    let mut raw_body = Vec::new();
-    raw_body.extend_from_slice(
-        format!(
-            "{header_lines}\r\n\r\n\
---{boundary}\r\n\
-Content-Type: text/plain; charset=utf-8\r\n\r\n\
-{body}\r\n\
---{boundary}\r\n\
-Content-Type: application/octet-stream\r\n\
-Content-Disposition: attachment; filename=\"{filename}\"\r\n\
-Content-Transfer-Encoding: base64\r\n\r\n\
-{encoded_file}\r\n\
---{boundary}--"
-        )
-        .as_bytes(),
-    );
-
-    let raw = URL_SAFE_NO_PAD.encode(raw_body);
+    let raw = build_raw_message(&MimeOptions {
+        to,
+        subject,
+        body,
+        cc,
+        bcc,
+        in_reply_to: None,
+        attachment_path: Some(local_path),
+    })?;
     let resp: Value = state
         .client
         .post(format!("{BASE}/messages/send"))
@@ -273,31 +311,70 @@ pub async fn reply(
     to: &str,
     subject: &str,
     body: &str,
+    attachment_path: Option<&str>,
 ) -> Result<Value> {
     let tok = access_token(state).await?;
-    let lines = vec![
-        format!("To: {to}"),
-        format!(
-            "Subject: {}",
-            if subject.to_lowercase().starts_with("re:") {
-                subject.to_owned()
-            } else {
-                format!("Re: {subject}")
-            }
-        ),
-        format!("In-Reply-To: {message_id}"),
-        format!("References: {message_id}"),
-        "Content-Type: text/plain; charset=utf-8".to_owned(),
-        "MIME-Version: 1.0".to_owned(),
-        String::new(),
-        body.to_owned(),
-    ];
-    let raw = URL_SAFE_NO_PAD.encode(lines.join("\r\n"));
+
+    // Gmail attaches a reply to a thread only when In-Reply-To/References carry
+    // the original message's RFC822 Message-ID (e.g. <CA+x@mail.gmail.com>) AND
+    // the Subject matches. Workflows almost always pass Gmail's *API* id (from a
+    // list/get/trigger node), which is NOT a valid Message-ID — so without
+    // resolving it the reply lands as a brand-new conversation. When the id
+    // isn't already an RFC message-id, fetch the original to recover its real
+    // Message-ID, threadId and Subject.
+    let provided = message_id.trim();
+    let (rfc_id, resolved_thread, subject_src) = if provided.contains('@') {
+        (provided.to_string(), thread_id.to_string(), subject.to_string())
+    } else if provided.is_empty() {
+        (String::new(), thread_id.to_string(), subject.to_string())
+    } else {
+        match get(state, provided).await {
+            Ok(orig) => (
+                orig["messageId"].as_str().unwrap_or_default().to_string(),
+                orig["threadId"].as_str().unwrap_or(thread_id).to_string(),
+                if subject.trim().is_empty() {
+                    orig["subject"].as_str().unwrap_or_default().to_string()
+                } else {
+                    subject.to_string()
+                },
+            ),
+            Err(_) => (String::new(), thread_id.to_string(), subject.to_string()),
+        }
+    };
+
+    // Normalize to a bracketed RFC 2822 message-id.
+    let in_reply_to = if rfc_id.is_empty() || rfc_id.starts_with('<') {
+        rfc_id.clone()
+    } else {
+        format!("<{rfc_id}>")
+    };
+
+    let reply_subject = if subject_src.to_lowercase().starts_with("re:") {
+        subject_src.clone()
+    } else {
+        format!("Re: {subject_src}")
+    };
+
+    let raw = build_raw_message(&MimeOptions {
+        to,
+        subject: &reply_subject,
+        body,
+        cc: None,
+        bcc: None,
+        in_reply_to: Some(&in_reply_to),
+        attachment_path,
+    })?;
+
+    let send_thread = if resolved_thread.trim().is_empty() {
+        thread_id
+    } else {
+        resolved_thread.as_str()
+    };
     let resp: Value = state
         .client
         .post(format!("{BASE}/messages/send"))
         .bearer_auth(&tok)
-        .json(&json!({ "raw": raw, "threadId": thread_id }))
+        .json(&json!({ "raw": raw, "threadId": send_thread }))
         .send()
         .await?
         .ensure_ok().await?
@@ -451,30 +528,6 @@ pub async fn forward(
 
 // ── Drafts ────────────────────────────────────────────────────────────────────
 
-fn build_raw_mime(
-    to: &str,
-    subject: &str,
-    body: &str,
-    cc: Option<&str>,
-    bcc: Option<&str>,
-) -> String {
-    let mut lines = vec![
-        format!("To: {to}"),
-        format!("Subject: {subject}"),
-        "Content-Type: text/plain; charset=utf-8".to_owned(),
-        "MIME-Version: 1.0".to_owned(),
-    ];
-    if let Some(cc) = cc {
-        lines.push(format!("Cc: {cc}"));
-    }
-    if let Some(bcc) = bcc {
-        lines.push(format!("Bcc: {bcc}"));
-    }
-    lines.push(String::new());
-    lines.push(body.to_owned());
-    URL_SAFE_NO_PAD.encode(lines.join("\r\n"))
-}
-
 pub async fn create_draft(
     state: &AppState,
     to: &str,
@@ -484,7 +537,15 @@ pub async fn create_draft(
     bcc: Option<&str>,
 ) -> Result<Value> {
     let tok = access_token(state).await?;
-    let raw = build_raw_mime(to, subject, body, cc, bcc);
+    let raw = build_raw_message(&MimeOptions {
+        to,
+        subject,
+        body,
+        cc,
+        bcc,
+        in_reply_to: None,
+        attachment_path: None,
+    })?;
     let resp: Value = state
         .client
         .post(format!("{BASE}/drafts"))
@@ -539,7 +600,15 @@ pub async fn update_draft(
     bcc: Option<&str>,
 ) -> Result<Value> {
     let tok = access_token(state).await?;
-    let raw = build_raw_mime(to, subject, body, cc, bcc);
+    let raw = build_raw_message(&MimeOptions {
+        to,
+        subject,
+        body,
+        cc,
+        bcc,
+        in_reply_to: None,
+        attachment_path: None,
+    })?;
     let resp: Value = state
         .client
         .put(format!("{BASE}/drafts/{draft_id}"))
