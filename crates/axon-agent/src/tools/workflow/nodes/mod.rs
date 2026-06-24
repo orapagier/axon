@@ -12,6 +12,7 @@
 //! subsystem cleanly is a separate follow-up.
 
 pub(crate) mod axon;
+pub(crate) mod classifier;
 pub(crate) mod condition;
 pub(crate) mod fovea;
 pub(crate) mod iterate;
