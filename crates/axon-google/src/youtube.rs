@@ -8,6 +8,26 @@ use std::sync::Arc;
 const BASE: &str = "https://www.googleapis.com/youtube/v3";
 const UPLOAD_BASE: &str = "https://www.googleapis.com/upload/youtube/v3";
 
+/// Resolve the app's `data/files` staging directory for downloaded media.
+///
+/// Mirrors the resolution used elsewhere in the app (`files::staging_dir`,
+/// `image_tool::app_data_files_dir`): honor `AXON_DATA_DIR` when set, otherwise
+/// fall back to the relative `data/files` directory the app creates at startup.
+/// `axon-google` cannot call `axon-agent`'s helper (that would be a circular
+/// dependency), so the minimal env-or-relative logic is replicated here.
+fn data_files_dir() -> std::path::PathBuf {
+    if let Ok(dir) = std::env::var("AXON_DATA_DIR") {
+        let base = std::path::PathBuf::from(dir);
+        // Accept a path that already points at the `files` dir; otherwise use the
+        // conventional `<AXON_DATA_DIR>/files` staging sub-dir.
+        if base.file_name().and_then(|n| n.to_str()) == Some("files") {
+            return base;
+        }
+        return base.join("files");
+    }
+    std::path::PathBuf::from("data/files")
+}
+
 struct ActionSpec {
     tool: &'static str,
     description: &'static str,
@@ -456,7 +476,9 @@ const ACTIONS: &[ActionSpec] = &[
     },
     ActionSpec {
         tool: "gyoutube_search_list",
-        description: "YouTube search.list: run a text search across YouTube resources.",
+        description: "YouTube search.list: search across YouTube resources. 'q' (text query) is \
+                      optional — you can also search by channelId, order (e.g. date for latest \
+                      uploads), type, publishedAfter, etc.",
         method: "GET",
         path: "/search",
         requires_part: true,
@@ -464,7 +486,7 @@ const ACTIONS: &[ActionSpec] = &[
         media_required: false,
         returns_binary: false,
         path_params: &[],
-        required_query: &["q"],
+        required_query: &[],
     },
     ActionSpec {
         tool: "gyoutube_subscriptions_list",
@@ -824,7 +846,8 @@ async fn call_action(
     let url = format!("{url_base}{path}");
 
     let response = if let Some(file_path) = upload_path {
-        let bytes = std::fs::read(&file_path)
+        let bytes = tokio::fs::read(&file_path)
+            .await
             .map_err(|e| anyhow!("failed to read upload_file_path '{file_path}': {e}"))?;
         let mime = opt_string_arg(args, "upload_mime_type")
             .unwrap_or_else(|| "application/octet-stream".to_string());
@@ -907,11 +930,11 @@ async fn call_action(
         let filename = opt_string_arg(args, "download_filename")
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| format!("{}_download.bin", spec.tool));
-        let download_dir = std::path::PathBuf::from("/data/files");
-        std::fs::create_dir_all(&download_dir)?;
+        let download_dir = data_files_dir();
+        tokio::fs::create_dir_all(&download_dir).await?;
         let path = download_dir.join(&filename);
         let bytes = response.bytes().await?;
-        std::fs::write(&path, &bytes)?;
+        tokio::fs::write(&path, &bytes).await?;
         return Ok(json!({
             "success": true,
             "name": filename,

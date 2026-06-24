@@ -1628,6 +1628,8 @@ async fn execute_node_by_type(
         "myelin" => crate::tools::myelin::execute_myelin_node(state, config).await,
         "telegram" => crate::tools::telegram::execute_telegram_node(config).await,
         "whatsapp" => crate::tools::whatsapp::execute_whatsapp_node(config).await,
+        "discord" => nodes::discord::execute(config).await,
+        "slack" => nodes::slack::execute(config).await,
         "shell" => nodes::shell::execute(config).await,
         "javascript" => {
             // Sort by position for deterministic $results[N] ordering.

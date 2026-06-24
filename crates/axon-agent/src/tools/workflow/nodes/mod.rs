@@ -14,11 +14,13 @@
 pub(crate) mod axon;
 pub(crate) mod classifier;
 pub(crate) mod condition;
+pub(crate) mod discord;
 pub(crate) mod fovea;
 pub(crate) mod iterate;
 pub(crate) mod mcp;
 pub(crate) mod nociceptor;
 pub(crate) mod shell;
+pub(crate) mod slack;
 pub(crate) mod synapse;
 pub(crate) mod trigger;
 pub(crate) mod wait;
