@@ -1,0 +1,55 @@
+# cargo-deny configuration for Axon.
+#
+# Axon is licensed under AGPL-3.0. This file audits the third-party Rust
+# dependency tree to make sure every crate we pull in carries a license that
+# is compatible with AGPL-3.0 (i.e. permissive or weak-copyleft code that can
+# legally be combined into an AGPL work).
+#
+# Run the audit with:
+#     cargo deny check licenses
+#
+# If the check fails on a crate whose license is genuinely AGPL-compatible but
+# simply not in the list below, add its SPDX identifier to `allow`. If it fails
+# on a strong-copyleft (e.g. GPL-3.0-only) or proprietary license, that crate
+# cannot ship in an AGPL binary as-is — replace it or seek a license exception.
+
+[licenses]
+# SPDX identifiers we accept in the dependency tree. Everything here is either
+# permissive (MIT/Apache/BSD/ISC/Zlib/...) or weak/file-level copyleft (MPL-2.0)
+# and is compatible with AGPL-3.0. Strong-copyleft and proprietary licenses are
+# intentionally absent, so any such crate will fail the check loudly.
+allow = [
+    # Permissive — these are the licenses actually present in the tree today.
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-1-Clause",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "BSL-1.0",
+    "CC0-1.0",
+    "NCSA",                 # libfuzzer-sys (transitive via image -> ravif -> rav1e)
+    "Unicode-3.0",          # icu_* crates
+    "Unlicense",            # boa_*, byteorder, memchr, ...
+    "CDLA-Permissive-2.0",  # webpki-roots (bundled Mozilla CA-cert data)
+    # Weak / library copyleft — legally fine to combine into an AGPL work.
+    "MPL-2.0",              # option-ext, webpki-roots@0.25
+    "LGPL-2.1-or-later",    # r-efi (UEFI target shim); LGPL links freely into (A)GPL
+]
+
+# Fuzzy-match threshold for detecting a license from its text (0.0-1.0).
+# 0.8 is the cargo-deny default and tolerates minor wording differences.
+confidence-threshold = 0.8
+
+# Per-crate license exceptions go here if ever needed, e.g.:
+# exceptions = [
+#     { crate = "some-crate", allow = ["SomeLicense"] },
+# ]
+
+# Our own workspace crates are unpublished; don't enforce a license on them.
+# Only third-party dependencies are audited.
+[licenses.private]
+ignore = true

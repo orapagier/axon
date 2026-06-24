@@ -2,6 +2,7 @@
 name    = "axon"
 version = "0.4.0"
 edition = "2021"
+publish = false
 default-run = "axon"
 
 [[bin]]
