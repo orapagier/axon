@@ -262,7 +262,7 @@ export const NODE_TYPES = {
                 type: 'boolean',
                 default: false,
                 displayOptions: { show: { type: ['gmail'] } },
-                hint: 'Download email attachments and include them in the workflow data.',
+                hint: 'Save every attachment & inline image to data/files and attach their paths (email.files[]). The full decoded body, signature/quote split, parsed sender, links and contacts are always included on each email.',
             },
         ],
     },

@@ -585,6 +585,15 @@ pub(crate) async fn execute_gmail_trigger(
                 .cloned()
                 .unwrap_or_default();
 
+            // Enrich each row with full decoded + decomposed body, parsed sender
+            // and richer attachments. The "Download Attachments" toggle also saves
+            // every file locally and attaches the paths. Same shape as the poller.
+            let download = config
+                .get("gmail_download_attachments")
+                .and_then(|v| v.as_bool().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+                .unwrap_or(false);
+            let emails = enrich_gmail_emails(state, emails, download).await;
+
             // A manual "Execute Step" is normally a non-destructive test fetch
             // (like n8n's "Fetch Test Event"). But if the user explicitly enabled
             // "Mark as read", honor it here too — otherwise the toggle silently
@@ -621,6 +630,54 @@ pub(crate) async fn execute_gmail_trigger(
         }
         Err(e) => Err(format!("Gmail trigger failed: {}", e)),
     }
+}
+
+/// Turn lightweight `gmail_list` rows into the rich per-message objects the smart
+/// Gmail node promises: a full decoded + decomposed body (main text, signature,
+/// quoted reply thread), parsed sender, links/contacts and richer attachment
+/// metadata — via `gmail_get`. When `download` is set, also persist every
+/// attachment to local storage and attach the resulting `files` paths.
+/// Best-effort: an email whose detail fetch fails is passed through unchanged so
+/// the workflow still runs.
+async fn enrich_gmail_emails(state: &AppState, emails: Vec<Value>, download: bool) -> Vec<Value> {
+    let mut enriched = Vec::with_capacity(emails.len());
+    for email in emails {
+        let id = email
+            .get("id")
+            .or_else(|| email.get("message_id"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let Some(id) = id else {
+            enriched.push(email);
+            continue;
+        };
+        let mut full = match state.tools.run("gmail_get", json!({ "id": id })).await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("Gmail enrich: gmail_get failed for {}: {}", id, e);
+                enriched.push(email);
+                continue;
+            }
+        };
+        if download {
+            match state
+                .tools
+                .run("gmail_download_all_attachments", json!({ "message_id": id }))
+                .await
+            {
+                Ok(res) => {
+                    if let (Some(obj), Some(files)) =
+                        (full.as_object_mut(), res.get("files").cloned())
+                    {
+                        obj.insert("files".to_string(), files);
+                    }
+                }
+                Err(e) => tracing::warn!("Gmail enrich: download failed for {}: {}", id, e),
+            }
+        }
+        enriched.push(full);
+    }
+    enriched
 }
 
 // ── Interpolation ─────────────────────────────────────────────────────────────
@@ -3228,13 +3285,26 @@ async fn check_and_trigger_gmail(
         emails.len()
     );
 
+    // Enrich each new email with its full decoded + decomposed body (main text,
+    // signature, quoted thread), parsed sender and richer attachments. The
+    // "Download Attachments" toggle additionally saves every file locally and
+    // attaches the paths. Best-effort; `new_emails` (used below for mark-as-read)
+    // is left intact.
+    let download = trigger_config
+        .get("gmail_download_attachments")
+        .and_then(|v| v.as_bool().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+        .unwrap_or(false);
+    let new_owned: Vec<Value> = new_emails.iter().map(|e| (*e).clone()).collect();
+    let enriched = enrich_gmail_emails(state, new_owned, download).await;
+    let enriched_count = enriched.len();
+
     // Store the new email data in a global map so execute_gmail_trigger can pick it up
     {
         let data = json!({
             "trigger": "gmail",
             "label": label,
-            "new_email_count": new_emails.len(),
-            "emails": new_emails,
+            "new_email_count": enriched_count,
+            "emails": enriched,
         });
         GMAIL_TRIGGER_DATA
             .lock()

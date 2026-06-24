@@ -59,7 +59,7 @@ impl GoogleService {
 
             // Gmail
             Tool { name: "gmail_list".into(),       description: "List Gmail messages. Returns id, subject, from, date, snippet.".into(),          input_schema: schema!({"max_results":{"type":"integer","default":10,"description":"Max messages (max 10)"},"query":{"type":"string","description":"Gmail search query, e.g. 'is:unread from:boss@co.com'"}}, []) },
-            Tool { name: "gmail_get".into(),        description: "Get a full Gmail message including decoded body.".into(),                         input_schema: schema!({"id":{"type":"string","description":"Message ID"}}, ["id"]) },
+            Tool { name: "gmail_get".into(),        description: "Get a full Gmail message: decoded body split into main text / signature / quoted reply, parsed sender, links, contacts, and attachment metadata.".into(), input_schema: schema!({"id":{"type":"string","description":"Message ID"}}, ["id"]) },
             Tool { name: "gmail_send".into(),       description: "Send a Gmail email, optionally with a file attachment.".into(),                  input_schema: schema!({"to":{"type":"string"},"subject":{"type":"string"},"body":{"type":"string"},"cc":{"type":"string"},"bcc":{"type":"string"},"send_attachment":{"type":"boolean","default":false,"title":"Send Attachment","description":"Toggle on to attach a file from a local/server path"},"attachment_path":{"type":"string","title":"Attachment Path","description":"Local/server file path to attach (e.g. /data/files/quote.pdf)","displayOptions":{"show":{"send_attachment":[true]}}}}, ["to","subject","body"]) },
             Tool { name: "gmail_reply".into(),      description: "Reply to a Gmail message thread, optionally with a file attachment. Pass the original message_id (Gmail id or RFC Message-ID); thread_id/subject are derived when omitted.".into(), input_schema: schema!({"message_id":{"type":"string"},"to":{"type":"string"},"body":{"type":"string"},"subject":{"type":"string"},"thread_id":{"type":"string"},"send_attachment":{"type":"boolean","default":false,"title":"Send Attachment","description":"Toggle on to attach a file from a local/server path"},"attachment_path":{"type":"string","title":"Attachment Path","description":"Local/server file path to attach","displayOptions":{"show":{"send_attachment":[true]}}}}, ["message_id","to","body"]) },
             Tool { name: "gmail_search".into(),     description: "Search Gmail messages by query string. Limited to 10 results.".into(),           input_schema: schema!({"query":{"type":"string"},"max_results":{"type":"integer","default":10}}, ["query"]) },
@@ -68,6 +68,7 @@ impl GoogleService {
             Tool { name: "gmail_add_label".into(),  description: "Add a label to a Gmail message.".into(),                                         input_schema: schema!({"id":{"type":"string"},"label_id":{"type":"string"}}, ["id","label_id"]) },
             Tool { name: "gmail_remove_label".into(),description: "Remove a label from a Gmail message.".into(),                                   input_schema: schema!({"id":{"type":"string"},"label_id":{"type":"string"}}, ["id","label_id"]) },
             Tool { name: "gmail_download_attachment".into(),description: "Download a Gmail attachment to a local file path so the agent can upload/send it.".into(), input_schema: schema!({"message_id":{"type":"string"},"attachment_id":{"type":"string"},"filename":{"type":"string"}}, ["message_id","attachment_id","filename"]) },
+            Tool { name: "gmail_download_all_attachments".into(),description: "Download every attachment on a Gmail message to local file paths, returning each with size, kind (image/document/other) and inline flag.".into(), input_schema: schema!({"message_id":{"type":"string"}}, ["message_id"]) },
             Tool { name: "gmail_list_labels".into(),description: "List all Gmail labels.".into(),                                                  input_schema: schema!({}, []) },
             Tool { name: "gmail_mark_unread".into(),description: "Mark Gmail messages as unread.".into(),                                            input_schema: schema!({"ids":{"type":"array","items":{"type":"string"}}}, ["ids"]) },
             Tool { name: "gmail_untrash".into(),    description: "Restore a Gmail message from trash.".into(),                                       input_schema: schema!({"id":{"type":"string"}}, ["id"]) },
@@ -328,6 +329,9 @@ impl GoogleService {
                     s("filename")?,
                 )
                 .await
+            }
+            "gmail_download_all_attachments" => {
+                gmail::download_all_attachments(&self.0, s("message_id")?).await
             }
             "gmail_list_labels" => gmail::list_labels(&self.0).await,
             "gmail_mark_unread" => gmail::mark_unread(&self.0, json_arr(a, "ids")?).await,
