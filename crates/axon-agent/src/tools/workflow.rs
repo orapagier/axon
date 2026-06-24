@@ -1825,39 +1825,31 @@ impl WorkflowEngine {
                             .map(|m| m.filter_map(|x| x.ok()).collect::<Vec<String>>())
                             .unwrap_or_default();
 
-                        for (idx, results_str) in rows.iter().enumerate() {
+                        let current_ids: std::collections::HashSet<&str> =
+                            nodes.iter().map(|n| n.id.as_str()).collect();
+                        // The first run that parses seeds the snapshot verbatim;
+                        // later runs only backfill nodes it dropped. Driven off a
+                        // `seeded` flag (not the row index) so a single unparseable
+                        // newest row doesn't demote the next run to backfill-only.
+                        let mut seeded = false;
+                        for results_str in &rows {
                             let Ok(results) =
                                 serde_json::from_str::<Vec<NodeResult>>(results_str)
                             else {
                                 continue;
                             };
-                            if idx == 0 {
-                                // Newest run: mirror it verbatim (preserves prior
-                                // behavior, including ordering and any error/skipped
-                                // results it carried).
-                                for r in &results {
-                                    node_results.insert(r.node_id.clone(), r.clone());
-                                }
-                                prior_ordered = results;
-                            } else {
-                                // Older runs: only fill gaps, only with successful
-                                // results (never resurrect an errored/skipped node as
-                                // if it had data — matches reuse_cached_upstream's
-                                // success gate), and only for nodes that still exist
-                                // in the current graph (don't revive deleted nodes).
-                                for r in &results {
-                                    if r.status == "success"
-                                        && !node_results.contains_key(&r.node_id)
-                                        && nodes.iter().any(|n| n.id == r.node_id)
-                                    {
-                                        node_results.insert(r.node_id.clone(), r.clone());
-                                        prior_ordered.push(r.clone());
-                                    }
-                                }
-                            }
-                            // Once every current node has a cached result, older runs
-                            // can add nothing more — stop parsing.
-                            if nodes.iter().all(|n| node_results.contains_key(&n.id)) {
+                            let complete = fold_prior_run_into_cache(
+                                &mut node_results,
+                                &mut prior_ordered,
+                                results,
+                                !seeded,
+                                &current_ids,
+                            );
+                            seeded = true;
+                            // Every current node already has a cached result — older
+                            // runs can add nothing, so stop parsing (keeps the healthy
+                            // path at a single parse).
+                            if complete {
                                 break;
                             }
                         }
