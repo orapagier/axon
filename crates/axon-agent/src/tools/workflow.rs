@@ -1647,6 +1647,50 @@ fn merge_single_node_results(prior: &[NodeResult], fresh: &[NodeResult]) -> Vec<
     merged
 }
 
+/// Fold one prior run's results into the upstream cache being assembled for a
+/// targeted ("Execute Step") run / expression fallback.
+///
+/// The newest run (`is_newest`) is mirrored verbatim so the snapshot matches the
+/// last run exactly. Older runs only BACKFILL nodes the newer runs dropped, and
+/// only with that node's most recent *successful* result for a node that still
+/// exists in the graph. This is what keeps a one-shot Telegram/Gmail/WhatsApp
+/// Stimulus payload alive when the immediately-previous run was a partial run on
+/// an unrelated node (which persists a node_results array without the trigger):
+/// without backfill the trigger would be absent from the cache, fail the
+/// single_node_ready and reuse_cached_upstream gates, and re-run under
+/// trigger_source="manual", overwriting its real payload with {"trigger":"manual"}.
+///
+/// Returns true once every current node has a cached result, so the caller can
+/// stop reading older runs (keeping the healthy path at a single parse).
+fn fold_prior_run_into_cache(
+    node_results: &mut std::collections::HashMap<String, NodeResult>,
+    prior_ordered: &mut Vec<NodeResult>,
+    run_results: Vec<NodeResult>,
+    is_newest: bool,
+    current_node_ids: &std::collections::HashSet<&str>,
+) -> bool {
+    if is_newest {
+        for r in &run_results {
+            node_results.insert(r.node_id.clone(), r.clone());
+        }
+        *prior_ordered = run_results;
+    } else {
+        for r in run_results {
+            if r.status == "success"
+                && !node_results.contains_key(&r.node_id)
+                && current_node_ids.contains(r.node_id.as_str())
+            {
+                node_results.insert(r.node_id.clone(), r.clone());
+                prior_ordered.push(r);
+            }
+        }
+    }
+    !current_node_ids.is_empty()
+        && current_node_ids
+            .iter()
+            .all(|id| node_results.contains_key(*id))
+}
+
 /// State handed to the engine when resuming a run that a durable Wait suspended.
 /// `results` are the nodes that already ran in this run (including the Wait);
 /// `completed` is their id set, used to replay-not-re-execute them on resume.
