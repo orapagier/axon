@@ -2,8 +2,9 @@
 name = "image_processor"
 version = "0.1.0"
 edition = "2021"
+publish = false
 description = "A full-featured image processing library for AI agent pipelines"
-license = "MIT"
+license = "AGPL-3.0-only"
 
 [lib]
 name = "image_processor"
