@@ -1,6 +1,6 @@
 /**
  * useCanvas composable - provides shared canvas state
- * Based on n8n's useCanvas composable
+ * Inspired by n8n's canvas-state pattern; independent implementation.
  */
 
 import { inject, provide, ref, computed } from 'vue'

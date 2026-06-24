@@ -1,6 +1,6 @@
 <script setup>
 /**
- * WorkflowCanvas - Main canvas wrapper based on n8n's WorkflowCanvas
+ * WorkflowCanvas - Main canvas wrapper; UX inspired by n8n, independent implementation
  * Provides the full canvas experience with proper data mapping
  */
 import { computed, ref, toRef, watch, nextTick } from 'vue'

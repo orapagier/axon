@@ -1,7 +1,7 @@
 
 /**
  * useCanvasMapping composable - maps Axon workflow data to Vue Flow format
- * Based on n8n's useCanvasMapping composable
+ * Inspired by n8n's canvas-mapping approach; independent implementation.
  */
 
 import { computed } from 'vue'

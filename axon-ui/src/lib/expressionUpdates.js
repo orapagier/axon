@@ -1,7 +1,8 @@
 /**
  * expressionUpdates.js
  * Utility to find and replace node label references in workflow expressions.
- * Ported/Inspired by n8n's applyAccessPatterns logic.
+ * Inspired by n8n's approach to rewriting node references in expressions;
+ * independent implementation, no n8n source code used.
  */
 
 function backslashEscape(nodeName) {

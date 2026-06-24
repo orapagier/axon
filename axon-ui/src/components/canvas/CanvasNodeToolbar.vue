@@ -1,7 +1,7 @@
 <script setup>
 /**
  * CanvasNodeToolbar - Node toolbar with actions
- * Based on n8n's CanvasNodeToolbar
+ * UX inspired by n8n; independent implementation.
  */
 defineProps({
   readOnly: {

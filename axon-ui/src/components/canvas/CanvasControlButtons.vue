@@ -1,6 +1,6 @@
 <script setup>
 /**
- * CanvasControlButtons - Zoom and view controls based on n8n's implementation
+ * CanvasControlButtons - Zoom and view controls; UX inspired by n8n, independent implementation
  */
 const props = defineProps({
   position: {

@@ -1,5 +1,5 @@
 /**
- * Canvas utility functions based on n8n's architecture
+ * Canvas utility functions; architecture inspired by n8n, independent implementation
  */
 
 import { CanvasConnectionMode } from './constants.js'

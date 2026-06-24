@@ -1,6 +1,6 @@
 <script setup>
 /**
- * CanvasBackground - Custom background component based on n8n's CanvasBackground
+ * CanvasBackground - Custom background component; UX inspired by n8n, independent implementation
  */
 import { computed } from 'vue'
 

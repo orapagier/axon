@@ -1,5 +1,5 @@
 /**
- * Canvas types and enums based on n8n's architecture
+ * Canvas types and enums; architecture inspired by n8n, independent implementation
  */
 
 // Node render types

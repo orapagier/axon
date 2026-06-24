@@ -1,6 +1,6 @@
 /**
  * useCanvasNode composable - provides node-specific state and methods
- * Based on n8n's useCanvasNode composable
+ * Inspired by n8n's per-node state pattern; independent implementation.
  */
 
 import { inject, computed, ref } from 'vue'

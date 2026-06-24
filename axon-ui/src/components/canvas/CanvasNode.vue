@@ -1,6 +1,6 @@
 <script setup>
 /**
- * CanvasNode - Main node component based on n8n's CanvasNode
+ * CanvasNode - Main node component; UX inspired by n8n, independent implementation
  * Wraps the node content and manages handles/toolbar
  */
 import { computed, provide, ref, toRef, watch, nextTick } from 'vue'

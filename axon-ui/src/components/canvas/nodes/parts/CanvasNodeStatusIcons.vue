@@ -1,7 +1,7 @@
 <script setup>
 /**
  * CanvasNodeStatusIcons - Status indicator icons for nodes
- * Based on n8n's CanvasNodeStatusIcons
+ * UX inspired by n8n; independent implementation.
  */
 import { useCanvasNode } from '../../../../composables/useCanvasNode.js'
 

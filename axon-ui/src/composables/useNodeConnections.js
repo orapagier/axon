@@ -1,6 +1,6 @@
 /**
  * useNodeConnections composable - manages node connections
- * Based on n8n's useNodeConnections composable
+ * Inspired by n8n's node-connection pattern; independent implementation.
  */
 
 import { computed } from 'vue'
