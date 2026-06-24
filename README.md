@@ -2,10 +2,10 @@
 
 > A highly autonomous, multi-platform AI agent written entirely in **async Rust** (`tokio`) with a **Vue 3** dashboard. It answers and acts across your messaging channels, runs real tools, routes LLM requests across many providers with automatic fallback, and remembers context via SQLite + Qdrant.
 
-**Version 0.4.0** · Rust edition 2021 · Apache License 2.0
+**Version 0.4.0** · Rust edition 2021 · GNU AGPL v3.0
 
 [![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org/)
-[![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
+[![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](./LICENSE)
 [![Vue 3](https://img.shields.io/badge/ui-Vue_3-42b883.svg)](https://vuejs.org/)
 
 Axon is a single self-contained process that acts as the operating intelligence for your digital life. It bridges raw LLM power and real-world action: reading and replying to messages, executing shell commands and SSH, calling Gmail/Calendar/Drive/Outlook/Instagram/CRM, running scheduled jobs, watching sources for changes, and chaining those steps together in visual workflows — all behind a live web dashboard.
@@ -507,9 +507,11 @@ Logs: set `RUST_LOG=axon=debug` for verbose tracing. Facebook auto-reply has an 
 
 ## 📄 License
 
-Licensed under the **Apache License, Version 2.0** — see [`LICENSE`](./LICENSE).
+Licensed under the **GNU Affero General Public License v3.0** (AGPL-3.0) — see [`LICENSE`](./LICENSE).
 
-The bundled `image_processor` crate (`crates/axon-image`) is MIT-licensed.
+You're free to use, study, modify, and self-host Axon. Because this is the **Affero** GPL, if you run a **modified** version of Axon as a network service, §13 requires you to make the corresponding source of your modified version available to its users. All crates in this workspace — including the bundled `image_processor` crate (`crates/axon-image`) — are covered by this license.
+
+Axon is an **independent implementation** in Rust. Some workflow concepts and the visual-canvas UX are *inspired by* [n8n](https://n8n.io), but Axon contains no n8n source code — n8n is a separate project under its own (non-AGPL) license.
 
 ---
 
