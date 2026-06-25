@@ -44,6 +44,8 @@ pub struct HttpRequestParams {
     pub allow_unauthorized_certs: Option<bool>,
     pub full_response: Option<bool>,
     pub data_cleaner: Option<bool>,
+    // When data_cleaner is on, preserve <a> links as Markdown [text](absolute-url).
+    pub keep_links: Option<bool>,
     pub always_output_binary: Option<bool>,
     // Synapse UI fields: jsonBody is a raw JSON string, specify_body controls how body is sent
     pub json_body: Option<String>,
