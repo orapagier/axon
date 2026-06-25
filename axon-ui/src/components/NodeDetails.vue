@@ -2582,8 +2582,8 @@ small.form-desc {
   font-size: 11.5px; font-weight: 600; letter-spacing: 0.2px;
   cursor: pointer; transition: all 0.18s ease;
 }
-/* The emoji glyph carries its own left side-bearing; pull it flush to the button's left edge. */
-.btn-curl-import .btn-icon { margin: 0 0 0 -2px; flex-shrink: 0; }
+/* SVG viewBox is cropped to the artwork, so its left edge sits flush against the button's left edge. */
+.btn-curl-import .btn-icon { margin: 0; flex-shrink: 0; }
 .btn-curl-import:hover {
   background: rgba(99,102,241,0.16);
   border-color: rgba(99,102,241,0.6);
