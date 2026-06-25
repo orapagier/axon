@@ -1751,6 +1751,30 @@ onUnmounted(() => {
     </div>
       </div>
 
+      <!-- Expanded Input Editor -->
+      <Teleport to="body">
+        <div v-if="expandedInput" class="expand-modal-overlay" @click.self="closeExpandedInput" @keydown.esc="closeExpandedInput">
+          <div class="expand-modal">
+            <header>
+              <h3>{{ expandedInput.title }}</h3>
+              <button @click="closeExpandedInput" title="Close">✕</button>
+            </header>
+            <div class="modal-body">
+              <textarea
+                ref="expandedInputRef"
+                :value="expandedInput.value"
+                @input="updateExpandedInput"
+                placeholder="Edit the full value here..."
+                spellcheck="false"
+              ></textarea>
+            </div>
+            <footer>
+              <button class="btn-import" @click="closeExpandedInput">Done</button>
+            </footer>
+          </div>
+        </div>
+      </Teleport>
+
       <!-- cURL Import Modal -->
       <Teleport to="body">
         <div v-if="showCurlModal" class="curl-modal-overlay" @click.self="showCurlModal = false">
