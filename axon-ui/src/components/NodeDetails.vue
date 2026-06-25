@@ -2661,6 +2661,41 @@ small.form-desc {
   border-color: #6366f1;
 }
 
+/* Expand affordance — a small button that surfaces on hover/focus at the top
+   corner of any text field, opening the full value in a roomy overlay editor.
+   Kept out of the input's flow (absolute) so it never reshapes the field, and
+   hidden until hover so it doesn't clutter the form. */
+.btn-expand-input {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(27, 27, 32, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 5px;
+  color: #a6a6b2;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s, color 0.15s, border-color 0.15s, background 0.15s;
+  z-index: 6;
+}
+.input-with-preview:hover > .btn-expand-input,
+.input-with-preview:focus-within > .btn-expand-input {
+  opacity: 1;
+  pointer-events: auto;
+}
+.btn-expand-input:hover {
+  color: #a5b4fc;
+  border-color: rgba(99, 102, 241, 0.5);
+  background: rgba(40, 40, 55, 0.95);
+}
+
 .form-select, select {
   width: 100%;
   background: rgba(255, 255, 255, 0.04);
