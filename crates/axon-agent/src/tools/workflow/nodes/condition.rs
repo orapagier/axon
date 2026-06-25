@@ -162,3 +162,82 @@ pub(crate) fn execute_switch_node(config: &Value) -> Result<Value, String> {
         "branch": branch
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Build a string-equals switch: top value `subject`, one rule per `cases`
+    // entry comparing the subject against that case value.
+    fn switch_config(subject: &str, cases: &[&str], extra: Value) -> Value {
+        let rules: Vec<Value> = cases
+            .iter()
+            .map(|c| json!({ "operation": "equals", "value2": c }))
+            .collect();
+        let mut cfg = json!({
+            "dataType": "string",
+            "value1": subject,
+            "rules": { "parameters": rules },
+        });
+        if let (Some(obj), Some(ex)) = (cfg.as_object_mut(), extra.as_object()) {
+            for (k, v) in ex {
+                obj.insert(k.clone(), v.clone());
+            }
+        }
+        cfg
+    }
+
+    fn indices(out: &Value) -> Vec<i64> {
+        out.get("outputIndices")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|x| x.as_i64()).collect())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn routes_to_matching_rule_index() {
+        let out = execute_switch_node(&switch_config("b", &["a", "b", "c"], json!({}))).unwrap();
+        assert_eq!(out["outputIndex"], 1);
+        assert_eq!(indices(&out), vec![1]);
+        assert_eq!(out["branch"], "case_2");
+    }
+
+    #[test]
+    fn default_output_index_follows_rule_count() {
+        // Three rules, nothing matches → Default sits just past the last rule.
+        let out = execute_switch_node(&switch_config("z", &["a", "b", "c"], json!({}))).unwrap();
+        assert_eq!(out["outputIndex"], 3);
+        assert_eq!(indices(&out), vec![3]);
+        assert_eq!(out["branch"], "default");
+        assert_eq!(out["matched"], false);
+    }
+
+    #[test]
+    fn fallback_none_drops_unmatched() {
+        let cfg = switch_config("z", &["a", "b"], json!({ "fallbackOutput": "none" }));
+        let out = execute_switch_node(&cfg).unwrap();
+        assert_eq!(out["outputIndex"], -1);
+        assert!(indices(&out).is_empty());
+        assert_eq!(out["branch"], "none");
+    }
+
+    #[test]
+    fn match_mode_all_fans_out_to_every_match() {
+        let cfg = switch_config("x", &["x", "x", "y"], json!({ "matchMode": "all" }));
+        let out = execute_switch_node(&cfg).unwrap();
+        assert_eq!(indices(&out), vec![0, 1]);
+        assert_eq!(out["outputIndex"], 0);
+    }
+
+    #[test]
+    fn supports_more_than_five_rules() {
+        // The old node capped at five cases; the dynamic node must route the 7th.
+        let cases = ["0", "1", "2", "3", "4", "5", "6"];
+        let out = execute_switch_node(&switch_config("5", &cases, json!({}))).unwrap();
+        assert_eq!(out["outputIndex"], 5);
+        assert_eq!(indices(&out), vec![5]);
+        // And Default for this 7-rule switch would be index 7.
+        let miss = execute_switch_node(&switch_config("nope", &cases, json!({}))).unwrap();
+        assert_eq!(miss["outputIndex"], 7);
+    }
+}
