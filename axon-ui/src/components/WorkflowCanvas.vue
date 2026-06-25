@@ -533,6 +533,8 @@ defineExpose({
   getSelectedEdges: () => getSelectedEdges.value,
   // Last pointer position over the canvas, in flow coordinates (or null).
   getLastFlowPosition: () => lastFlowPosition.value,
+  // Last position clicked on the empty canvas, in flow coordinates (or null).
+  getLastClickPosition: () => lastClickFlowPosition.value,
   // Replace the current selection with the given node ids. Deselects
   // everything else so a freshly pasted group becomes the active selection
   // and can be dragged as one.
