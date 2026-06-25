@@ -65,7 +65,22 @@ provide(CanvasNodeKey, {
 
 // Node connections
 const inputs = computed(() => props.data.inputs || [])
-const outputs = computed(() => props.data.outputs || [])
+// Nodes with dynamic outputs (e.g. Switch) derive their handles from the live
+// config, so adding/removing a rule instantly adds/removes an output handle —
+// no need to re-create the node. Everything else uses its stored outputs.
+const outputs = computed(() => {
+  const type = props.data.node_type || props.data.type
+  if (NODE_TYPES[type]?.dynamicOutputs) {
+    const labels = getNodeOutputs(type, props.data.config || {}) || []
+    return labels.map((label, index) => ({
+      type: NodeConnectionTypes.Main,
+      required: false,
+      index,
+      label,
+    }))
+  }
+  return props.data.outputs || []
+})
 const connections = computed(() => props.data.connections || { input: {}, output: {} })
 
 const {
