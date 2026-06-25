@@ -696,9 +696,9 @@ function addNodeFromPalette(type) {
     }
     pendingSplice.value = null
   } else {
-    // Plain "+" add: drop at the natural continuation of the chain (right of the
-    // last node, in a vacant slot), then pan it into view so the user never has
-    // to scroll to find where it landed.
+    // Plain "+" add: drop under the last canvas cursor position (paste-style), so
+    // it lands where the user is looking. ensureNodeVisible is kept only as a
+    // fallback for the no-cursor case — it no-ops when the node is already visible.
     const position = computeNewNodePosition()
     addNode(type, position)
     nextTick(() => canvasRef.value?.ensureNodeVisible?.(position))
