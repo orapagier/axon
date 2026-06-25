@@ -683,13 +683,13 @@ export const NODE_TYPES = {
                 hint: 'Expression or literal value to evaluate against the switch rules.',
             },
             {
-                displayName: 'Rules (first match wins)',
+                displayName: 'Routing Rules',
                 name: 'rules',
                 type: 'fixedCollection',
-                default: { parameters: [{ dataType: 'string', operation: 'equals', value2: '' }] },
+                default: { parameters: [{ dataType: 'string', operation: 'equals', value1: '', value2: '', outputName: '' }] },
                 placeholder: 'Add Rule',
                 typeOptions: { multipleValues: true },
-                hint: 'Only the first 5 rules are mapped to outputs. Unmatched values go to Default.',
+                hint: 'Each rule adds its own output handle. Add as many as you need; unmatched values go to Default (unless the fallback is set to None).',
                 options: [
                     {
                         name: 'dataType', displayName: 'Type', type: 'options', default: 'string',
@@ -718,7 +718,26 @@ export const NODE_TYPES = {
                         placeholder: 'Compare value',
                         displayOptions: { hide: { operation: UNARY_OPERATIONS } },
                     },
+                    {
+                        name: 'outputName',
+                        displayName: 'Output Name (optional)',
+                        type: 'string',
+                        default: '',
+                        placeholder: 'e.g. High priority',
+                        hint: 'Label shown on this rule\'s output handle. Defaults to "case N".',
+                    },
                 ],
+            },
+            {
+                displayName: 'Fallback Output',
+                name: 'fallbackOutput',
+                type: 'options',
+                options: [
+                    { name: 'Extra "Default" output', value: 'extra' },
+                    { name: 'None (drop unmatched)', value: 'none' },
+                ],
+                default: 'extra',
+                hint: 'Extra: values matching no rule go to a Default output. None: they are dropped and no branch runs.',
             },
             {
                 displayName: 'Match Mode',
