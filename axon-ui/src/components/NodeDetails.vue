@@ -2681,6 +2681,18 @@ small.form-desc {
   background: rgba(0, 0, 0, 0.25);
 }
 
+/* First-node empty state: .nd-input-layout zeroes its own padding, so the
+   "No input data…" message would otherwise sit flush against the edge. Give
+   it breathing room and let it span the full column. */
+.nd-input-layout > .data-empty {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 16px;
+  color: #a6a6b2;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 /* Removed gutter CSS */
 
 .nd-input-main {
