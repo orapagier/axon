@@ -205,7 +205,8 @@ pub async fn create_with_image(state: &AppState, message: &str, image_url: &str)
         .form(&[("message", message), ("attached_media[0]", attached.as_str())])
         .send()
         .await?;
-    Ok(ensure_ok(resp).await?.json().await?)
+    let value: Value = ensure_ok(resp).await?.json().await?;
+    Ok(ensure_permalink(state, &tok, value).await)
 }
 
 pub async fn update(state: &AppState, post_id: &str, message: &str) -> Result<Value> {
