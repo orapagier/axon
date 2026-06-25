@@ -2267,6 +2267,11 @@ impl WorkflowEngine {
             // normally. The block is closed right before edge routing.
             if !resumed_completed.contains(&current_id) && !reuse_cached_upstream {
             let n_start = std::time::Instant::now();
+            // Upstream node ids of the node about to run — used so a
+            // `$node["Name"]` reference whose name collides with another node
+            // (e.g. legacy workflows predating unique-naming) resolves toward
+            // this node's actual upstream instead of a random HashMap match.
+            let node_ancestors = ancestor_node_ids(&current_id, &edges);
             let iteration_source_id =
                 find_iteration_source_node_id(&current_id, &edges, &node_results);
             // "Execute Once" (n8n's "Run Once for All Items"): when set, the node
