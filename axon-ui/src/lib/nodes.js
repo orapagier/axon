@@ -667,6 +667,44 @@ export const NODE_TYPES = {
                         name: 'alwaysOutputBinary',
                         type: 'boolean',
                         default: false,
+                    },
+                    {
+                        displayName: 'Follow Redirects',
+                        name: 'followRedirects',
+                        type: 'boolean',
+                        default: true,
+                        description: 'Whether to follow HTTP 3xx redirects',
+                    },
+                    {
+                        displayName: 'Max Redirects',
+                        name: 'maxRedirects',
+                        type: 'number',
+                        default: 21,
+                        description: 'Maximum number of redirects to follow',
+                        displayOptions: { show: { followRedirects: [true] } },
+                    },
+                    {
+                        displayName: 'Retry On Fail',
+                        name: 'retryOnFail',
+                        type: 'boolean',
+                        default: false,
+                        description: 'Retry on network errors or 5xx/429 responses',
+                    },
+                    {
+                        displayName: 'Max Tries',
+                        name: 'maxTries',
+                        type: 'number',
+                        default: 3,
+                        description: 'Total attempts (including the first) when Retry On Fail is on',
+                        displayOptions: { show: { retryOnFail: [true] } },
+                    },
+                    {
+                        displayName: 'Retry Interval (ms)',
+                        name: 'retryInterval',
+                        type: 'number',
+                        default: 1000,
+                        description: 'Wait time between retry attempts',
+                        displayOptions: { show: { retryOnFail: [true] } },
                     }
                 ]
             }
