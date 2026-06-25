@@ -162,10 +162,11 @@ impl HttpRequestTool {
             allow_unauthorized
         );
 
-        // Redirect handling — only deviate from the pooled client's default when asked.
+        // Redirect handling — the pooled client already follows up to 21 redirects,
+        // so only build a request-scoped client when the policy actually differs.
         let follow_redirects = params.follow_redirects.unwrap_or(true);
-        let redirect_limit = params.max_redirects.unwrap_or(10);
-        let custom_redirect = !follow_redirects || params.max_redirects.is_some();
+        let redirect_limit = params.max_redirects.unwrap_or(21);
+        let custom_redirect = !follow_redirects || redirect_limit != 21;
 
         // A proxy, relaxed TLS, or a non-default redirect policy each force a
         // request-scoped client (these can't be set per-request on the pool).
