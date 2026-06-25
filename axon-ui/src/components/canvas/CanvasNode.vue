@@ -8,7 +8,7 @@ import { Position, Handle } from '@vue-flow/core'
 import { CanvasNodeKey, CanvasConnectionMode, NodeConnectionTypes } from '../../lib/canvas/constants.js'
 import { useNodeConnections } from '../../composables/useNodeConnections.js'
 import { createCanvasConnectionHandleString, insertSpacersBetweenEndpoints } from '../../lib/canvas/utils.js'
-import { NODE_TYPES } from '../../lib/nodes.js'
+import { NODE_TYPES, getNodeOutputs } from '../../lib/nodes.js'
 import CanvasNodeDefault from './nodes/CanvasNodeDefault.vue'
 import CanvasNodeToolbar from './CanvasNodeToolbar.vue'
 
