@@ -3681,9 +3681,9 @@ mod condition_tests {
 
 #[cfg(test)]
 mod resolve_tests {
-    use super::{resolve_value, NodeResult};
+    use super::{resolve_value, resolve_value_scoped, NodeResult};
     use serde_json::{json, Value};
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     fn node(name: &str, output: Value) -> NodeResult {
         NodeResult {
