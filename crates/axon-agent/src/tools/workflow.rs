@@ -839,6 +839,9 @@ fn lookup_node<'a>(
     matches.into_iter().next()
 }
 
+/// Convenience wrapper used by tests (production passes an ancestor scope via
+/// [`resolve_value_scoped`]).
+#[cfg(test)]
 fn resolve_value(s: &str, results: &std::collections::HashMap<String, NodeResult>) -> Value {
     resolve_value_scoped(s, results, None)
 }
