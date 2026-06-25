@@ -950,11 +950,7 @@ fn resolve_value_scoped(
     for cap in re.captures_iter(s) {
         let identifier = &cap[1];
         let field = &cap[2];
-        let res = results.get(identifier).or_else(|| {
-            results
-                .values()
-                .find(|r| r.node_name.to_lowercase() == identifier.to_lowercase())
-        });
+        let res = lookup_node(results, ancestors, identifier);
         if let Some(res) = res {
             let val = extract_field(res, field);
             result = result.replace(&cap[0], &val);
@@ -966,11 +962,7 @@ fn resolve_value_scoped(
     for cap in re_dot.captures_iter(&result_clone) {
         let identifier = &cap[1];
         let field = &cap[2];
-        let res = results.get(identifier).or_else(|| {
-            results
-                .values()
-                .find(|r| r.node_name.to_lowercase() == identifier.to_lowercase())
-        });
+        let res = lookup_node(results, ancestors, identifier);
         if let Some(res) = res {
             let val = extract_field(res, field);
             result = result.replace(&cap[0], &val);
