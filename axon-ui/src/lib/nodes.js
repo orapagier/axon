@@ -489,8 +489,26 @@ export const NODE_TYPES = {
                 },
                 typeOptions: { multipleValues: true },
                 options: [
+                    {
+                        name: 'parameterType',
+                        displayName: 'Type',
+                        type: 'options',
+                        default: 'formData',
+                        // Only Form-Data bodies distinguish text fields from file parts.
+                        displayOptions: { show: { contentType: ['multipart-form-data'] } },
+                        options: [
+                            { name: 'Form Data', value: 'formData' },
+                            { name: 'Binary File', value: 'formBinaryData' },
+                        ],
+                    },
                     { name: 'name', displayName: 'Name', type: 'string', default: '' },
-                    { name: 'value', displayName: 'Value', type: 'string', default: '' }
+                    {
+                        name: 'value',
+                        displayName: 'Value',
+                        type: 'string',
+                        default: '',
+                        placeholder: 'Value, or /path/to/file for Binary File',
+                    },
                 ],
             },
             {
@@ -499,10 +517,11 @@ export const NODE_TYPES = {
                 type: 'string',
                 typeOptions: { rows: 8 },
                 default: '',
+                // Reused for Form-Urlencoded "Using JSON": the object's fields become form fields.
                 displayOptions: {
                     show: {
                         sendBody: [true],
-                        contentType: ['json'],
+                        contentType: ['json', 'form-urlencoded'],
                         specifyBody: ['json'],
                     },
                 },
