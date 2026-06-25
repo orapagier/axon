@@ -1713,6 +1713,7 @@ pub async fn run_saved_synapse(
                 json_body: None,
                 specify_body: None,
                 header_parameters: None,
+                ..Default::default()
             }, next_request_id))
 
         }
