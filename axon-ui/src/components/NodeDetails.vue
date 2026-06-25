@@ -3075,70 +3075,70 @@ small.form-desc {
   z-index: 9999; backdrop-filter: blur(6px);
 }
 
-/* Expanded input editor — a generous overlay for reading/editing long values.
-   Capped to the viewport so very long content stays comfortably on screen. */
-.expand-modal-overlay {
-  position: fixed; inset: 0;
-  background: rgba(0,0,0,0.75);
-  display: flex; align-items: center; justify-content: center;
-  z-index: 10000; backdrop-filter: blur(6px);
-  padding: 24px;
-}
-.expand-modal {
-  width: min(760px, 92vw);
-  max-height: 86vh;
+/* Expanded input editor — overlays the PARAMETERS column only (absolute inset),
+   so the INPUT column on the left stays visible and its fields remain draggable
+   into the larger editor. Cleanly fills the column instead of floating over the
+   whole screen. */
+.nd-expand-panel {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
   display: flex;
   flex-direction: column;
-  background: #161619;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 14px;
-  box-shadow: 0 24px 80px rgba(0,0,0,0.8);
-  overflow: hidden;
+  background: #141417;
+  border-left: 2px solid rgba(99, 102, 241, 0.5);
 }
-.expand-modal header {
-  padding: 16px 20px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  display: flex; justify-content: space-between; align-items: center;
+.nd-expand-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px;
+  padding: 0 16px;
+  height: 52px;
   flex-shrink: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: #16161a;
 }
-.expand-modal header h3 {
-  font-size: 14px; font-weight: 700; color: #f2f7ff; margin: 0;
+.nd-expand-title {
+  font-size: 13px; font-weight: 700; color: #f2f7ff;
+  letter-spacing: 0.3px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.expand-modal header button {
+.nd-expand-close {
   background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.09);
-  color: #a6a6b2; font-size: 16px; cursor: pointer;
-  width: 28px; height: 28px; border-radius: 6px; flex-shrink: 0; margin-left: 12px;
+  color: #a6a6b2; font-size: 15px; cursor: pointer;
+  width: 28px; height: 28px; border-radius: 6px; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center; transition: all 0.15s;
 }
-.expand-modal header button:hover { color: #f85149; border-color: rgba(248,81,73,0.4); }
-.expand-modal .modal-body {
-  padding: 16px 20px;
+.nd-expand-close:hover { color: #f85149; border-color: rgba(248,81,73,0.4); }
+.nd-expand-body {
   flex: 1;
   min-height: 0;
   display: flex;
+  padding: 12px;
 }
-.expand-modal textarea {
+.nd-expand-textarea {
   width: 100%;
-  min-height: 240px;
   flex: 1;
   background: #0a0a0c;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 8px; color: #f2f7ff;
   padding: 12px; font-family: 'Fira Code', monospace;
   font-size: 12.5px; resize: none; outline: none;
-  transition: border-color 0.2s; box-sizing: border-box;
+  transition: border-color 0.2s, box-shadow 0.2s; box-sizing: border-box;
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
 }
-.expand-modal textarea:focus { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,0.15); }
-.expand-modal footer {
-  padding: 14px 20px;
+.nd-expand-textarea:focus { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,0.15); }
+.nd-expand-textarea.has-expression {
+  border-color: rgba(99,102,241,0.45);
+}
+.nd-expand-foot {
+  padding: 12px 16px;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   display: flex; justify-content: flex-end; gap: 10px;
   flex-shrink: 0;
+  background: #16161a;
 }
 .curl-modal {
   width: 600px;
