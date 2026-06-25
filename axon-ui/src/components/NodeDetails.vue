@@ -1355,7 +1355,7 @@ onUnmounted(() => {
                           <div style="display: flex; gap: 8px; width: 100%; align-items: flex-start;">
                             <div class="fc-item-fields">
                             <template v-for="subProp in prop.options" :key="'inline-'+subProp.name">
-                              <div v-if="shouldShowProperty(subProp, item) && !subProp.typeOptions?.rows" class="fc-sub-field">
+                              <div v-if="shouldShowProperty(subProp, item) && !subProp.typeOptions?.rows" class="fc-sub-field" :class="{ 'fc-sub-nolabel': subProp.hideLabel }">
                                 <label v-if="idx === 0 && !subProp.hideLabel" class="fc-header-label" style="display: block; margin-bottom: 4px;">{{ subProp.displayName }}</label>
                                 <div class="input-with-preview">
                                   <template v-if="subProp.type === 'options'">
