@@ -612,7 +612,7 @@ export const NODE_TYPES = {
         name: 'ifCondition',
         icon: '/icons/ifCondition.png',
         outputs: ['true', 'false'],
-        description: 'Route items based on one or more conditions — outputs to the True or False branch (n8n-style filters)',
+        description: 'Route items based on one or more conditions — outputs to the True or False branch with full filters',
         properties: [
             {
                 displayName: 'Combine',
