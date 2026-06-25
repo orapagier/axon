@@ -781,7 +781,75 @@ fn evaluate_js_expression(
 }
 
 // Resolves a single value against node results. Preserves types for full matches.
+/// All transitive upstream node ids of `node_id`, walking `edges` backwards.
+/// Lets same-named `$node["Name"]` references be disambiguated toward the
+/// reference's actual upstream, matching the editor preview's scoping.
+fn ancestor_node_ids(
+    node_id: &str,
+    edges: &[WorkflowEdge],
+) -> std::collections::HashSet<String> {
+    let mut ancestors = std::collections::HashSet::new();
+    let mut stack = vec![node_id.to_string()];
+    while let Some(cur) = stack.pop() {
+        for e in edges.iter().filter(|e| e.target_id == cur) {
+            if ancestors.insert(e.source_id.clone()) {
+                stack.push(e.source_id.clone());
+            }
+        }
+    }
+    ancestors
+}
+
+/// Resolve a `$node["identifier"]` reference to a single result.
+///
+/// Exact node-id matches win. For a name match, when several nodes share the
+/// name we prefer one that is in `ancestors` (an upstream node of the node being
+/// resolved) — the same scoping the editor preview uses — and otherwise fall
+/// back to a deterministic pick (lowest node id). Previously the match fell out
+/// of `HashMap::values()` in random order, so a name collision (e.g. a legacy
+/// workflow with two "Post Bible Verse" nodes) resolved correctly on some runs
+/// and to empty on others.
+fn lookup_node<'a>(
+    results: &'a std::collections::HashMap<String, NodeResult>,
+    ancestors: Option<&std::collections::HashSet<String>>,
+    identifier: &str,
+) -> Option<&'a NodeResult> {
+    if let Some(r) = results.get(identifier) {
+        return Some(r);
+    }
+    let id_lower = identifier.to_lowercase();
+    let mut matches: Vec<&NodeResult> = results
+        .values()
+        .filter(|r| r.node_name.to_lowercase() == id_lower)
+        .collect();
+    if matches.len() > 1 {
+        if let Some(anc) = ancestors {
+            let mut upstream: Vec<&NodeResult> = matches
+                .iter()
+                .copied()
+                .filter(|r| anc.contains(&r.node_id))
+                .collect();
+            if !upstream.is_empty() {
+                upstream.sort_by(|a, b| a.node_id.cmp(&b.node_id));
+                return upstream.into_iter().next();
+            }
+        }
+        matches.sort_by(|a, b| a.node_id.cmp(&b.node_id));
+    }
+    matches.into_iter().next()
+}
+
 fn resolve_value(s: &str, results: &std::collections::HashMap<String, NodeResult>) -> Value {
+    resolve_value_scoped(s, results, None)
+}
+
+/// Same as [`resolve_value`] but scoped to the executing node's upstream
+/// `ancestors` (node ids), so same-named references prefer the upstream node.
+fn resolve_value_scoped(
+    s: &str,
+    results: &std::collections::HashMap<String, NodeResult>,
+    ancestors: Option<&std::collections::HashSet<String>>,
+) -> Value {
     use once_cell::sync::Lazy;
     // Compiled once: this function runs for every string in every node config.
     static RE: Lazy<Regex> = Lazy::new(|| {
