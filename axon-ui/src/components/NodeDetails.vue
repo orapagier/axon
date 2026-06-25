@@ -2574,23 +2574,17 @@ small.form-desc {
 .btn-curl-import {
   display: inline-flex; align-items: center; justify-content: flex-start; gap: 7px;
   width: auto; align-self: flex-start;
-  background: rgba(99,102,241,0.08);
-  border: 1px dashed rgba(99,102,241,0.35);
+  /* No box — plain icon + text link, flush to the left edge. */
+  background: none;
+  border: none;
   color: #a5b4fc;
-  /* No left padding — the icon sits flush against the button's left edge. */
-  padding: 6px 12px 6px 0; border-radius: 8px;
+  padding: 6px 0;
   font-size: 11.5px; font-weight: 600; letter-spacing: 0.2px;
-  cursor: pointer; transition: all 0.18s ease;
+  cursor: pointer; transition: color 0.18s ease;
 }
 /* SVG viewBox is cropped to the artwork, so its left edge sits flush against the button's left edge. */
 .btn-curl-import .btn-icon { margin: 0; flex-shrink: 0; }
-.btn-curl-import:hover {
-  background: rgba(99,102,241,0.16);
-  border-color: rgba(99,102,241,0.6);
-  border-style: solid;
-  color: #c7d2fe;
-  box-shadow: 0 2px 14px rgba(99,102,241,0.22);
-}
+.btn-curl-import:hover { color: #c7d2fe; }
 .btn-curl-import:active { transform: translateY(1px); }
 .btn-icon { font-size: 14px; }
 
