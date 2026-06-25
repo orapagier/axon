@@ -577,9 +577,6 @@ export const NODE_TYPES = {
                         placeholder: 'http://proxy.example.com:8080',
                     },
                     {
-                        description: 'Whether to use a headless browser (Playwright) to render JavaScript',
-                    },
-                    {
                         displayName: 'Always Output Binary',
                         name: 'alwaysOutputBinary',
                         type: 'boolean',
