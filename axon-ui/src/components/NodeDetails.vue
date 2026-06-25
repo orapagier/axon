@@ -837,19 +837,21 @@ function tokenizeShell(input) {
       n: '\n', t: '\t', r: '\r', '\\': '\\', "'": "'", '"': '"',
       a: '\x07', b: '\b', f: '\f', v: '\v', '0': '\0',
     }[ch]))
+  // Consume a single-quoted run starting at input[i] === "'". With ansi=true the
+  // contents are ANSI-C unescaped (the $'...' form).
+  const readSingle = (ansi) => {
+    i++ // opening '
+    let raw = ''
+    while (i < n && input[i] !== "'") { raw += input[i]; i++ }
+    i++ // closing '
+    cur += ansi ? ansiUnescape(raw) : raw
+    has = true
+  }
   while (i < n) {
     const c = input[i]
-    // $'...' / $"..." — drop the leading $ and parse as a quote
-    if (c === '$' && (input[i + 1] === "'" || input[i + 1] === '"')) { i++; continue }
-    if (c === "'") {
-      has = true; i++
-      let raw = ''
-      while (i < n && input[i] !== "'") { raw += input[i]; i++ }
-      i++ // closing '
-      // If this single-quoted run was introduced by $'...', apply ANSI-C unescaping.
-      cur += input[i - raw.length - 2] === '$' ? ansiUnescape(raw) : raw
-      continue
-    }
+    if (c === '$' && input[i + 1] === "'") { i++; readSingle(true); continue }
+    if (c === '$' && input[i + 1] === '"') { i++; continue } // $"..." → parse as "..."
+    if (c === "'") { readSingle(false); continue }
     if (c === '"') {
       has = true; i++
       while (i < n && input[i] !== '"') {
