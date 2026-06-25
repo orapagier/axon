@@ -2765,3 +2765,33 @@ export const NODE_TYPES = {
         ],
     }
 }
+
+/**
+ * Resolve a node's output handle labels.
+ *
+ * Most nodes have a fixed set declared on their definition
+ * (`NODE_TYPES[type].outputs`, e.g. ['true','false'] for IF). The Switch node is
+ * dynamic — it grows one output per routing rule (n8n-style), plus an optional
+ * Default fallback — so its handles are derived from the live node config here
+ * rather than baked into the definition.
+ *
+ * @returns {string[]|null} ordered labels, or null for ordinary single-output nodes.
+ */
+export function getNodeOutputs(type, config = {}) {
+    if (type === 'switch') {
+        const rules = config?.rules?.parameters
+        const list = Array.isArray(rules) ? rules : []
+        const labels = list.map((rule, i) => {
+            const name = (rule?.outputName || '').trim()
+            return name || `case ${i + 1}`
+        })
+        // Default fallback output, unless explicitly turned off.
+        if (config?.fallbackOutput !== 'none') {
+            labels.push('default')
+        }
+        // Always expose at least one handle so a freshly-dropped switch can be
+        // wired up while it's still being configured.
+        return labels.length ? labels : ['default']
+    }
+    return NODE_TYPES[type]?.outputs || null
+}
