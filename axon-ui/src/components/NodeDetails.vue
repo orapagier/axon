@@ -2572,7 +2572,7 @@ small.form-desc {
 .curl-import-row { grid-column: 1 / -1; padding: 2px 0 10px; display: flex; justify-content: flex-start; }
 
 .btn-curl-import {
-  display: inline-flex; align-items: center; gap: 7px;
+  display: inline-flex; align-items: center; justify-content: flex-start; gap: 7px;
   width: auto; align-self: flex-start;
   background: rgba(99,102,241,0.08);
   border: 1px dashed rgba(99,102,241,0.35);
@@ -2581,6 +2581,7 @@ small.form-desc {
   font-size: 11.5px; font-weight: 600; letter-spacing: 0.2px;
   cursor: pointer; transition: all 0.18s ease;
 }
+.btn-curl-import .btn-icon { margin-right: 1px; flex-shrink: 0; }
 .btn-curl-import:hover {
   background: rgba(99,102,241,0.16);
   border-color: rgba(99,102,241,0.6);
