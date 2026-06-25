@@ -2581,8 +2581,6 @@ small.form-desc {
   font-size: 11.5px; font-weight: 600; letter-spacing: 0.2px;
   cursor: pointer; transition: color 0.18s ease;
 }
-/* SVG viewBox is cropped to the artwork, so its left edge sits flush against the button's left edge. */
-.btn-curl-import .btn-icon { margin: 0; flex-shrink: 0; }
 .btn-curl-import:hover { color: #c7d2fe; }
 .btn-curl-import:active { transform: translateY(1px); }
 .btn-icon { font-size: 14px; }
