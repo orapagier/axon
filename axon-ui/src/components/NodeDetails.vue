@@ -1100,7 +1100,13 @@ function normalizeConfig() {
   nodeDefinition.value.properties.forEach(p => {
     if (props.node.data.config[p.name] === undefined) {
       if (p.type === 'collection') {
-        props.node.data.config[p.name] = {}
+        // Seed the collection's option defaults so booleans (e.g. Follow
+        // Redirects = true) render correctly and conditional options evaluate.
+        const coll = {}
+        ;(p.options || []).forEach(opt => {
+          if (opt.default !== undefined) coll[opt.name] = opt.default
+        })
+        props.node.data.config[p.name] = coll
       } else if (p.type === 'fixedCollection') {
         props.node.data.config[p.name] = { parameters: [] }
       } else if (p.type === 'multiOptions') {
