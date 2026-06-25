@@ -772,15 +772,16 @@ defineExpose({
           v-for="edge in edges"
           :id="`arrowhead-${edge.id}`"
           :key="`marker-${edge.id}`"
-          markerWidth="12"
-          markerHeight="12"
-          refX="10"
-          refY="6"
+          markerWidth="9"
+          markerHeight="9"
+          refX="7.5"
+          refY="4.5"
           orient="auto"
+          markerUnits="userSpaceOnUse"
         >
           <path
-            d="M0,0 L0,12 L12,6 z"
-            fill="var(--canvas--edge--color, rgba(180, 180, 180, 0.5))"
+            d="M0,0 L9,4.5 L0,9 z"
+            fill="rgba(210, 210, 210, 0.9)"
           />
         </marker>
       </defs>
