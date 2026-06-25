@@ -2446,7 +2446,7 @@ impl WorkflowEngine {
                                 }))
                             }
                         } else {
-                            let config = interpolate_config(&node.config, &node_results, state);
+                            let config = interpolate_config(&node.config, &node_results, state, Some(&node_ancestors));
                             execute_node_by_type(
                                 node,
                                 &config,
@@ -2460,7 +2460,7 @@ impl WorkflowEngine {
                             .await
                         }
                     } else {
-                        let config = interpolate_config(&node.config, &node_results, state);
+                        let config = interpolate_config(&node.config, &node_results, state, Some(&node_ancestors));
                         execute_node_by_type(
                             node,
                             &config,
@@ -2474,7 +2474,7 @@ impl WorkflowEngine {
                         .await
                     }
                 } else {
-                    let config = interpolate_config(&node.config, &node_results, state);
+                    let config = interpolate_config(&node.config, &node_results, state, Some(&node_ancestors));
                     execute_node_by_type(
                         node,
                         &config,
@@ -2488,7 +2488,7 @@ impl WorkflowEngine {
                     .await
                 }
             } else {
-                let config = interpolate_config(&node.config, &node_results, state);
+                let config = interpolate_config(&node.config, &node_results, state, Some(&node_ancestors));
                 execute_node_by_type(
                     node,
                     &config,
