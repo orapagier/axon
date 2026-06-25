@@ -623,7 +623,10 @@ function computeNewNodePosition() {
   const NODE_W = 120 // rendered node width (matches the splice-insert spacing)
   const NODE_H = 140 // collision box height
   const GAP = 100
-  const COLLISION_W = 250 // wider box so we don't stack new nodes on top of neighbours
+  // Collision box must be narrower than the placement offset (NODE_W + GAP = 220),
+  // or the new node would "overlap" the rightmost node it's meant to sit beside and
+  // get bumped down on every check.
+  const COLLISION_W = 150
   // Right-most node = end of the chain. Sit just to its right, not a screen away.
   const rightmost = list.reduce((a, b) => (b.position.x > a.position.x ? b : a))
   const pos = { x: rightmost.position.x + NODE_W + GAP, y: rightmost.position.y }
