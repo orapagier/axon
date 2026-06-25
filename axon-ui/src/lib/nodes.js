@@ -649,6 +649,14 @@ export const NODE_TYPES = {
                         description: 'Whether to extract only the textual content from the response, ignoring HTML tags and other markup',
                     },
                     {
+                        displayName: 'Keep Links',
+                        name: 'keepLinks',
+                        type: 'boolean',
+                        default: false,
+                        description: 'Keep hyperlinks as [text](url) Markdown, resolving relative permalinks to absolute URLs',
+                        displayOptions: { show: { dataCleaner: [true] } },
+                    },
+                    {
                         displayName: 'Timeout (ms)',
                         name: 'timeout',
                         type: 'number',
