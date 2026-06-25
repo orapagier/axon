@@ -281,17 +281,6 @@ pub(crate) async fn execute_http_node(config: &Value) -> Result<Value, String> {
         .or_else(|| config.get("fullResponse"))
         .and_then(|v| v.as_bool());
 
-    // Debug: Log the body and content type
-    tracing::info!(
-        "Synapse body: {:?}, content_type: {:?}, specify_body: {:?}",
-        body,
-        content_type,
-        specify_body
-    );
-
-    // Debug: Log jsonBody field specifically
-    tracing::info!("Synapse jsonBody raw: {:?}", config.get("jsonBody"));
-
     let params = HttpRequestParams {
         method,
         url,
