@@ -672,37 +672,7 @@ impl HttpRequestTool {
                     // the page's own URL.
                     let working: String = if params.keep_links.unwrap_or(false) {
                         let base = reqwest::Url::parse(&final_url).ok();
-                        let re_anchor = regex::Regex::new(
-                            r#"(?is)<a\s[^>]*?href\s*=\s*["']([^"']*)["'][^>]*>(.*?)</a>"#,
-                        )
-                        .unwrap();
-                        let re_inner = regex::Regex::new(r"<[^>]*>").unwrap();
-                        re_anchor
-                            .replace_all(&text, |caps: &regex::Captures| {
-                                let href = caps.get(1).map(|m| m.as_str()).unwrap_or("").trim();
-                                let inner = caps.get(2).map(|m| m.as_str()).unwrap_or("");
-                                // Reduce the anchor's inner HTML to a plain text label.
-                                let label = re_inner.replace_all(inner, " ");
-                                let label = label.split_whitespace().collect::<Vec<_>>().join(" ");
-                                // Resolve to an absolute URL where it makes sense.
-                                let url = if href.is_empty()
-                                    || href.starts_with('#')
-                                    || href.starts_with("javascript:")
-                                {
-                                    None
-                                } else {
-                                    base.as_ref()
-                                        .and_then(|b| b.join(href).ok())
-                                        .map(|u| u.to_string())
-                                        .or_else(|| Some(href.to_string()))
-                                };
-                                match (url, label.is_empty()) {
-                                    (Some(u), false) => format!(" [{}]({}) ", label, u),
-                                    (Some(u), true) => format!(" {} ", u),
-                                    (None, _) => format!(" {} ", label),
-                                }
-                            })
-                            .into_owned()
+                        links_to_markdown(&text, base.as_ref())
                     } else {
                         text.clone()
                     };
