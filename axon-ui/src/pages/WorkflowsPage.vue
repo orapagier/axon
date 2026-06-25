@@ -607,6 +607,30 @@ function handleAddNode({ type, position }) {
   addNode(type, position)
 }
 
+// Where to drop a node added via the toolbar "+" picker (no source handle, edge,
+// or replace context). Place it just right of the last node in the chain — the
+// natural continuation point — nudging down until the slot is vacant so it never
+// lands on top of an existing node. Falls back to the last cursor position over
+// the canvas (paste-style), then a fixed default for an empty canvas.
+function computeNewNodePosition() {
+  const list = nodes.value
+  if (list.length === 0) {
+    const cursor = canvasRef.value?.getLastFlowPosition?.()
+    return cursor ? { x: cursor.x, y: cursor.y } : { x: 250, y: 150 }
+  }
+  const NODE_W = 250
+  const NODE_H = 140
+  const GAP = 80
+  // Right-most node = end of the chain.
+  const rightmost = list.reduce((a, b) => (b.position.x > a.position.x ? b : a))
+  const pos = { x: rightmost.position.x + NODE_W + GAP, y: rightmost.position.y }
+  const overlaps = (p) => list.some((n) =>
+    Math.abs(n.position.x - p.x) < NODE_W && Math.abs(n.position.y - p.y) < NODE_H)
+  let guard = 0
+  while (overlaps(pos) && guard++ < 100) pos.y += NODE_H
+  return pos
+}
+
 function addNodeFromPalette(type) {
   if (pendingReplace.value) {
     replaceNode(pendingReplace.value.id, type)
