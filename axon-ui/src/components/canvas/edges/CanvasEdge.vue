@@ -243,15 +243,15 @@ function onMouseLeave() {
   display: flex;
   align-items: center;
   justify-content: center;
-  /* Visual size kept small (16px), but generous transparent padding extends
-     the hit area so the button stays easy to click. */
-  width: 16px;
-  height: 16px;
-  padding: 7px;
+  /* Compact visual size (12px), but transparent padding keeps a generous,
+     easy-to-click hit area around each button. */
+  width: 12px;
+  height: 12px;
+  padding: 5px;
   box-sizing: content-box;
   background: transparent;
   border: none;
-  border-radius: 8px;
+  border-radius: 6px;
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease, transform 0.1s ease;
   color: rgba(255, 255, 255, 0.85);
