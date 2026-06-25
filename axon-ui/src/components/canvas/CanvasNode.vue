@@ -91,6 +91,40 @@ const {
   requiredNonMainInputs,
 } = useNodeConnections({ inputs, outputs, connections })
 
+// n8n-style growing node: when a node has several main outputs (e.g. Switch, one
+// output per routing rule) the box stretches taller so every output handle gets
+// its own vertical slot. Without this they'd cram into a fixed 100px box and the
+// edges would stack on top of each other. The handle offsets are percentages, so
+// growing the box automatically spreads them out evenly.
+const BASE_NODE_SIZE = 100
+const OUTPUT_SLOT_HEIGHT = 46 // px reserved per main output once we start growing
+const nodeHeight = computed(() => {
+  const count = mainOutputs.value.length
+  if (count <= 2) return BASE_NODE_SIZE
+  return count * OUTPUT_SLOT_HEIGHT
+})
+// Override the node-height CSS var for this node only; both the wrapper and the
+// inner box read `--canvas-node--height`, so the icon stays centered as it grows.
+const rootStyle = computed(() => ({
+  '--canvas-node--height': `${nodeHeight.value}px`,
+}))
+
+// Vue Flow caches each handle's position relative to its node. When the number of
+// outputs (or the node height) changes, those cached bounds go stale and edges
+// connect to the wrong spot — so we tell Vue Flow to remeasure this node once the
+// new handles/height have rendered.
+const { updateNodeInternals } = useVueFlow()
+watch(
+  () => mainOutputs.value.length,
+  () => {
+    nextTick(() => {
+      // A double tick lets the resize + new handles settle in the DOM before
+      // Vue Flow remeasures, so edge endpoints land exactly on each output.
+      requestAnimationFrame(() => updateNodeInternals([props.id]))
+    })
+  },
+)
+
 // Computed class for node state
 const classes = computed(() => ({
   'canvas-node': true,
