@@ -130,7 +130,14 @@ pub async fn create(
         .form(&form)
         .send()
         .await?;
-    Ok(ensure_ok(resp).await?.json().await?)
+    let value: Value = ensure_ok(resp).await?.json().await?;
+    // Scheduled (unpublished) posts have no live permalink yet — leave as-is.
+    let scheduled = matches!(publish_time, Some(ts) if ts > 0);
+    if scheduled {
+        Ok(value)
+    } else {
+        Ok(ensure_permalink(state, &tok, value).await)
+    }
 }
 
 pub async fn create_with_image(state: &AppState, message: &str, image_url: &str) -> Result<Value> {
