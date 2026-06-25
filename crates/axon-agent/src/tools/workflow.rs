@@ -896,11 +896,7 @@ fn resolve_value_scoped(
         if let Some(cap) = RE_PURE.captures(expression) {
             let identifier = &cap[1];
             let field = &cap[2];
-            let res = results.get(identifier).or_else(|| {
-                results
-                    .values()
-                    .find(|r| r.node_name.to_lowercase() == identifier.to_lowercase())
-            });
+            let res = lookup_node(results, ancestors, identifier);
             return Some(match res {
                 // Preserve null so downstream nodes see the real value.
                 // Previously this converted null -> "" which hid missing data.
@@ -915,11 +911,7 @@ fn resolve_value_scoped(
         if let Some(cap) = RE_PURE_DOT.captures(expression) {
             let identifier = &cap[1];
             let field = &cap[2];
-            let res = results.get(identifier).or_else(|| {
-                results
-                    .values()
-                    .find(|r| r.node_name.to_lowercase() == identifier.to_lowercase())
-            });
+            let res = lookup_node(results, ancestors, identifier);
             return Some(match res {
                 Some(res) => get_raw_field(res, field),
                 None => Value::Null,
@@ -1047,11 +1039,7 @@ fn resolve_value_scoped(
                 continue;
             }
             let token = &whole[..whole.len() - (cap[2].len() - field.len())];
-            let res = results.get(identifier).or_else(|| {
-                results
-                    .values()
-                    .find(|r| r.node_name.to_lowercase() == identifier.to_lowercase())
-            });
+            let res = lookup_node(results, ancestors, identifier);
             // Found -> stringified value; recognized but missing (not yet run /
             // wrong branch) -> empty, so the literal token never leaks downstream.
             let replacement = match res {
