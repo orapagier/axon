@@ -221,12 +221,12 @@ function onMouseLeave() {
 .controls-body {
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 2px;
   background: rgba(18, 29, 36, 0.9);
   backdrop-filter: blur(8px);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
-  padding: 2px;
+  border-radius: 8px;
+  padding: 1px;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
   transform: scale(0);
   opacity: 0;
