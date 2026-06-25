@@ -697,11 +697,9 @@ function addNodeFromPalette(type) {
     pendingSplice.value = null
   } else {
     // Plain "+" add: drop under the last canvas cursor position (paste-style), so
-    // it lands where the user is looking. ensureNodeVisible is kept only as a
-    // fallback for the no-cursor case — it no-ops when the node is already visible.
+    // it lands where the user is looking — already on-screen, so no viewport pan.
     const position = computeNewNodePosition()
     addNode(type, position)
-    nextTick(() => canvasRef.value?.ensureNodeVisible?.(position))
   }
   isNodePickerOpen.value = false
 }
