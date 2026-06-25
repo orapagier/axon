@@ -446,7 +446,60 @@ impl HttpRequestTool {
         // Apply finalized headers
         rb = rb.headers(headers);
 
-        let response = rb.send().await.context("HTTP request failed")?;
+        // Retry on transient failures (network errors, 5xx, 429) when enabled.
+        let max_tries = if params.retry_on_fail.unwrap_or(false) {
+            params.max_tries.unwrap_or(3).max(1)
+        } else {
+            1
+        };
+        let retry_interval = Duration::from_millis(params.retry_interval_ms.unwrap_or(1000));
+
+        // Retrying requires re-issuing the request, which needs a cloneable body
+        // (streaming/multipart bodies can't be cloned — those run once).
+        let response = if max_tries <= 1 || rb.try_clone().is_none() {
+            rb.send().await.context("HTTP request failed")?
+        } else {
+            let mut resp = None;
+            let mut last_err: Option<reqwest::Error> = None;
+            for attempt in 1..=max_tries {
+                let attempt_rb = rb.try_clone().expect("body is cloneable");
+                match attempt_rb.send().await {
+                    Ok(r) => {
+                        let retryable =
+                            r.status().is_server_error() || r.status().as_u16() == 429;
+                        if retryable && attempt < max_tries {
+                            tracing::debug!(
+                                "HTTP retry {}/{} after status {}",
+                                attempt,
+                                max_tries,
+                                r.status()
+                            );
+                            tokio::time::sleep(retry_interval).await;
+                            continue;
+                        }
+                        resp = Some(r);
+                        break;
+                    }
+                    Err(e) => {
+                        last_err = Some(e);
+                        if attempt < max_tries {
+                            tracing::debug!("HTTP retry {}/{} after transport error", attempt, max_tries);
+                            tokio::time::sleep(retry_interval).await;
+                            continue;
+                        }
+                    }
+                }
+            }
+            match resp {
+                Some(r) => r,
+                None => {
+                    return Err(anyhow::Error::from(
+                        last_err.expect("a transport error was recorded"),
+                    ))
+                    .context("HTTP request failed after retries")
+                }
+            }
+        };
         let status = response.status().as_u16();
         let headers = response.headers().clone();
 
