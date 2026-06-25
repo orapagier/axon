@@ -661,8 +661,10 @@ export const NODE_TYPES = {
         displayName: 'Switch',
         name: 'switch',
         icon: '/icons/switch.png',
-        outputs: ['case 1', 'case 2', 'case 3', 'case 4', 'case 5', 'default'],
-        description: 'Route data to one of multiple branches — first matching rule wins (n8n-style switch with full filters)',
+        // Outputs are dynamic: one per rule (+ an optional Default), derived from
+        // the node config by getNodeOutputs(). See that helper below.
+        dynamicOutputs: true,
+        description: 'Route data to one of many branches — one output per rule, added automatically as you add rules (n8n-style switch with full filters)',
         properties: [
             {
                 displayName: 'Default Data Type',
