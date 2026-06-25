@@ -533,6 +533,30 @@ defineExpose({
   zoomTo,
   getViewport: () => viewport.value,
   setViewport: (v) => setViewport(v),
+  // Pan the viewport so a flow-coordinate point is comfortably on-screen. Only
+  // pans when the point falls outside the visible area (with a margin) so a
+  // freshly added node that's already visible doesn't trigger a jarring jump.
+  ensureNodeVisible(pos) {
+    if (!pos) return
+    const vp = viewport.value
+    const dim = dimensions.value
+    if (!vp || !dim?.width) return
+    const NODE_W = 250
+    const NODE_H = 140
+    const MARGIN = 60
+    const screenX = pos.x * vp.zoom + vp.x
+    const screenY = pos.y * vp.zoom + vp.y
+    const w = NODE_W * vp.zoom
+    const h = NODE_H * vp.zoom
+    const offscreen =
+      screenX < MARGIN ||
+      screenY < MARGIN ||
+      screenX + w > dim.width - MARGIN ||
+      screenY + h > dim.height - MARGIN
+    if (offscreen) {
+      setCenter(pos.x + NODE_W / 2, pos.y + NODE_H / 2, { zoom: vp.zoom, duration: 250 })
+    }
+  },
   // Update node execution state
   updateNodeExecution,
   // Batch update all nodes' execution states
