@@ -49,6 +49,13 @@ pub struct HttpRequestParams {
     pub json_body: Option<String>,
     pub specify_body: Option<String>,
     pub header_parameters: Option<serde_json::Value>, // {"parameters": [{"name":..,"value":..}]}
+    // Redirect handling
+    pub follow_redirects: Option<bool>, // default true
+    pub max_redirects: Option<usize>,   // default 10
+    // Retry on failure (network errors, 5xx, 429)
+    pub retry_on_fail: Option<bool>,
+    pub max_tries: Option<u32>,        // total attempts incl. the first
+    pub retry_interval_ms: Option<u64>, // wait between attempts
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
