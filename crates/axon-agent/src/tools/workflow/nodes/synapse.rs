@@ -146,22 +146,16 @@ pub(crate) async fn execute_http_node(config: &Value) -> Result<Value, String> {
         .and_then(|v| v.as_str())
         .unwrap_or("keypair");
 
-    // Debug: Log raw config values before body processing
-    tracing::info!("Synapse BEFORE body - specify_body: {:?}, sendBody: {:?}, jsonBody: {:?}, contentType: {:?}",
-        specify_body,
-        config.get("sendBody"),
-        config.get("jsonBody"),
-        config.get("contentType")
-    );
-
-    let has_body_method = ["POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
-        .contains(&method.to_uppercase().as_str());
+    // Only POST/PUT/PATCH/DELETE carry a body — this matches the UI's `sendBody`
+    // display options. HEAD/OPTIONS must never send one.
+    let has_body_method =
+        ["POST", "PUT", "PATCH", "DELETE"].contains(&method.to_uppercase().as_str());
 
     let body = if has_body_method
         && config
             .get("sendBody")
             .and_then(|v| v.as_bool())
-            .unwrap_or(true)
+            .unwrap_or(false)
     {
         match content_type {
             "json" => {
