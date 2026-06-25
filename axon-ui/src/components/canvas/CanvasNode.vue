@@ -561,6 +561,10 @@ function cancelRename() {
   white-space: nowrap;
   opacity: 0;
   transition: opacity 0.2s ease;
+  /* Neutral default so dynamic Switch labels (case N / custom / default) are
+     legible; true/false override below. */
+  color: #c7d2fe;
+  background: rgba(99, 102, 241, 0.15);
 }
 .canvas-node:hover .handle-label,
 .canvas-node.selected .handle-label {
