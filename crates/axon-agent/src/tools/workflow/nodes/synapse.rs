@@ -229,6 +229,15 @@ pub(crate) async fn execute_http_node(config: &Value) -> Result<Value, String> {
                         .get("body")
                         .and_then(|v| v.as_str())
                         .map(|b| json!(b))
+                } else if specify_body == "json" {
+                    // A JSON object whose key/values become the urlencoded form fields.
+                    config.get("jsonBody").and_then(|v| {
+                        if let Some(s) = v.as_str() {
+                            serde_json::from_str(s).ok()
+                        } else {
+                            Some(v.clone())
+                        }
+                    })
                 } else {
                     let mut base_obj = serde_json::Map::new();
                     if let Some(params) = config
