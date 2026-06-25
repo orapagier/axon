@@ -2577,11 +2577,12 @@ small.form-desc {
   background: rgba(99,102,241,0.08);
   border: 1px dashed rgba(99,102,241,0.35);
   color: #a5b4fc;
-  padding: 6px 12px; border-radius: 8px;
+  /* No left padding — the icon sits flush against the button's left edge. */
+  padding: 6px 12px 6px 0; border-radius: 8px;
   font-size: 11.5px; font-weight: 600; letter-spacing: 0.2px;
   cursor: pointer; transition: all 0.18s ease;
 }
-.btn-curl-import .btn-icon { margin-right: 1px; flex-shrink: 0; }
+.btn-curl-import .btn-icon { margin: 0; flex-shrink: 0; }
 .btn-curl-import:hover {
   background: rgba(99,102,241,0.16);
   border-color: rgba(99,102,241,0.6);
