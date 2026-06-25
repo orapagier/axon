@@ -2569,16 +2569,16 @@ small.form-desc {
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    cURL IMPORT BUTTON
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
-.curl-import-row { grid-column: 1 / -1; padding: 2px 0 10px; }
+.curl-import-row { grid-column: 1 / -1; padding: 2px 0 10px; display: flex; justify-content: flex-start; }
 
 .btn-curl-import {
-  display: flex; align-items: center; justify-content: center; gap: 8px;
-  width: 100%;
+  display: inline-flex; align-items: center; gap: 7px;
+  width: auto; align-self: flex-start;
   background: rgba(99,102,241,0.08);
   border: 1px dashed rgba(99,102,241,0.35);
   color: #a5b4fc;
-  padding: 9px 14px; border-radius: 9px;
-  font-size: 12px; font-weight: 600; letter-spacing: 0.2px;
+  padding: 6px 12px; border-radius: 8px;
+  font-size: 11.5px; font-weight: 600; letter-spacing: 0.2px;
   cursor: pointer; transition: all 0.18s ease;
 }
 .btn-curl-import:hover {
