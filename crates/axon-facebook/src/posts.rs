@@ -298,5 +298,5 @@ pub async fn create_with_video(state: &AppState, message: &str, video_url: &str)
         ensure_ok(resp).await?.json().await?
     };
 
-    Ok(resp_value)
+    Ok(ensure_permalink(state, &tok, resp_value).await)
 }
