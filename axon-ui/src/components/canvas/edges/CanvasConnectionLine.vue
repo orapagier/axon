@@ -11,23 +11,10 @@ const props = defineProps({
   targetY: { type: Number, required: true },
 })
 
-// Calculate bezier curve control points
-const path = computed(() => {
-  const sourceX = props.sourceX
-  const sourceY = props.sourceY
-  const targetX = props.targetX
-  const targetY = props.targetY
-
-  // Control points for bezier curve
-  const controlPointOffset = Math.abs(targetX - sourceX) * 0.5
-
-  const c1x = sourceX + controlPointOffset
-  const c1y = sourceY
-  const c2x = targetX - controlPointOffset
-  const c2y = targetY
-
-  return `M ${sourceX} ${sourceY} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${targetX} ${targetY}`
-})
+// Straight drag line, matching the straight committed edges.
+const path = computed(
+  () => `M ${props.sourceX} ${props.sourceY} L ${props.targetX} ${props.targetY}`,
+)
 </script>
 
 <template>
