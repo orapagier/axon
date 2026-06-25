@@ -529,6 +529,46 @@ function migrateSwitchDefaultEdges(nodeList, edgeList) {
   }
 }
 
+// Dynamic outputs (Switch rules) are positional: handles are output_main_<index>,
+// with rules 0..N-1 followed by a trailing Default at N. Adding or removing a rule
+// shifts every later index, so an edge stored under the old index would silently
+// re-target the wrong rule. These remap edges from a given source so each wire
+// stays on its rule — or is dropped when its rule is deleted.
+// `mutate(outIdx)` returns: a new index to move the edge, `null` to delete it, or
+// `undefined` to leave it untouched.
+function remapDynamicOutputEdges(nodeId, mutate) {
+  const next = []
+  for (const e of edges.value) {
+    if (e.source !== nodeId) { next.push(e); continue }
+    const m = /^output_(.+)_(\d+)$/.exec(e.sourceHandle || '')
+    if (!m) { next.push(e); continue }
+    const result = mutate(parseInt(m[2], 10))
+    if (result === null) continue // rule deleted → drop its edge
+    if (result !== undefined) {
+      const newHandle = `output_${m[1]}_${result}`
+      e.sourceHandle = newHandle
+      if (e.data) e.data.sourceHandle = newHandle
+    }
+    next.push(e)
+  }
+  edges.value = next
+}
+
+function handleDynamicOutputRemoved({ nodeId, index }) {
+  remapDynamicOutputEdges(nodeId, (outIdx) => {
+    if (outIdx === index) return null     // the deleted rule's own edge
+    if (outIdx > index) return outIdx - 1 // later outputs shift up one slot
+    return undefined
+  })
+}
+
+function handleDynamicOutputAdded({ nodeId, index }) {
+  remapDynamicOutputEdges(nodeId, (outIdx) => {
+    if (outIdx >= index) return outIdx + 1 // Default (and beyond) shift down one
+    return undefined
+  })
+}
+
 async function selectWorkflow(wf) {
   selectedWorkflow.value = wf
   isWorkflowMenuOpen.value = false
