@@ -31,16 +31,15 @@ const { removeEdges } = useVueFlow()
 const localHovered = ref(false)
 let hoverTimeout = null
 
-// Calculate the bezier path for the edge using n8n-style curves
+// Straight-line path: a single direct line from the source output to the target
+// input, so each wire visibly runs straight to the node it feeds (with an
+// arrowhead at the target end via markerEnd).
 const edgePath = computed(() => {
-  const [path] = getBezierPath({
+  const [path] = getStraightPath({
     sourceX: props.sourceX,
     sourceY: props.sourceY,
-    sourcePosition: props.sourcePosition,
     targetX: props.targetX,
     targetY: props.targetY,
-    targetPosition: props.targetPosition,
-    curvature: 0.5, // n8n uses 0.5 curvature for smooth curves
   })
   return path
 })
