@@ -1,6 +1,27 @@
 use crate::tools::http::{HttpAuth, HttpRequestParams, HttpRequestTool};
 use crate::tools::workflow::try_parse_json_value;
 use serde_json::{json, Value};
+use std::time::Duration;
+
+/// A response "page" counts as empty (stop paginating) when it has no data.
+fn is_empty_body(v: &Value) -> bool {
+    match v {
+        Value::Null => true,
+        Value::Array(a) => a.is_empty(),
+        Value::Object(o) => o.is_empty(),
+        Value::String(s) => s.trim().is_empty(),
+        _ => false,
+    }
+}
+
+/// Resolve a dot-path (e.g. "paging.next") against a JSON value.
+fn get_by_path<'a>(v: &'a Value, path: &str) -> Option<&'a Value> {
+    let mut cur = v;
+    for seg in path.split('.') {
+        cur = cur.get(seg)?;
+    }
+    Some(cur)
+}
 
 /// Header and query-parameter values are always strings on the wire, so they must
 /// NOT be coerced to JSON numbers/bools the way body fields are. Coercing them
