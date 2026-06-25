@@ -157,8 +157,9 @@ function parseHandleType(handleId) {
  */
 export function createNodeData(id, type, name, config = {}, enabled = true) {
   const isTrigger = type === 'trigger'
-  const nodeDef = NODE_TYPES[type]
-  const customOutputs = nodeDef?.outputs // e.g. ['true', 'false'] for IF node
+  // Output handles: fixed for most nodes, but config-derived for dynamic ones
+  // like Switch (one handle per rule + optional Default).
+  const customOutputs = getNodeOutputs(type, config) // e.g. ['true', 'false'] for IF node
 
   const outputs = customOutputs
     ? customOutputs.map((label, i) => ({
