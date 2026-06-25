@@ -5,9 +5,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cd \"$CLAUDE_PROJECT_DIR\" && git push origin HEAD 2>/dev/null || true",
-            "async": true,
-            "statusMessage": "Pushing to origin"
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && git add -A && (git diff-index --quiet HEAD || git commit -m \"claude: auto-backup $(date +%H:%M:%S)\") ; git push origin HEAD || true",
+            "statusMessage": "Committing and pushing to origin"
           }
         ]
       }
