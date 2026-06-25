@@ -2347,8 +2347,12 @@ impl WorkflowEngine {
                                         out_obj.insert("total".to_string(), json!(unit_count));
                                     }
                                 }
-                                let item_config =
-                                    interpolate_config(&node.config, &temp_results, state);
+                                let item_config = interpolate_config(
+                                    &node.config,
+                                    &temp_results,
+                                    state,
+                                    Some(&node_ancestors),
+                                );
                                 (item_config, temp_results)
                             };
 
