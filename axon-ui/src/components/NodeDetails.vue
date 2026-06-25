@@ -823,45 +823,275 @@ function openCurlImport() {
   showCurlModal.value = true
 }
 
+// Tokenize a shell-style command line, honoring single/double quotes,
+// $'...' ANSI-C quoting, and backslash escapes. Line continuations are
+// stripped beforehand. Returns an array of unquoted argument strings.
+function tokenizeShell(input) {
+  const tokens = []
+  let cur = ''
+  let has = false
+  let i = 0
+  const n = input.length
+  const ansiUnescape = (s) =>
+    s.replace(/\\(n|t|r|\\|'|"|a|b|f|v|0)/g, (_, ch) => ({
+      n: '\n', t: '\t', r: '\r', '\\': '\\', "'": "'", '"': '"',
+      a: '\x07', b: '\b', f: '\f', v: '\v', '0': '\0',
+    }[ch]))
+  while (i < n) {
+    const c = input[i]
+    // $'...' / $"..." — drop the leading $ and parse as a quote
+    if (c === '$' && (input[i + 1] === "'" || input[i + 1] === '"')) { i++; continue }
+    if (c === "'") {
+      has = true; i++
+      let raw = ''
+      while (i < n && input[i] !== "'") { raw += input[i]; i++ }
+      i++ // closing '
+      // If this single-quoted run was introduced by $'...', apply ANSI-C unescaping.
+      cur += input[i - raw.length - 2] === '$' ? ansiUnescape(raw) : raw
+      continue
+    }
+    if (c === '"') {
+      has = true; i++
+      while (i < n && input[i] !== '"') {
+        if (input[i] === '\\' && i + 1 < n && '"\\$`\n'.includes(input[i + 1])) {
+          if (input[i + 1] !== '\n') cur += input[i + 1]
+          i += 2
+        } else { cur += input[i]; i++ }
+      }
+      i++ // closing "
+      continue
+    }
+    if (c === '\\') { // escape next char outside quotes
+      if (i + 1 < n) { cur += input[i + 1]; has = true; i += 2 } else { i++ }
+      continue
+    }
+    if (/\s/.test(c)) {
+      if (has) { tokens.push(cur); cur = ''; has = false }
+      i++
+      continue
+    }
+    cur += c; has = true; i++
+  }
+  if (has) tokens.push(cur)
+  return tokens
+}
+
+function isJsonString(s) {
+  try { JSON.parse(s); return true } catch { return false }
+}
+
+// Parse "a=1&b=2" (urlencoded) into [{name,value}], decoding percent-escapes
+// so the backend can re-encode cleanly.
+function parseUrlencodedPairs(str) {
+  const out = []
+  for (const part of str.split('&')) {
+    if (!part) continue
+    const eq = part.indexOf('=')
+    const rawName = eq === -1 ? part : part.slice(0, eq)
+    const rawValue = eq === -1 ? '' : part.slice(eq + 1)
+    const dec = (v) => { try { return decodeURIComponent(v.replace(/\+/g, ' ')) } catch { return v } }
+    out.push({ name: dec(rawName), value: dec(rawValue) })
+  }
+  return out
+}
+
 function importCurl() {
   if (!curlInput.value) return
-  
-  const curl = curlInput.value.trim()
-  const config = props.node.data.config
-  
-  // Basic cURL parser
-  // Fix: Don't capture options starting with '-' immediately after curl
-  const urlMatch = curl.match(/--url\s+["']?([^"'\s]+)["']?/) || curl.match(/(?:^|\s)["']?(https?:\/\/[^"'\s]+)["']?/) || curl.match(/curl\s+["']?([^-][^"'\s]+)["']?/)
-  if (urlMatch) config.url = urlMatch[1]
 
-  // Method: -X or --request
-  const methodMatch = curl.match(/-X\s+([A-Z]+)/) || curl.match(/--request\s+([A-Z]+)/)
-  if (methodMatch) config.method = methodMatch[1]
+  // Strip line continuations ( \<newline> for bash, ^<newline> for cmd ) so the
+  // command becomes a single logical line before tokenizing.
+  const normalized = curlInput.value
+    .replace(/\\\r?\n/g, ' ')
+    .replace(/\^\r?\n/g, ' ')
+    .trim()
 
-  // Headers: -H or --header
-  const headerRegex = /(?:-H|--header)\s+["'](.+?):?\s+(.+?)["']/g
-  let hMatch
-  const headers = []
-  while ((hMatch = headerRegex.exec(curl)) !== null) {
-    headers.push({ name: hMatch[1], value: hMatch[2] })
+  const tokens = tokenizeShell(normalized)
+  if (tokens[0] && tokens[0].toLowerCase() === 'curl') tokens.shift()
+
+  let method = ''
+  let basicAuth = ''
+  let insecure = false
+  const positionals = []
+  const rawHeaders = []   // "Name: value" strings
+  const dataParts = []    // -d / --data*
+  const urlencodeParts = [] // --data-urlencode
+  const formParts = []    // -F / --form (multipart)
+  let explicitUrl = ''
+
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i]
+    const eq = t.indexOf('=')
+    const flag = t.startsWith('--') && eq !== -1 ? t.slice(0, eq) : t
+    const inlineVal = t.startsWith('--') && eq !== -1 ? t.slice(eq + 1) : null
+    const val = () => (inlineVal !== null ? inlineVal : tokens[++i])
+
+    switch (flag) {
+      case '-X': case '--request': method = (val() || '').toUpperCase(); break
+      case '--url': explicitUrl = val() || ''; break
+      case '-H': case '--header': { const v = val(); if (v) rawHeaders.push(v); break }
+      case '-d': case '--data': case '--data-raw':
+      case '--data-binary': case '--data-ascii': { const v = val(); if (v != null) dataParts.push(v); break }
+      case '--data-urlencode': { const v = val(); if (v != null) urlencodeParts.push(v); break }
+      case '-F': case '--form': { const v = val(); if (v) formParts.push(v); break }
+      case '-u': case '--user': basicAuth = val() || ''; break
+      case '-b': case '--cookie': { const v = val(); if (v) rawHeaders.push('Cookie: ' + v); break }
+      case '-A': case '--user-agent': { const v = val(); if (v) rawHeaders.push('User-Agent: ' + v); break }
+      case '-e': case '--referer': { const v = val(); if (v) rawHeaders.push('Referer: ' + v); break }
+      case '-k': case '--insecure': insecure = true; break
+      // No-arg flags we can safely ignore
+      case '--compressed': case '-L': case '--location': case '-s': case '--silent':
+      case '-i': case '--include': case '-g': case '--globoff': case '-v': case '--verbose':
+      case '-#': case '--progress-bar': case '-S': case '--show-error': case '-f': case '--fail':
+        break
+      default:
+        if (flag.startsWith('-') && flag !== '-') {
+          // Unknown flag that likely carries a value — consume it so the value
+          // isn't mistaken for the URL. Skip only if the next token isn't a flag.
+          if (inlineVal === null && tokens[i + 1] != null && !tokens[i + 1].startsWith('-')) i++
+        } else {
+          positionals.push(t)
+        }
+    }
   }
-  if (headers.length > 0) {
+
+  // URL: explicit --url wins, else first http(s) positional, else first positional.
+  const url = explicitUrl ||
+    positionals.find((p) => /^https?:\/\//i.test(p)) ||
+    positionals[0] || ''
+
+  if (!url) {
+    toast('Couldn’t find a URL in that cURL command.', false)
+    return
+  }
+
+  const config = props.node.data.config
+  config.url = url
+
+  // Headers → {name,value}; capture Content-Type to drive the body mapping.
+  const headers = []
+  let contentTypeHeader = ''
+  for (const h of rawHeaders) {
+    const idx = h.indexOf(':')
+    if (idx === -1) continue
+    const name = h.slice(0, idx).trim()
+    const value = h.slice(idx + 1).trim()
+    if (!name) continue
+    if (name.toLowerCase() === 'content-type') contentTypeHeader = value.toLowerCase()
+    headers.push({ name, value })
+  }
+
+  const hasBody = dataParts.length > 0 || urlencodeParts.length > 0 || formParts.length > 0
+  // curl defaults to POST when a body is present and no method was given.
+  config.method = method || (hasBody ? 'POST' : 'GET')
+
+  // Decide body content type and shape. We strip the Content-Type header for
+  // managed types (json/form/multipart) because the backend serializer sets the
+  // correct one — crucially the multipart boundary, which a bare header would clobber.
+  let bodySummary = 'no body'
+  let dropContentTypeHeader = false
+  if (hasBody) {
+    config.sendBody = true
+    if (formParts.length > 0) {
+      // multipart/form-data — values like name=value, files like name=@/path
+      config.contentType = 'multipart-form-data'
+      config.specifyBody = 'keypair'
+      config.bodyParameters = {
+        parameters: formParts.map((f) => {
+          const eq = f.indexOf('=')
+          const name = eq === -1 ? f : f.slice(0, eq)
+          let value = eq === -1 ? '' : f.slice(eq + 1)
+          if (value.startsWith('@')) {
+            return { name, value: value.slice(1).split(';')[0], parameterType: 'formBinaryData' }
+          }
+          return { name, value, parameterType: 'formData' }
+        }),
+      }
+      dropContentTypeHeader = true
+      bodySummary = `${config.bodyParameters.parameters.length}-field form-data`
+    } else if (urlencodeParts.length > 0 && dataParts.length === 0) {
+      config.contentType = 'form-urlencoded'
+      config.specifyBody = 'keypair'
+      config.bodyParameters = {
+        parameters: urlencodeParts.map((p) => {
+          const eq = p.indexOf('=')
+          return { name: eq === -1 ? p : p.slice(0, eq), value: eq === -1 ? '' : p.slice(eq + 1) }
+        }),
+      }
+      dropContentTypeHeader = true
+      bodySummary = 'urlencoded body'
+    } else {
+      const data = [...dataParts, ...urlencodeParts].join('&')
+      const ctIsJson = contentTypeHeader.includes('json')
+      const ctIsForm = contentTypeHeader.includes('x-www-form-urlencoded')
+      const looksUrlencoded = /^[^=&\s]+=[^&]*(&[^=&\s]+=[^&]*)*$/.test(data)
+      const looksJson = /^\s*[[{]/.test(data) && isJsonString(data)
+
+      if (ctIsForm || (!contentTypeHeader && looksUrlencoded && !looksJson)) {
+        config.contentType = 'form-urlencoded'
+        config.specifyBody = 'keypair'
+        config.bodyParameters = { parameters: parseUrlencodedPairs(data) }
+        dropContentTypeHeader = true
+        bodySummary = 'urlencoded body'
+      } else if (looksJson || (ctIsJson && isJsonString(data))) {
+        config.contentType = 'json'
+        config.specifyBody = 'json'
+        config.jsonBody = data
+        dropContentTypeHeader = true
+        bodySummary = 'JSON body'
+      } else {
+        // Raw body (text/xml/etc., or a Content-Type:json that isn't valid JSON).
+        // Keep the Content-Type header so the exact type is sent, and mirror it
+        // into rawContentType for the backend's raw path.
+        config.contentType = 'raw'
+        config.specifyBody = 'string'
+        config.body = data
+        if (contentTypeHeader) config.rawContentType = contentTypeHeader
+        bodySummary = 'raw body'
+      }
+    }
+  } else {
+    config.sendBody = false
+  }
+
+  // Apply headers (minus the Content-Type we mapped to the body type).
+  const finalHeaders = dropContentTypeHeader
+    ? headers.filter((h) => h.name.toLowerCase() !== 'content-type')
+    : headers
+  if (finalHeaders.length > 0) {
     config.sendHeaders = true
     config.specifyHeaders = 'keypair'
-    config.headerParameters = { parameters: headers }
+    config.headerParameters = { parameters: finalHeaders }
+  } else {
+    config.sendHeaders = false
+    config.headerParameters = { parameters: [] }
   }
 
-  // Body: -d, --data, --data-raw, --data-binary
-  const dataMatch = curl.match(/(?:-d|--data|--data-raw|--data-binary)\s+["'](.+?)["']/)
-  if (dataMatch) {
-    config.sendBody = true
-    config.contentType = 'json'
-    config.specifyBody = 'json'
-    config.jsonBody = dataMatch[1]
+  // Basic auth via -u user:pass
+  if (basicAuth) {
+    const idx = basicAuth.indexOf(':')
+    config.authentication = 'genericCredentialType'
+    config.genericAuthType = 'httpBasicAuth'
+    config.user = idx === -1 ? basicAuth : basicAuth.slice(0, idx)
+    config.password = idx === -1 ? '' : basicAuth.slice(idx + 1)
+  }
+
+  // -k / --insecure → ignore SSL errors (lives in the Options collection)
+  if (insecure) {
+    if (!config.options || typeof config.options !== 'object') config.options = {}
+    config.options.allowUnauthorizedCerts = true
   }
 
   showCurlModal.value = false
   emit('save')
+
+  const parts = [config.method, getHostnameSafe(url)]
+  if (finalHeaders.length) parts.push(`${finalHeaders.length} header${finalHeaders.length > 1 ? 's' : ''}`)
+  parts.push(bodySummary)
+  toast(`Imported cURL · ${parts.join(' · ')}`)
+}
+
+function getHostnameSafe(url) {
+  try { return new URL(url).hostname } catch { return url }
 }
 function normalizeConfig() {
   if (!props.node?.data?.config || !nodeDefinition.value) return
