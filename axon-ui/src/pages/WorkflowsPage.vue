@@ -620,14 +620,15 @@ function computeNewNodePosition() {
   const list = nodes.value
   if (list.length === 0) return { x: 250, y: 150 }
 
-  const NODE_W = 250
-  const NODE_H = 140
-  const GAP = 80
-  // Right-most node = end of the chain.
+  const NODE_W = 120 // rendered node width (matches the splice-insert spacing)
+  const NODE_H = 140 // collision box height
+  const GAP = 100
+  const COLLISION_W = 250 // wider box so we don't stack new nodes on top of neighbours
+  // Right-most node = end of the chain. Sit just to its right, not a screen away.
   const rightmost = list.reduce((a, b) => (b.position.x > a.position.x ? b : a))
   const pos = { x: rightmost.position.x + NODE_W + GAP, y: rightmost.position.y }
   const overlaps = (p) => list.some((n) =>
-    Math.abs(n.position.x - p.x) < NODE_W && Math.abs(n.position.y - p.y) < NODE_H)
+    Math.abs(n.position.x - p.x) < COLLISION_W && Math.abs(n.position.y - p.y) < NODE_H)
   let guard = 0
   while (overlaps(pos) && guard++ < 100) pos.y += NODE_H
   return pos
