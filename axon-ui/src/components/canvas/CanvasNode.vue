@@ -246,7 +246,11 @@ function cancelRename() {
             :connectable="!readOnly"
             @click.stop="onAdd(source.handleId)"
           />
-          <span v-if="source.label" class="handle-label" :class="'handle-label--' + source.label">
+          <span
+            v-if="source.label"
+            class="handle-label"
+            :class="{ 'handle-label--true': source.label === 'true', 'handle-label--false': source.label === 'false' }"
+          >
             {{ source.label === 'true' ? '✓' : (source.label === 'false' ? '✗' : source.label) }}
           </span>
         </div>
