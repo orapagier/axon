@@ -667,11 +667,51 @@ impl HttpRequestTool {
                 let text = String::from_utf8_lossy(&bytes).into_owned();
 
                 if params.data_cleaner.unwrap_or(false) {
+                    // Optionally preserve hyperlinks as Markdown — [label](absolute-url) —
+                    // BEFORE any tags are stripped, resolving relative permalinks against
+                    // the page's own URL.
+                    let working: String = if params.keep_links.unwrap_or(false) {
+                        let base = reqwest::Url::parse(&final_url).ok();
+                        let re_anchor = regex::Regex::new(
+                            r#"(?is)<a\s[^>]*?href\s*=\s*["']([^"']*)["'][^>]*>(.*?)</a>"#,
+                        )
+                        .unwrap();
+                        let re_inner = regex::Regex::new(r"<[^>]*>").unwrap();
+                        re_anchor
+                            .replace_all(&text, |caps: &regex::Captures| {
+                                let href = caps.get(1).map(|m| m.as_str()).unwrap_or("").trim();
+                                let inner = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+                                // Reduce the anchor's inner HTML to a plain text label.
+                                let label = re_inner.replace_all(inner, " ");
+                                let label = label.split_whitespace().collect::<Vec<_>>().join(" ");
+                                // Resolve to an absolute URL where it makes sense.
+                                let url = if href.is_empty()
+                                    || href.starts_with('#')
+                                    || href.starts_with("javascript:")
+                                {
+                                    None
+                                } else {
+                                    base.as_ref()
+                                        .and_then(|b| b.join(href).ok())
+                                        .map(|u| u.to_string())
+                                        .or_else(|| Some(href.to_string()))
+                                };
+                                match (url, label.is_empty()) {
+                                    (Some(u), false) => format!(" [{}]({}) ", label, u),
+                                    (Some(u), true) => format!(" {} ", u),
+                                    (None, _) => format!(" {} ", label),
+                                }
+                            })
+                            .into_owned()
+                    } else {
+                        text.clone()
+                    };
+
                     // Improved HTML stripping (preserve some structure)
                     let re_script =
                         regex::Regex::new(r"(?s)<script.*?>.*?</script>|<style.*?>.*?</style>")
                             .unwrap();
-                    let stripped_scripts = re_script.replace_all(&text, " ");
+                    let stripped_scripts = re_script.replace_all(&working, " ");
 
                     // Convert common block elements to newlines
                     let re_blocks = regex::Regex::new(
