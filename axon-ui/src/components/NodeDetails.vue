@@ -1414,17 +1414,21 @@ onUnmounted(() => {
                                       </label>
                                     </div>
                                   </template>
-                                  <input 
+                                  <input
                                     v-else
                                     :type="subProp.type === 'number' ? 'number' : 'text'"
-                                    v-model="item[subProp.name]" 
+                                    v-model="item[subProp.name]"
                                     :class="{ 'has-expression': hasExpression(item[subProp.name]), 'focused-exp': isFieldFocused({ collection: prop.name, index: idx, subName: subProp.name }) }"
                                     :placeholder="subProp.placeholder || ''"
-                                    @drop.prevent="onDropCollection($event, prop.name, idx, subProp.name)" 
+                                    @drop.prevent="onDropCollection($event, prop.name, idx, subProp.name)"
                                     @dragover.prevent
                                     @focus="handleFocus($event, { collection: prop.name, index: idx, subName: subProp.name })"
                                     @blur="handleBlur"
                                   />
+                                  <button v-if="subProp.type !== 'options' && subProp.type !== 'boolean'" type="button" class="btn-expand-input" title="Expand to view full value"
+                                    @click="openExpandedInput(subProp.displayName, item[subProp.name], v => item[subProp.name] = v)">
+                                    <svg viewBox="0 0 24 24" width="13" height="13"><path fill="currentColor" d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
+                                  </button>
                                   <!-- Bottom Dropdown Preview -->
                                   <Transition name="fade">
                                     <div 
