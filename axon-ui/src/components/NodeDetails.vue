@@ -1567,16 +1567,20 @@ onUnmounted(() => {
                   <template v-else-if="prop.type === 'string' || prop.type === 'number'">
                     <label>{{ prop.displayName }}</label>
                     <div class="input-with-preview">
-                      <input 
-                        type="text" 
-                        v-model="node.data.config[prop.name]" 
+                      <input
+                        type="text"
+                        v-model="node.data.config[prop.name]"
                         :class="{ 'has-expression': hasExpression(node.data.config[prop.name]), 'focused-exp': isFieldFocused({ name: prop.name }) }"
-                        @drop.prevent="onDrop($event, prop.name)" 
+                        @drop.prevent="onDrop($event, prop.name)"
                         @dragover.prevent
                         @focus="handleFocus($event, { name: prop.name })"
                         @blur="handleBlur"
                         placeholder="Drop variables here..."
                       />
+                      <button type="button" class="btn-expand-input" title="Expand to view full value"
+                        @click="openExpandedInput(prop.displayName, node.data.config[prop.name], v => node.data.config[prop.name] = v)">
+                        <svg viewBox="0 0 24 24" width="13" height="13"><path fill="currentColor" d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
+                      </button>
 
                       <!-- Bottom Dropdown Preview -->
                       <Transition name="fade">
