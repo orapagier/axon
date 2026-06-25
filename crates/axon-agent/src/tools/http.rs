@@ -24,7 +24,7 @@ const REFERERS: &[&str] = &[
     "https://t.co/",
 ];
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HttpRequestParams {
     pub method: String,
     pub url: String,
