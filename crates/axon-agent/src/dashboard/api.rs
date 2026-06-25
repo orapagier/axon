@@ -1801,6 +1801,7 @@ pub async fn run_synapse_adhoc(
         json_body: None,
         specify_body: None,
         header_parameters: None,
+        ..Default::default()
     };
 
     let tool = crate::tools::http::HttpRequestTool::new();
