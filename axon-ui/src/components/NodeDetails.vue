@@ -2296,6 +2296,12 @@ small.form-desc {
 .fc-item { display: flex; gap: 8px; align-items: flex-start; }
 .fc-item-fields { flex: 1; display: flex; gap: 8px; }
 .fc-sub-field { flex: 1; display: flex; flex-direction: column; }
+/* A label-less field (e.g. Switch's "Output Name") sits beside fields that DO
+   carry a header label on the first row. Without this it floats up and lines up
+   with their labels instead of their inputs. Anchoring its input to the bottom of
+   the stretched row keeps it on the same baseline when everything fits on one
+   line, and is a harmless no-op once the field wraps onto its own row. */
+.fc-sub-field.fc-sub-nolabel { justify-content: flex-end; }
 
 .fc-sub-field input[type="text"],
 .fc-sub-field input[type="number"],
