@@ -6,7 +6,7 @@
 
 import { computed } from 'vue'
 import { NodeConnectionTypes, CanvasConnectionMode } from '../lib/canvas/constants.js'
-import { NODE_TYPES, getNodeOutputs } from '../lib/nodes.js'
+import { getNodeOutputs } from '../lib/nodes.js'
 
 /**
  * Map Axon nodes to Vue Flow nodes with n8n-style data structure
