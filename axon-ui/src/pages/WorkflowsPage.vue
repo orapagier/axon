@@ -2308,6 +2308,8 @@ onUnmounted(() => {
               @delete="removeNode"
               @switch="switchNode"
               @clear-execution="clearNodeExecution"
+              @output-added="handleDynamicOutputAdded"
+              @output-removed="handleDynamicOutputRemoved"
             />
           </Transition>
 
