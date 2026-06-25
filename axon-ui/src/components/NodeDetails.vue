@@ -3072,7 +3072,9 @@ small.form-desc {
   position: fixed; inset: 0;
   background: rgba(0,0,0,0.75);
   display: flex; align-items: center; justify-content: center;
-  z-index: 9999; backdrop-filter: blur(6px);
+  /* Must sit ABOVE .nd-overlay (z-index 12000) — both are teleported to <body>
+     as siblings, so a lower value renders the modal behind the panel. */
+  z-index: 12500; backdrop-filter: blur(6px);
 }
 
 /* Expanded input editor — overlays the PARAMETERS column only (absolute inset),
