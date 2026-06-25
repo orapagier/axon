@@ -80,6 +80,14 @@ pub(crate) fn execute_switch_node(config: &Value) -> Result<Value, String> {
         .and_then(|v| v.as_str())
         .unwrap_or("first");
 
+    // What to do with a value that matches no rule (n8n's "Fallback Output"):
+    //   "extra" — route it to a dedicated Default output (one past the last rule)
+    //   "none"  — drop it; follow no edge at all.
+    let fallback = config
+        .get("fallbackOutput")
+        .and_then(|v| v.as_str())
+        .unwrap_or("extra");
+
     let rules = config
         .get("rules")
         .and_then(|v| v.get("parameters"))
@@ -87,11 +95,12 @@ pub(crate) fn execute_switch_node(config: &Value) -> Result<Value, String> {
         .cloned()
         .unwrap_or_default();
 
-    // Static UI outputs: Case1..Case5 + Default (index 5)
-    let max_cases = 5usize;
+    // Dynamic outputs (n8n-style): one output per rule, in order. The Default
+    // output, when present, sits immediately past the last rule.
+    let default_index = rules.len();
     let mut matched: Vec<usize> = Vec::new();
 
-    for (idx, rule) in rules.iter().enumerate().take(max_cases) {
+    for (idx, rule) in rules.iter().enumerate() {
         let data_type = rule
             .get("dataType")
             .and_then(|v| v.as_str())
@@ -126,26 +135,30 @@ pub(crate) fn execute_switch_node(config: &Value) -> Result<Value, String> {
         }
     }
 
-    // No rule matched → the Default output (index = max_cases).
-    let indices: Vec<usize> = if matched.is_empty() {
-        vec![max_cases]
+    // Resolve the active output handle(s) and a human-readable branch label.
+    let (indices, branch): (Vec<i64>, String) = if !matched.is_empty() {
+        (
+            matched.iter().map(|&i| i as i64).collect(),
+            format!("case_{}", matched[0] + 1),
+        )
+    } else if fallback == "none" {
+        // Drop: no output is active. The empty list (and the -1 outputIndex
+        // below) guarantee no `output_main_N` edge handle ever matches.
+        (Vec::new(), "none".to_string())
     } else {
-        matched.clone()
+        (vec![default_index as i64], "default".to_string())
     };
-    let first = *indices.first().unwrap_or(&max_cases);
+    let first = indices.first().copied().unwrap_or(-1);
 
     Ok(json!({
         "value": top_value,
         // outputIndex: first active output (back-compat + UI run animation).
+        // -1 means "nothing matched and fallback is none" → no edge animates.
         "outputIndex": first,
         // outputIndices: every active output (drives multi-output routing).
         "outputIndices": indices,
         "matchMode": match_mode,
         "matched": !matched.is_empty(),
-        "branch": if matched.is_empty() {
-            "default".to_string()
-        } else {
-            format!("case_{}", first + 1)
-        }
+        "branch": branch
     }))
 }
