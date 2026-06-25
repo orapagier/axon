@@ -575,6 +575,11 @@ function cancelRename() {
   display: flex;
   align-items: center;
   z-index: 5;
+  /* The inline `top` offset sets the wrapper's top edge; pull it up by half its
+     height so the handle's *center* lands exactly on the offset — matching how
+     Vue Flow centers the input handles. Without this the output handle sat ~6px
+     low, so wires between vertically aligned nodes came out slightly sloped. */
+  transform: translateY(-50%);
 }
 .handle-wrapper.right {
   right: -6px;
