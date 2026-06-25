@@ -793,6 +793,23 @@ function updateExpandedInput(event) {
   expandedInput.value.value = v
   expandedInput.value.set(v)
 }
+// Accept a variable token dragged from the INPUT panel, inserting it at the
+// cursor (or appending) just like the inline fields do.
+function onExpandedDrop(event) {
+  if (!expandedInput.value) return
+  const token = event.dataTransfer.getData('variable')
+  if (!token) return
+  const el = event.target
+  let v = expandedInput.value.value || ''
+  if (el && typeof el.selectionStart === 'number') {
+    const pos = el.selectionStart
+    v = v.substring(0, pos) + token + v.substring(pos)
+  } else {
+    v = v + token
+  }
+  expandedInput.value.value = v
+  expandedInput.value.set(v)
+}
 function closeExpandedInput() {
   expandedInput.value = null
 }
