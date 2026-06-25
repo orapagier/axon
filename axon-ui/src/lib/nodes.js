@@ -2773,7 +2773,7 @@ export const NODE_TYPES = {
  *
  * Most nodes have a fixed set declared on their definition
  * (`NODE_TYPES[type].outputs`, e.g. ['true','false'] for IF). The Switch node is
- * dynamic — it grows one output per routing rule (n8n-style), plus an optional
+ * dynamic — it grows one output per routing rule, plus an optional
  * Default fallback — so its handles are derived from the live node config here
  * rather than baked into the definition.
  *
