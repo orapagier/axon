@@ -3778,6 +3778,40 @@ mod resolve_tests {
         assert_eq!(out, Value::String("Manila to Cebu".to_string()));
     }
 
+    // Regression: two nodes share the name "Post Bible Verse" (a legacy workflow
+    // created before unique-naming was enforced). Only the Facebook one — the
+    // actual upstream of the Telegram node — has `permalink_url`; the Instagram
+    // one does not. Scoped resolution must prefer the upstream ancestor so the
+    // link resolves on every run, instead of falling out of HashMap iteration
+    // order and intermittently hitting the Instagram node (-> empty "view it at ").
+    #[test]
+    fn duplicate_name_prefers_upstream_ancestor() {
+        let mut fb = node(
+            "Post Bible Verse",
+            json!({ "id": "1_2", "permalink_url": "https://fb/p/2" }),
+        );
+        fb.node_id = "node_fb".to_string();
+        let mut ig = node("Post Bible Verse", json!({ "id": "ig_1" }));
+        ig.node_id = "node_ig".to_string();
+
+        let mut m = HashMap::new();
+        m.insert(fb.node_id.clone(), fb);
+        m.insert(ig.node_id.clone(), ig);
+
+        let text = "view it at $node[\"Post Bible Verse\"].data.permalink_url";
+
+        // The Facebook-branch Telegram node's only upstream is the Facebook node.
+        let fb_anc: HashSet<String> = ["node_fb".to_string()].into_iter().collect();
+        let out = resolve_value_scoped(text, &m, Some(&fb_anc));
+        assert_eq!(out, Value::String("view it at https://fb/p/2".to_string()));
+
+        // A node scoped to the Instagram branch sees no permalink -> empty,
+        // and never silently borrows the Facebook node's value.
+        let ig_anc: HashSet<String> = ["node_ig".to_string()].into_iter().collect();
+        let out_ig = resolve_value_scoped(text, &m, Some(&ig_anc));
+        assert_eq!(out_ig, Value::String("view it at ".to_string()));
+    }
+
     // Repro of the empty-caption bug: a cached/reused upstream result carries the
     // node_name it had on a PRIOR run; after the node was renamed to "Axon 2",
     // $node["Axon 2"] no longer matches by name and the caption resolves to null.
