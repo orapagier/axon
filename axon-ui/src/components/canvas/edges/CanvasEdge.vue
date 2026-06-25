@@ -274,7 +274,7 @@ function onMouseLeave() {
 }
 
 .symbol {
-  font-size: 13px;
+  font-size: 11px;
   line-height: 1;
   font-weight: 700;
   pointer-events: none;
