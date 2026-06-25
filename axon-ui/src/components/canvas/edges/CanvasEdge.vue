@@ -31,15 +31,18 @@ const { removeEdges } = useVueFlow()
 const localHovered = ref(false)
 let hoverTimeout = null
 
-// Straight-line path: a single direct line from the source output to the target
-// input, so each wire visibly runs straight to the node it feeds (with an
-// arrowhead at the target end via markerEnd).
+// Bezier path: it collapses to a perfectly straight horizontal line when the two
+// handles are vertically aligned, and bows into a smooth curve when they're not —
+// so wires stay straight between aligned nodes and gracefully bend otherwise.
 const edgePath = computed(() => {
-  const [path] = getStraightPath({
+  const [path] = getBezierPath({
     sourceX: props.sourceX,
     sourceY: props.sourceY,
+    sourcePosition: props.sourcePosition,
     targetX: props.targetX,
     targetY: props.targetY,
+    targetPosition: props.targetPosition,
+    curvature: 0.4,
   })
   return path
 })
