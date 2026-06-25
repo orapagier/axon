@@ -694,8 +694,12 @@ function addNodeFromPalette(type) {
     }
     pendingSplice.value = null
   } else {
-    // Determine position based on canvas bounds if needed, or default
-    addNode(type)
+    // Plain "+" add: drop at the natural continuation of the chain (right of the
+    // last node, in a vacant slot), then pan it into view so the user never has
+    // to scroll to find where it landed.
+    const position = computeNewNodePosition()
+    addNode(type, position)
+    nextTick(() => canvasRef.value?.ensureNodeVisible?.(position))
   }
   isNodePickerOpen.value = false
 }
