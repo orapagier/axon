@@ -115,6 +115,12 @@ const connectingHandle = ref(null)
 // Used so paste drops nodes under the cursor instead of at a fixed offset.
 const lastFlowPosition = ref(null)
 
+// Last position the user actually *clicked* on the empty canvas, in flow
+// coordinates. Distinct from lastFlowPosition (which follows every hover): the
+// toolbar "+" add uses this so the node drops where the user last clicked, not
+// where the cursor happened to land while traveling to the "+" button.
+const lastClickFlowPosition = ref(null)
+
 function trackPointer(event) {
   const bounds = viewportRef.value?.getBoundingClientRect()
   if (!bounds) return
