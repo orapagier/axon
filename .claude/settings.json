@@ -1,1 +1,16 @@
-{}
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && git push origin HEAD 2>/dev/null || true",
+            "async": true,
+            "statusMessage": "Pushing to origin"
+          }
+        ]
+      }
+    ]
+  }
+}
