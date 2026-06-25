@@ -6,6 +6,7 @@ import DataTreeNode from './DataTreeNode.vue'
 import { NODE_TYPES } from '../lib/nodes.js'
 import { renameNodeInExpressions, applyAccessPatterns } from '../lib/expressionUpdates.js'
 import { get } from '../lib/api.js'
+import { toast } from '../lib/toast.js'
 
 const props = defineProps({
   node: { type: Object, required: true },
