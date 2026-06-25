@@ -775,6 +775,28 @@ async function copyOutput() {
     console.error('Failed to copy output', err)
   }
 }
+// ── Expandable input editor ──────────────────────────────────────────────────
+// Any text/number/expression field can be opened in a roomy overlay to read or
+// edit its full value, instead of squinting at a cramped single-line box. We bind
+// by getter/setter closures so the same modal serves top-level config fields and
+// nested collection rows alike — writes flow straight back through v-model's
+// target, keeping autosave and expression previews in sync.
+const expandedInput = ref(null) // { title, value, set }
+const expandedInputRef = ref(null)
+function openExpandedInput(title, value, setter) {
+  expandedInput.value = { title: title || 'Value', value: value == null ? '' : String(value), set: setter }
+  nextTick(() => { expandedInputRef.value?.focus() })
+}
+function updateExpandedInput(event) {
+  if (!expandedInput.value) return
+  const v = event.target.value
+  expandedInput.value.value = v
+  expandedInput.value.set(v)
+}
+function closeExpandedInput() {
+  expandedInput.value = null
+}
+
 const showCurlModal = ref(false)
 const curlInput = ref('')
 
