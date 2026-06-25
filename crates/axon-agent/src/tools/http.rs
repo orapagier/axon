@@ -78,6 +78,39 @@ pub struct HttpResponse {
     pub binary: Option<crate::files::AttachedFile>,
 }
 
+/// Rewrite `<a href>` anchors to Markdown `[label](url)`, resolving relative URLs
+/// (permalinks like `/post/123` or `./next`) against `base`. Anchors whose href is
+/// empty, a bare `#fragment`, or `javascript:` degrade to just their label text.
+/// Used by the data cleaner's "Keep Links" option.
+fn links_to_markdown(text: &str, base: Option<&reqwest::Url>) -> String {
+    let re_anchor =
+        regex::Regex::new(r#"(?is)<a\s[^>]*?href\s*=\s*["']([^"']*)["'][^>]*>(.*?)</a>"#).unwrap();
+    let re_inner = regex::Regex::new(r"<[^>]*>").unwrap();
+    re_anchor
+        .replace_all(text, |caps: &regex::Captures| {
+            let href = caps.get(1).map(|m| m.as_str()).unwrap_or("").trim();
+            let inner = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+            // Reduce the anchor's inner HTML to a plain text label.
+            let label = re_inner.replace_all(inner, " ");
+            let label = label.split_whitespace().collect::<Vec<_>>().join(" ");
+            // Resolve to an absolute URL where it makes sense.
+            let url =
+                if href.is_empty() || href.starts_with('#') || href.starts_with("javascript:") {
+                    None
+                } else {
+                    base.and_then(|b| b.join(href).ok())
+                        .map(|u| u.to_string())
+                        .or_else(|| Some(href.to_string()))
+                };
+            match (url, label.is_empty()) {
+                (Some(u), false) => format!(" [{}]({}) ", label, u),
+                (Some(u), true) => format!(" {} ", u),
+                (None, _) => format!(" {} ", label),
+            }
+        })
+        .into_owned()
+}
+
 pub struct HttpRequestTool {
     client: reqwest::Client,
 }
