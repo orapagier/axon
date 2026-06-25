@@ -356,11 +356,6 @@ impl HttpRequestTool {
                 }
             }
         } else if let Some(body_val) = params.body {
-            // Debug: Log the body being sent
-            tracing::info!(
-                "HTTP body: {}",
-                serde_json::to_string(&body_val).unwrap_or_default()
-            );
             let explicit_type = params.body_content_type.as_deref().unwrap_or("json");
 
             match explicit_type {
