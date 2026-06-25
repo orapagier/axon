@@ -1332,8 +1332,8 @@ onUnmounted(() => {
                                 </Transition>
                               </div>
                             </div>
-                          </div>
-                          
+                          </template>
+
                           <!-- Inline grouped fields -->
                           <div style="display: flex; gap: 8px; width: 100%; align-items: flex-start;">
                             <div class="fc-item-fields">
