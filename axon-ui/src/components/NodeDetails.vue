@@ -3082,7 +3082,7 @@ small.form-desc {
 .nd-expand-panel {
   position: absolute;
   inset: 0;
-  z-index: 50;
+  z-index: 2000;
   display: flex;
   flex-direction: column;
   background: #141417;
