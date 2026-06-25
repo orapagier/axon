@@ -720,10 +720,10 @@ export const NODE_TYPES = {
                     },
                     {
                         name: 'outputName',
-                        displayName: 'Output Name (optional)',
+                        displayName: 'Output Name',
                         type: 'string',
                         default: '',
-                        placeholder: 'e.g. High priority',
+                        placeholder: 'Output Name (optional)',
                         hint: 'Label shown on this rule\'s output handle. Defaults to "case N".',
                     },
                 ],
