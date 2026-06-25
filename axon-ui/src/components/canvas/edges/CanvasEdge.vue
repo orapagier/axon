@@ -4,7 +4,7 @@
  * Features smooth bezier curves and edge toolbar
  */
 import { computed, ref } from 'vue'
-import { BaseEdge, EdgeLabelRenderer, getStraightPath, useVueFlow } from '@vue-flow/core'
+import { BaseEdge, EdgeLabelRenderer, getBezierPath, useVueFlow } from '@vue-flow/core'
 
 const props = defineProps({
   id: { type: String, required: true },
