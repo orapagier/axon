@@ -196,6 +196,10 @@ onNodeMouseLeave(({ node }) => {
 
 // Node click handling - emit select event
 vueFlowNodeClick(({ event, node }) => {
+  // The last click landed on a node, not empty canvas — drop the remembered
+  // pane-click spot so the toolbar "+" add falls back to right-of-the-last-node
+  // instead of reusing a stale empty-space click.
+  lastClickFlowPosition.value = null
   emit('node-select', node)
 })
 
