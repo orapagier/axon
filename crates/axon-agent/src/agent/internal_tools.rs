@@ -309,6 +309,7 @@ async fn handle_run_saved_http_request(
                 json_body: None,
                 specify_body: None,
                 header_parameters: None,
+                ..Default::default()
             };
             let next_request_id: Option<String> = row.get::<_, Option<String>>(6)?;
             (req_id, params, next_request_id)
