@@ -164,7 +164,7 @@ impl HttpRequestTool {
                 .deflate(true);
 
             if let Some(proxy_url) = &params.proxy {
-                tracing::info!("Setting up proxy: {}", proxy_url);
+                tracing::debug!("Configuring outbound proxy");
                 let proxy = reqwest::Proxy::all(proxy_url).context("Invalid proxy URL")?;
                 builder = builder.proxy(proxy);
             }
