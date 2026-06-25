@@ -1652,6 +1652,35 @@ onUnmounted(() => {
               </div>
             </div>
           </div>
+
+          <!-- Expanded input editor — overlays the PARAMETERS column only, so the
+               INPUT column stays visible and you can still drag expressions from
+               upstream nodes straight into this larger editor. -->
+          <Transition name="fade">
+            <div v-if="expandedInput" class="nd-expand-panel">
+              <header class="nd-expand-head">
+                <span class="nd-expand-title" :title="expandedInput.title">{{ expandedInput.title }}</span>
+                <button class="nd-expand-close" @click="closeExpandedInput" title="Close (Esc)">✕</button>
+              </header>
+              <div class="nd-expand-body">
+                <textarea
+                  ref="expandedInputRef"
+                  class="nd-expand-textarea"
+                  :class="{ 'has-expression': hasExpression(expandedInput.value) }"
+                  :value="expandedInput.value"
+                  @input="updateExpandedInput"
+                  @drop.prevent="onExpandedDrop"
+                  @dragover.prevent
+                  @keydown.esc="closeExpandedInput"
+                  placeholder="Edit the full value here — drag fields from the INPUT panel to insert expressions."
+                  spellcheck="false"
+                ></textarea>
+              </div>
+              <footer class="nd-expand-foot">
+                <button class="btn-import" @click="closeExpandedInput">Done</button>
+              </footer>
+            </div>
+          </Transition>
         </section>
 
         <!-- Right Resizer -->
