@@ -125,7 +125,7 @@ pub(crate) async fn execute_http_node(config: &Value) -> Result<Value, String> {
                         (p.get("name").and_then(|v| v.as_str()), p.get("value"))
                     {
                         if !name.is_empty() {
-                            query_obj.insert(name.to_string(), try_parse_json_value(value.clone()));
+                            query_obj.insert(name.to_string(), header_query_value(value));
                         }
                     }
                 }
