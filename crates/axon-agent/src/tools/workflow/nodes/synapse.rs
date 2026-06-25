@@ -260,8 +260,6 @@ pub(crate) async fn execute_http_node(config: &Value) -> Result<Value, String> {
     };
 
     let options = config.get("options");
-    tracing::info!("Synapse options raw: {:?}", options);
-    tracing::info!("Synapse proxy: {:?}", options.and_then(|o| o.get("proxy")));
     let timeout_seconds = options
         .and_then(|o| o.get("timeout"))
         .and_then(|v| v.as_u64())
