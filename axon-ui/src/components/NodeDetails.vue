@@ -1298,9 +1298,13 @@ onUnmounted(() => {
                       <div class="fixed-collection">
                       <div class="fc-items">
                         <div v-for="(item, idx) in (node.data.config[prop.name]?.parameters || [])" :key="idx" class="fc-item" style="flex-direction: column;">
-                          <!-- Full-width rows (e.g. textareas) -->
-                          <div v-for="subProp in prop.options" :key="'row-'+subProp.name" style="width: 100%;">
-                            <div v-if="shouldShowProperty(subProp, item) && subProp.typeOptions?.rows" class="fc-sub-field">
+                          <!-- Full-width rows (e.g. textareas). Use <template> so
+                               sub-fields without a row textarea don't leave empty
+                               flex children behind — those were injecting dead
+                               vertical space (the fc-item column has a gap) and
+                               spreading the rules far apart. -->
+                          <template v-for="subProp in prop.options" :key="'row-'+subProp.name">
+                            <div v-if="shouldShowProperty(subProp, item) && subProp.typeOptions?.rows" class="fc-sub-field" style="width: 100%;">
 
                               <div class="input-with-preview">
                                 <textarea
