@@ -134,6 +134,8 @@ impl HttpRequestTool {
             "PUT" => reqwest::Method::PUT,
             "PATCH" => reqwest::Method::PATCH,
             "DELETE" => reqwest::Method::DELETE,
+            "HEAD" => reqwest::Method::HEAD,
+            "OPTIONS" => reqwest::Method::OPTIONS,
             _ => anyhow::bail!("Unsupported HTTP method: {}", params.method),
         };
 
