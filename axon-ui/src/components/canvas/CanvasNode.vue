@@ -4,7 +4,7 @@
  * Wraps the node content and manages handles/toolbar
  */
 import { computed, provide, ref, toRef, watch, nextTick } from 'vue'
-import { Position, Handle } from '@vue-flow/core'
+import { Position, Handle, useVueFlow } from '@vue-flow/core'
 import { CanvasNodeKey, CanvasConnectionMode, NodeConnectionTypes } from '../../lib/canvas/constants.js'
 import { useNodeConnections } from '../../composables/useNodeConnections.js'
 import { createCanvasConnectionHandleString, insertSpacersBetweenEndpoints } from '../../lib/canvas/utils.js'
