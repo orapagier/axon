@@ -1208,6 +1208,7 @@ fn get_raw_field(res: &NodeResult, field: &str) -> Value {
 fn interpolate_value(
     val: &Value,
     results: &std::collections::HashMap<String, NodeResult>,
+    ancestors: Option<&std::collections::HashSet<String>>,
 ) -> Value {
     match val {
         Value::String(s) => {
@@ -1215,16 +1216,18 @@ fn interpolate_value(
             // try_parse_json_value — that caused double-parsing where strings
             // like "123" became numbers, "true" became bools, and comma-
             // containing strings became arrays.
-            resolve_value(s, results)
+            resolve_value_scoped(s, results, ancestors)
         }
         Value::Object(map) => Value::Object(
             map.iter()
-                .map(|(k, v)| (k.clone(), interpolate_value(v, results)))
+                .map(|(k, v)| (k.clone(), interpolate_value(v, results, ancestors)))
                 .collect(),
         ),
-        Value::Array(arr) => {
-            Value::Array(arr.iter().map(|v| interpolate_value(v, results)).collect())
-        }
+        Value::Array(arr) => Value::Array(
+            arr.iter()
+                .map(|v| interpolate_value(v, results, ancestors))
+                .collect(),
+        ),
         other => other.clone(),
     }
 }
@@ -1233,8 +1236,9 @@ fn interpolate_config(
     config: &Value,
     results: &std::collections::HashMap<String, NodeResult>,
     state: &AppState,
+    ancestors: Option<&std::collections::HashSet<String>>,
 ) -> Value {
-    let mut interpolated = interpolate_value(config, results);
+    let mut interpolated = interpolate_value(config, results, ancestors);
 
     // Inject credentials if specified
     if let Value::Object(ref mut map) = interpolated {
