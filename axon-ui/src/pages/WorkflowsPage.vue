@@ -608,14 +608,14 @@ function handleAddNode({ type, position }) {
 }
 
 // Where to drop a node added via the toolbar "+" picker (no source handle, edge,
-// or replace context). Mirror paste / drag-drop: land at the last pointer position
-// over the canvas (top-left at the cursor) so the node appears right where the user
-// was looking — instead of being flung to the end of the chain, which forced a
-// viewport pan that visibly shoved the existing nodes aside. Falls back to right of
-// the last node, then a fixed default, when the pointer has never been over the canvas.
+// or replace context). Land at the last spot the user *clicked* on the canvas, so
+// the node appears exactly where they pointed — not at the end of the chain (which
+// forced a viewport pan that shoved existing nodes aside), and not under the cursor's
+// last hover, which drifts onto the "+" button as the mouse travels to click it.
+// Falls back to right of the last node, then a fixed default, if nothing's been clicked.
 function computeNewNodePosition() {
-  const cursor = canvasRef.value?.getLastFlowPosition?.()
-  if (cursor) return { x: cursor.x, y: cursor.y }
+  const click = canvasRef.value?.getLastClickPosition?.()
+  if (click) return { x: click.x, y: click.y }
 
   const list = nodes.value
   if (list.length === 0) return { x: 250, y: 150 }
