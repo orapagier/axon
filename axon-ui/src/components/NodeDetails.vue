@@ -2561,24 +2561,26 @@ small.form-desc {
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    cURL IMPORT BUTTON
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
-.curl-import-row { grid-column: 1 / -1; padding: 4px 0 8px; }
+.curl-import-row { grid-column: 1 / -1; padding: 2px 0 10px; }
 
 .btn-curl-import {
-  display: inline-flex; align-items: center; gap: 8px;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  width: 100%;
   background: rgba(99,102,241,0.08);
-  border: 1px solid rgba(99,102,241,0.25);
-  color: #818cf8;
-  padding: 7px 14px; border-radius: 8px;
-  font-size: 12px; font-weight: 600;
-  cursor: pointer; transition: all 0.2s;
+  border: 1px dashed rgba(99,102,241,0.35);
+  color: #a5b4fc;
+  padding: 9px 14px; border-radius: 9px;
+  font-size: 12px; font-weight: 600; letter-spacing: 0.2px;
+  cursor: pointer; transition: all 0.18s ease;
 }
 .btn-curl-import:hover {
-  background: rgba(99,102,241,0.18);
-  border-color: rgba(99,102,241,0.5);
-  color: #a5b4fc;
-  box-shadow: 0 2px 12px rgba(99,102,241,0.2);
-  transform: translateY(-1px);
+  background: rgba(99,102,241,0.16);
+  border-color: rgba(99,102,241,0.6);
+  border-style: solid;
+  color: #c7d2fe;
+  box-shadow: 0 2px 14px rgba(99,102,241,0.22);
 }
+.btn-curl-import:active { transform: translateY(1px); }
 .btn-icon { font-size: 14px; }
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
