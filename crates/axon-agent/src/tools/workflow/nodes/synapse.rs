@@ -2,6 +2,18 @@ use crate::tools::http::{HttpAuth, HttpRequestParams, HttpRequestTool};
 use crate::tools::workflow::try_parse_json_value;
 use serde_json::{json, Value};
 
+/// Header and query-parameter values are always strings on the wire, so they must
+/// NOT be coerced to JSON numbers/bools the way body fields are. Coercing them
+/// corrupts real-world values: ZIP codes ("01234" → 1234), long IDs (i64/f64
+/// precision loss), version strings ("1.0" → 1.0) and tokens.
+fn header_query_value(value: &Value) -> Value {
+    match value {
+        Value::String(s) => Value::String(s.clone()),
+        Value::Null => Value::String(String::new()),
+        other => Value::String(other.to_string()),
+    }
+}
+
 pub(crate) async fn execute_http_node(config: &Value) -> Result<Value, String> {
     let method = config
         .get("method")
