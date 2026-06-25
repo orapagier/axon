@@ -537,6 +537,8 @@ async function selectWorkflow(wf) {
     ),
   }))
 
+  migrateSwitchDefaultEdges(nodes.value, edges.value)
+
   selectedNode.value = null
   showHistory.value = false
   isNodeDetailsOpen.value = false
