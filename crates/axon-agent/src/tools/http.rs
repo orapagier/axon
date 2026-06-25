@@ -143,12 +143,12 @@ impl HttpRequestTool {
         let timeout = params.timeout_seconds.unwrap_or(30);
         let allow_unauthorized = params.allow_unauthorized_certs.unwrap_or(false);
 
-        // Debug: Log proxy and SSL settings
-        tracing::info!(
-            "HTTP Request: method={}, url={}, proxy={:?}, allow_unauthorized={}",
+        // Avoid logging the proxy URL — it may embed credentials (user:pass@host).
+        tracing::debug!(
+            "HTTP {} {} (proxy={}, allow_unauthorized={})",
             method,
             params.url,
-            params.proxy,
+            params.proxy.is_some(),
             allow_unauthorized
         );
 
