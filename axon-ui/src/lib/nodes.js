@@ -792,7 +792,7 @@ export const NODE_TYPES = {
                 type: 'number',
                 default: 1,
                 placeholder: '1',
-                hint: 'How many items to process concurrently. 1 = sequential (n8n-style). >1 runs the downstream body in parallel — a real speedup the Rust engine gives you.',
+                hint: 'How many items to process concurrently. 1 = sequential. >1 runs the downstream body in parallel — a real speedup the Rust engine gives you.',
             },
             {
                 displayName: 'Batch Size',
