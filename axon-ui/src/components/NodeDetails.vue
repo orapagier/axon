@@ -1339,7 +1339,7 @@ onUnmounted(() => {
                             <div class="fc-item-fields">
                             <template v-for="subProp in prop.options" :key="'inline-'+subProp.name">
                               <div v-if="shouldShowProperty(subProp, item) && !subProp.typeOptions?.rows" class="fc-sub-field">
-                                <label v-if="idx === 0" class="fc-header-label" style="display: block; margin-bottom: 4px;">{{ subProp.displayName }}</label>
+                                <label v-if="idx === 0 && !subProp.hideLabel" class="fc-header-label" style="display: block; margin-bottom: 4px;">{{ subProp.displayName }}</label>
                                 <div class="input-with-preview">
                                   <template v-if="subProp.type === 'options'">
                                     <SearchableSelect
