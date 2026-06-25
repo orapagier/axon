@@ -18,7 +18,7 @@ const props = defineProps({
   mcpDynamicProps: { type: Function, default: null },
 })
 
-const emit = defineEmits(['close', 'save', 'execute', 'delete', 'switch', 'clear-execution', 'rename'])
+const emit = defineEmits(['close', 'save', 'execute', 'delete', 'switch', 'clear-execution', 'rename', 'output-added', 'output-removed'])
 
 const activeTab = ref('parameters')
 const inputMode = ref('schema')
