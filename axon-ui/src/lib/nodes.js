@@ -1,5 +1,5 @@
-// ── n8n-style condition primitives (shared by IF + Switch) ───────────────────
-// Data types and operators are inspired by n8n's Filter component. The operator
+// ── Condition primitives (shared by IF + Switch) ─────────────────────────────
+// Data types and operators for a filter-style condition builder. The operator
 // dropdown is filtered per-row by the chosen data type using `filterBy` +
 // each option's `show` list (see filteredOptions in NodeDetails.vue).
 export const CONDITION_DATA_TYPES = [
