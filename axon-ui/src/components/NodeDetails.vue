@@ -586,6 +586,13 @@ function onDropCollection(event, propName, index, fieldName) {
   }
 }
 
+// A fixedCollection whose items each map to a dynamic output handle (the Switch
+// node's routing rules). Adding/removing such an item shifts every later output
+// index, so connected edges must be re-indexed by the parent — see emits below.
+function isDynamicOutputCollection(propName) {
+  return !!NODE_TYPES[props.node.data.node_type]?.dynamicOutputs && propName === 'rules'
+}
+
 function addCollectionItem(propName, options) {
   if (!props.node.data.config[propName]) {
     props.node.data.config[propName] = { parameters: [] }
@@ -598,12 +605,22 @@ function addCollectionItem(propName, options) {
     newItem[opt.name] = opt.default !== undefined ? opt.default : ''
   })
   props.node.data.config[propName].parameters.push(newItem)
+  if (isDynamicOutputCollection(propName)) {
+    // New rule takes this index; the trailing Default output shifts down by one,
+    // so the parent bumps any edge at or past it to keep wiring intact.
+    const index = props.node.data.config[propName].parameters.length - 1
+    emit('output-added', { nodeId: props.node.id, index })
+  }
 }
 
 function removeCollectionItem(propName, index) {
   const coll = props.node.data.config[propName]
   if (coll && coll.parameters) {
     coll.parameters.splice(index, 1)
+    if (isDynamicOutputCollection(propName)) {
+      // Drop the deleted rule's own edge and shift later outputs up by one.
+      emit('output-removed', { nodeId: props.node.id, index })
+    }
   }
 }
 
