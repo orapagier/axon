@@ -724,6 +724,8 @@ export const NODE_TYPES = {
                         type: 'string',
                         default: '',
                         placeholder: 'Output Name (optional)',
+                        // Rely on the in-field placeholder instead of a column header.
+                        hideLabel: true,
                         hint: 'Label shown on this rule\'s output handle. Defaults to "case N".',
                     },
                 ],
