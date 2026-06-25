@@ -2039,11 +2039,19 @@ onUnmounted(() => {
               <button @click="showCurlModal = false">✕</button>
             </header>
             <div class="modal-body">
-              <p>Paste your cURL command below to automatically populate this node.</p>
-              <textarea 
-                v-model="curlInput" 
-                placeholder="curl -X POST https://api.example.com -H 'Content-Type: application/json' -d '{&quot;key&quot;:&quot;value&quot;}'"
+              <p>Paste a cURL command — including one copied straight from your browser's
+                 DevTools (“Copy as cURL”). Method, URL, headers, auth and body are detected
+                 and filled in for you.</p>
+              <textarea
+                v-model="curlInput"
+                placeholder="curl -X POST https://api.example.com/v1/items \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer TOKEN' \
+  -d '{&quot;name&quot;:&quot;value&quot;}'"
                 rows="10"
+                spellcheck="false"
+                @keydown.ctrl.enter="importCurl"
+                @keydown.meta.enter="importCurl"
               ></textarea>
             </div>
             <footer>
