@@ -268,7 +268,7 @@ function cancelRename() {
 </script>
 
 <template>
-  <div :class="classes" :data-node-id="id" :data-node-type="data.type">
+  <div :class="classes" :style="rootStyle" :data-node-id="id" :data-node-type="data.type">
     <div class="node-wrapper">
       <!-- Output Handles -->
       <template v-for="source in mappedOutputs" :key="source.handleId">
