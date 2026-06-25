@@ -2964,25 +2964,6 @@ small.form-desc {
 }
 .form-select:focus, select:focus { border-color: #6366f1; }
 
-.curl-import-row {
-  grid-column: 1 / -1;
-  display: flex; justify-content: flex-start;
-}
-.btn-curl-import {
-  display: inline-flex; align-items: center; gap: 6px;
-  background: rgba(99,102,241,0.1);
-  color: #818cf8;
-  border: 1px solid rgba(99,102,241,0.3);
-  padding: 6px 14px;
-  border-radius: 6px;
-  font-size: 12px; font-weight: 600; cursor: pointer;
-  transition: all 0.2s;
-}
-.btn-curl-import:hover {
-  background: rgba(99,102,241,0.2);
-  color: #a5b4fc;
-}
-
 /* Collections */
 .collection-wrapper {
   grid-column: 1 / -1;
