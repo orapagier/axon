@@ -86,6 +86,9 @@ impl HttpRequestTool {
             .timeout(Duration::from_secs(30))
             .cookie_store(true)
             .referer(true)
+            // Default redirect limit aligned with the UI default so the common
+            // case can reuse this pooled client (keeps connections warm).
+            .redirect(reqwest::redirect::Policy::limited(21))
             .gzip(true)
             .brotli(true)
             .deflate(true)
