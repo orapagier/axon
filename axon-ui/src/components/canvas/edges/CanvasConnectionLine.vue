@@ -11,10 +11,15 @@ const props = defineProps({
   targetY: { type: Number, required: true },
 })
 
-// Straight drag line, matching the straight committed edges.
-const path = computed(
-  () => `M ${props.sourceX} ${props.sourceY} L ${props.targetX} ${props.targetY}`,
-)
+// Bezier drag line, matching the committed edges: straight when aligned, curved
+// when the endpoints differ in height.
+const path = computed(() => {
+  const { sourceX, sourceY, targetX, targetY } = props
+  const controlPointOffset = Math.abs(targetX - sourceX) * 0.4
+  const c1x = sourceX + controlPointOffset
+  const c2x = targetX - controlPointOffset
+  return `M ${sourceX} ${sourceY} C ${c1x} ${sourceY}, ${c2x} ${targetY}, ${targetX} ${targetY}`
+})
 </script>
 
 <template>
