@@ -297,9 +297,12 @@ pub(crate) async fn execute_http_node(config: &Value) -> Result<Value, String> {
         body,
         auth,
         timeout_seconds,
-        response_format: config
-            .get("responseFormat")
+        // Response Format lives inside the Options collection in the UI; fall back
+        // to a top-level field for older saved configs.
+        response_format: options
+            .and_then(|o| o.get("responseFormat"))
             .and_then(|v| v.as_str())
+            .or_else(|| config.get("responseFormat").and_then(|v| v.as_str()))
             .map(String::from),
         limit: None,
         // Proxy can be at top level or in options
