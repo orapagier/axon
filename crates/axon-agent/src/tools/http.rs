@@ -190,18 +190,29 @@ impl HttpRequestTool {
         if let Some(ref query_val) = params.query {
             if let Some(query_obj) = query_val.as_object() {
                 if !query_obj.is_empty() {
-                    let mut connector = if final_url.contains('?') { "&" } else { "?" };
+                    // The query string must sit before any URL fragment, so split it
+                    // off and re-attach it after appending params.
+                    let (mut base, fragment) = match final_url.split_once('#') {
+                        Some((b, f)) => (b.to_string(), Some(f.to_string())),
+                        None => (final_url.clone(), None),
+                    };
+                    let mut connector = if base.contains('?') { "&" } else { "?" };
                     for (k, v) in query_obj {
                         let v_str = match v {
                             serde_json::Value::String(s) => s.clone(),
                             _ => v.to_string(),
                         };
-                        final_url.push_str(connector);
-                        final_url.push_str(&urlencoding::encode(k));
-                        final_url.push('=');
-                        final_url.push_str(&urlencoding::encode(&v_str));
+                        base.push_str(connector);
+                        base.push_str(&urlencoding::encode(k));
+                        base.push('=');
+                        base.push_str(&urlencoding::encode(&v_str));
                         connector = "&";
                     }
+                    if let Some(frag) = fragment {
+                        base.push('#');
+                        base.push_str(&frag);
+                    }
+                    final_url = base;
                 }
             }
         }
