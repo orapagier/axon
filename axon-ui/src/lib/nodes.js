@@ -910,7 +910,7 @@ export const NODE_TYPES = {
                 name: 'memory_window',
                 type: 'number',
                 default: 10,
-                description: "How many recent interactions this node keeps — one interaction is a user message plus the AI's reply. Older ones drop off like a sliding window, same as n8n Simple Memory.",
+                description: "How many recent interactions this node keeps — one interaction is a user message plus the AI's reply. Older ones drop off like a sliding window.",
                 displayOptions: { show: { memory_enabled: [true] } },
             },
             {
