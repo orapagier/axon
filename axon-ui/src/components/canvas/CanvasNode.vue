@@ -97,7 +97,7 @@ const {
 // edges would stack on top of each other. The handle offsets are percentages, so
 // growing the box automatically spreads them out evenly.
 const BASE_NODE_SIZE = 100
-const OUTPUT_SLOT_HEIGHT = 46 // px reserved per main output once we start growing
+const OUTPUT_SLOT_HEIGHT = 40 // px reserved per main output once we start growing
 const nodeHeight = computed(() => {
   const count = mainOutputs.value.length
   if (count <= 2) return BASE_NODE_SIZE
