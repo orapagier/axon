@@ -1488,7 +1488,6 @@ onUnmounted(() => {
                 <div v-if="shouldShowProperty(prop)" class="form-row" :class="'row-' + prop.type">
                   <div v-if="prop.type === 'curlImport'" class="curl-import-row">
                     <button class="btn-curl-import" @click="openCurlImport">
-                      <svg class="btn-icon" viewBox="5 3 14 17" preserveAspectRatio="xMinYMid meet" width="14" height="16" aria-hidden="true"><path fill="currentColor" d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
                       Import from cURL
                     </button>
                   </div>
