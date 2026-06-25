@@ -8,63 +8,6 @@ const FB_API: &str = "https://graph.facebook.com/v25.0";
 const POST_FIELDS: &str = "id,message,story,created_time,full_picture,permalink_url,\
      likes.summary(true),comments.summary(true),shares";
 
-/// Guarantee a freshly-created post carries a usable `permalink_url`.
-///
-/// Graph **write** endpoints (`POST /{page}/feed`, `/photos`, `/videos`) do not
-/// reliably echo `?fields=permalink_url` back — they often return only
-/// `{"id": ...}`. Downstream nodes that reference `permalink_url` then resolve
-/// to an empty string (e.g. a Telegram message ending in "view it at "). When
-/// the field is missing we recover it: first with an authoritative GET (where
-/// `fields` *is* honored), then by deriving it from the `{page}_{post}` id.
-async fn ensure_permalink(state: &AppState, tok: &str, mut value: Value) -> Value {
-    let has_permalink = value
-        .get("permalink_url")
-        .and_then(|v| v.as_str())
-        .is_some_and(|s| !s.is_empty());
-    if has_permalink {
-        return value;
-    }
-    let Some(id) = value.get("id").and_then(|v| v.as_str()).map(str::to_owned) else {
-        return value;
-    };
-
-    // 1) Authoritative read — `fields` is honored on GET.
-    if let Ok(resp) = state
-        .client
-        .get(format!("{FB_API}/{id}"))
-        .bearer_auth(tok)
-        .query(&[("fields", "permalink_url")])
-        .send()
-        .await
-    {
-        if let Ok(fetched) = resp.json::<Value>().await {
-            if let Some(url) = fetched
-                .get("permalink_url")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())
-            {
-                if let Value::Object(map) = &mut value {
-                    map.insert("permalink_url".into(), json!(url));
-                }
-                return value;
-            }
-        }
-    }
-
-    // 2) Last resort — derive from the `{page}_{post}` feed id. (Video/photo
-    //    object ids have no `_`, so this is correctly skipped for them; the GET
-    //    above is their path.)
-    if let Some((page, post)) = id.split_once('_') {
-        if let Value::Object(map) = &mut value {
-            map.insert(
-                "permalink_url".into(),
-                json!(format!("https://www.facebook.com/{page}/posts/{post}")),
-            );
-        }
-    }
-    value
-}
-
 pub async fn list(state: &AppState, limit: u32, after: Option<&str>) -> Result<Value> {
     let tok = page_token(state).await?;
     let pid = page_id(state).await?;
@@ -130,14 +73,7 @@ pub async fn create(
         .form(&form)
         .send()
         .await?;
-    let value: Value = ensure_ok(resp).await?.json().await?;
-    // Scheduled (unpublished) posts have no live permalink yet — leave as-is.
-    let scheduled = matches!(publish_time, Some(ts) if ts > 0);
-    if scheduled {
-        Ok(value)
-    } else {
-        Ok(ensure_permalink(state, &tok, value).await)
-    }
+    Ok(ensure_ok(resp).await?.json().await?)
 }
 
 pub async fn create_with_image(state: &AppState, message: &str, image_url: &str) -> Result<Value> {
@@ -205,8 +141,7 @@ pub async fn create_with_image(state: &AppState, message: &str, image_url: &str)
         .form(&[("message", message), ("attached_media[0]", attached.as_str())])
         .send()
         .await?;
-    let value: Value = ensure_ok(resp).await?.json().await?;
-    Ok(ensure_permalink(state, &tok, value).await)
+    Ok(ensure_ok(resp).await?.json().await?)
 }
 
 pub async fn update(state: &AppState, post_id: &str, message: &str) -> Result<Value> {
@@ -298,5 +233,5 @@ pub async fn create_with_video(state: &AppState, message: &str, video_url: &str)
         ensure_ok(resp).await?.json().await?
     };
 
-    Ok(ensure_permalink(state, &tok, resp_value).await)
+    Ok(resp_value)
 }
