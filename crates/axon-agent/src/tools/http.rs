@@ -159,12 +159,24 @@ impl HttpRequestTool {
             allow_unauthorized
         );
 
-        // If a proxy is provided or we need to allow unauthorized certs, we need a temporary client
-        let client = if params.proxy.is_some() || allow_unauthorized {
+        // Redirect handling — only deviate from the pooled client's default when asked.
+        let follow_redirects = params.follow_redirects.unwrap_or(true);
+        let redirect_limit = params.max_redirects.unwrap_or(10);
+        let custom_redirect = !follow_redirects || params.max_redirects.is_some();
+
+        // A proxy, relaxed TLS, or a non-default redirect policy each force a
+        // request-scoped client (these can't be set per-request on the pool).
+        let client = if params.proxy.is_some() || allow_unauthorized || custom_redirect {
+            let redirect_policy = if !follow_redirects {
+                reqwest::redirect::Policy::none()
+            } else {
+                reqwest::redirect::Policy::limited(redirect_limit)
+            };
             let mut builder = reqwest::Client::builder()
                 .timeout(Duration::from_secs(timeout))
                 .cookie_store(true)
                 .danger_accept_invalid_certs(allow_unauthorized)
+                .redirect(redirect_policy)
                 .referer(true)
                 .gzip(true)
                 .brotli(true)
