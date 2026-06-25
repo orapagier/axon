@@ -685,7 +685,7 @@ pub fn tool_definition() -> ToolDefinition {
         description: "Execute a raw HTTP request (GET, POST, etc). Use this for ad-hoc API calls or when no specific tool exists for a service.".to_string(),
         parameters: serde_json::json!({
             "url": {"type":"string"},
-            "method": {"type":"string", "enum":["GET","POST","PUT","DELETE","PATCH"], "default":"GET"},
+            "method": {"type":"string", "enum":["GET","POST","PUT","DELETE","PATCH","HEAD","OPTIONS"], "default":"GET"},
             "headers": {"type":"object", "description":"JSON object of headers"},
             "body": {"type":"object", "description":"JSON body for POST/PUT"},
             "timeout_seconds": {"type":"integer", "default":30},
