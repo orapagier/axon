@@ -500,6 +500,30 @@ async function load() {
   }
 }
 
+// Backward-compat: legacy Switch nodes always exposed a fixed Default output at
+// index 5 (Case1..Case5 + Default). Dynamic switches put Default right after the
+// last rule (index = rule count), so remap any stale default edge on load. Only
+// touches edges whose source is a Switch and whose handle is the old default.
+function migrateSwitchDefaultEdges(nodeList, edgeList) {
+  const ruleCountBySwitch = new Map()
+  for (const n of nodeList) {
+    if (n.data?.node_type !== 'switch') continue
+    const rules = n.data?.config?.rules?.parameters
+    ruleCountBySwitch.set(n.id, Array.isArray(rules) ? rules.length : 0)
+  }
+  if (ruleCountBySwitch.size === 0) return
+
+  for (const e of edgeList) {
+    if (e.sourceHandle !== 'output_main_5') continue
+    if (!ruleCountBySwitch.has(e.source)) continue
+    const ruleCount = ruleCountBySwitch.get(e.source)
+    if (ruleCount === 5) continue // already the correct default index
+    const newHandle = `output_main_${ruleCount}`
+    e.sourceHandle = newHandle
+    if (e.data) e.data.sourceHandle = newHandle
+  }
+}
+
 async function selectWorkflow(wf) {
   selectedWorkflow.value = wf
   isWorkflowMenuOpen.value = false
