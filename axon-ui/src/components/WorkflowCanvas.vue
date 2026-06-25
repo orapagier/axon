@@ -235,8 +235,16 @@ onSelectionEnd(() => {
   // Selection ended
 })
 
-// Pane click handling - deselect
+// Pane click handling - deselect, and remember where on the canvas the user
+// clicked so the toolbar "+" add can drop the new node right there.
 onPaneClick((event) => {
+  const bounds = viewportRef.value?.getBoundingClientRect()
+  if (bounds) {
+    lastClickFlowPosition.value = project({
+      x: event.clientX - bounds.left,
+      y: event.clientY - bounds.top,
+    })
+  }
   emit('node-deselect')
 })
 
