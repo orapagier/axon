@@ -363,11 +363,161 @@ pub(crate) async fn execute_http_node(config: &Value) -> Result<Value, String> {
         json_body: None,
         specify_body: None,
         header_parameters: None,
+        follow_redirects: options
+            .and_then(|o| o.get("followRedirects"))
+            .and_then(|v| v.as_bool()),
+        max_redirects: options
+            .and_then(|o| o.get("maxRedirects"))
+            .and_then(|v| v.as_u64())
+            .map(|v| v as usize),
+        retry_on_fail: options
+            .and_then(|o| o.get("retryOnFail"))
+            .and_then(|v| v.as_bool()),
+        max_tries: options
+            .and_then(|o| o.get("maxTries"))
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32),
+        retry_interval_ms: options
+            .and_then(|o| o.get("retryInterval"))
+            .and_then(|v| v.as_u64()),
     };
 
     let tool = HttpRequestTool::new();
-    match tool.request(params).await {
-        Ok(resp) => serde_json::to_value(resp).map_err(|e| e.to_string()),
-        Err(e) => Err(e.to_string()),
+
+    // Single request (the common case).
+    if !config
+        .get("pagination")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        return match tool.request(params).await {
+            Ok(resp) => serde_json::to_value(resp).map_err(|e| e.to_string()),
+            Err(e) => Err(e.to_string()),
+        };
     }
+
+    // --- Pagination: fetch pages until a stop condition or the page cap. ---
+    let mode = config
+        .get("paginationMode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("updateParameter");
+    let max_pages = config
+        .get("paginationMaxPages")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(100)
+        .max(1);
+    let interval_ms = config
+        .get("paginationInterval")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
+    let mut pages: Vec<Value> = Vec::new();
+    let mut page: u64 = 0;
+
+    if mode == "nextUrl" {
+        let field = config
+            .get("paginationNextUrlField")
+            .and_then(|v| v.as_str())
+            .unwrap_or("next")
+            .to_string();
+        let mut next_params = params.clone();
+        loop {
+            page += 1;
+            if page > max_pages {
+                break;
+            }
+            let resp = match tool.request(next_params.clone()).await {
+                Ok(r) => r,
+                Err(e) => {
+                    if pages.is_empty() {
+                        return Err(e.to_string());
+                    }
+                    break;
+                }
+            };
+            let next_url = get_by_path(&resp.body, &field)
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .filter(|s| !s.is_empty());
+            pages.push(resp.body);
+            match next_url {
+                Some(u) => {
+                    next_params.url = u;
+                    // The next URL already carries its own query string.
+                    next_params.query = None;
+                }
+                None => break,
+            }
+            if interval_ms > 0 {
+                tokio::time::sleep(Duration::from_millis(interval_ms)).await;
+            }
+        }
+    } else {
+        // updateParameter: bump a query parameter each page, stop on an empty page.
+        let param_name = config
+            .get("paginationParameterName")
+            .and_then(|v| v.as_str())
+            .unwrap_or("page")
+            .to_string();
+        let start = config
+            .get("paginationParameterStart")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(1);
+        let increment = config
+            .get("paginationParameterIncrement")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(1)
+            .max(1);
+        let mut value = start;
+        loop {
+            page += 1;
+            if page > max_pages {
+                break;
+            }
+            let mut p = params.clone();
+            let mut q = p
+                .query
+                .as_ref()
+                .and_then(|v| v.as_object())
+                .cloned()
+                .unwrap_or_default();
+            q.insert(param_name.clone(), Value::String(value.to_string()));
+            p.query = Some(Value::Object(q));
+
+            let resp = match tool.request(p).await {
+                Ok(r) => r,
+                Err(e) => {
+                    if pages.is_empty() {
+                        return Err(e.to_string());
+                    }
+                    break;
+                }
+            };
+            let empty = is_empty_body(&resp.body);
+            pages.push(resp.body);
+            if empty {
+                break;
+            }
+            value += increment;
+            if interval_ms > 0 {
+                tokio::time::sleep(Duration::from_millis(interval_ms)).await;
+            }
+        }
+    }
+
+    // Flatten array-shaped pages into a single `items` list for easy downstream use,
+    // while preserving the raw per-page bodies in `pages`.
+    let mut items: Vec<Value> = Vec::new();
+    for b in &pages {
+        match b {
+            Value::Array(arr) => items.extend(arr.iter().cloned()),
+            other => items.push(other.clone()),
+        }
+    }
+
+    Ok(json!({
+        "items": items,
+        "pages": pages,
+        "page_count": pages.len(),
+    }))
 }
