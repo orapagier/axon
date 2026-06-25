@@ -746,7 +746,7 @@ export const NODE_TYPES = {
                 name: 'matchMode',
                 type: 'options',
                 options: [
-                    { name: 'First match wins (n8n-style)', value: 'first' },
+                    { name: 'First match wins', value: 'first' },
                     { name: 'All matches (route to every matching output)', value: 'all' },
                 ],
                 default: 'first',
