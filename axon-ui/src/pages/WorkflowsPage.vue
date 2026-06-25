@@ -622,8 +622,8 @@ function computeNewNodePosition() {
 
   const NODE_W = 120 // rendered node width (matches the splice-insert spacing)
   const NODE_H = 140 // collision box height
-  const GAP = 100
-  // Collision box must be narrower than the placement offset (NODE_W + GAP = 220),
+  const GAP = 80
+  // Collision box must be narrower than the placement offset (NODE_W + GAP = 200),
   // or the new node would "overlap" the rightmost node it's meant to sit beside and
   // get bumped down on every check.
   const COLLISION_W = 150
