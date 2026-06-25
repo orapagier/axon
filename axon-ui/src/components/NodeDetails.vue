@@ -1489,7 +1489,7 @@ onUnmounted(() => {
                   <div v-if="prop.type === 'curlImport'" class="curl-import-row">
                     <button class="btn-curl-import" @click="openCurlImport">
                       <span class="btn-icon">📋</span>
-                      Import cURL
+                      Import from cURL
                     </button>
                   </div>
                   <template v-else-if="prop.type === 'boolean'">
