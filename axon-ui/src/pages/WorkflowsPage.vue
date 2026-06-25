@@ -190,7 +190,12 @@ function getInitialConfig(type) {
   if (!def) return {}
   const config = {}
   def.properties.forEach(p => {
-    config[p.name] = p.default
+    // Clone object/array defaults (e.g. a fixedCollection's `rules`) so every
+    // new node owns its own copy — otherwise two nodes of the same type share
+    // one default object and editing one (e.g. adding a Switch rule) mutates
+    // the other and the shared definition.
+    const d = p.default
+    config[p.name] = (d && typeof d === 'object') ? JSON.parse(JSON.stringify(d)) : d
   })
   return config
 }
