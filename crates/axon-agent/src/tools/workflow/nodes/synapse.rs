@@ -365,6 +365,10 @@ pub(crate) async fn execute_http_node(config: &Value) -> Result<Value, String> {
             .and_then(|o| o.get("dataCleaner"))
             .and_then(|v| v.as_bool())
             .or_else(|| config.get("dataCleaner").and_then(|v| v.as_bool())),
+        keep_links: options
+            .and_then(|o| o.get("keepLinks"))
+            .and_then(|v| v.as_bool())
+            .or_else(|| config.get("keepLinks").and_then(|v| v.as_bool())),
         always_output_binary: options
             .and_then(|o| o.get("alwaysOutputBinary"))
             .and_then(|v| v.as_bool())
