@@ -1564,35 +1564,6 @@ onUnmounted(() => {
           
           <div class="col-content">
             <div v-if="activeTab === 'parameters'" class="params-form">
-              <!-- Webhook URL Display -->
-              <div v-if="node.data.config.type === 'webhook'" class="form-row webhook-url-row">
-                <label class="field-label" style="color: var(--teal)" title="Send a POST request with JSON data to this URL to trigger the workflow.">
-                  Unique Webhook URL
-                  <span class="info-icon" style="opacity: 0.5; font-size: 10px; cursor: help;">ⓘ</span>
-                </label>
-                <div class="webhook-url-input-group">
-                  <input type="text" :value="webhookUrl" readonly />
-                  <button @click="copyWebhookUrl" class="btn-copy-url" title="Copy URL">
-                    <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M16 1H4C2.9 1 2 1.9 2 3v14h2V3h12V1zm3 4H8C6.9 5 6 5.9 6 7v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
-                  </button>
-                </div>
-
-              </div>
-
-              <!-- GitHub Webhook URL Display -->
-              <div v-if="node.data.config.type === 'github'" class="form-row webhook-url-row">
-                <label class="field-label" style="color: var(--teal)" title="Paste this URL into your repo → Settings → Webhooks. Content type: application/json.">
-                  GitHub Webhook URL
-                  <span class="info-icon" style="opacity: 0.5; font-size: 10px; cursor: help;">ⓘ</span>
-                </label>
-                <div class="webhook-url-input-group">
-                  <input type="text" :value="githubWebhookUrl" readonly />
-                  <button @click="copyGithubWebhookUrl" class="btn-copy-url" title="Copy URL">
-                    <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M16 1H4C2.9 1 2 1.9 2 3v14h2V3h12V1zm3 4H8C6.9 5 6 5.9 6 7v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
-                  </button>
-                </div>
-              </div>
-
               <!-- Dynamic Props -->
               <template v-for="prop in nodeDefinition.properties" :key="prop.name">
                 <div v-if="shouldShowProperty(prop)" class="form-row" :class="'row-' + prop.type">
@@ -2101,6 +2072,32 @@ onUnmounted(() => {
                       </div>
                     </div>
                   </template>
+                </div>
+
+                <!-- Webhook URL Display — rendered right after the Trigger Type field so the URL never sits above the trigger selector -->
+                <div v-if="prop.name === 'type' && node.data.config.type === 'webhook'" class="form-row webhook-url-row">
+                  <label class="field-label" style="color: var(--teal)" title="Send a POST request with JSON data to this URL to trigger the workflow.">
+                    Unique Webhook URL
+                    <span class="info-icon" style="opacity: 0.5; font-size: 10px; cursor: help;">ⓘ</span>
+                  </label>
+                  <div class="webhook-url-input-group">
+                    <input type="text" :value="webhookUrl" readonly />
+                    <button @click="copyWebhookUrl" class="btn-copy-url" title="Copy URL">
+                      <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M16 1H4C2.9 1 2 1.9 2 3v14h2V3h12V1zm3 4H8C6.9 5 6 5.9 6 7v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+                    </button>
+                  </div>
+                </div>
+                <div v-if="prop.name === 'type' && node.data.config.type === 'github'" class="form-row webhook-url-row">
+                  <label class="field-label" style="color: var(--teal)" title="Paste this URL into your repo → Settings → Webhooks. Content type: application/json.">
+                    GitHub Webhook URL
+                    <span class="info-icon" style="opacity: 0.5; font-size: 10px; cursor: help;">ⓘ</span>
+                  </label>
+                  <div class="webhook-url-input-group">
+                    <input type="text" :value="githubWebhookUrl" readonly />
+                    <button @click="copyGithubWebhookUrl" class="btn-copy-url" title="Copy URL">
+                      <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M16 1H4C2.9 1 2 1.9 2 3v14h2V3h12V1zm3 4H8C6.9 5 6 5.9 6 7v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+                    </button>
+                  </div>
                 </div>
               </template>
             </div>
@@ -2688,7 +2685,7 @@ onUnmounted(() => {
 .btn-copy-url {
   background: rgba(129, 230, 217, 0.1);
   border: 1px solid rgba(129, 230, 217, 0.3);
-  color: #2c9b8d;
+  color: #81e6d9;
   width: 34px;
   height: 34px;
   display: flex;
@@ -2699,9 +2696,13 @@ onUnmounted(() => {
   transition: all 0.2s;
   flex-shrink: 0;
 }
+.btn-copy-url svg {
+  display: block;
+}
 .btn-copy-url:hover {
   background: rgba(129, 230, 217, 0.2);
-  border-color: #2c9b8d;
+  border-color: #81e6d9;
+  color: #b6f3e9;
   transform: translateY(-1px);
 }
 .fc-toggle {
