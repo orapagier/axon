@@ -1139,7 +1139,7 @@ export const NODE_TYPES = {
                 name: 'memory_enabled',
                 type: 'boolean',
                 default: true,
-                description: 'Give this Axon node its own persistent conversation memory. Each node remembers its own history across runs; disable to make the node stateless.',
+                description: 'Give this Cortex node its own persistent conversation memory. Each node remembers its own history across runs; disable to make the node stateless.',
             },
             {
                 displayName: 'Interactions to Remember',
