@@ -1767,11 +1767,71 @@ onUnmounted(() => {
                             </div>
                             <div v-else-if="opt.type === 'string'" class="cf-row">
                               <label>{{ opt.displayName }}</label>
-                              <input type="text" v-model="node.data.config[prop.name][opt.name]" :placeholder="opt.placeholder" />
+                              <div class="input-with-preview">
+                                <input
+                                  type="text"
+                                  v-model="node.data.config[prop.name][opt.name]"
+                                  :placeholder="opt.placeholder || 'Drop variables here...'"
+                                  :class="{ 'has-expression': hasExpression(node.data.config[prop.name][opt.name]), 'focused-exp': isFieldFocused({ collectionField: prop.name, subName: opt.name }) }"
+                                  @drop.prevent="onDropCollectionField($event, prop.name, opt.name)"
+                                  @dragover.prevent
+                                  @focus="handleFocus($event, { collectionField: prop.name, subName: opt.name })"
+                                  @blur="handleBlur"
+                                />
+                                <Transition name="fade">
+                                  <div
+                                    v-if="isFieldFocused({ collectionField: prop.name, subName: opt.name }) && hasExpression(node.data.config[prop.name][opt.name])"
+                                    class="nd-dropdown-preview"
+                                    @mousedown="keepPreview = true"
+                                    @mouseup="releasePreview"
+                                    @mouseleave="releasePreview"
+                                  >
+                                    <div class="fp-header"><span>RESULT</span></div>
+                                    <div class="fp-body">{{ focusedValue || (focusedValue === '' ? '(Empty String)' : '(Waiting for data...)') }}</div>
+                                  </div>
+                                </Transition>
+                                <div
+                                  v-if="hasExpression(node.data.config[prop.name][opt.name]) && !isFieldFocused({ collectionField: prop.name, subName: opt.name })"
+                                  class="exp-resolved"
+                                >
+                                  <span class="exp-resolved-icon">=</span>
+                                  <span class="exp-resolved-val">{{ inlineResolved(node.data.config[prop.name][opt.name]) ?? '(run previous node to preview)' }}</span>
+                                </div>
+                              </div>
                             </div>
                             <div v-else-if="opt.type === 'number'" class="cf-row">
                               <label>{{ opt.displayName }}</label>
-                              <input type="number" v-model="node.data.config[prop.name][opt.name]" />
+                              <div class="input-with-preview">
+                                <input
+                                  :type="hasExpression(node.data.config[prop.name][opt.name]) ? 'text' : 'number'"
+                                  v-model="node.data.config[prop.name][opt.name]"
+                                  :placeholder="opt.placeholder || 'Drop variables here...'"
+                                  :class="{ 'has-expression': hasExpression(node.data.config[prop.name][opt.name]), 'focused-exp': isFieldFocused({ collectionField: prop.name, subName: opt.name }) }"
+                                  @drop.prevent="onDropCollectionField($event, prop.name, opt.name)"
+                                  @dragover.prevent
+                                  @focus="handleFocus($event, { collectionField: prop.name, subName: opt.name })"
+                                  @blur="handleBlur"
+                                />
+                                <Transition name="fade">
+                                  <div
+                                    v-if="isFieldFocused({ collectionField: prop.name, subName: opt.name }) && hasExpression(node.data.config[prop.name][opt.name])"
+                                    class="nd-dropdown-preview"
+                                    @mousedown="keepPreview = true"
+                                    @mouseup="releasePreview"
+                                    @mouseleave="releasePreview"
+                                  >
+                                    <div class="fp-header"><span>RESULT</span></div>
+                                    <div class="fp-body">{{ focusedValue || (focusedValue === '' ? '(Empty String)' : '(Waiting for data...)') }}</div>
+                                  </div>
+                                </Transition>
+                                <div
+                                  v-if="hasExpression(node.data.config[prop.name][opt.name]) && !isFieldFocused({ collectionField: prop.name, subName: opt.name })"
+                                  class="exp-resolved"
+                                >
+                                  <span class="exp-resolved-icon">=</span>
+                                  <span class="exp-resolved-val">{{ inlineResolved(node.data.config[prop.name][opt.name]) ?? '(run previous node to preview)' }}</span>
+                                </div>
+                              </div>
                             </div>
                           </template>
                         </div>
