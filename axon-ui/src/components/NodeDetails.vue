@@ -233,8 +233,9 @@ const focusedValue = computed(() => {
 
 function isFieldFocused(fieldInfo) {
   if (!focusedField.value) return false
-  return focusedField.value.name === fieldInfo.name && 
+  return focusedField.value.name === fieldInfo.name &&
          focusedField.value.collection === fieldInfo.collection &&
+         focusedField.value.collectionField === fieldInfo.collectionField &&
          focusedField.value.index === fieldInfo.index &&
          focusedField.value.subName === fieldInfo.subName
 }
