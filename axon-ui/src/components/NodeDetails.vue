@@ -206,6 +206,37 @@ function hasExpression(val) {
   return /\$node(\.|\[['"])[A-Za-z0-9 _-]/.test(val)
 }
 
+// ── Expression mode for pickers (dropdowns, multi-selects, dates, booleans) ──
+// You can't drop text into a <select> or checkbox, so these fields gain an "ƒx"
+// toggle that swaps the native control for an expression text input. A field is
+// in expression mode when the user toggled it on (tracked here) OR its value
+// already holds an expression. This keyed map is what makes EVERY field type —
+// and therefore every current/future node using that type — dynamic-capable.
+const exprModeFields = reactive({})
+function isExprMode(key, val) {
+  return !!exprModeFields[key] || hasExpression(val)
+}
+// Enter expression mode. `setVal` resets the value so the new expression input
+// starts clean (a picker's enum/bool/array value isn't a sensible expression).
+function enterExprMode(key, setVal) {
+  exprModeFields[key] = true
+  if (setVal) setVal('')
+}
+// Leave expression mode; `resetVal` restores the control's natural empty value
+// (false for booleans, [] for multiOptions, '' for selects/dates).
+function exitExprMode(key, resetVal) {
+  delete exprModeFields[key]
+  if (resetVal) resetVal()
+}
+// Dropping an upstream field onto a picker converts it to an expression bound to
+// that field — the drag-to-make-dynamic gesture, uniform across every field type.
+function dropToExpr(event, key, setVal) {
+  const token = event.dataTransfer.getData('variable')
+  if (!token) return
+  setVal(token)
+  exprModeFields[key] = true
+}
+
 const focusedRawValue = computed(() => {
   if (!focusedField.value) return null
   const { name, collection, collectionField, index, subName } = focusedField.value
