@@ -1934,30 +1934,44 @@ onUnmounted(() => {
                                   <label class="fc-header-label" style="display: block; margin-bottom: 4px;">{{ subProp.displayName }}</label>
                                   <div class="input-with-preview">
                                   <template v-if="subProp.type === 'options'">
-                                    <SearchableSelect 
-                                      v-if="subProp.searchable || subProp.allowCustomValue"
+                                    <ExprInput
+                                      v-if="isExprMode('p:'+subProp.name, node.data.config[subProp.name])"
                                       v-model="node.data.config[subProp.name]"
-                                      :options="subProp.options"
-                                      :allow-custom-value="!!subProp.allowCustomValue"
-                                      :placeholder="subProp.placeholder || (subProp.allowCustomValue ? 'Select or type...' : 'Search...')"
+                                      :resolve="resolveExpression"
+                                      placeholder="Expression…"
+                                      @revert="exitExprMode('p:'+subProp.name, () => node.data.config[subProp.name] = '')"
                                     />
-                                    <select 
-                                      v-else
-                                      v-model="node.data.config[subProp.name]"
-                                      :class="{ 'has-expression': hasExpression(node.data.config[subProp.name]), 'focused-exp': isFieldFocused({ name: subProp.name }) }"
-                                      @focus="handleFocus($event, { name: subProp.name })"
-                                      @blur="handleBlur"
-                                    >
-                                      <option v-for="opt in subProp.options" :key="opt.value" :value="opt.value">{{ optionDisplayName(opt) }}</option>
-                                    </select>
+                                    <div v-else class="field-with-fx" @drop.prevent="dropToExpr($event, 'p:'+subProp.name, v => node.data.config[subProp.name] = v)" @dragover.prevent>
+                                      <SearchableSelect
+                                        v-if="subProp.searchable || subProp.allowCustomValue"
+                                        v-model="node.data.config[subProp.name]"
+                                        :options="subProp.options"
+                                        :allow-custom-value="!!subProp.allowCustomValue"
+                                        :placeholder="subProp.placeholder || (subProp.allowCustomValue ? 'Select or type...' : 'Search...')"
+                                      />
+                                      <select v-else v-model="node.data.config[subProp.name]">
+                                        <option v-for="opt in subProp.options" :key="opt.value" :value="opt.value">{{ optionDisplayName(opt) }}</option>
+                                      </select>
+                                      <button type="button" class="btn-fx-toggle" title="Use an expression" @click="enterExprMode('p:'+subProp.name, () => node.data.config[subProp.name] = '')">ƒx</button>
+                                    </div>
                                   </template>
-                                  <div v-else-if="subProp.type === 'dateTime'" class="datetime-field">
-                                    <input
-                                      type="datetime-local"
-                                      :value="isoToLocal(node.data.config[subProp.name])"
-                                      @change="e => node.data.config[subProp.name] = localToIso(e.target.value)"
-                                    />
-                                    <span v-if="node.data.config[subProp.name]" class="datetime-iso-hint">{{ node.data.config[subProp.name] }}</span>
+                                  <ExprInput
+                                    v-else-if="subProp.type === 'dateTime' && isExprMode('p:'+subProp.name, node.data.config[subProp.name])"
+                                    v-model="node.data.config[subProp.name]"
+                                    :resolve="resolveExpression"
+                                    placeholder="Expression returning a date/time…"
+                                    @revert="exitExprMode('p:'+subProp.name, () => node.data.config[subProp.name] = '')"
+                                  />
+                                  <div v-else-if="subProp.type === 'dateTime'" class="field-with-fx" @drop.prevent="dropToExpr($event, 'p:'+subProp.name, v => node.data.config[subProp.name] = v)" @dragover.prevent>
+                                    <div class="datetime-field">
+                                      <input
+                                        type="datetime-local"
+                                        :value="isoToLocal(node.data.config[subProp.name])"
+                                        @change="e => node.data.config[subProp.name] = localToIso(e.target.value)"
+                                      />
+                                      <span v-if="node.data.config[subProp.name]" class="datetime-iso-hint">{{ node.data.config[subProp.name] }}</span>
+                                    </div>
+                                    <button type="button" class="btn-fx-toggle" title="Use an expression" @click="enterExprMode('p:'+subProp.name, () => node.data.config[subProp.name] = '')">ƒx</button>
                                   </div>
                                   <input
                                     v-else
