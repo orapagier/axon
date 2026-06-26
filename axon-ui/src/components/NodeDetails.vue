@@ -698,12 +698,32 @@ const tableData = computed(() => {
   return Array.isArray(data) ? data : [data]
 })
 
-function shouldShowProperty(prop, item = null) {
+function shouldShowProperty(prop, item = null, _seen = null) {
   if (!prop.displayOptions?.show) return true
+
+  // Cascade visibility: a field that depends on a parent field is only valid
+  // while that parent is itself visible. When a parent is hidden its value
+  // lingers in the config — e.g. switching HTTP Method POST -> GET hides
+  // "Send Body" but leaves sendBody=true — which would otherwise keep children
+  // like "Body Content Type"/"Specify Body"/"Body Parameters" showing. Treat a
+  // hidden parent as if its dependency is not satisfied. The visited set guards
+  // against circular displayOptions.
+  const seen = _seen || new Set()
+  if (prop.name) seen.add(prop.name)
+  const rootProps = nodeDefinition.value?.properties || []
+  const parentVisible = (key) => {
+    const parent = rootProps.find(p => p.name === key)
+    if (!parent || !parent.displayOptions || seen.has(parent.name)) return true
+    return shouldShowProperty(parent, null, seen)
+  }
+
   for (let [key, values] of Object.entries(prop.displayOptions.show)) {
     // Strip leading / if present (n8n style for parent/root path)
     if (key.startsWith('/')) key = key.substring(1)
-    
+
+    // A hidden parent's stale value must not satisfy this dependency.
+    if (!parentVisible(key)) return false
+
     let current = undefined;
     if (item && item[key] !== undefined) {
       current = item[key]
