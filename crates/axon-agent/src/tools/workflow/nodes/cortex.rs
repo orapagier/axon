@@ -85,8 +85,8 @@ pub(crate) fn execute_cortex_node<'a>(
             Some(system_prompt_text.as_str())
         };
 
-        // Isolated session PER NODE (not per workflow) so each Axon node keeps
-        // its own dedicated, persistent conversation memory — multiple Axon nodes
+        // Isolated session PER NODE (not per workflow) so each Cortex node keeps
+        // its own dedicated, persistent conversation memory — multiple Cortex nodes
         // in the same workflow no longer share one history.
         let session = format!("wf:{}:node:{}", workflow_id, node_id);
         let mut ctx = crate::agent::RunContext::new(
