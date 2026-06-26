@@ -645,7 +645,7 @@ const nodeDefinition = computed(() => {
   const base = NODE_TYPES[type] || { properties: [], displayName: 'Neuron', icon: '📦' }
 
   // For Axon and Classifier nodes, inject dynamic options into model/tools properties
-  if ((type === 'axon' || type === 'classifier') && base.properties) {
+  if ((type === 'cortex' || type === 'classifier') && base.properties) {
     const enriched = { ...base, properties: base.properties.map(p => {
       if (p.name === 'model' && p.type === 'options') {
         return { ...p, options: availableModels.value, searchable: true }
