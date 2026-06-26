@@ -849,3 +849,56 @@ pub fn run_saved_tool_definition() -> ToolDefinition {
         is_mutating: true,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::links_to_markdown;
+
+    fn base(u: &str) -> reqwest::Url {
+        reqwest::Url::parse(u).unwrap()
+    }
+
+    #[test]
+    fn resolves_relative_permalinks_and_keeps_labels() {
+        let b = base("https://example.com/blog/index.html");
+        let html = r#"<p>See <a href="/post/123">My Post</a> and
+                      <a href="next.html">Next</a> and
+                      <a href="https://other.com/x">External</a>.</p>"#;
+        let out = links_to_markdown(html, Some(&b));
+        assert!(
+            out.contains("[My Post](https://example.com/post/123)"),
+            "root-relative not resolved: {out}"
+        );
+        assert!(
+            out.contains("[Next](https://example.com/blog/next.html)"),
+            "doc-relative not resolved: {out}"
+        );
+        assert!(
+            out.contains("[External](https://other.com/x)"),
+            "absolute url not kept: {out}"
+        );
+    }
+
+    #[test]
+    fn strips_inner_tags_and_degrades_non_navigational_hrefs() {
+        let b = base("https://example.com/");
+        let html = r#"<a href="/a"><b>Bold</b>  link</a> <a href="#top">jump</a> <a href="javascript:void(0)">js</a>"#;
+        let out = links_to_markdown(html, Some(&b));
+        assert!(
+            out.contains("[Bold link](https://example.com/a)"),
+            "inner tags not stripped / collapsed: {out}"
+        );
+        // Fragment-only and javascript hrefs keep just the label text, no URL.
+        assert!(out.contains(" jump "), "fragment label dropped: {out}");
+        assert!(out.contains(" js "), "javascript label dropped: {out}");
+        assert!(!out.contains("javascript:"), "javascript href leaked: {out}");
+        assert!(!out.contains("](#top)"), "fragment url leaked: {out}");
+    }
+
+    #[test]
+    fn leaves_non_anchor_html_untouched() {
+        let b = base("https://example.com/");
+        let html = "<p>no links here</p>";
+        assert_eq!(links_to_markdown(html, Some(&b)), html);
+    }
+}
