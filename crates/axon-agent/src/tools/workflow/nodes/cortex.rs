@@ -114,7 +114,7 @@ pub(crate) fn execute_cortex_node<'a>(
 
         let agent_response = crate::agent::run_task(&stimulus, state, ctx)
             .await
-            .map_err(|e| format!("Axon agent error: {}", e))?;
+            .map_err(|e| format!("Cortex agent error: {}", e))?;
 
         Ok(serde_json::json!({
             "output": agent_response
