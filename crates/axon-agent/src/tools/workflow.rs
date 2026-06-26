@@ -1713,6 +1713,16 @@ async fn execute_node_by_type(
         "fovea" => nodes::fovea::execute(config, state).await,
         t if t == "mcp" || t.starts_with("mcp_") => nodes::mcp::execute(config, state).await,
         "wait" => nodes::wait::execute(config, state, workflow_id, run_id, durable_allowed).await,
+        "soma" => {
+            // Soma's "Include Other Input Fields" merges over the incoming item.
+            // Use the same primary-input convention as $json: the most recent
+            // predecessor by position.
+            let mut vec: Vec<_> = node_results.values().cloned().collect();
+            vec.sort_by_key(|r| r.position);
+            let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
+            nodes::soma::execute(config, &input)
+        }
+        "engram" => nodes::engram::execute(config, state).await,
         "ifCondition" => nodes::condition::execute_if_condition_node(config),
         "switch" => nodes::condition::execute_switch_node(config),
         "loop" => nodes::iterate::execute(config),
