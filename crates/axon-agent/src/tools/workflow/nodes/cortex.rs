@@ -23,7 +23,7 @@ pub(crate) fn execute_cortex_node<'a>(
         };
 
         if stimulus.is_empty() {
-            return Err("Axon node: stimulus (User Prompt) is empty".to_string());
+            return Err("Cortex node: stimulus (User Prompt) is empty".to_string());
         }
 
         // Extract optional model selection
