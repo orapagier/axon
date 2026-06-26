@@ -1114,11 +1114,11 @@ export const NODE_TYPES = {
             },
         ],
     },
-    axon: {
-        displayName: 'Axon',
-        name: 'axon',
-        icon: '/icons/axon.png',
-        description: 'Sends data to the Axon AI agent and dispatches its response to the active messaging platform',
+    cortex: {
+        displayName: 'Cortex',
+        name: 'cortex',
+        icon: '/icons/cortex.png',
+        description: 'Runs an AI agent on the input and dispatches its response to the active messaging platform',
         properties: [
             {
                 displayName: 'Model (Optional)',
