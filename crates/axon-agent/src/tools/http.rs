@@ -882,7 +882,7 @@ mod tests {
     #[test]
     fn strips_inner_tags_and_degrades_non_navigational_hrefs() {
         let b = base("https://example.com/");
-        let html = r#"<a href="/a"><b>Bold</b>  link</a> <a href="#top">jump</a> <a href="javascript:void(0)">js</a>"#;
+        let html = r##"<a href="/a"><b>Bold</b>  link</a> <a href="#top">jump</a> <a href="javascript:void(0)">js</a>"##;
         let out = links_to_markdown(html, Some(&b));
         assert!(
             out.contains("[Bold link](https://example.com/a)"),
