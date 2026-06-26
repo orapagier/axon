@@ -1617,21 +1617,30 @@ onUnmounted(() => {
                   </template>
                   <template v-else-if="prop.type === 'multiOptions'">
                     <label>{{ prop.displayName }}</label>
+                    <ExprInput
+                      v-if="isExprMode('p:'+prop.name, node.data.config[prop.name])"
+                      v-model="node.data.config[prop.name]"
+                      :resolve="resolveExpression"
+                      placeholder="Expression returning a list…"
+                      @revert="exitExprMode('p:'+prop.name, () => node.data.config[prop.name] = [])"
+                    />
+                    <div v-else class="field-with-fx" @drop.prevent="dropToExpr($event, 'p:'+prop.name, v => node.data.config[prop.name] = v)" @dragover.prevent>
                       <div class="multi-options-field">
                         <div class="mo-selected-tags">
                           <span v-for="(val, idx) in (node.data.config[prop.name] || [])" :key="val" class="mo-tag">
-                          {{ getOptionLabel(prop, val) }}
-                          <button class="mo-tag-remove" type="button" @click="node.data.config[prop.name].splice(idx, 1)">✕</button>
-                        </span>
+                            {{ getOptionLabel(prop, val) }}
+                            <button class="mo-tag-remove" type="button" @click="node.data.config[prop.name].splice(idx, 1)">✕</button>
+                          </span>
+                        </div>
+                        <SearchableSelect
+                          :modelValue="''"
+                          :options="(prop.options || []).filter(o => !(node.data.config[prop.name] || []).includes(o.value))"
+                          :placeholder="prop.placeholder || `Search ${prop.displayName.toLowerCase()}...`"
+                          @update:modelValue="(v) => { if (v) { if (!node.data.config[prop.name]) node.data.config[prop.name] = []; node.data.config[prop.name].push(v); } }"
+                        />
                       </div>
-                      <SearchableSelect
-                        :modelValue="''"
-                        :options="(prop.options || []).filter(o => !(node.data.config[prop.name] || []).includes(o.value))"
-                        :placeholder="prop.placeholder || `Search ${prop.displayName.toLowerCase()}...`"
-                        @update:modelValue="(v) => { if (v) { if (!node.data.config[prop.name]) node.data.config[prop.name] = []; node.data.config[prop.name].push(v); } }"
-                      />
+                      <button type="button" class="btn-fx-toggle" title="Use an expression" @click="enterExprMode('p:'+prop.name, () => node.data.config[prop.name] = '')">ƒx</button>
                     </div>
-                    
                   </template>
                   <template v-else-if="prop.type === 'credential'">
                     <label class="field-label">{{ prop.displayName }}</label>
