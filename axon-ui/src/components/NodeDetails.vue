@@ -1973,13 +1973,23 @@ onUnmounted(() => {
                   </template>
                   <template v-else-if="prop.type === 'dateTime'">
                     <label>📅 {{ prop.displayName }}</label>
-                    <div class="datetime-field">
-                      <input
-                        type="datetime-local"
-                        :value="isoToLocal(node.data.config[prop.name])"
-                        @change="e => node.data.config[prop.name] = localToIso(e.target.value)"
-                      />
-                      <span v-if="node.data.config[prop.name]" class="datetime-iso-hint">{{ node.data.config[prop.name] }}</span>
+                    <ExprInput
+                      v-if="isExprMode('p:'+prop.name, node.data.config[prop.name])"
+                      v-model="node.data.config[prop.name]"
+                      :resolve="resolveExpression"
+                      placeholder="Expression returning a date/time…"
+                      @revert="exitExprMode('p:'+prop.name, () => node.data.config[prop.name] = '')"
+                    />
+                    <div v-else class="field-with-fx" @drop.prevent="dropToExpr($event, 'p:'+prop.name, v => node.data.config[prop.name] = v)" @dragover.prevent>
+                      <div class="datetime-field">
+                        <input
+                          type="datetime-local"
+                          :value="isoToLocal(node.data.config[prop.name])"
+                          @change="e => node.data.config[prop.name] = localToIso(e.target.value)"
+                        />
+                        <span v-if="node.data.config[prop.name]" class="datetime-iso-hint">{{ node.data.config[prop.name] }}</span>
+                      </div>
+                      <button type="button" class="btn-fx-toggle" title="Use an expression" @click="enterExprMode('p:'+prop.name, () => node.data.config[prop.name] = '')">ƒx</button>
                     </div>
                   </template>
                   <template v-else-if="prop.type === 'string' || prop.type === 'number'">
