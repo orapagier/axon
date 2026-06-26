@@ -2,6 +2,7 @@
 import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import Pill from './Pill.vue'
 import SearchableSelect from './SearchableSelect.vue'
+import ExprInput from './ExprInput.vue'
 import DataTreeNode from './DataTreeNode.vue'
 import { NODE_TYPES } from '../lib/nodes.js'
 import { renameNodeInExpressions, applyAccessPatterns } from '../lib/expressionUpdates.js'
