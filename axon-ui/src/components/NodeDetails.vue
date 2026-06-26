@@ -1574,12 +1574,22 @@ onUnmounted(() => {
                   </div>
                   <template v-else-if="prop.type === 'boolean'">
                     <label class="field-label">{{ prop.displayName }}</label>
-                    <div class="toggle-field">
-                      <label class="toggle-switch">
-                        <input type="checkbox" v-model="node.data.config[prop.name]" />
-                        <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                      </label>
-                      <span class="toggle-label">{{ node.data.config[prop.name] ? 'Enabled' : 'Disabled' }}</span>
+                    <ExprInput
+                      v-if="isExprMode('p:'+prop.name, node.data.config[prop.name])"
+                      v-model="node.data.config[prop.name]"
+                      :resolve="resolveExpression"
+                      placeholder="Expression returning true / false…"
+                      @revert="exitExprMode('p:'+prop.name, () => node.data.config[prop.name] = false)"
+                    />
+                    <div v-else class="field-with-fx" @drop.prevent="dropToExpr($event, 'p:'+prop.name, v => node.data.config[prop.name] = v)" @dragover.prevent>
+                      <div class="toggle-field">
+                        <label class="toggle-switch">
+                          <input type="checkbox" v-model="node.data.config[prop.name]" />
+                          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                        </label>
+                        <span class="toggle-label">{{ node.data.config[prop.name] ? 'Enabled' : 'Disabled' }}</span>
+                      </div>
+                      <button type="button" class="btn-fx-toggle" title="Use an expression" @click="enterExprMode('p:'+prop.name, () => node.data.config[prop.name] = '')">ƒx</button>
                     </div>
                   </template>
                   <template v-else-if="prop.type === 'options'">
