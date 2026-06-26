@@ -3852,7 +3852,7 @@ mod resolve_tests {
             position: 0,
             position_x: 0.0,
             position_y: 0.0,
-            node_type: "axon".into(),
+            node_type: "cortex".into(),
             name: "Axon 2".into(),
             config: j!({}),
             enabled: true,
