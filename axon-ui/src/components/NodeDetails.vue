@@ -592,6 +592,24 @@ function onDropCollection(event, propName, index, fieldName) {
   }
 }
 
+// Drop a dragged expression into a `collection` sub-field (e.g. Telegram's
+// "Additional Fields"). Unlike fixedCollection, the value is stored flat at
+// config[collectionName][fieldName] rather than in a .parameters[] array.
+function onDropCollectionField(event, collectionName, fieldName) {
+  const token = event.dataTransfer.getData('variable')
+  if (!token) return
+  const coll = props.node.data.config[collectionName]
+  if (!coll) return
+  const currentVal = coll[fieldName] || ''
+  const el = event.target || event.srcElement
+  if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') && typeof el.selectionStart === 'number') {
+    const pos = el.selectionStart
+    coll[fieldName] = currentVal.substring(0, pos) + token + currentVal.substring(pos)
+  } else {
+    coll[fieldName] = currentVal + token
+  }
+}
+
 // A fixedCollection whose items each map to a dynamic output handle (the Switch
 // node's routing rules). Adding/removing such an item shifts every later output
 // index, so connected edges must be re-indexed by the parent — see emits below.
