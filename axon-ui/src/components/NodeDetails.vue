@@ -1747,29 +1747,43 @@ onUnmounted(() => {
                                 <label v-if="idx === 0 && !subProp.hideLabel" class="fc-header-label" style="display: block; margin-bottom: 4px;">{{ subProp.displayName }}</label>
                                 <div class="input-with-preview">
                                   <template v-if="subProp.type === 'options'">
-                                    <SearchableSelect
-                                      v-if="subProp.searchable || subProp.allowCustomValue"
+                                    <ExprInput
+                                      v-if="isExprMode('fc:'+prop.name+':'+idx+':'+subProp.name, item[subProp.name])"
                                       v-model="item[subProp.name]"
-                                      :options="filteredOptions(subProp, item)"
-                                      :allow-custom-value="!!subProp.allowCustomValue"
-                                      :placeholder="subProp.placeholder || (subProp.allowCustomValue ? 'Select or type...' : 'Search...')"
+                                      :resolve="resolveExpression"
+                                      placeholder="Expression…"
+                                      @revert="exitExprMode('fc:'+prop.name+':'+idx+':'+subProp.name, () => item[subProp.name] = '')"
                                     />
-                                    <select
-                                      v-else
-                                      v-model="item[subProp.name]"
-                                      :class="{ 'has-expression': hasExpression(item[subProp.name]), 'focused-exp': isFieldFocused({ collection: prop.name, index: idx, subName: subProp.name }) }"
-                                      @focus="handleFocus($event, { collection: prop.name, index: idx, subName: subProp.name })"
-                                      @blur="handleBlur"
-                                    >
-                                      <option v-for="opt in filteredOptions(subProp, item)" :key="opt.value" :value="opt.value">{{ optionDisplayName(opt) }}</option>
-                                    </select>
+                                    <div v-else class="field-with-fx" @drop.prevent="dropToExpr($event, 'fc:'+prop.name+':'+idx+':'+subProp.name, v => item[subProp.name] = v)" @dragover.prevent>
+                                      <SearchableSelect
+                                        v-if="subProp.searchable || subProp.allowCustomValue"
+                                        v-model="item[subProp.name]"
+                                        :options="filteredOptions(subProp, item)"
+                                        :allow-custom-value="!!subProp.allowCustomValue"
+                                        :placeholder="subProp.placeholder || (subProp.allowCustomValue ? 'Select or type...' : 'Search...')"
+                                      />
+                                      <select v-else v-model="item[subProp.name]">
+                                        <option v-for="opt in filteredOptions(subProp, item)" :key="opt.value" :value="opt.value">{{ optionDisplayName(opt) }}</option>
+                                      </select>
+                                      <button type="button" class="btn-fx-toggle" title="Use an expression" @click="enterExprMode('fc:'+prop.name+':'+idx+':'+subProp.name, () => item[subProp.name] = '')">ƒx</button>
+                                    </div>
                                   </template>
                                   <template v-else-if="subProp.type === 'boolean'">
-                                    <div class="fc-toggle">
-                                      <label class="fc-toggle-switch" :title="subProp.displayName">
-                                        <input type="checkbox" v-model="item[subProp.name]" />
-                                        <span class="fc-toggle-slider"></span>
-                                      </label>
+                                    <ExprInput
+                                      v-if="isExprMode('fc:'+prop.name+':'+idx+':'+subProp.name, item[subProp.name])"
+                                      v-model="item[subProp.name]"
+                                      :resolve="resolveExpression"
+                                      placeholder="Expression true/false…"
+                                      @revert="exitExprMode('fc:'+prop.name+':'+idx+':'+subProp.name, () => item[subProp.name] = false)"
+                                    />
+                                    <div v-else class="field-with-fx" @drop.prevent="dropToExpr($event, 'fc:'+prop.name+':'+idx+':'+subProp.name, v => item[subProp.name] = v)" @dragover.prevent>
+                                      <div class="fc-toggle">
+                                        <label class="fc-toggle-switch" :title="subProp.displayName">
+                                          <input type="checkbox" v-model="item[subProp.name]" />
+                                          <span class="fc-toggle-slider"></span>
+                                        </label>
+                                      </div>
+                                      <button type="button" class="btn-fx-toggle" title="Use an expression" @click="enterExprMode('fc:'+prop.name+':'+idx+':'+subProp.name, () => item[subProp.name] = '')">ƒx</button>
                                     </div>
                                   </template>
                                   <input
