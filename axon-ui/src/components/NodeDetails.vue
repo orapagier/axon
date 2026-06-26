@@ -2882,6 +2882,9 @@ small.form-desc {
 .cf-row-boolean:hover { background: rgba(255, 255, 255, 0.03); }
 .cf-row-boolean input[type="checkbox"] { width: 14px; height: 14px; accent-color: #6366f1; cursor: pointer; }
 .cf-row-boolean label { font-size: 12px; color: #f2f7ff; cursor: pointer; font-weight: 500; }
+/* Keep the ƒx toggle out of the way on checkboxes until the row is hovered. */
+.cf-bool-fx { margin-left: auto; height: 22px; opacity: 0; transition: opacity 0.15s; }
+.cf-row-boolean:hover .cf-bool-fx { opacity: 1; }
 
 /* Buttons inside collections */
 .btn-fc-add {
