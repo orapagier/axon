@@ -1835,9 +1835,19 @@ onUnmounted(() => {
                       <div class="cf-items">
                         <div v-for="opt in prop.options" :key="opt.name" class="cf-item">
                           <template v-if="shouldShowProperty(opt, node.data.config[prop.name])">
-                            <div v-if="opt.type === 'boolean'" class="cf-row-boolean">
+                            <div v-if="opt.type === 'boolean' && isExprMode('cf:'+prop.name+':'+opt.name, node.data.config[prop.name][opt.name])" class="cf-row">
+                              <label>{{ opt.displayName }}</label>
+                              <ExprInput
+                                v-model="node.data.config[prop.name][opt.name]"
+                                :resolve="resolveExpression"
+                                placeholder="Expression true/false…"
+                                @revert="exitExprMode('cf:'+prop.name+':'+opt.name, () => node.data.config[prop.name][opt.name] = false)"
+                              />
+                            </div>
+                            <div v-else-if="opt.type === 'boolean'" class="cf-row-boolean" @drop.prevent="dropToExpr($event, 'cf:'+prop.name+':'+opt.name, v => node.data.config[prop.name][opt.name] = v)" @dragover.prevent>
                               <input type="checkbox" v-model="node.data.config[prop.name][opt.name]" :id="prop.name + opt.name" />
                               <label :for="prop.name + opt.name">{{ opt.displayName }}</label>
+                              <button type="button" class="btn-fx-toggle cf-bool-fx" title="Use an expression" @click="enterExprMode('cf:'+prop.name+':'+opt.name, () => node.data.config[prop.name][opt.name] = '')">ƒx</button>
                             </div>
                             <div v-else-if="opt.type === 'string'" class="cf-row">
                               <label>{{ opt.displayName }}</label>
