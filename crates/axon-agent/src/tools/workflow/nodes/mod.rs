@@ -17,6 +17,7 @@ pub(crate) mod cortex;
 pub(crate) mod discord;
 pub(crate) mod engram;
 pub(crate) mod fovea;
+pub(crate) mod github;
 pub(crate) mod iterate;
 pub(crate) mod mcp;
 pub(crate) mod nociceptor;
