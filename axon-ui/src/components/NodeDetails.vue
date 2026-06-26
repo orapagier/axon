@@ -1594,17 +1594,26 @@ onUnmounted(() => {
                   </template>
                   <template v-else-if="prop.type === 'options'">
                     <label>{{ prop.displayName }}</label>
-                    <SearchableSelect 
-                      v-if="prop.searchable || prop.allowCustomValue"
+                    <ExprInput
+                      v-if="isExprMode('p:'+prop.name, node.data.config[prop.name])"
                       v-model="node.data.config[prop.name]"
-                      :options="prop.options"
-                      :allow-custom-value="!!prop.allowCustomValue"
-                      :placeholder="prop.placeholder || (prop.allowCustomValue ? 'Select or type...' : 'Search...')"
+                      :resolve="resolveExpression"
+                      :placeholder="'Expression for ' + prop.displayName + '…'"
+                      @revert="exitExprMode('p:'+prop.name, () => node.data.config[prop.name] = '')"
                     />
-                    <select v-else v-model="node.data.config[prop.name]">
-                      <option v-for="opt in prop.options" :key="opt.value" :value="opt.value">{{ optionDisplayName(opt) }}</option>
-                    </select>
-                    
+                    <div v-else class="field-with-fx" @drop.prevent="dropToExpr($event, 'p:'+prop.name, v => node.data.config[prop.name] = v)" @dragover.prevent>
+                      <SearchableSelect
+                        v-if="prop.searchable || prop.allowCustomValue"
+                        v-model="node.data.config[prop.name]"
+                        :options="prop.options"
+                        :allow-custom-value="!!prop.allowCustomValue"
+                        :placeholder="prop.placeholder || (prop.allowCustomValue ? 'Select or type...' : 'Search...')"
+                      />
+                      <select v-else v-model="node.data.config[prop.name]">
+                        <option v-for="opt in prop.options" :key="opt.value" :value="opt.value">{{ optionDisplayName(opt) }}</option>
+                      </select>
+                      <button type="button" class="btn-fx-toggle" title="Use an expression" @click="enterExprMode('p:'+prop.name, () => node.data.config[prop.name] = '')">ƒx</button>
+                    </div>
                   </template>
                   <template v-else-if="prop.type === 'multiOptions'">
                     <label>{{ prop.displayName }}</label>
