@@ -2688,6 +2688,9 @@ onUnmounted(() => {
   color: #81e6d9;
   width: 34px;
   height: 34px;
+  min-height: 34px;
+  padding: 0;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   justify-content: center;
