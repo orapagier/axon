@@ -3109,6 +3109,32 @@ small.form-desc {
 }
 .form-select:focus, select:focus { border-color: #6366f1; }
 
+/* A native picker (select / toggle / date) paired with the ƒx "make dynamic"
+   toggle. The control flexes to fill the row; the toggle sits flush to its
+   right. Dropping an upstream field anywhere on the row converts to an
+   expression — see dropToExpr(). */
+.field-with-fx { display: flex; align-items: center; gap: 6px; width: 100%; }
+.field-with-fx > :first-child { flex: 1 1 auto; min-width: 0; }
+.btn-fx-toggle {
+  flex: 0 0 auto;
+  height: 26px;
+  min-width: 26px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(27, 27, 32, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 5px;
+  color: #a6a6b2;
+  font-family: 'Fira Code', monospace;
+  font-size: 12px;
+  font-style: italic;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.btn-fx-toggle:hover { color: #a5b4fc; border-color: rgba(99,102,241,0.5); background: rgba(40,40,55,0.95); }
+
 /* Collections */
 .collection-wrapper {
   grid-column: 1 / -1;
