@@ -208,9 +208,13 @@ function hasExpression(val) {
 
 const focusedRawValue = computed(() => {
   if (!focusedField.value) return null
-  const { name, collection, index, subName } = focusedField.value
-  
-  if (collection) {
+  const { name, collection, collectionField, index, subName } = focusedField.value
+
+  if (collectionField) {
+    // `collection` type (e.g. Telegram "Additional Fields"): value lives at
+    // config[collectionName][fieldName] — a flat object, not array-indexed.
+    return props.node.data.config[collectionField]?.[subName] || ''
+  } else if (collection) {
     const coll = props.node.data.config[collection]?.parameters || []
     return coll[index]?.[subName] || ''
   } else {
