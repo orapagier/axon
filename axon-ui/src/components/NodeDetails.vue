@@ -294,6 +294,21 @@ async function copyWebhookUrl() {
   }
 }
 
+// GitHub deliveries hit a per-workflow endpoint keyed by the workflow id (the
+// handler looks the workflow up by that id), unlike the legacy external webhook.
+const githubWebhookUrl = computed(() => {
+  if (props.node.data.node_type !== 'trigger' && props.node.data.node_type !== 'stimulus') return ''
+  return `${window.location.origin}/webhook/github/${props.workflowId}`
+})
+
+async function copyGithubWebhookUrl() {
+  try {
+    await navigator.clipboard.writeText(githubWebhookUrl.value)
+  } catch (err) {
+    console.error('Failed to copy GitHub webhook URL', err)
+  }
+}
+
 // Persist a settings toggle immediately. The settings checkboxes bind directly
 // to node.data via v-model, so the in-memory state updates instantly — but
 // without emitting save here the change never reaches the backend, which is why
@@ -1562,6 +1577,20 @@ onUnmounted(() => {
                   </button>
                 </div>
 
+              </div>
+
+              <!-- GitHub Webhook URL Display -->
+              <div v-if="node.data.config.type === 'github'" class="form-row webhook-url-row">
+                <label class="field-label" style="color: var(--teal)" title="Paste this URL into your repo → Settings → Webhooks. Content type: application/json.">
+                  GitHub Webhook URL
+                  <span class="info-icon" style="opacity: 0.5; font-size: 10px; cursor: help;">ⓘ</span>
+                </label>
+                <div class="webhook-url-input-group">
+                  <input type="text" :value="githubWebhookUrl" readonly />
+                  <button @click="copyGithubWebhookUrl" class="btn-copy-url" title="Copy URL">
+                    <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M16 1H4C2.9 1 2 1.9 2 3v14h2V3h12V1zm3 4H8C6.9 5 6 5.9 6 7v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+                  </button>
+                </div>
               </div>
 
               <!-- Dynamic Props -->

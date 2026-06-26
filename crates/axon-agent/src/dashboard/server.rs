@@ -215,6 +215,10 @@ pub fn build_router(state: AppState) -> Router {
             "/webhook/external/:workflow_id",
             axum::routing::post(crate::webhook::external::handle_external_webhook),
         )
+        .route(
+            "/webhook/github/:workflow_id",
+            axum::routing::post(crate::webhook::github::handle_github_webhook),
+        )
         // OAuth callback — Google/Microsoft/Facebook redirect here after login
         .route("/auth/:service/callback", get(api::oauth_callback))
         // Temporary local-media for Instagram publishing (Meta fetches these;

@@ -2141,7 +2141,7 @@ impl WorkflowEngine {
         // a Telegram reply must NOT also fire a Gmail trigger sitting in the same
         // workflow. "manual"/scheduled runs (None) start from every trigger node.
         let entry_trigger_type: Option<&str> = match trigger_source {
-            "telegram" | "gmail" | "whatsapp" | "webhook" => Some(trigger_source),
+            "telegram" | "gmail" | "whatsapp" | "webhook" | "github" => Some(trigger_source),
             _ => None,
         };
 

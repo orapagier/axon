@@ -32,7 +32,11 @@ pub(crate) async fn execute(
         } else {
             Ok(json!({"trigger": trigger_source}))
         }
-    } else if config.get("type").and_then(|v| v.as_str()) == Some("webhook") {
+    } else if config.get("type").and_then(|v| v.as_str()) == Some("webhook")
+        || config.get("type").and_then(|v| v.as_str()) == Some("github")
+    {
+        // GitHub deliveries share the external-trigger map (keyed by workflow_id);
+        // the payload here is the enriched {event, action, delivery, payload}.
         let mut data = EXTERNAL_TRIGGER_DATA.lock().await;
         if let Some(val) = data.remove(workflow_id) {
             Ok(val)
