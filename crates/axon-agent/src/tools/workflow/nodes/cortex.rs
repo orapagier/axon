@@ -73,7 +73,7 @@ pub(crate) fn execute_cortex_node<'a>(
 
         if let Some(ref model) = selected_model {
             tracing::info!(
-                "Axon node: user selected model '{}' for workflow {}",
+                "Cortex node: user selected model '{}' for workflow {}",
                 model,
                 workflow_id
             );
