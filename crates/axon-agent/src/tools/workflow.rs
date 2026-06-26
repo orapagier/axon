@@ -1704,7 +1704,7 @@ async fn execute_node_by_type(
                 .unwrap_or("");
             execute_js_node(raw_script, node, &vec, workflow_id).await
         }
-        "axon" => nodes::axon::execute_axon_node(config, state, workflow_id, &node.id).await,
+        "cortex" => nodes::cortex::execute_cortex_node(config, state, workflow_id, &node.id).await,
         "classifier" => nodes::classifier::execute(config, state, workflow_id, &node.id).await,
         "nociceptor" => {
             let vec: Vec<_> = node_results.values().cloned().collect();
