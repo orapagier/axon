@@ -1007,6 +1007,113 @@ export const NODE_TYPES = {
             },
         ],
     },
+    soma: {
+        displayName: 'Soma',
+        name: 'soma',
+        // Emoji fallback (rendered via CanvasNodeDefault when not an image path);
+        // swap for /icons/soma.png once an asset exists.
+        icon: '🧬',
+        description: 'Set, edit, rename or build fields on the data passing through',
+        properties: [
+            {
+                displayName: 'Include Other Input Fields',
+                name: 'includeOtherFields',
+                type: 'boolean',
+                default: false,
+                hint: 'On: keep every field from the incoming item and add/overwrite the ones below. Off: output only the fields you set.',
+            },
+            {
+                displayName: 'Fields to Set',
+                name: 'fields',
+                type: 'fixedCollection',
+                default: { parameters: [] },
+                placeholder: 'Add Field',
+                typeOptions: { multipleValues: true },
+                options: [
+                    { name: 'name', displayName: 'Name', type: 'string', default: '' },
+                    {
+                        name: 'type',
+                        displayName: 'Type',
+                        type: 'options',
+                        default: 'string',
+                        options: [
+                            { name: 'String', value: 'string' },
+                            { name: 'Number', value: 'number' },
+                            { name: 'Boolean', value: 'boolean' },
+                            { name: 'JSON', value: 'json' },
+                        ],
+                    },
+                    {
+                        name: 'value',
+                        displayName: 'Value',
+                        type: 'string',
+                        default: '',
+                        placeholder: 'Value or {{ $json.field }}',
+                    },
+                ],
+            },
+        ],
+    },
+    engram: {
+        displayName: 'Engram',
+        name: 'engram',
+        // Emoji fallback; swap for /icons/engram.png once an asset exists.
+        icon: '🗄️',
+        description: 'Persistent key-value memory that survives across workflow runs',
+        properties: [
+            {
+                displayName: 'Operation',
+                name: 'operation',
+                type: 'options',
+                default: 'get',
+                options: [
+                    { name: 'Get', value: 'get' },
+                    { name: 'Set', value: 'set' },
+                    { name: 'Delete', value: 'delete' },
+                    { name: 'Increment', value: 'increment' },
+                    { name: 'List Keys', value: 'list' },
+                ],
+            },
+            {
+                displayName: 'Scope',
+                name: 'scope',
+                type: 'string',
+                default: 'default',
+                hint: 'Namespace for keys. Use different scopes to isolate unrelated data.',
+            },
+            {
+                displayName: 'Key',
+                name: 'key',
+                type: 'string',
+                default: '',
+                displayOptions: { show: { operation: ['get', 'set', 'delete', 'increment'] } },
+            },
+            {
+                displayName: 'Value',
+                name: 'value',
+                type: 'string',
+                typeOptions: { rows: 3 },
+                default: '',
+                displayOptions: { show: { operation: ['set'] } },
+                hint: 'Stored as JSON when it parses as JSON, otherwise as text.',
+            },
+            {
+                displayName: 'Increment By',
+                name: 'incrementBy',
+                type: 'number',
+                default: 1,
+                displayOptions: { show: { operation: ['increment'] } },
+            },
+            {
+                displayName: 'Default Value',
+                name: 'defaultValue',
+                type: 'string',
+                default: '',
+                displayOptions: { show: { operation: ['get'] } },
+                hint: 'Returned when the key does not exist.',
+            },
+        ],
+    },
     axon: {
         displayName: 'Axon',
         name: 'axon',
