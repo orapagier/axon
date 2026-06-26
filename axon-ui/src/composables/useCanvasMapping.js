@@ -114,6 +114,8 @@ function getNodeIcon(nodeType) {
     trigger: '⚡',
     synapse: '🌐',
     myelin: '🛡️',
+    soma: '🧬',
+    engram: '🗄️',
     shell: '💻',
     javascript: '📜',
     python: '🐍',
