@@ -1,7 +1,7 @@
 use crate::state::AppState;
 use serde_json::Value;
 
-pub(crate) fn execute_axon_node<'a>(
+pub(crate) fn execute_cortex_node<'a>(
     config: &'a Value,
     state: &'a AppState,
     workflow_id: &'a str,
