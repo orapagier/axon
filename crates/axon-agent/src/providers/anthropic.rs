@@ -11,8 +11,10 @@ struct AnthReq<'a> {
     model: &'a str,
     max_tokens: u32,
     messages: Vec<AnthMsg>,
-    #[serde(skip_serializing_if = "str::is_empty")]
-    system: &'a str,
+    // String, or a structured text-block array carrying a cache_control
+    // breakpoint. Null when empty so serde skips it.
+    #[serde(skip_serializing_if = "Value::is_null")]
+    system: Value,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -77,7 +79,7 @@ pub async fn call(
         AnthMsg { role: m.role.clone(), content }
     }).collect();
 
-    let tool_defs: Vec<Value> = tools
+    let mut tool_defs: Vec<Value> = tools
         .iter()
         .map(|t| {
             json!({
@@ -86,6 +88,27 @@ pub async fn call(
             })
         })
         .collect();
+
+    // Prompt caching: the system prompt + tool schemas are byte-identical across
+    // every iteration of a run (and across runs), so cache that stable prefix.
+    // A breakpoint on the last tool caches the whole tools block; a breakpoint on
+    // the system block caches tools+system. Anthropic ignores breakpoints below
+    // the minimum cacheable size, so this is always safe. (api.anthropic.com is
+    // hardcoded below, so this path is always genuine Anthropic.)
+    if let Some(last) = tool_defs.last_mut() {
+        if let Some(obj) = last.as_object_mut() {
+            obj.insert("cache_control".to_string(), json!({"type": "ephemeral"}));
+        }
+    }
+    let system_field = if system.is_empty() {
+        Value::Null
+    } else {
+        json!([{
+            "type": "text",
+            "text": system,
+            "cache_control": {"type": "ephemeral"}
+        }])
+    };
 
     // tool_choice only applies when tools are present. Auto is Anthropic's
     // default, so we only emit an explicit value for Required/None.
@@ -108,7 +131,7 @@ pub async fn call(
             model: &model.model_id,
             max_tokens,
             messages: msgs,
-            system,
+            system: system_field,
             tools: tool_defs,
             temperature: options.temperature,
             tool_choice,
