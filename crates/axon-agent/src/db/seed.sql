@@ -50,7 +50,8 @@ INSERT OR IGNORE INTO settings VALUES
     ('router.model_call_timeout_min_secs', '10', 'int', 'Minimum per-attempt timeout in seconds used by adaptive model timeout logic', 'router', datetime('now')),
     ('router.model_call_timeout_max_secs', '90', 'int', 'Maximum per-attempt timeout in seconds used by adaptive model timeout logic', 'router', datetime('now')),
     ('router.model_call_timeout_per_1k_chars_secs', '3', 'int', 'Extra timeout seconds added per 1k prompt characters for adaptive model timeout', 'router', datetime('now')),
-    ('router.model_call_timeout_fair_share_grace_secs', '4', 'int', 'Extra seconds above fair-share budget for each model attempt during fallback routing', 'router', datetime('now'));
+    ('router.model_call_timeout_fair_share_grace_secs', '4', 'int', 'Extra seconds above fair-share budget for each model attempt during fallback routing', 'router', datetime('now')),
+    ('router.model_health_check_enabled', 'false', 'bool', 'Proactively ping models in the background. OFF by default: each ping is a real, quota-consuming completion (~960/day/provider at default cadence), enough to exhaust free-tier daily caps. Routing is reactive regardless.', 'router', datetime('now'));
 
 -- Watcher / Smart Notifications.
 INSERT OR IGNORE INTO settings VALUES
