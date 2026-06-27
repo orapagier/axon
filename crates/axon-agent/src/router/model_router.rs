@@ -248,8 +248,10 @@ fn build_priority_order(models: &[ModelRecord], pool: &[usize], start: usize) ->
                 .map(|&mi| rl_headroom(&models[mi]))
                 .max()
                 .unwrap_or(u64::MAX);
-            let a_critical = ha <= CRITICAL_HEADROOM && ha < u64::MAX;
-            let b_critical = hb <= CRITICAL_HEADROOM && hb < u64::MAX;
+            // A snapshot-less model gets u64::MAX headroom, so `<= CRITICAL_HEADROOM`
+            // already treats it as non-critical — no extra `< u64::MAX` guard needed.
+            let a_critical = ha <= CRITICAL_HEADROOM;
+            let b_critical = hb <= CRITICAL_HEADROOM;
             // Only reorder: non-critical before critical. Otherwise stable.
             a_critical.cmp(&b_critical)
         });
