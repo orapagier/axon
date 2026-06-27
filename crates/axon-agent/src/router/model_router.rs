@@ -921,7 +921,8 @@ async fn try_call(
         let (consecutive, model_name) = {
             let mut g = router.lock().await;
             if is_rl {
-                g.models[idx].mark_rate_limited(cooldown, settings.rate_limit_max_cooldown());
+                let hint = parse_rate_limit_hint(&e.to_string());
+                g.models[idx].mark_rate_limited(&hint, cooldown, settings.rate_limit_max_cooldown());
             } else {
                 g.models[idx].mark_error(threshold, cooldown);
             }

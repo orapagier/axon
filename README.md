@@ -249,7 +249,12 @@ What happens on each request:
 
 - **Priority tiers:** models are grouped by `priority` (lower = higher). Within a tier, traffic is round-robined across distinct provider/model endpoints, biased away from endpoints critically close to their rate limit.
 - **Fallback order per request:** preferred model (if the caller picked one) → sticky model → role pool → general pool → a sweep over any remaining free model → `paid_model` last.
-- **Rate-limit quarantine:** a `429`/quota error puts the model on a cooldown and routing falls through to the next option without dropping the request. The cooldown uses **exponential backoff** — `router.rate_limit_cooldown` on the first hit, doubling on each consecutive 429 up to `router.rate_limit_max_cooldown` — so a model that has burned a daily free-tier quota backs off toward hourly retries instead of being re-hit every minute. A successful call resets it. Cooldowns auto-expire.
+- **Rate-limit quarantine:** a `429`/quota error puts the model on a cooldown and routing falls through to the next option without dropping the request. The cooldown is **inferred from what the provider tells us** — a `Retry-After` header, Gemini's `retryDelay`, or an inline "try again in …" — and from the limit window named in the error:
+  - *per-minute* limit → wait the provider's reset (≈ seconds),
+  - *daily* quota exhausted → parked until the window resets (provider reset if given, else next UTC midnight, 1h–24h), so a daily-capped model is retried a couple of times a day, not ~20×,
+  - *unknown* limit with no reset info → **exponential backoff** (`router.rate_limit_cooldown` → doubling → `router.rate_limit_max_cooldown`).
+
+  A successful call resets the backoff; cooldowns auto-expire.
 - **Adaptive timeouts:** per-call timeouts scale with prompt size (min/max bounds, per-1k-chars, fair-share grace) instead of a flat ceiling.
 - **Alerts:** rate-limit, timeout, and "paid fallback used" events are collected per run and surfaced to the operator (dashboard + messaging notifications).
 

@@ -348,9 +348,13 @@ async fn call_streaming(
     model.rl_snapshot = rl;
     if !resp.status().is_success() {
         let status = resp.status();
+        let retry_after = retry_after_header(resp.headers());
         let body = resp.text().await.unwrap_or_default();
         if status.as_u16() == 429 {
-            anyhow::bail!("rate limit: {}", body);
+            let suffix = retry_after
+                .map(|ra| format!(" [retry-after:{}]", ra))
+                .unwrap_or_default();
+            anyhow::bail!("rate limit{}: {}", suffix, body);
         }
 
         // FIX: Groq aggressively throws 400 if the model hallucinates a tool when tools were empty.
@@ -514,6 +518,16 @@ async fn call_streaming(
     ))
 }
 
+/// The `Retry-After` header value (raw string — usually integer seconds, sometimes
+/// an HTTP date) if present. Captured at 429 time and folded into the error so the
+/// router can honor the provider's own reset timing.
+pub fn retry_after_header(h: &HeaderMap) -> Option<String> {
+    h.get("retry-after")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 pub fn parse_rl_headers(provider: &str, h: &HeaderMap) -> RateLimitSnapshot {
     let get = |k: &str| -> Option<u64> { h.get(k)?.to_str().ok()?.parse().ok() };
     let gets = |k: &str| -> Option<String> { Some(h.get(k)?.to_str().ok()?.to_string()) };
@@ -605,9 +619,13 @@ pub async fn call(
     model.rl_snapshot = rl;
     if !resp.status().is_success() {
         let status = resp.status();
+        let retry_after = retry_after_header(resp.headers());
         let body = resp.text().await.unwrap_or_default();
         if status.as_u16() == 429 {
-            anyhow::bail!("rate limit: {}", body);
+            let suffix = retry_after
+                .map(|ra| format!(" [retry-after:{}]", ra))
+                .unwrap_or_default();
+            anyhow::bail!("rate limit{}: {}", suffix, body);
         }
 
         // FIX: Groq aggressively throws 400 if the model hallucinates a tool when tools were empty.

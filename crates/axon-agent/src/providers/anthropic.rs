@@ -103,9 +103,13 @@ pub async fn call(
     model.rl_snapshot = rl;
     if !resp.status().is_success() {
         let status = resp.status();
+        let retry_after = super::openai_compat::retry_after_header(resp.headers());
         let body = resp.text().await.unwrap_or_default();
         if status.as_u16() == 429 {
-            anyhow::bail!("rate limit: {}", body);
+            let suffix = retry_after
+                .map(|ra| format!(" [retry-after:{}]", ra))
+                .unwrap_or_default();
+            anyhow::bail!("rate limit{}: {}", suffix, body);
         }
         anyhow::bail!("anthropic {}: {}", status, body);
     }

@@ -239,6 +239,206 @@ pub fn rate_limit_backoff_minutes(strikes: u32, base: i64, cap: i64) -> i64 {
     base.saturating_mul(factor).min(cap)
 }
 
+/// Which rate-limit window a 429 most likely refers to, inferred from the error text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RateLimitWindow {
+    PerMinute,
+    Hourly,
+    Daily,
+    Unknown,
+}
+
+/// Structured hint extracted from a provider's 429: which window was hit and, when
+/// the provider told us, exactly how many seconds until it resets.
+#[derive(Debug, Clone)]
+pub struct RateLimitHint {
+    pub window: RateLimitWindow,
+    pub explicit_secs: Option<u64>,
+}
+
+/// Parse a duration like `57s`, `1m30s`, `2m`, `1h2m3s`, `0.5s`, `500ms`, or a
+/// bare number (seconds) into whole seconds, rounded up.
+pub fn parse_duration_secs(s: &str) -> Option<u64> {
+    let s = s.trim().to_ascii_lowercase();
+    if s.is_empty() {
+        return None;
+    }
+    // Bare number → seconds.
+    if let Ok(n) = s.parse::<f64>() {
+        return (n.is_finite() && n >= 0.0).then_some(n.ceil() as u64);
+    }
+    let mut total = 0f64;
+    let mut num = String::new();
+    let mut found = false;
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c.is_ascii_digit() || c == '.' {
+            num.push(c);
+        } else if c == 'h' {
+            if let Ok(v) = num.parse::<f64>() {
+                total += v * 3600.0;
+                found = true;
+            }
+            num.clear();
+        } else if c == 'm' {
+            if chars.peek() == Some(&'s') {
+                chars.next(); // 'ms'
+                if let Ok(v) = num.parse::<f64>() {
+                    total += v / 1000.0;
+                    found = true;
+                }
+            } else if let Ok(v) = num.parse::<f64>() {
+                total += v * 60.0;
+                found = true;
+            }
+            num.clear();
+        } else if c == 's' {
+            if let Ok(v) = num.parse::<f64>() {
+                total += v;
+                found = true;
+            }
+            num.clear();
+        } else {
+            num.clear();
+        }
+    }
+    found.then_some(total.ceil() as u64)
+}
+
+fn substr_between<'a>(s: &'a str, start: &str, end: &str) -> Option<&'a str> {
+    let i = s.find(start)? + start.len();
+    let j = s[i..].find(end)? + i;
+    Some(&s[i..j])
+}
+
+/// Pull an explicit reset delay (seconds) from a lowercased 429 body, most
+/// authoritative source first.
+fn extract_explicit_reset_secs(lower: &str) -> Option<u64> {
+    // 1) Retry-After header we folded in as `[retry-after:VALUE]`.
+    if let Some(v) = substr_between(lower, "[retry-after:", "]") {
+        if let Some(s) = parse_duration_secs(v).filter(|&s| s > 0) {
+            return Some(s);
+        }
+    }
+    // 2) Gemini-style `"retryDelay": "57s"`. After splitting off the key text, the
+    // quotes in the remainder are: [0]=key's closing quote, [1]=value open,
+    // [2]=value close — so the value sits between quotes 1 and 2.
+    if let Some(rest) = lower.split("retrydelay").nth(1) {
+        let quotes: Vec<usize> = rest.match_indices('"').map(|(i, _)| i).collect();
+        if quotes.len() >= 3 {
+            let val = &rest[quotes[1] + 1..quotes[2]];
+            if let Some(s) = parse_duration_secs(val).filter(|&s| s > 0) {
+                return Some(s);
+            }
+        }
+    }
+    // 3) Inline "try again in <dur>" / "retry after <dur>".
+    for marker in [
+        "try again in ",
+        "try again after ",
+        "retry after ",
+        "please retry after ",
+    ] {
+        if let Some(idx) = lower.find(marker) {
+            let tail = &lower[idx + marker.len()..];
+            let end = tail
+                .find(|c: char| matches!(c, '.' | ',' | ')' | '\n' | '"'))
+                .unwrap_or(tail.len());
+            if let Some(s) = parse_duration_secs(&tail[..end]).filter(|&s| s > 0) {
+                return Some(s);
+            }
+        }
+    }
+    None
+}
+
+/// Infer the rate-limit window and any explicit reset delay from a 429 error string.
+pub fn parse_rate_limit_hint(err: &str) -> RateLimitHint {
+    let lower = err.to_ascii_lowercase();
+    let has = |needles: &[&str]| needles.iter().any(|p| lower.contains(p));
+
+    let window = if has(&[
+        "per day",
+        "per-day",
+        "perday",
+        "/day",
+        "requests per day",
+        "tokens per day",
+        "daily",
+        "rpd",
+    ]) {
+        RateLimitWindow::Daily
+    } else if has(&["per hour", "per-hour", "perhour", "/hour", "hourly", "rph"]) {
+        RateLimitWindow::Hourly
+    } else if has(&[
+        "per minute",
+        "per-minute",
+        "perminute",
+        "/min",
+        "per min",
+        "rpm",
+        "tpm",
+    ]) {
+        RateLimitWindow::PerMinute
+    } else {
+        RateLimitWindow::Unknown
+    };
+
+    RateLimitHint {
+        window,
+        explicit_secs: extract_explicit_reset_secs(&lower),
+    }
+}
+
+/// Seconds from now until the next UTC midnight — a neutral, self-correcting
+/// estimate of when a daily free-tier quota rolls over.
+pub fn secs_until_next_utc_midnight() -> i64 {
+    use chrono::Timelike;
+    let secs_into_day = chrono::Utc::now().num_seconds_from_midnight() as i64;
+    (86_400 - secs_into_day).clamp(1, 86_400)
+}
+
+/// Decide how long (seconds) to quarantine a model after a 429.
+///
+/// - **Daily:** wait until the window resets — the provider's explicit delay if it
+///   gave a long one, else until next UTC midnight (clamped 1h–24h).
+/// - **Hourly:** the explicit delay, else ~1h.
+/// - **PerMinute / Unknown:** honor an explicit delay exactly (+3s buffer); with no
+///   number, fall back to exponential backoff so repeated hits still escalate.
+pub fn rate_limit_cooldown_secs(
+    hint: &RateLimitHint,
+    strikes: u32,
+    base_min: i64,
+    max_min: i64,
+    secs_until_utc_midnight: i64,
+) -> i64 {
+    const HARD_MAX: i64 = 24 * 3600;
+    const FLOOR: i64 = 5;
+    match hint.window {
+        RateLimitWindow::Daily => hint
+            .explicit_secs
+            .map(|s| s as i64)
+            .filter(|&s| s >= 3600)
+            .unwrap_or_else(|| secs_until_utc_midnight.max(3600))
+            .clamp(3600, HARD_MAX),
+        RateLimitWindow::Hourly => hint
+            .explicit_secs
+            .map(|s| s as i64)
+            .filter(|&s| s >= 60)
+            .unwrap_or(3600)
+            .clamp(60, HARD_MAX),
+        RateLimitWindow::PerMinute | RateLimitWindow::Unknown => {
+            if let Some(s) = hint.explicit_secs {
+                (s as i64).saturating_add(3).clamp(FLOOR, HARD_MAX)
+            } else {
+                rate_limit_backoff_minutes(strikes, base_min, max_min)
+                    .saturating_mul(60)
+                    .clamp(FLOOR, HARD_MAX)
+            }
+        }
+    }
+}
+
 impl ModelRecord {
     pub fn is_available(&self) -> bool {
         if !self.enabled {
@@ -254,23 +454,29 @@ impl ModelRecord {
             _ => true,
         }
     }
-    /// Quarantine a model after a 429, with exponential backoff keyed on the
-    /// number of consecutive rate-limit hits: `base_cooldown * 2^(n-1)`, clamped
-    /// to `max_cooldown`. The first hit waits `base_cooldown` (so per-minute
-    /// limits recover quickly); repeated hits — the signature of an exhausted
-    /// daily quota — escalate toward `max_cooldown` instead of being retried
-    /// every minute.
-    pub fn mark_rate_limited(&mut self, base_cooldown: i64, max_cooldown: i64) {
+    /// Quarantine a model after a 429. The cooldown is chosen from the parsed
+    /// `hint`: an explicit provider-supplied reset is honored, a daily cap waits
+    /// until the window rolls over, and an unknown limit with no reset info falls
+    /// back to exponential backoff (`base_min`..`max_min`). This keeps per-minute
+    /// limits recovering in ~a minute while a model that has burned its *daily*
+    /// free-tier quota is parked for hours instead of retried every minute.
+    pub fn mark_rate_limited(&mut self, hint: &RateLimitHint, base_min: i64, max_min: i64) {
         self.consecutive_rate_limits = self.consecutive_rate_limits.saturating_add(1);
-        let effective =
-            rate_limit_backoff_minutes(self.consecutive_rate_limits, base_cooldown, max_cooldown);
+        let secs = rate_limit_cooldown_secs(
+            hint,
+            self.consecutive_rate_limits,
+            base_min,
+            max_min,
+            secs_until_next_utc_midnight(),
+        );
         self.status = "rate_limited".into();
         self.rate_limit_reset_at =
-            Some((chrono::Utc::now() + chrono::Duration::minutes(effective)).to_rfc3339());
+            Some((chrono::Utc::now() + chrono::Duration::seconds(secs)).to_rfc3339());
         tracing::error!(
-            "{} rate-limited for {}m (strike #{})",
+            "{} rate-limited for {}s ({:?}, strike #{})",
             self.name,
-            effective,
+            secs,
+            hint.window,
             self.consecutive_rate_limits
         );
     }
@@ -368,6 +574,93 @@ mod tests {
         // Defensive edges: strike 0 -> base; cap below base -> base wins.
         assert_eq!(rate_limit_backoff_minutes(0, 1, 60), 1);
         assert_eq!(rate_limit_backoff_minutes(1, 5, 1), 5);
+    }
+
+    #[test]
+    fn parses_durations() {
+        assert_eq!(parse_duration_secs("57s"), Some(57));
+        assert_eq!(parse_duration_secs("2m30s"), Some(150));
+        assert_eq!(parse_duration_secs("1h2m3s"), Some(3723));
+        assert_eq!(parse_duration_secs("1.5s"), Some(2)); // rounds up
+        assert_eq!(parse_duration_secs("500ms"), Some(1)); // rounds up
+        assert_eq!(parse_duration_secs("20"), Some(20)); // bare = seconds
+        assert_eq!(parse_duration_secs("  3m "), Some(180));
+        assert_eq!(parse_duration_secs("garbage"), None);
+        assert_eq!(parse_duration_secs(""), None);
+    }
+
+    #[test]
+    fn classifies_rate_limit_windows() {
+        assert_eq!(
+            parse_rate_limit_hint("rate limit: Quota exceeded ... GenerateRequestsPerDay").window,
+            RateLimitWindow::Daily
+        );
+        assert_eq!(
+            parse_rate_limit_hint("429 requests per minute exceeded").window,
+            RateLimitWindow::PerMinute
+        );
+        assert_eq!(
+            parse_rate_limit_hint("rate limit: 100 per hour").window,
+            RateLimitWindow::Hourly
+        );
+        assert_eq!(
+            parse_rate_limit_hint("rate limit: something opaque").window,
+            RateLimitWindow::Unknown
+        );
+    }
+
+    #[test]
+    fn extracts_explicit_reset_from_body() {
+        // Retry-After header we fold in.
+        assert_eq!(
+            parse_rate_limit_hint("rate limit [retry-after:42]: too many").explicit_secs,
+            Some(42)
+        );
+        // Gemini retryDelay.
+        assert_eq!(
+            parse_rate_limit_hint(r#"rate limit: {"retryDelay": "17s"}"#).explicit_secs,
+            Some(17)
+        );
+        // Inline phrasing.
+        assert_eq!(
+            parse_rate_limit_hint("rate limit: Please try again in 2m30s.").explicit_secs,
+            Some(150)
+        );
+    }
+
+    #[test]
+    fn cooldown_honors_window_and_explicit_reset() {
+        let until_midnight = 5 * 3600;
+        // Per-minute with explicit 30s reset → ~30s, not minutes.
+        let h = RateLimitHint {
+            window: RateLimitWindow::PerMinute,
+            explicit_secs: Some(30),
+        };
+        assert_eq!(rate_limit_cooldown_secs(&h, 1, 1, 60, until_midnight), 33);
+        // Daily with no explicit reset → wait until UTC midnight (>= 1h).
+        let h = RateLimitHint {
+            window: RateLimitWindow::Daily,
+            explicit_secs: None,
+        };
+        assert_eq!(
+            rate_limit_cooldown_secs(&h, 1, 1, 60, until_midnight),
+            until_midnight
+        );
+        // Daily ignores a bogus short "retry in 30s" and still parks for hours.
+        let h = RateLimitHint {
+            window: RateLimitWindow::Daily,
+            explicit_secs: Some(30),
+        };
+        assert_eq!(
+            rate_limit_cooldown_secs(&h, 1, 1, 60, until_midnight),
+            until_midnight
+        );
+        // Unknown with no reset info → exponential backoff in seconds.
+        let h = RateLimitHint {
+            window: RateLimitWindow::Unknown,
+            explicit_secs: None,
+        };
+        assert_eq!(rate_limit_cooldown_secs(&h, 3, 1, 60, until_midnight), 4 * 60);
     }
 
     #[test]

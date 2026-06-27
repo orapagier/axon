@@ -245,10 +245,13 @@ Notable keys and their defaults:
 - **Fallback order per request:** preferred model (if the caller picked one) → sticky model →
   role pool → general pool → a sweep over any remaining free model → `paid_model` last.
 - **Rate-limit quarantine:** a `429`/quota error puts the model on a cooldown and routing
-  falls through to the next option without dropping the request. The cooldown grows by
-  exponential backoff — `router.rate_limit_cooldown` on the first hit, doubling per consecutive
-  429 up to `router.rate_limit_max_cooldown` — so a model that exhausted a daily free-tier
-  quota isn't retried every minute. A success resets it; cooldowns auto-expire.
+  falls through to the next option without dropping the request. The cooldown is inferred from
+  the provider's own reset signal (`Retry-After` header, Gemini `retryDelay`, or an inline
+  "try again in …") and the limit window in the error: a *per-minute* limit waits ~seconds, a
+  *daily* quota is parked until it resets (provider reset if supplied, else next UTC midnight,
+  1h–24h) so it isn't retried ~20×/day, and an *unknown* limit with no reset info falls back to
+  exponential backoff (`router.rate_limit_cooldown` → doubling → `router.rate_limit_max_cooldown`).
+  A success resets the backoff; cooldowns auto-expire.
 - **Alerts:** rate-limit, timeout, and "paid fallback used" events are collected per run and
   surfaced to the operator (dashboard + messaging notifications).
 
