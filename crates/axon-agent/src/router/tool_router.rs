@@ -1,4 +1,5 @@
 use crate::config::RuntimeSettings;
+use crate::memory::embeddings::{cosine_similarity, VoyageEmbedder};
 use crate::providers::types::Message;
 use crate::router::model_router::SharedRouter;
 use crate::tools::schema::ToolDefinition;
@@ -217,6 +218,12 @@ pub struct ToolRouter {
     db: Arc<Pool<SqliteConnectionManager>>,
     router: SharedRouter,
     settings: Arc<RuntimeSettings>,
+    /// Optional embedder for the zero-LLM semantic tool tier. `None` when no
+    /// VOYAGE_API_KEY is configured — the router then falls back to the LLM tier.
+    embedder: Option<VoyageEmbedder>,
+    /// Cache of tool-description embeddings, keyed by tool name. Filled lazily
+    /// (and batched) the first time each tool is a routing candidate.
+    tool_embeddings: Arc<RwLock<HashMap<String, Vec<f32>>>>,
 }
 
 impl ToolRouter {
@@ -225,11 +232,17 @@ impl ToolRouter {
         router: SharedRouter,
         settings: Arc<RuntimeSettings>,
     ) -> Self {
+        let embedder = std::env::var("VOYAGE_API_KEY")
+            .ok()
+            .filter(|k| !k.is_empty())
+            .map(VoyageEmbedder::new);
         ToolRouter {
             patterns: Arc::new(RwLock::new(HashMap::new())),
             db,
             router,
             settings,
+            embedder,
+            tool_embeddings: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -283,6 +296,110 @@ impl ToolRouter {
         let confident =
             service_hit || (!matched.is_empty() && matched.len() <= 3 && !MULTISTEP.is_match(msg));
         (matched, confident)
+    }
+
+    /// Ensure every candidate tool has a cached description embedding. Misses are
+    /// batched (chunked to stay within Voyage's per-request limits) and the write
+    /// lock is only taken after all network calls complete.
+    async fn ensure_tool_embeddings(
+        &self,
+        candidates: &[ToolDefinition],
+        embedder: &VoyageEmbedder,
+    ) {
+        let missing: Vec<(String, String)> = {
+            let cache = self.tool_embeddings.read().await;
+            candidates
+                .iter()
+                .filter(|t| !cache.contains_key(&t.name))
+                .map(|t| (t.name.clone(), format!("{}: {}", t.name, t.description)))
+                .collect()
+        };
+        if missing.is_empty() {
+            return;
+        }
+        let mut fresh: Vec<(String, Vec<f32>)> = Vec::with_capacity(missing.len());
+        for chunk in missing.chunks(96) {
+            let texts: Vec<&str> = chunk.iter().map(|(_, txt)| txt.as_str()).collect();
+            match embedder.embed(&texts).await {
+                Ok(embs) if embs.len() == chunk.len() => {
+                    for ((name, _), emb) in chunk.iter().zip(embs) {
+                        fresh.push((name.clone(), emb));
+                    }
+                }
+                Ok(_) => tracing::warn!("embed router: tool-embedding count mismatch"),
+                Err(e) => {
+                    tracing::debug!("embed router: tool embed failed: {}", e);
+                    return;
+                }
+            }
+        }
+        if !fresh.is_empty() {
+            let mut cache = self.tool_embeddings.write().await;
+            for (name, emb) in fresh {
+                cache.insert(name, emb);
+            }
+        }
+    }
+
+    /// Zero-LLM tool selection: embed the request once and cosine-match it
+    /// against cached tool-description embeddings, returning the top-K tools
+    /// above a similarity floor. Returns `None` (so the caller falls back to the
+    /// LLM tier) when embeddings are disabled/unavailable or nothing clears the
+    /// floor. This replaces a full chat-completion per routing turn with a single
+    /// cheap embedding call.
+    async fn tier_embed(
+        &self,
+        msg: &str,
+        candidates: &[ToolDefinition],
+    ) -> Option<(Vec<String>, serde_json::Value)> {
+        if !self.settings.get_bool("router.use_embeddings", true) {
+            return None;
+        }
+        let embedder = self.embedder.as_ref()?;
+        if candidates.is_empty() {
+            return None;
+        }
+        let t0 = std::time::Instant::now();
+        self.ensure_tool_embeddings(candidates, embedder).await;
+        let qv = match embedder.embed_one(msg).await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::debug!("embed router: query embed failed: {}", e);
+                return None;
+            }
+        };
+        let top_k = self.settings.get_int("router.embed_top_k", 5).max(1) as usize;
+        let floor = self.settings.get_f64("router.embed_floor", 0.45) as f32;
+        let mut scored: Vec<(f32, String)> = {
+            let cache = self.tool_embeddings.read().await;
+            candidates
+                .iter()
+                .filter_map(|t| {
+                    cache
+                        .get(&t.name)
+                        .map(|emb| (cosine_similarity(&qv, emb), t.name.clone()))
+                })
+                .collect()
+        };
+        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        let top_score = scored.first().map(|(s, _)| *s).unwrap_or(0.0);
+        let hits: Vec<String> = scored
+            .iter()
+            .take_while(|(s, _)| *s >= floor)
+            .take(top_k)
+            .map(|(_, n)| n.clone())
+            .collect();
+        if hits.is_empty() {
+            return None;
+        }
+        Some((
+            hits,
+            serde_json::json!({
+                "tier": "embed",
+                "duration_ms": t0.elapsed().as_millis(),
+                "top_score": top_score,
+            }),
+        ))
     }
 
     async fn tier2(
@@ -427,6 +544,30 @@ impl ToolRouter {
                 .filter_map(|n| by_name.get(n).map(|t| (*t).clone()))
                 .collect()
         };
+
+        // Zero-LLM embedding tier (when a Voyage key is configured). Replaces a
+        // chat-completion per routing turn with one cheap embedding call. Falls
+        // through to the LLM tier only when embeddings are unavailable or nothing
+        // clears the similarity floor.
+        if let Some((emb_hits, telem)) = self.tier_embed(msg, &candidates).await {
+            let merged = if multi && !hits.is_empty() {
+                let mut v = hits.clone();
+                for h in &emb_hits {
+                    if !v.contains(h) {
+                        v.push(h.clone());
+                    }
+                }
+                v
+            } else {
+                emb_hits
+            };
+            let tools = merged
+                .iter()
+                .filter_map(|n| by_name.get(n).map(|t| (*t).clone()))
+                .collect();
+            return (tools, telem);
+        }
+
         let (llm_hits, telem) = self.tier2(msg, &candidates, history, multi).await;
         if telem.get("tier").and_then(|v| v.as_str()) != Some("binary_llm_failed") {
             let merged = if multi && !hits.is_empty() {
