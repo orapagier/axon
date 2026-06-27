@@ -229,6 +229,34 @@ fn spawn_model_wait_heartbeat(
 /// tools whose names merely contained a write marker (`fb_list_posts` → `_post`,
 /// `fb_get_scheduled_posts` → `_schedule`). Those misclassifications let a
 /// successful *read* vouch for a fabricated *write* claim in the claim guard.
+/// Deterministic pre-execution check: every required parameter must be present
+/// and non-null in the call's input. Returns the missing field names. Catches the
+/// most common arg error (an omitted required field) before spending a real tool
+/// round-trip — the cheapest possible correction. Unknown tools / empty `required`
+/// yield no findings, so the check never blocks a legitimate call.
+fn missing_required_args(
+    name: &str,
+    input: &serde_json::Value,
+    all_tools: &[ToolDefinition],
+) -> Vec<String> {
+    let def = match all_tools.iter().find(|t| t.name == name) {
+        Some(d) => d,
+        None => return Vec::new(),
+    };
+    if def.required.is_empty() {
+        return Vec::new();
+    }
+    let obj = input.as_object();
+    def.required
+        .iter()
+        .filter(|r| match obj {
+            Some(map) => map.get(r.as_str()).map(|v| v.is_null()).unwrap_or(true),
+            None => true,
+        })
+        .cloned()
+        .collect()
+}
+
 pub(crate) fn receipt_is_mutating(name: &str, all_tools: &[ToolDefinition]) -> bool {
     all_tools
         .iter()
@@ -1658,7 +1686,41 @@ pub(crate) async fn run_inner(
                 }
             }
 
-            let results = run_parallel(final_calls, Arc::new(state.tools.clone()), max_par).await;
+            // Pre-execution validation: divert calls missing required args and
+            // answer them inline with guidance, saving a wasted network round-trip.
+            let mut valid_calls = Vec::with_capacity(final_calls.len());
+            for tc in final_calls {
+                let missing = missing_required_args(&tc.name, &tc.input, &all_tools);
+                if missing.is_empty() {
+                    valid_calls.push(tc);
+                    continue;
+                }
+                emit!(AgentEvent::ToolEnd {
+                    run_id: run_id.clone(),
+                    tool: tc.name.clone(),
+                    tool_call_id: tc.id.clone(),
+                    duration_ms: 0,
+                    ok: false
+                });
+                tool_receipts.push(ToolExecutionReceipt {
+                    name: tc.name.clone(),
+                    ok: false,
+                    is_mutating: receipt_is_mutating(&tc.name, &all_tools),
+                });
+                result_msgs.push(Message::tool_result(
+                    &tc.id,
+                    serde_json::json!({
+                        "error": format!("Missing required parameter(s): {}", missing.join(", ")),
+                        "guidance": format!(
+                            "Tool '{}' requires: {}. Re-call it with every required field set.",
+                            tc.name,
+                            missing.join(", ")
+                        ),
+                    }),
+                ));
+            }
+
+            let results = run_parallel(valid_calls, Arc::new(state.tools.clone()), max_par).await;
             for res in &results {
                 emit!(AgentEvent::ToolEnd {
                     run_id: run_id.clone(),
