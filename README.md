@@ -41,7 +41,7 @@ Axon is a single self-contained process that acts as the operating intelligence 
 
 - **One process.** The agent, the dashboard, the webhooks, the scheduler, and **all** integration tools (Google, Microsoft, Facebook, Instagram, CRM) run in-process — no separate server, no SSE hop.
 - **Multi-channel.** Telegram, Discord, Slack, Facebook/Messenger, WhatsApp, and a built-in web chat — all out of the box.
-- **Resilient model router.** Priority tiers, sticky routing, round-robin within a tier, automatic 429-quarantine with cooldown, a background health checker, and a last-resort `paid_model` fallback. Requests don't drop.
+- **Resilient model router.** Priority tiers, sticky routing, round-robin within a tier, automatic 429-quarantine with cooldown, and a last-resort `paid_model` fallback. Requests don't drop.
 - **Deep, layered memory.** Short-term SQLite history per session, long-term Qdrant vector recall (always presented as *hints to verify with tools*, never ground truth), and compressed searchable tool observations.
 - **Real tools.** Shell, SSH, HTTP, web search, image generation/processing, parallel workers, cron jobs, watchers, and workflows.
 - **Self-correcting.** A validation pipeline (claim guard, refusal nudge, blank/raw-syntax guards, and an optional secondary-LLM quality check) catches hallucinations and tool misuse before anything is sent publicly.
@@ -217,7 +217,7 @@ Most behavior is tunable live via the **Settings** page (stored in the `settings
 - `agent.request_timeout_secs` (`45`), `agent.request_timeout_max_secs` (`120`), `agent.run_timeout_secs` (`300`)
 - `agent.quality_check` (`true`), `agent.allow_tool_writing` (`true`)
 - `agent.system_prompt` — the master system prompt (editable live).
-- `router.rate_limit_cooldown` (minutes), `router.error_threshold` (`3`), `router.model_call_timeout_secs` (`20`), `router.model_health_check_interval_secs` (`90`).
+- `router.rate_limit_cooldown` (minutes), `router.error_threshold` (`3`), `router.model_call_timeout_secs` (`20`).
 - `memory.short_term_max_msgs` (`50`), `memory.long_term_top_k` (`5`).
 - `websearch.enabled`, `websearch.max_results`.
 - `watcher.user_name`, `watcher.user_title`, `watcher.quiet_hours_*`.

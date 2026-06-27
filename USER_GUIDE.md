@@ -203,7 +203,7 @@ Notable keys and their defaults:
   `agent.temp_tool_max_retries` (2)
 - `agent.system_prompt` — the master system prompt (editable live).
 - `router.rate_limit_cooldown` (minutes), `router.error_threshold` (3),
-  `router.model_call_timeout_secs` (20), `router.model_health_check_interval_secs` (90),
+  `router.model_call_timeout_secs` (20),
   and the adaptive-timeout knobs (`router.model_call_timeout_{min,max,per_1k_chars,fair_share_grace}_secs`).
 - `memory.short_term_max_msgs` (50), `memory.long_term_top_k` (5)
 - `websearch.enabled`, `websearch.max_results`

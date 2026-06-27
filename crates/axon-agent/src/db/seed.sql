@@ -15,7 +15,6 @@ INSERT OR IGNORE INTO settings VALUES
     ('router.rate_limit_cooldown',  '1',     'int',    'Minutes before retrying a rate-limited model',  'router',    datetime('now')),
     ('router.error_threshold',      '3',     'int',    'Errors before marking a model unavailable',     'router',    datetime('now')),
     ('router.model_call_timeout_secs','20',  'int',    'Default per-call model timeout in seconds when a model-specific timeout is not set', 'router', datetime('now')),
-    ('router.model_health_check_interval_secs','90','int','Background model health-check cadence in seconds', 'router', datetime('now')),
     ('memory.short_term_max_msgs',  '50',    'int',    'Max messages kept per session',                 'memory',    datetime('now')),
     ('memory.long_term_top_k',      '5',     'int',    'Memories injected per agent call',              'memory',    datetime('now')),
     ('scheduler.max_jobs',          '100',   'int',    'Maximum active scheduled jobs',                 'scheduler', datetime('now')),
@@ -46,12 +45,10 @@ INSERT OR IGNORE INTO settings VALUES
     ('agent.quality_check_mode',    'mutating', 'string', 'When to spend an LLM quality check: all (every tool-backed answer), mutating (only state-changing actions, false refusals, or blank/fake-success responses), off', 'agent', datetime('now')),
     ('agent.request_timeout_max_secs', '120', 'int', 'Hard cap for adaptive per-LLM fallback-chain timeout in seconds', 'agent', datetime('now')),
     ('agent.min_model_chain_secs',  '60',  'int', 'Guaranteed minimum per-call budget in seconds to prevent starving slow models late in a run', 'agent', datetime('now')),
-    ('router.model_health_check_interval_secs', '90', 'int', 'Background model health-check cadence in seconds', 'router', datetime('now')),
     ('router.model_call_timeout_min_secs', '10', 'int', 'Minimum per-attempt timeout in seconds used by adaptive model timeout logic', 'router', datetime('now')),
     ('router.model_call_timeout_max_secs', '90', 'int', 'Maximum per-attempt timeout in seconds used by adaptive model timeout logic', 'router', datetime('now')),
     ('router.model_call_timeout_per_1k_chars_secs', '3', 'int', 'Extra timeout seconds added per 1k prompt characters for adaptive model timeout', 'router', datetime('now')),
-    ('router.model_call_timeout_fair_share_grace_secs', '4', 'int', 'Extra seconds above fair-share budget for each model attempt during fallback routing', 'router', datetime('now')),
-    ('router.model_health_check_enabled', 'false', 'bool', 'Proactively ping models in the background. OFF by default: each ping is a real, quota-consuming completion (~960/day/provider at default cadence), enough to exhaust free-tier daily caps. Routing is reactive regardless.', 'router', datetime('now'));
+    ('router.model_call_timeout_fair_share_grace_secs', '4', 'int', 'Extra seconds above fair-share budget for each model attempt during fallback routing', 'router', datetime('now'));
 
 -- Watcher / Smart Notifications.
 INSERT OR IGNORE INTO settings VALUES

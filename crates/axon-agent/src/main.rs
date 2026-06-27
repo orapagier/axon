@@ -542,19 +542,6 @@ async fn main() -> anyhow::Result<()> {
     watcher.start(state.clone()).await;
     tracing::info!("Watcher engine initialized (enable via dashboard settings)");
 
-    if settings.model_health_check_enabled() {
-        tokio::spawn(axon::router::model_router::start_health_checker(
-            state.router.clone(),
-            state.settings.clone(),
-        ));
-        tracing::info!("Model router health checker initialized");
-    } else {
-        tracing::info!(
-            "Model router health checker disabled (router.model_health_check_enabled=false); \
-             routing stays reactive — no proactive quota-consuming pings"
-        );
-    }
-
     let app = build_router(state);
     let addr = format!("0.0.0.0:{}", cfg.port);
     let listener = tokio::net::TcpListener::bind(&addr)

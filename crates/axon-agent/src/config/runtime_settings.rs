@@ -196,18 +196,6 @@ RESPONSE RULES:
     pub fn model_call_timeout_fair_share_grace_secs(&self) -> u64 {
         self.get_int("router.model_call_timeout_fair_share_grace_secs", 4) as u64
     }
-    pub fn model_health_check_interval_secs(&self) -> u64 {
-        self.get_int("router.model_health_check_interval_secs", 90)
-            .max(15) as u64
-    }
-    /// Whether the background health checker proactively pings models.
-    /// Default OFF: each ping is a real, quota-consuming completion, and at the
-    /// default 90s cadence that's ~960 requests/day per provider — enough to
-    /// exhaust free-tier daily caps on its own. Routing is already reactive
-    /// (failed calls cooldown + fall through), so proactive pinging is opt-in.
-    pub fn model_health_check_enabled(&self) -> bool {
-        self.get_bool("router.model_health_check_enabled", false)
-    }
 
     pub fn resolve(&self, input: &str) -> String {
         if !input.starts_with("${") || !input.ends_with("}") {
