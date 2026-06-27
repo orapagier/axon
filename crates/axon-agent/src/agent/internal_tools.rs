@@ -105,6 +105,18 @@ pub(crate) async fn handle_internal(
                 .await
                 .map_err(|e| anyhow::anyhow!(e))
         }
+        "discord" => {
+            let args = merge_stored_credentials("discord", args, &state);
+            crate::tools::workflow::nodes::discord::execute(&args)
+                .await
+                .map_err(|e| anyhow::anyhow!(e))
+        }
+        "slack" => {
+            let args = merge_stored_credentials("slack", args, &state);
+            crate::tools::workflow::nodes::slack::execute(&args)
+                .await
+                .map_err(|e| anyhow::anyhow!(e))
+        }
         // myelin works on staged files, not external credentials.
         "myelin" => crate::tools::myelin::execute_myelin_node(&state, &args)
             .await

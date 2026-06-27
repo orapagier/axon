@@ -11,6 +11,7 @@
 //! runs, so a bot token arrives as `bot_token` (or `access_token`). Error and
 //! JSON handling mirror `tools::telegram`.
 
+use crate::tools::schema::{ToolDefinition, ToolSource};
 use serde_json::{json, Value};
 
 const API_BASE: &str = "https://discord.com/api/v10";
@@ -313,5 +314,53 @@ pub(crate) async fn execute(config: &Value) -> Result<Value, String> {
         "addReaction" => add_reaction(&client, &auth, config).await,
         "getMessages" => get_messages(&client, &auth, config).await,
         other => Err(format!("Unsupported Discord operation '{other}'")),
+    }
+}
+
+// ── Agent tool definition ─────────────────────────────────────────────────────
+
+/// Exposes this node's executor as an agent-callable tool. The bot token is NOT
+/// a parameter: `handle_internal` fills it from the stored `discord` credential
+/// before calling `execute`, so it must stay out of `required` (the pre-execution
+/// arg check runs before that merge and would otherwise block every call).
+pub(crate) fn tool_definition() -> ToolDefinition {
+    ToolDefinition {
+        name: "discord".to_string(),
+        description:
+            "Send and manage Discord messages via a bot token or an incoming webhook. Bot mode \
+             supports sendMessage, sendEmbed, editMessage, deleteMessage, addReaction, and \
+             getMessages on a channel; webhook mode posts content/embeds to a webhook URL. The bot \
+             token is supplied automatically from the stored 'discord' credential — do not pass it."
+                .to_string(),
+        parameters: json!({
+            "auth_mode": {
+                "type": "string",
+                "enum": ["bot", "webhook"],
+                "description": "'bot' uses the stored Discord bot token (default); 'webhook' posts to a webhook URL with no credential.",
+                "default": "bot"
+            },
+            "operation": {
+                "type": "string",
+                "enum": ["sendMessage", "sendEmbed", "editMessage", "deleteMessage", "addReaction", "getMessages"],
+                "description": "Bot-mode operation (ignored in webhook mode).",
+                "default": "sendMessage"
+            },
+            "channel_id": { "type": "string", "description": "Target channel ID (required for all bot-mode operations)." },
+            "content": { "type": "string", "description": "Message text. Required for sendMessage/editMessage; optional caption for sendEmbed and webhook posts. Auto-split at Discord's 2000-char limit." },
+            "message_id": { "type": "string", "description": "Target message ID (required for editMessage/deleteMessage/addReaction)." },
+            "emoji": { "type": "string", "description": "addReaction: a Unicode emoji or a custom 'name:id'." },
+            "limit": { "type": "integer", "description": "getMessages: how many recent messages to fetch (1-100, default 50)." },
+            "embed_title": { "type": "string", "description": "Embed title (sendEmbed / webhook)." },
+            "embed_description": { "type": "string", "description": "Embed body text (sendEmbed / webhook)." },
+            "embed_url": { "type": "string", "description": "Embed title hyperlink URL (sendEmbed / webhook)." },
+            "embed_color": { "type": "string", "description": "Embed accent color as #RRGGBB, 0xRRGGBB, or a decimal integer." },
+            "webhook_url": { "type": "string", "description": "Incoming-webhook URL (required when auth_mode is 'webhook')." },
+            "username": { "type": "string", "description": "Webhook mode: override the displayed sender name." },
+            "avatar_url": { "type": "string", "description": "Webhook mode: override the displayed sender avatar." }
+        }),
+        required: vec![],
+        source: ToolSource::Internal,
+        enabled: true,
+        is_mutating: true,
     }
 }

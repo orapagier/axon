@@ -14,6 +14,7 @@
 //! on failure (mirrors `messaging::slack`), so success is decided by the `ok`
 //! field, not the HTTP status.
 
+use crate::tools::schema::{ToolDefinition, ToolSource};
 use serde_json::{json, Value};
 
 const API_BASE: &str = "https://slack.com/api";
@@ -236,5 +237,47 @@ pub(crate) async fn execute(config: &Value) -> Result<Value, String> {
         "deleteMessage" => delete_message(&client, &token, config).await,
         "addReaction" => add_reaction(&client, &token, config).await,
         other => Err(format!("Unsupported Slack operation '{other}'")),
+    }
+}
+
+// ── Agent tool definition ─────────────────────────────────────────────────────
+
+/// Exposes this node's executor as an agent-callable tool. The bot token is NOT
+/// a parameter: `handle_internal` fills it from the stored `slack` credential
+/// before calling `execute`, so it must stay out of `required` (the pre-execution
+/// arg check runs before that merge and would otherwise block every call).
+pub(crate) fn tool_definition() -> ToolDefinition {
+    ToolDefinition {
+        name: "slack".to_string(),
+        description:
+            "Send and manage Slack messages via a bot token or an incoming webhook. Bot mode \
+             supports postMessage, postBlocks, updateMessage, deleteMessage, and addReaction; \
+             webhook mode posts text/blocks to a webhook URL. The bot token is supplied \
+             automatically from the stored 'slack' credential — do not pass it."
+                .to_string(),
+        parameters: json!({
+            "auth_mode": {
+                "type": "string",
+                "enum": ["bot", "webhook"],
+                "description": "'bot' uses the stored Slack bot token (default); 'webhook' posts to an incoming-webhook URL with no credential.",
+                "default": "bot"
+            },
+            "operation": {
+                "type": "string",
+                "enum": ["postMessage", "postBlocks", "updateMessage", "deleteMessage", "addReaction"],
+                "description": "Bot-mode operation (ignored in webhook mode).",
+                "default": "postMessage"
+            },
+            "channel": { "type": "string", "description": "Target channel ID or name (required for all bot-mode operations)." },
+            "text": { "type": "string", "description": "Message text. Required for postMessage/updateMessage; recommended fallback alongside blocks." },
+            "blocks": { "type": "string", "description": "Block Kit layout as a JSON string — either a bare array or an object with a 'blocks' array (postBlocks / webhook)." },
+            "ts": { "type": "string", "description": "Target message timestamp (required for updateMessage/deleteMessage/addReaction)." },
+            "reaction": { "type": "string", "description": "addReaction: emoji shortcode, with or without surrounding colons (e.g. 'thumbsup')." },
+            "webhook_url": { "type": "string", "description": "Incoming-webhook URL (required when auth_mode is 'webhook')." }
+        }),
+        required: vec![],
+        source: ToolSource::Internal,
+        enabled: true,
+        is_mutating: true,
     }
 }

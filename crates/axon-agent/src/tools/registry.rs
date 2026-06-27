@@ -169,6 +169,8 @@ fn internal_tools() -> Vec<ToolDefinition> {
         crate::tools::whatsapp::tool_definition(),
         crate::tools::whatsapp::trigger_tool_definition(),
         crate::tools::myelin::tool_definition(),
+        crate::tools::workflow::nodes::discord::tool_definition(),
+        crate::tools::workflow::nodes::slack::tool_definition(),
                 ToolDefinition::internal(
             "image_tool",
             "Process images and create videos. Actions: \
