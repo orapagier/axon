@@ -213,6 +213,12 @@ pub struct ModelRecord {
     pub rate_limit_reset_at: Option<String>,
     #[serde(default)]
     pub consecutive_errors: u32,
+    /// Consecutive rate-limit (429) hits with no intervening success. Drives the
+    /// exponential backoff in `mark_rate_limited` so a model that has burned a
+    /// *daily* free-tier quota isn't retried every cooldown for the rest of the
+    /// day. Reset to 0 on the next success.
+    #[serde(default)]
+    pub consecutive_rate_limits: u32,
     #[serde(default)]
     pub total_calls: u64,
     #[serde(default)]
@@ -222,6 +228,17 @@ pub struct ModelRecord {
     #[serde(default)]
     pub rl_snapshot: RateLimitSnapshot,
 }
+/// Exponential backoff (in minutes) for the Nth consecutive rate-limit hit:
+/// `base * 2^(strikes-1)`, clamped to `[base, cap]`. Overflow-safe — large
+/// `strikes` saturate at `cap` rather than wrapping.
+pub fn rate_limit_backoff_minutes(strikes: u32, base: i64, cap: i64) -> i64 {
+    let base = base.max(1);
+    let cap = cap.max(base);
+    let shift = strikes.saturating_sub(1).min(16);
+    let factor = 1i64.checked_shl(shift).unwrap_or(i64::MAX);
+    base.saturating_mul(factor).min(cap)
+}
+
 impl ModelRecord {
     pub fn is_available(&self) -> bool {
         if !self.enabled {
@@ -237,11 +254,25 @@ impl ModelRecord {
             _ => true,
         }
     }
-    pub fn mark_rate_limited(&mut self, cooldown: i64) {
+    /// Quarantine a model after a 429, with exponential backoff keyed on the
+    /// number of consecutive rate-limit hits: `base_cooldown * 2^(n-1)`, clamped
+    /// to `max_cooldown`. The first hit waits `base_cooldown` (so per-minute
+    /// limits recover quickly); repeated hits — the signature of an exhausted
+    /// daily quota — escalate toward `max_cooldown` instead of being retried
+    /// every minute.
+    pub fn mark_rate_limited(&mut self, base_cooldown: i64, max_cooldown: i64) {
+        self.consecutive_rate_limits = self.consecutive_rate_limits.saturating_add(1);
+        let effective =
+            rate_limit_backoff_minutes(self.consecutive_rate_limits, base_cooldown, max_cooldown);
         self.status = "rate_limited".into();
         self.rate_limit_reset_at =
-            Some((chrono::Utc::now() + chrono::Duration::minutes(cooldown)).to_rfc3339());
-        tracing::error!("{} rate-limited for {}m", self.name, cooldown);
+            Some((chrono::Utc::now() + chrono::Duration::minutes(effective)).to_rfc3339());
+        tracing::error!(
+            "{} rate-limited for {}m (strike #{})",
+            self.name,
+            effective,
+            self.consecutive_rate_limits
+        );
     }
     pub fn mark_error(&mut self, threshold: u32, cooldown: i64) {
         self.consecutive_errors += 1;
@@ -259,6 +290,7 @@ impl ModelRecord {
     }
     pub fn mark_success(&mut self, i: u32, o: u32) {
         self.consecutive_errors = 0;
+        self.consecutive_rate_limits = 0;
         self.status = "available".into();
         self.rate_limit_reset_at = None;
         self.total_calls += 1;
@@ -318,6 +350,24 @@ mod tests {
             provider_base_url("gemini"),
             Some("https://generativelanguage.googleapis.com/v1beta/openai/")
         );
+    }
+
+    #[test]
+    fn rate_limit_backoff_escalates_then_caps() {
+        // base 1, cap 60: 1, 2, 4, 8, 16, 32, then capped at 60.
+        assert_eq!(rate_limit_backoff_minutes(1, 1, 60), 1);
+        assert_eq!(rate_limit_backoff_minutes(2, 1, 60), 2);
+        assert_eq!(rate_limit_backoff_minutes(3, 1, 60), 4);
+        assert_eq!(rate_limit_backoff_minutes(6, 1, 60), 32);
+        assert_eq!(rate_limit_backoff_minutes(7, 1, 60), 60); // 64 -> cap
+        // Huge strike count must not overflow.
+        assert_eq!(rate_limit_backoff_minutes(100, 1, 60), 60);
+        // base 2, cap 30.
+        assert_eq!(rate_limit_backoff_minutes(4, 2, 30), 16);
+        assert_eq!(rate_limit_backoff_minutes(5, 2, 30), 30); // 32 -> cap
+        // Defensive edges: strike 0 -> base; cap below base -> base wins.
+        assert_eq!(rate_limit_backoff_minutes(0, 1, 60), 1);
+        assert_eq!(rate_limit_backoff_minutes(1, 5, 1), 5);
     }
 
     #[test]

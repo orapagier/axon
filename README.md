@@ -217,7 +217,7 @@ Most behavior is tunable live via the **Settings** page (stored in the `settings
 - `agent.request_timeout_secs` (`45`), `agent.request_timeout_max_secs` (`120`), `agent.run_timeout_secs` (`300`)
 - `agent.quality_check` (`true`), `agent.allow_tool_writing` (`true`)
 - `agent.system_prompt` — the master system prompt (editable live).
-- `router.rate_limit_cooldown` (minutes), `router.error_threshold` (`3`), `router.model_call_timeout_secs` (`20`).
+- `router.rate_limit_cooldown` (base minutes), `router.rate_limit_max_cooldown` (`60`, backoff cap), `router.error_threshold` (`3`), `router.model_call_timeout_secs` (`20`).
 - `memory.short_term_max_msgs` (`50`), `memory.long_term_top_k` (`5`).
 - `websearch.enabled`, `websearch.max_results`.
 - `watcher.user_name`, `watcher.user_title`, `watcher.quiet_hours_*`.
@@ -249,8 +249,7 @@ What happens on each request:
 
 - **Priority tiers:** models are grouped by `priority` (lower = higher). Within a tier, traffic is round-robined across distinct provider/model endpoints, biased away from endpoints critically close to their rate limit.
 - **Fallback order per request:** preferred model (if the caller picked one) → sticky model → role pool → general pool → a sweep over any remaining free model → `paid_model` last.
-- **Rate-limit quarantine:** a `429`/quota error puts the model on a cooldown (`router.rate_limit_cooldown` minutes) and routing falls through to the next option without dropping the request. Cooldowns auto-expire.
-- **Health checker:** a background task pings one available model per provider every ~90s and proactively benches unhealthy endpoints before a user hits them.
+- **Rate-limit quarantine:** a `429`/quota error puts the model on a cooldown and routing falls through to the next option without dropping the request. The cooldown uses **exponential backoff** — `router.rate_limit_cooldown` on the first hit, doubling on each consecutive 429 up to `router.rate_limit_max_cooldown` — so a model that has burned a daily free-tier quota backs off toward hourly retries instead of being re-hit every minute. A successful call resets it. Cooldowns auto-expire.
 - **Adaptive timeouts:** per-call timeouts scale with prompt size (min/max bounds, per-1k-chars, fair-share grace) instead of a flat ceiling.
 - **Alerts:** rate-limit, timeout, and "paid fallback used" events are collected per run and surfaced to the operator (dashboard + messaging notifications).
 

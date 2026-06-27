@@ -202,8 +202,8 @@ Notable keys and their defaults:
 - `agent.quality_check` (true), `agent.allow_tool_writing` (true),
   `agent.temp_tool_max_retries` (2)
 - `agent.system_prompt` — the master system prompt (editable live).
-- `router.rate_limit_cooldown` (minutes), `router.error_threshold` (3),
-  `router.model_call_timeout_secs` (20),
+- `router.rate_limit_cooldown` (base minutes), `router.rate_limit_max_cooldown` (60, exponential-backoff cap),
+  `router.error_threshold` (3), `router.model_call_timeout_secs` (20),
   and the adaptive-timeout knobs (`router.model_call_timeout_{min,max,per_1k_chars,fair_share_grace}_secs`).
 - `memory.short_term_max_msgs` (50), `memory.long_term_top_k` (5)
 - `websearch.enabled`, `websearch.max_results`
@@ -244,11 +244,11 @@ Notable keys and their defaults:
   endpoints that are critically close to their rate limit.
 - **Fallback order per request:** preferred model (if the caller picked one) → sticky model →
   role pool → general pool → a sweep over any remaining free model → `paid_model` last.
-- **Rate-limit quarantine:** a `429`/quota error puts the model on a cooldown
-  (`router.rate_limit_cooldown` minutes) and routing falls through to the next option without
-  dropping the request. Cooldowns auto-expire.
-- **Health checker:** a background task pings one available model per provider every
-  ~90s and proactively benches unhealthy endpoints before a user hits them.
+- **Rate-limit quarantine:** a `429`/quota error puts the model on a cooldown and routing
+  falls through to the next option without dropping the request. The cooldown grows by
+  exponential backoff — `router.rate_limit_cooldown` on the first hit, doubling per consecutive
+  429 up to `router.rate_limit_max_cooldown` — so a model that exhausted a daily free-tier
+  quota isn't retried every minute. A success resets it; cooldowns auto-expire.
 - **Alerts:** rate-limit, timeout, and "paid fallback used" events are collected per run and
   surfaced to the operator (dashboard + messaging notifications).
 

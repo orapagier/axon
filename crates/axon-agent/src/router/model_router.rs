@@ -260,7 +260,14 @@ fn build_priority_order(models: &[ModelRecord], pool: &[usize], start: usize) ->
                 let key = &bucket_keys[(start + offset) % bucket_count];
                 if let Some(bucket) = buckets.get(key) {
                     if round < bucket.len() {
-                        order.push(bucket[round]);
+                        // Rotate the starting key *within* the bucket too, keyed
+                        // on `start`. Multiple API keys for the same provider +
+                        // model land in one bucket; without this, key #0 is
+                        // always tried first and gets hammered until it 429s
+                        // while the others sit idle. `(start + round) % len` is a
+                        // permutation over the bucket, so all keys are still
+                        // covered with no duplicates.
+                        order.push(bucket[(start + round) % bucket.len()]);
                         emitted += 1;
                     }
                 }
@@ -458,6 +465,9 @@ pub async fn call_llm_with_options(
             let order = build_priority_order(&g.models, &pool, start_index);
             order
                 .into_iter()
+                // Skip models already tried in the preferred/sticky passes — no
+                // point re-hitting a just-failed endpoint within the same call.
+                .filter(|mi| !attempted_indices.contains(mi))
                 .map(|mi| {
                     let m = &g.models[mi];
                     (mi, m.name.clone(), max_tokens.unwrap_or(m.max_tokens))
@@ -499,6 +509,9 @@ pub async fn call_llm_with_options(
         let order = build_priority_order(&g.models, &pool, start_index);
         order
             .into_iter()
+            // Skip models already attempted in earlier passes (preferred,
+            // sticky, role) so each model is tried at most once per call.
+            .filter(|mi| !attempted_indices.contains(mi))
             .map(|mi| {
                 let m = &g.models[mi];
                 (mi, m.name.clone(), max_tokens.unwrap_or(m.max_tokens))
@@ -908,7 +921,7 @@ async fn try_call(
         let (consecutive, model_name) = {
             let mut g = router.lock().await;
             if is_rl {
-                g.models[idx].mark_rate_limited(cooldown);
+                g.models[idx].mark_rate_limited(cooldown, settings.rate_limit_max_cooldown());
             } else {
                 g.models[idx].mark_error(threshold, cooldown);
             }
@@ -953,6 +966,10 @@ pub async fn get_status(router: &SharedRouter) -> Vec<serde_json::Value> {
             m.status = "available".into();
             m.rate_limit_reset_at = None;
             m.consecutive_errors = 0;
+            // NOTE: deliberately do NOT reset consecutive_rate_limits here.
+            // It must persist across cooldown expiries so the exponential
+            // backoff keeps escalating for a model stuck on a daily quota;
+            // only a genuine success (mark_success) clears it.
         }
     }
 
@@ -967,6 +984,7 @@ pub async fn get_status(router: &SharedRouter) -> Vec<serde_json::Value> {
                 "enabled": m.enabled,
                 "rate_limit_reset_at": m.rate_limit_reset_at,
                 "consecutive_errors": m.consecutive_errors,
+                "consecutive_rate_limits": m.consecutive_rate_limits,
                 "total_calls": m.total_calls,
                 "total_input_tokens": m.total_input_tokens,
                 "total_output_tokens": m.total_output_tokens,
@@ -982,6 +1000,7 @@ pub async fn reset_model(router: &SharedRouter, name: &str) -> bool {
         m.status = "available".into();
         m.rate_limit_reset_at = None;
         m.consecutive_errors = 0;
+        m.consecutive_rate_limits = 0;
         return true;
     }
     false

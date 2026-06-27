@@ -146,6 +146,12 @@ RESPONSE RULES:
     pub fn rate_limit_cooldown(&self) -> i64 {
         self.get_int("router.rate_limit_cooldown", 2)
     }
+    /// Upper bound (minutes) for the exponential rate-limit backoff in
+    /// `ModelRecord::mark_rate_limited`. Caps how long a repeatedly-429'd model
+    /// (e.g. one that exhausted a daily free-tier quota) stays quarantined.
+    pub fn rate_limit_max_cooldown(&self) -> i64 {
+        self.get_int("router.rate_limit_max_cooldown", 60)
+    }
     pub fn error_threshold(&self) -> u32 {
         self.get_int("router.error_threshold", 3) as u32
     }
