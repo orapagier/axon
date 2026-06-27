@@ -513,6 +513,20 @@ pub fn normalize_provider_name(provider: &str) -> String {
     }
 }
 
+/// Canonicalize a model's router role: trim, lowercase, and collapse runs of
+/// whitespace/hyphens into single underscores. This way a hand-typed value like
+/// `"Quality Checker"` or `"paid-model"` matches the role names the engine
+/// requests internally (e.g. `quality_checker`, `paid_model`) instead of
+/// silently never matching. Empty/general stays empty.
+pub fn normalize_role(role: &str) -> String {
+    role.trim()
+        .to_ascii_lowercase()
+        .split(|c: char| c.is_whitespace() || c == '-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("_")
+}
+
 pub fn normalize_base_url(base_url: Option<String>) -> Option<String> {
     base_url
         .map(|url| normalize_base_url_str(&url))
@@ -574,6 +588,16 @@ mod tests {
         // Defensive edges: strike 0 -> base; cap below base -> base wins.
         assert_eq!(rate_limit_backoff_minutes(0, 1, 60), 1);
         assert_eq!(rate_limit_backoff_minutes(1, 5, 1), 5);
+    }
+
+    #[test]
+    fn normalizes_roles() {
+        assert_eq!(normalize_role("Quality Checker"), "quality_checker");
+        assert_eq!(normalize_role(" paid-model "), "paid_model");
+        assert_eq!(normalize_role("complex_tasks"), "complex_tasks");
+        assert_eq!(normalize_role("  Router  "), "router");
+        assert_eq!(normalize_role(""), "");
+        assert_eq!(normalize_role("memory   compressor"), "memory_compressor");
     }
 
     #[test]

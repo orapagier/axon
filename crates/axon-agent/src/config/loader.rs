@@ -1,4 +1,4 @@
-use crate::providers::types::{normalize_base_url, normalize_provider_name, ModelRecord};
+use crate::providers::types::{normalize_base_url, normalize_provider_name, normalize_role, ModelRecord};
 use anyhow::Context;
 use serde::Deserialize;
 
@@ -67,7 +67,7 @@ pub fn load_models(path: &str) -> anyhow::Result<Vec<ModelRecord>> {
             priority: m.priority.unwrap_or(99),
             max_tokens: m.max_tokens.unwrap_or(4096),
             enabled: m.enabled,
-            role: m.role,
+            role: normalize_role(&m.role),
             status: "available".into(),
             rate_limit_reset_at: None,
             consecutive_errors: 0,
@@ -99,7 +99,7 @@ pub fn load_models_from_db(conn: &rusqlite::Connection) -> anyhow::Result<Vec<Mo
             priority: r.get(6)?,
             max_tokens: r.get(7)?,
             enabled: r.get::<_, i32>(8)? != 0,
-            role: r.get(9)?,
+            role: normalize_role(&r.get::<_, String>(9)?),
             status: "available".into(),
             rate_limit_reset_at: None,
             consecutive_errors: 0,

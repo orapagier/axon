@@ -278,8 +278,17 @@ onMounted(load)
           <label>Role</label>
           <select v-model="form.role" class="premium-input select-input">
             <option value="">General</option>
-            <option value="router">Router</option>
-            <option value="tool_writer">Tool Writer</option>
+            <optgroup label="Agent tier">
+              <option value="simple_tasks">Simple Tasks (cheap / fast)</option>
+              <option value="complex_tasks">Complex Tasks (capable)</option>
+            </optgroup>
+            <optgroup label="Specialists">
+              <option value="router">Router (cron / tool select)</option>
+              <option value="tool_writer">Tool Writer</option>
+              <option value="quality_checker">Quality Checker</option>
+              <option value="memory_compressor">Memory Compressor</option>
+              <option value="watcher">Watcher</option>
+            </optgroup>
             <option value="paid_model">Paid Fallback</option>
           </select>
         </div>
