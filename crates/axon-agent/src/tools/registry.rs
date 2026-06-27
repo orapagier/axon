@@ -7,13 +7,24 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-/// Internal tools that are registered for the workflow builder (they appear as
-/// nodes in the UI) but are NOT actionable by the agent: they register webhooks
-/// rather than perform a one-shot action, so they have no `handle_internal`
-/// dispatch arm. Kept out of the agent's callable set by
-/// [`ToolRegistry::all_enabled_for_agent`]. Their workflow-node counterparts
-/// (`telegram`/`whatsapp` types) are dispatched in `workflow.rs`.
-const NON_AGENT_INTERNAL_TOOLS: &[&str] = &["telegram_trigger", "whatsapp_trigger"];
+/// Internal tools registered for the workflow builder (they appear as nodes in
+/// the UI) but kept out of the agent's callable set by
+/// [`ToolRegistry::all_enabled_for_agent`]. Two reasons land a tool here:
+///
+///   • Trigger tools (`*_trigger`) register webhooks rather than perform a
+///     one-shot action, so they have no `handle_internal` arm — offering them
+///     would let the agent pick a tool that fails with "Unknown internal tool".
+///
+///   • Messaging tools (`telegram`/`whatsapp`) DO have `handle_internal` arms,
+///     but by design messaging platforms are user↔agent chat gateways (the
+///     `messaging/` module) and any agent-initiated sending is expressed as a
+///     workflow node — never an agent send-tool. The arms stay for the workflow
+///     generic-tool-node path; only the agent is denied them here.
+///
+/// Either way the full set is still served to the UI via [`all`], so their
+/// workflow-node counterparts (dispatched in `workflow.rs`) are unaffected.
+const NON_AGENT_INTERNAL_TOOLS: &[&str] =
+    &["telegram_trigger", "whatsapp_trigger", "telegram", "whatsapp"];
 
 fn internal_tools() -> Vec<ToolDefinition> {
     vec![
