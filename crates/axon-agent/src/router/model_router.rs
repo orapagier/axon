@@ -304,6 +304,22 @@ fn estimate_prompt_chars(messages: &[Message], system: &str) -> usize {
     system.len() + messages.iter().map(message_len).sum::<usize>()
 }
 
+tokio::task_local! {
+    /// Per-run sink for *auxiliary* LLM token usage (tool router + quality gate).
+    /// `run_inner` scopes it and folds the total into the run's reported token
+    /// count, so cost telemetry reflects the hidden routing/QC spend rather than
+    /// only the main agent calls. Absent outside a run, so writers use try_with.
+    pub static RUN_TOKEN_SINK: std::sync::Arc<std::sync::atomic::AtomicU64>;
+}
+
+/// Add auxiliary (router/QC) token usage to the current run's sink, if one is in
+/// scope. No-op outside a run.
+pub fn record_aux_tokens(n: u32) {
+    let _ = RUN_TOKEN_SINK.try_with(|s| {
+        s.fetch_add(n as u64, std::sync::atomic::Ordering::Relaxed);
+    });
+}
+
 pub async fn call_llm(
     messages: &[Message],
     system: &str,

@@ -520,7 +520,10 @@ async fn validate_response(
 
 pub async fn run_task(task: &str, state: &AppState, ctx: RunContext) -> anyhow::Result<String> {
     let run_id = ctx.run_id.clone();
-    let result = run_inner(task, state, ctx, None).await;
+    let sink = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let result = crate::router::model_router::RUN_TOKEN_SINK
+        .scope(sink, run_inner(task, state, ctx, None))
+        .await;
     if result.is_err() {
         mark_run_failed_if_running(state, &run_id);
     }
@@ -534,7 +537,10 @@ pub async fn run_task_streaming(
     tx: mpsc::Sender<AgentEvent>,
 ) -> anyhow::Result<String> {
     let run_id = ctx.run_id.clone();
-    let result = run_inner(task, state, ctx, Some(tx)).await;
+    let sink = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let result = crate::router::model_router::RUN_TOKEN_SINK
+        .scope(sink, run_inner(task, state, ctx, Some(tx)))
+        .await;
     if result.is_err() {
         mark_run_failed_if_running(state, &run_id);
     }
@@ -1015,6 +1021,11 @@ pub(crate) async fn run_inner(
         };
 
         tokens += response.usage.total();
+        // Fold accumulated auxiliary (tool-router + quality-gate) tokens into the
+        // run total so reported cost reflects real spend, not just main calls.
+        tokens += crate::router::model_router::RUN_TOKEN_SINK
+            .try_with(|s| s.swap(0, std::sync::atomic::Ordering::Relaxed))
+            .unwrap_or(0) as u32;
         if !models_used.contains(&model_name) {
             models_used.push(model_name.clone());
         }
@@ -1175,6 +1186,10 @@ pub(crate) async fn run_inner(
                     // oscillating between correction types.
                     total_corrections += 1;
                     if total_corrections > max_corrections {
+                        // Fold this turn's quality-gate tokens before exiting.
+                        tokens += crate::router::model_router::RUN_TOKEN_SINK
+                            .try_with(|s| s.swap(0, std::sync::atomic::Ordering::Relaxed))
+                            .unwrap_or(0) as u32;
                         emit!(AgentEvent::Thinking {
                             run_id: run_id.clone(),
                             text: "Correction budget reached — returning best-effort response"
@@ -1288,6 +1303,11 @@ pub(crate) async fn run_inner(
                     continue 'agent;
                 }
                 ValidationDecision::Pass => {
+                    // Fold this turn's quality-gate tokens (runs after the main
+                    // fold above) so the final total is complete.
+                    tokens += crate::router::model_router::RUN_TOKEN_SINK
+                        .try_with(|s| s.swap(0, std::sync::atomic::Ordering::Relaxed))
+                        .unwrap_or(0) as u32;
                     // Memory write (only for useful, tool-backed results)
                     if memory_enabled {
                         match ctx.memory_window {

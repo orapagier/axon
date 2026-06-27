@@ -173,6 +173,7 @@ pub(crate) async fn quality_check(
     .await
     {
         Ok((resp, model, _)) => {
+            crate::router::model_router::record_aux_tokens(resp.usage.total());
             let verdict = resp.text_content().trim().to_string();
             tracing::info!(
                 "Quality check [{}]: {}",

@@ -483,6 +483,7 @@ impl ToolRouter {
         .await
         {
             Ok((resp, model, tier)) => {
+                crate::router::model_router::record_aux_tokens(resp.usage.total());
                 let raw = resp.text_content().trim().to_uppercase();
                 let dur = t0.elapsed().as_millis();
                 if raw == "NONE" || raw.is_empty() {
