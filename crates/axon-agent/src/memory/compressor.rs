@@ -20,6 +20,7 @@ pub async fn compress_and_store(
     router: SharedRouter,
     settings: Arc<RuntimeSettings>,
     db: Arc<Pool<SqliteConnectionManager>>,
+    budget: Arc<std::sync::atomic::AtomicU32>,
 ) {
     let raw = tool_result.to_string();
 
@@ -39,6 +40,26 @@ pub async fn compress_and_store(
         || tool_result.get("success").and_then(|v| v.as_bool()) == Some(false)
     {
         tracing::debug!("Compressor skipped error result for tool '{}'", tool_name);
+        return;
+    }
+
+    // Consume one unit of the per-run compression budget. This bounds background
+    // LLM spend on observation extraction (the most invisible recurring cost on a
+    // rate-limited free pool). Only charged here — after the cheap skips — so a
+    // run of tiny/error results doesn't exhaust the budget. When the budget is 0
+    // (feature disabled or cap reached) we skip the LLM call entirely.
+    use std::sync::atomic::Ordering;
+    if budget
+        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |x| {
+            if x > 0 {
+                Some(x - 1)
+            } else {
+                None
+            }
+        })
+        .is_err()
+    {
+        tracing::debug!("Compressor budget exhausted — skipping '{}'", tool_name);
         return;
     }
 

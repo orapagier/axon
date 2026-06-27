@@ -587,6 +587,20 @@ pub(crate) async fn run_inner(
     // per-reason caps don't cover; bounded well under max_iter so we exit
     // gracefully with a best-effort answer instead of churning to timeout.
     let max_corrections = state.settings.get_int("agent.max_corrections", 6) as u32;
+    // Hard ceiling on cumulative tokens (input+output) for the whole run. The
+    // dominant cost unit is tokens, not iterations — this caps spend even when a
+    // few iterations carry huge contexts. Off by default (0).
+    let max_total_tokens = state.settings.get_int("agent.max_total_tokens", 0) as u32;
+    // Per-run budget for background observation compression. Each compression is
+    // an LLM call; capping them bounds the most invisible recurring cost. Master
+    // switch agent.compress_observations (default on) and cap
+    // agent.max_observations_per_run (default 4). Shared atomic so the cap holds
+    // across the parallel internal + sequential external tool paths.
+    let obs_budget = {
+        let on = state.settings.get_bool("agent.compress_observations", true);
+        let cap = state.settings.get_int("agent.max_observations_per_run", 4).max(0) as u32;
+        Arc::new(std::sync::atomic::AtomicU32::new(if on { cap } else { 0 }))
+    };
     let memory_enabled = ctx.memory_enabled;
     let task_is_bulk = is_bulk_task(task);
     let is_conversational = crate::router::tool_router::CONVERSATIONAL.is_match(task);
@@ -1039,6 +1053,69 @@ pub(crate) async fn run_inner(
             );
         }
 
+        // ── Guard: per-task token budget ─────────────────────────────────────
+        // When cumulative spend trips the ceiling, stop and return the best
+        // answer so far with an honest caveat rather than continuing to pay.
+        if max_total_tokens > 0 && tokens >= max_total_tokens {
+            emit!(AgentEvent::Thinking {
+                run_id: run_id.clone(),
+                text: "Token budget reached — returning best-effort response".into()
+            });
+            let mut clean = strip_reasoning(&text);
+            if tools_used.is_empty() {
+                clean = clean
+                    .replace("**", "")
+                    .replace("__", "")
+                    .replace("###", "")
+                    .replace("##", "")
+                    .replace("# ", "")
+                    .replace('`', "");
+            }
+            let mut final_output = strip_router_alert_footer(clean.trim());
+            if final_output.is_empty() {
+                final_output = "I reached my token budget for this request before fully finishing. Please narrow the request or try again.".to_string();
+            } else {
+                final_output.push_str("\n\n(Note: I reached my token budget for this request, so this is my best-effort answer and some steps may be incomplete.)");
+            }
+            if !token_emitted {
+                emit!(AgentEvent::Token {
+                    run_id: run_id.clone(),
+                    text: final_output.clone()
+                });
+            }
+            let alerts = drain_alerts(&state.router).await;
+            dispatch_router_alert_notifications(
+                &alerts,
+                state,
+                tx.as_ref(),
+                &run_id,
+                &ctx.platform,
+                ctx.chat_id.as_deref(),
+                "Model/router alert during run",
+            )
+            .await;
+            final_text = final_output.clone();
+            emit!(AgentEvent::Done {
+                run_id: run_id.clone(),
+                full_text: final_output,
+                total_tokens: tokens,
+                iterations: iters,
+                total_duration_ms: run_start.elapsed().as_millis() as u64,
+            });
+            finalize(
+                state,
+                &run_id,
+                "completed",
+                &final_text,
+                iters,
+                tokens,
+                &models_used,
+                &tools_used,
+                &guard_counts,
+            );
+            break 'agent;
+        }
+
         // ── No tool calls → validate and maybe finalize ──────────────────────
         if !response.has_tool_calls() {
             let is_subtask = ctx.depth > 0;
@@ -1475,6 +1552,7 @@ pub(crate) async fn run_inner(
             let ctx = ctx.clone();
             let run_id = run_id.clone();
             let tx_clone = tx.clone();
+            let obs_budget = Arc::clone(&obs_budget);
 
             futures.push(tokio::spawn(async move {
                 if let Some(ref t) = tx_clone {
@@ -1499,7 +1577,7 @@ pub(crate) async fn run_inner(
                 // skip the shared observation pool so the main agent never sees
                 // which tools an individual node used.
                 if !ctx.isolated_memory {
-                    spawn_compress(run_id.clone(), tc.name.clone(), tc.input.clone(), val.clone(), Arc::clone(&state.router), Arc::clone(&state.settings), Arc::clone(&state.db));
+                    spawn_compress(run_id.clone(), tc.name.clone(), tc.input.clone(), val.clone(), Arc::clone(&state.router), Arc::clone(&state.settings), Arc::clone(&state.db), Arc::clone(&obs_budget));
                 }
                 (tc.id, tc.name, val)
             }));
@@ -1617,6 +1695,7 @@ pub(crate) async fn run_inner(
                         Arc::clone(&state.router),
                         Arc::clone(&state.settings),
                         Arc::clone(&state.db),
+                        Arc::clone(&obs_budget),
                     );
                 }
 
@@ -1641,6 +1720,7 @@ pub(crate) async fn run_inner(
 
 // ── Compression helper ───────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_compress(
     run_id: String,
     tool_name: String,
@@ -1649,6 +1729,7 @@ fn spawn_compress(
     router: crate::router::model_router::SharedRouter,
     settings: Arc<crate::config::RuntimeSettings>,
     db: Arc<r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>>,
+    budget: Arc<std::sync::atomic::AtomicU32>,
 ) {
     tokio::spawn(async move {
         compress_and_store(
@@ -1659,6 +1740,7 @@ fn spawn_compress(
             router,
             settings,
             db,
+            budget,
         )
         .await;
     });
