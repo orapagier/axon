@@ -1,15 +1,7 @@
 [settings]
 
-[[models]]
-name       = "axon"
-provider   = "openai"
-model_id   = "axon-ai"
-api_key    = "${AXON_API_KEY}"
-base_url   = "http://localhost:5000/v1"
-role       = ""
-priority   = 2
-timeout_secs = 60
-enabled    = true
+# ── 'axon' model (local axon-api-proxy @ localhost:5000) removed 2026-06-27:
+#    proxy decommissioned; Gemini/OpenRouter/etc. now handle all routing.
 
 # ── GENERAL ROLE GEMINI ─────────────────────────────────────────────
 
