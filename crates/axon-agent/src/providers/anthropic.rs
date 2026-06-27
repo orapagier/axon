@@ -15,6 +15,10 @@ struct AnthReq<'a> {
     system: &'a str,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<Value>,
 }
 #[derive(Serialize, Deserialize)]
 struct AnthMsg {
@@ -58,7 +62,7 @@ pub async fn call(
     system: &str,
     tools: &[ToolDefinition],
     max_tokens: u32,
-    _options: ProviderCallOptions,
+    options: ProviderCallOptions,
 ) -> anyhow::Result<UnifiedResponse> {
     let msgs: Vec<AnthMsg> = messages.iter().map(|m| {
         let content = match &m.content {
@@ -83,6 +87,18 @@ pub async fn call(
         })
         .collect();
 
+    // tool_choice only applies when tools are present. Auto is Anthropic's
+    // default, so we only emit an explicit value for Required/None.
+    let tool_choice = if tool_defs.is_empty() {
+        None
+    } else {
+        match options.tool_choice {
+            Some(ToolChoice::Required) => Some(json!({"type": "any"})),
+            Some(ToolChoice::None) => Some(json!({"type": "none"})),
+            _ => None,
+        }
+    };
+
     let resp = HTTP_CLIENT
         .post("https://api.anthropic.com/v1/messages")
         .header("x-api-key", &model.api_key)
@@ -94,6 +110,8 @@ pub async fn call(
             messages: msgs,
             system,
             tools: tool_defs,
+            temperature: options.temperature,
+            tool_choice,
         })
         .send()
         .await

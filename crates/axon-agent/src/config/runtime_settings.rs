@@ -49,6 +49,11 @@ impl RuntimeSettings {
             .map(|v| v == "true" || v == "1")
             .unwrap_or(default)
     }
+    pub fn get_f64(&self, key: &str, default: f64) -> f64 {
+        self.get_raw(key)
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(default)
+    }
     pub fn get_str(&self, key: &str, default: &str) -> String {
         self.get_raw(key).unwrap_or_else(|| default.to_string())
     }

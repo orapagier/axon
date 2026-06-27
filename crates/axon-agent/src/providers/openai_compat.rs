@@ -21,6 +21,10 @@ struct OaiReq {
     tools: Option<Vec<Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_choice: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -576,14 +580,23 @@ pub async fn call(
     } else {
         Some(to_oai_tools(tools))
     };
+    // tool_choice only applies when tools are present; map our enum to the
+    // OpenAI wire value, defaulting to "auto".
+    let tool_choice = oai_tools.as_ref().map(|_| match options.tool_choice {
+        Some(ToolChoice::Required) => "required".to_string(),
+        Some(ToolChoice::None) => "none".to_string(),
+        _ => "auto".to_string(),
+    });
     let payload = OaiReq {
         model: model.model_id.clone(),
         messages: to_oai_msgs(messages, system),
         max_tokens,
         stream: options.stream_sink.as_ref().map(|_| true),
         stream_options: None,
-        tool_choice: oai_tools.as_ref().map(|_| "auto".into()),
+        tool_choice,
         tools: oai_tools,
+        temperature: options.temperature,
+        reasoning_effort: options.reasoning_effort.clone(),
     };
 
     if let Some(stream_sink) = options.stream_sink {

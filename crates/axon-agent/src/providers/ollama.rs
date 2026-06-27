@@ -12,6 +12,8 @@ struct OllamaReq {
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    options: Option<Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -127,7 +129,7 @@ pub async fn call(
     system: &str,
     tools: &[ToolDefinition],
     _max_tokens: u32,
-    _options: ProviderCallOptions,
+    options: ProviderCallOptions,
 ) -> anyhow::Result<UnifiedResponse> {
     let base = model
         .base_url
@@ -159,11 +161,16 @@ pub async fn call(
         )
     };
 
+    let ollama_opts = options
+        .temperature
+        .map(|t| json!({ "temperature": t }));
+
     let payload = OllamaReq {
         model: model.model_id.clone(),
         messages: to_ollama_msgs(messages, system),
         stream: false,
         tools: ollama_tools,
+        options: ollama_opts,
     };
 
     let mut client_builder = reqwest::Client::builder();

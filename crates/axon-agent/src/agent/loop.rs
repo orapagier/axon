@@ -630,6 +630,10 @@ pub(crate) async fn run_inner(
     // Consecutive correction counter for exponential backoff.
     #[allow(unused_assignments)]
     let mut consecutive_corrections: u32 = 0;
+    // Set after a false-refusal nudge so the *next* model call forces tool use
+    // (tool_choice=Required) rather than re-pleading in the prompt. Consumed and
+    // cleared at the top of the next iteration.
+    let mut force_tool_use_next = false;
     let final_text;
 
     'agent: loop {
@@ -871,6 +875,27 @@ pub(crate) async fn run_inner(
         let min_model_chain_secs = state.settings.get_int("agent.min_model_chain_secs", 60) as u64;
         let model_chain_secs = adaptive_chain_secs.max(min_model_chain_secs);
 
+        // Low sampling temperature reduces hallucinated tool syntax and
+        // correction oscillation. Configurable; default 0.3.
+        let temperature = state.settings.get_f64("agent.temperature", 0.3) as f32;
+        // Reasoning effort is opt-in (default off) — many free OpenAI-compat
+        // providers 400 on an unexpected field. When set, apply it only on the
+        // capable/correction phase where deeper planning actually pays off.
+        let reasoning_cfg = state.settings.get_str("agent.reasoning_effort", "");
+        let reasoning_effort = if !reasoning_cfg.is_empty() && preferred_role == "complex_tasks" {
+            Some(reasoning_cfg)
+        } else {
+            None
+        };
+        // After a false refusal, force the model to actually call a tool instead
+        // of re-pleading via prompt — but only when tools are available.
+        let tool_choice = if force_tool_use_next && !filtered.is_empty() {
+            Some(crate::providers::ToolChoice::Required)
+        } else {
+            None
+        };
+        force_tool_use_next = false;
+
         let llm_result = call_llm_with_options(
             &messages,
             &sys,
@@ -891,6 +916,9 @@ pub(crate) async fn run_inner(
                         + tokio::time::Duration::from_secs(model_chain_secs),
                 ),
                 route_seed: Some(iter_seed),
+                temperature: Some(temperature),
+                tool_choice,
+                reasoning_effort,
                 ..CallLlmOptions::default()
             },
         )
@@ -1123,6 +1151,10 @@ pub(crate) async fn run_inner(
                         }
                     });
                     messages.push(Message::user(&message));
+
+                    // A false refusal means the model has the tools but declined.
+                    // Force a real tool call on the retry instead of re-asking.
+                    force_tool_use_next = matches!(reason, RetryReason::Refusal);
 
                     // Clear sticky preference on QC/claim-guard corrections so the
                     // router can pick a fresh model. A model that produced a bad

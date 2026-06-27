@@ -348,7 +348,7 @@ impl ToolRouter {
             .replace("{msg}", msg);
 
         let t0 = std::time::Instant::now();
-        match crate::router::model_router::call_llm(
+        match crate::router::model_router::call_llm_with_options(
             &[Message::user(&prompt)],
             &sys_prompt,
             &[],
@@ -356,7 +356,12 @@ impl ToolRouter {
             "router",
             Arc::clone(&self.router),
             &self.settings,
-            None,
+            crate::router::model_router::CallLlmOptions {
+                // Tool routing is a deterministic classification — pin temp to 0
+                // for stable, reproducible selections.
+                temperature: Some(0.0),
+                ..Default::default()
+            },
         )
         .await
         {

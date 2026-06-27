@@ -8,6 +8,14 @@ pub use types::*;
 #[derive(Clone, Default)]
 pub struct ProviderCallOptions {
     pub stream_sink: Option<StreamSink>,
+    /// Sampling temperature. `None` = leave provider default. Deterministic
+    /// sub-tasks (routing, quality gate) pass `Some(0.0)`.
+    pub temperature: Option<f32>,
+    /// Force/suppress tool use. `None` = `Auto` when tools are present.
+    pub tool_choice: Option<ToolChoice>,
+    /// Reasoning effort for reasoning-capable models ("low"|"medium"|"high").
+    /// `None` = omit the field entirely (safe for non-reasoning providers).
+    pub reasoning_effort: Option<String>,
 }
 
 pub async fn call_provider(

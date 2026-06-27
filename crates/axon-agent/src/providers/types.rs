@@ -194,6 +194,18 @@ impl Message {
     }
 }
 
+/// How the model is allowed to use tools on a single call. Mapped to each
+/// provider's native wire format (`tool_choice` for OpenAI/Anthropic).
+///   - `Auto`     : model decides (default when tools are present)
+///   - `Required` : model MUST call at least one tool (used to defeat false refusals)
+///   - `None`     : model must not call a tool this turn
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolChoice {
+    Auto,
+    Required,
+    None,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelRecord {
     pub name: String,

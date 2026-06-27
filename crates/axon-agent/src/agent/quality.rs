@@ -9,7 +9,6 @@
 use once_cell::sync::Lazy;
 
 use crate::providers::types::{ContentBlock, Message, MessageContent};
-use crate::router::call_llm;
 
 /// Detects the `call:tool{args}` hallucination format some weak models emit.
 pub(crate) static RE_CALL_COLON: Lazy<regex::Regex> =
@@ -156,7 +155,7 @@ pub(crate) async fn quality_check(
         return None;
     }
 
-    match call_llm(
+    match crate::router::model_router::call_llm_with_options(
         &[Message::user(&prompt)],
         sys,
         &[],
@@ -164,7 +163,12 @@ pub(crate) async fn quality_check(
         "quality_checker",
         router,
         settings,
-        None,
+        crate::router::model_router::CallLlmOptions {
+            // The gate emits a fixed PASS / one-sentence verdict — temp 0 keeps
+            // it stable and avoids spurious flip-flopping between runs.
+            temperature: Some(0.0),
+            ..Default::default()
+        },
     )
     .await
     {

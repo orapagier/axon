@@ -51,6 +51,12 @@ pub struct CallLlmOptions {
     /// When present, replaces the shared global_index counter so routing is
     /// stateless and reproducible without mutex contention.
     pub route_seed: Option<usize>,
+    /// Sampling temperature override. `None` leaves the provider default.
+    pub temperature: Option<f32>,
+    /// Force/suppress tool use for this call (e.g. `Required` after a false refusal).
+    pub tool_choice: Option<crate::providers::ToolChoice>,
+    /// Reasoning effort for reasoning-capable models. `None` omits the field.
+    pub reasoning_effort: Option<String>,
 }
 
 fn is_request_budget_error(err: &anyhow::Error) -> bool {
@@ -797,6 +803,9 @@ async fn try_call(
             } else {
                 None
             },
+            temperature: options.temperature,
+            tool_choice: options.tool_choice,
+            reasoning_effort: options.reasoning_effort.clone(),
         };
 
         let call_result = tokio::time::timeout(
