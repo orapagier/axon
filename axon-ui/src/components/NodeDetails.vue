@@ -1678,7 +1678,7 @@ onUnmounted(() => {
                   </template>
                   <template v-else-if="prop.type === 'credential'">
                     <label class="field-label">{{ prop.displayName }}</label>
-                    <div style="display:flex; gap:8px; align-items:center;">
+                    <div style="display:flex; gap:8px; align-items:stretch;">
                       <select v-model="node.data.config[prop.name]" style="flex:1;">
                         <option value="">-- None --</option>
                         <option v-for="cred in getCredentialsForService(prop.service)" :key="cred.id" :value="cred.id">{{ cred.name }}</option>
@@ -1688,7 +1688,7 @@ onUnmounted(() => {
                         type="button"
                         :disabled="fbConnecting"
                         @click="connectFacebook"
-                        style="white-space:nowrap; padding:6px 12px; border-radius:8px; border:none; background:#1877F2; color:#fff; font-weight:600; cursor:pointer;"
+                        style="white-space:nowrap; display:flex; align-items:center; padding:0 12px; border-radius:8px; border:none; background:#1877F2; color:#fff; font-weight:600; cursor:pointer;"
                         title="Log in with Facebook and save each Page you manage as a credential"
                       >{{ fbConnecting ? 'Connecting…' : '+ Connect' }}</button>
                     </div>
