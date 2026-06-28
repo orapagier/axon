@@ -26,6 +26,38 @@ use tokio::sync::RwLock;
 const NON_AGENT_INTERNAL_TOOLS: &[&str] =
     &["telegram_trigger", "whatsapp_trigger", "telegram", "whatsapp"];
 
+/// Facebook *write* tools that perform outward-facing, public, hard-to-reverse
+/// actions (publish/edit/delete posts, reply/moderate comments, react, send DMs,
+/// edit Page settings). They are deliberately kept out of the agent's callable
+/// set so every public Page action flows through a defined, reviewable **workflow**
+/// path instead of the agent's ad-hoc discretion. The agent keeps the read tools
+/// (`fb_get_*`, `fb_list_*`, `fb_recent_comments`, `fb_*_insights`) for answering
+/// questions conversationally. These names are still served to the UI via [`all`]
+/// and dispatched by name via [`run`], so the Facebook workflow nodes are
+/// unaffected — only the agent is denied them here. Matched by name regardless of
+/// `ToolSource` (these are in-process MCP tools, not `Internal`).
+const WORKFLOW_ONLY_WRITE_TOOLS: &[&str] = &[
+    // Page
+    "fb_update_page",
+    // Posts
+    "fb_create_post",
+    "fb_create_post_with_image",
+    "fb_create_post_with_video",
+    "fb_update_post",
+    "fb_delete_post",
+    "fb_schedule_post",
+    // Comments / reactions
+    "fb_reply_to_comment",
+    "fb_delete_comment",
+    "fb_hide_comment",
+    "fb_like_object",
+    "fb_react_object",
+    "fb_unreact_object",
+    // Messenger
+    "fb_send_message",
+    "fb_send_message_image",
+];
+
 fn internal_tools() -> Vec<ToolDefinition> {
     vec![
         ToolDefinition::internal(
