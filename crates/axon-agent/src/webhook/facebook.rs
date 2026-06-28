@@ -307,28 +307,58 @@ async fn process_messaging(state: &AppState, page_id: &str, msg: &Value) {
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-    let message_text = msg
-        .get("message")
-        .and_then(|m| m.get("text"))
-        .and_then(|t| t.as_str())
-        .unwrap_or("")
-        .to_string();
-
-    if message_text.is_empty() {
+    // Classify the Messenger sub-event. Inbound text/attachments → "message";
+    // button taps → "postback"; emoji reactions → "message_reaction"; the passive
+    // receipts → "message_delivery" / "message_read". A representative text payload
+    // (message body, postback payload, reaction emoji) rides along in `message`.
+    let (event_type, message_text) = if let Some(pb) = msg.get("postback") {
+        let payload = pb
+            .get("payload")
+            .or_else(|| pb.get("title"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        ("postback", payload)
+    } else if let Some(re) = msg.get("reaction") {
+        let emoji = re
+            .get("emoji")
+            .or_else(|| re.get("reaction"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        ("message_reaction", emoji)
+    } else if msg.get("delivery").is_some() {
+        ("message_delivery", String::new())
+    } else if msg.get("read").is_some() {
+        ("message_read", String::new())
+    } else if let Some(m) = msg.get("message") {
+        // Skip echoes of the Page's own outbound messages — otherwise our own
+        // replies would re-trigger the workflow (loop).
+        if m.get("is_echo").and_then(|v| v.as_bool()).unwrap_or(false) {
+            return;
+        }
+        let text = m
+            .get("text")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .to_string();
+        ("message", text)
+    } else {
+        tracing::debug!("FB webhook: unhandled messaging event (page {})", page_id);
         return;
-    }
+    };
 
     let raw = serde_json::to_string(msg).unwrap_or_default();
 
     if let Ok(conn) = state.db.get() {
         let _ = conn.execute(
             "INSERT INTO webhook_events (source, event_type, from_name, from_id, object_id, message, raw_json, page_id)
-             VALUES ('facebook', 'message', ?1, ?2, '', ?3, ?4, ?5)",
-            rusqlite::params![sender_name, sender_id, message_text, raw, page_id],
+             VALUES ('facebook', ?1, ?2, ?3, '', ?4, ?5, ?6)",
+            rusqlite::params![event_type, sender_name, sender_id, message_text, raw, page_id],
         );
         tracing::info!(
-            "FB webhook: stored message from {} (PSID {}, page {})",
-            sender_name,
+            "FB webhook: stored {} from PSID {} (page {})",
+            event_type,
             sender_id,
             page_id
         );
@@ -337,13 +367,13 @@ async fn process_messaging(state: &AppState, page_id: &str, msg: &Value) {
     let event = json!({
         "trigger": "facebook",
         "page_id": page_id,
-        "event_type": "message",
+        "event_type": event_type,
         "from_name": sender_name,
         "from_id": sender_id,
         "recipient_id": sender_id,
         "message": message_text,
     });
-    dispatch_facebook_workflows(state, page_id, "message", event).await;
+    dispatch_facebook_workflows(state, page_id, event_type, event).await;
 }
 
 // ── Workflow dispatch (replaces the built-in auto-reply pipeline) ─────────────
