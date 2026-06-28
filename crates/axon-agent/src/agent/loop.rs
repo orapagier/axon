@@ -350,22 +350,6 @@ fn task_needs_time_context(task: &str) -> bool {
     RE_TIME_SENSITIVE_TASK.is_match(task)
 }
 
-fn content_block_char_len(block: &ContentBlock) -> usize {
-    match block {
-        ContentBlock::Text { text } => text.len(),
-        ContentBlock::ToolUse { name, input, .. } => name.len() + input.to_string().len(),
-        ContentBlock::ToolResult { content, .. } => content.len(),
-        ContentBlock::Image { data, .. } => data.len(),
-    }
-}
-
-fn message_char_len(message: &Message) -> usize {
-    match &message.content {
-        MessageContent::Text(s) => s.len(),
-        MessageContent::Blocks(blocks) => blocks.iter().map(content_block_char_len).sum(),
-    }
-}
-
 // ── Validation pipeline ──────────────────────────────────────────────────────
 
 /// Single-pass response validator. Replaces the two parallel condition trees
