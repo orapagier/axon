@@ -526,6 +526,42 @@ fn gmail_query_for_label(label: &str) -> String {
     }
 }
 
+/// Build the full Gmail search query for a trigger: the label clause plus any
+/// optional subject/body text filters. Empty filters are skipped, so the trigger
+/// fires on every new email in the label (no narrowing) — same as before these
+/// fields existed. Filters are literal plain text (a trigger's config can't take
+/// `{{ }}` expressions): the subject filter scopes to the subject line, while the
+/// body filter is a bare term and therefore matches anywhere in the message
+/// (subject or body). Multi-word input is grouped in parens, so each word must
+/// match (Gmail AND semantics) rather than only the first.
+fn gmail_trigger_query(config: &Value) -> String {
+    let label = config
+        .get("gmail_label")
+        .and_then(|v| v.as_str())
+        .unwrap_or("INBOX");
+    let mut query = gmail_query_for_label(label);
+
+    if let Some(subject) = config
+        .get("gmail_subject_query")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        query.push_str(&format!(" subject:({})", subject));
+    }
+
+    if let Some(body) = config
+        .get("gmail_body_query")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        query.push_str(&format!(" ({})", body));
+    }
+
+    query
+}
+
 pub(crate) async fn execute_gmail_trigger(
     config: &Value,
     state: &AppState,
