@@ -40,7 +40,8 @@ pub struct FileHandler {
 
 impl FileHandler {
     pub fn new(db: Arc<Pool<SqliteConnectionManager>>) -> anyhow::Result<Self> {
-        let dir = PathBuf::from("data/files");
+        // Shared resolver so the agent and every node read/write the same dir.
+        let dir = axon_core::data_files_dir();
         std::fs::create_dir_all(&dir)?;
         Ok(FileHandler {
             incoming_dir: dir.clone(),
