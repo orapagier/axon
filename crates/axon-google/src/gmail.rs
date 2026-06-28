@@ -1456,7 +1456,8 @@ pub async fn download_all_attachments(state: &AppState, message_id: &str) -> Res
                 Ok(b) => b,
                 Err(_) => continue,
             };
-            let path = unique_path(&download_dir, &sanitize_filename(filename));
+            // Overwrite same-named attachments so only the newest copy is kept.
+            let path = download_dir.join(sanitize_filename(filename));
             if std::fs::write(&path, &bytes).is_err() {
                 continue;
             }
