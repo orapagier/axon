@@ -378,7 +378,7 @@ pub async fn download_binary(state: &AppState, file_id: &str) -> Result<Value> {
 
     let download_dir = std::path::PathBuf::from("/data/files");
     std::fs::create_dir_all(&download_dir)?;
-    let path = download_dir.join(&export_name);
+    let path = axon_core::resolve_dedup_path(&download_dir, &export_name, bytes.len() as u64);
     std::fs::write(&path, &bytes)?;
     Ok(json!({
         "name": export_name,
@@ -426,7 +426,7 @@ pub async fn export(state: &AppState, file_id: &str, mime_type: &str) -> Result<
     let export_name = format!("{name}.{ext}");
     let download_dir = std::path::PathBuf::from("/data/files");
     std::fs::create_dir_all(&download_dir)?;
-    let path = download_dir.join(&export_name);
+    let path = axon_core::resolve_dedup_path(&download_dir, &export_name, bytes.len() as u64);
     std::fs::write(&path, &bytes)?;
 
     Ok(json!({
