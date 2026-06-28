@@ -176,22 +176,6 @@ impl RouterState {
     }
 }
 
-/// Rate-limit headroom score for a single model.
-/// Higher = more remaining capacity = should be tried first within a tier.
-fn rl_headroom(m: &ModelRecord) -> u64 {
-    let snap = &m.rl_snapshot;
-    // Use per-minute remaining if available, else fall back to absolute remaining.
-    let req = snap
-        .req_remaining_per_min
-        .or(snap.req_remaining)
-        .unwrap_or(u64::MAX);
-    let tok = snap
-        .tokens_remaining_per_min
-        .or(snap.tokens_remaining)
-        .unwrap_or(u64::MAX);
-    req.min(tok)
-}
-
 /// Build a priority-ordered model sequence for a pool, applying round-robin
 /// *within* each priority tier across concurrent calls.
 ///
@@ -199,9 +183,10 @@ fn rl_headroom(m: &ModelRecord) -> u64 {
 /// so distribution is across calls rather than within a single call. Within a
 /// single call all models at the same priority level are tried in offset order.
 ///
-/// Within each priority tier, bucket ordering is biased by rate-limit headroom:
-/// models with more remaining capacity are tried first, steering traffic away
-/// from nearly-exhausted endpoints before they 429.
+/// Within a tier there is no rate-limit-headroom steering: buckets keep their
+/// natural order and the `start` offset gives a fair round-robin / pseudo-random
+/// pick across calls. Models are only ever skipped when actually unavailable
+/// (`is_available()` is false), never demoted for being "close" to a limit.
 fn build_priority_order(models: &[ModelRecord], pool: &[usize], start: usize) -> Vec<usize> {
     let mut tiers: std::collections::BTreeMap<i32, Vec<usize>> = std::collections::BTreeMap::new();
     for &mi in pool {
@@ -225,36 +210,10 @@ fn build_priority_order(models: &[ModelRecord], pool: &[usize], start: usize) ->
             buckets.entry(key).or_default().push(mi);
         }
 
-        // Conservative rate-limit demotion: only push models that are
-        // CRITICALLY exhausted (≤ 2 remaining requests or tokens) to the
-        // back of the tier. All other models — including those with no
-        // snapshot data — keep their natural BTreeMap key order, which
-        // preserves the original round-robin distribution.
-        //
-        // Why not sort by headroom descending? Because models with no
-        // snapshot data get u64::MAX, which pushes recently-successful
-        // models (with real, lower headroom) behind untried models that
-        // may be broken or slow — causing cascading timeouts.
-        const CRITICAL_HEADROOM: u64 = 2;
-        let mut bucket_keys = buckets.keys().cloned().collect::<Vec<_>>();
-        bucket_keys.sort_by(|a, b| {
-            let ha = buckets[a]
-                .iter()
-                .map(|&mi| rl_headroom(&models[mi]))
-                .max()
-                .unwrap_or(u64::MAX);
-            let hb = buckets[b]
-                .iter()
-                .map(|&mi| rl_headroom(&models[mi]))
-                .max()
-                .unwrap_or(u64::MAX);
-            // A snapshot-less model gets u64::MAX headroom, so `<= CRITICAL_HEADROOM`
-            // already treats it as non-critical — no extra `< u64::MAX` guard needed.
-            let a_critical = ha <= CRITICAL_HEADROOM;
-            let b_critical = hb <= CRITICAL_HEADROOM;
-            // Only reorder: non-critical before critical. Otherwise stable.
-            a_critical.cmp(&b_critical)
-        });
+        // Keep buckets in their natural (provider, base_url, model_id) order;
+        // the `start` offset below rotates the starting bucket per call so the
+        // pick is fairly distributed across calls. No headroom-based reordering.
+        let bucket_keys = buckets.keys().cloned().collect::<Vec<_>>();
         let bucket_count = bucket_keys.len();
         if bucket_count == 0 {
             continue;
@@ -284,26 +243,6 @@ fn build_priority_order(models: &[ModelRecord], pool: &[usize], start: usize) ->
         }
     }
     order
-}
-
-fn content_block_len(block: &ContentBlock) -> usize {
-    match block {
-        ContentBlock::Text { text } => text.len(),
-        ContentBlock::ToolUse { name, input, .. } => name.len() + input.to_string().len(),
-        ContentBlock::ToolResult { content, .. } => content.len(),
-        ContentBlock::Image { data, .. } => data.len(),
-    }
-}
-
-fn message_len(message: &Message) -> usize {
-    match &message.content {
-        MessageContent::Text(s) => s.len(),
-        MessageContent::Blocks(blocks) => blocks.iter().map(content_block_len).sum(),
-    }
-}
-
-fn estimate_prompt_chars(messages: &[Message], system: &str) -> usize {
-    system.len() + messages.iter().map(message_len).sum::<usize>()
 }
 
 tokio::task_local! {

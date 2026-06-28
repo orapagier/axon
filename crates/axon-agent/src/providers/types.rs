@@ -629,36 +629,42 @@ mod tests {
     #[test]
     fn cooldown_honors_window_and_explicit_reset() {
         let until_midnight = 5 * 3600;
-        // Per-minute with explicit 30s reset → ~30s, not minutes.
+        // Per-minute with explicit 30s reset → ~30s (+3s buffer), honored over the flat default.
         let h = RateLimitHint {
             window: RateLimitWindow::PerMinute,
             explicit_secs: Some(30),
         };
-        assert_eq!(rate_limit_cooldown_secs(&h, 1, 1, 60, until_midnight), 33);
+        assert_eq!(rate_limit_cooldown_secs(&h, until_midnight), 33);
+        // Per-minute with no reset info → flat 60s, no exponential escalation.
+        let h = RateLimitHint {
+            window: RateLimitWindow::PerMinute,
+            explicit_secs: None,
+        };
+        assert_eq!(rate_limit_cooldown_secs(&h, until_midnight), 60);
+        // Hourly with no reset info → a flat 60 minutes.
+        let h = RateLimitHint {
+            window: RateLimitWindow::Hourly,
+            explicit_secs: None,
+        };
+        assert_eq!(rate_limit_cooldown_secs(&h, until_midnight), 3600);
         // Daily with no explicit reset → wait until UTC midnight (>= 1h).
         let h = RateLimitHint {
             window: RateLimitWindow::Daily,
             explicit_secs: None,
         };
-        assert_eq!(
-            rate_limit_cooldown_secs(&h, 1, 1, 60, until_midnight),
-            until_midnight
-        );
+        assert_eq!(rate_limit_cooldown_secs(&h, until_midnight), until_midnight);
         // Daily ignores a bogus short "retry in 30s" and still parks for hours.
         let h = RateLimitHint {
             window: RateLimitWindow::Daily,
             explicit_secs: Some(30),
         };
-        assert_eq!(
-            rate_limit_cooldown_secs(&h, 1, 1, 60, until_midnight),
-            until_midnight
-        );
-        // Unknown with no reset info → exponential backoff in seconds.
+        assert_eq!(rate_limit_cooldown_secs(&h, until_midnight), until_midnight);
+        // Unknown with no reset info → treated like per-minute (flat 60s).
         let h = RateLimitHint {
             window: RateLimitWindow::Unknown,
             explicit_secs: None,
         };
-        assert_eq!(rate_limit_cooldown_secs(&h, 3, 1, 60, until_midnight), 4 * 60);
+        assert_eq!(rate_limit_cooldown_secs(&h, until_midnight), 60);
     }
 
     #[test]
