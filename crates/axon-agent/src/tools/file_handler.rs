@@ -147,10 +147,13 @@ impl FileHandler {
         } else {
             safe
         };
-        let dest = self.incoming_dir.join(&staged_name);
-
-        // Overwrite any existing file with the same name so only the newest
-        // copy is kept on disk.
+        // A same-name/same-size file is overwritten (assumed identical); a
+        // same-name file of a different size is kept under a numbered variant.
+        let dest = axon_core::resolve_dedup_path(
+            &self.incoming_dir,
+            &staged_name,
+            file.bytes.len() as u64,
+        );
         tokio::fs::write(&dest, &file.bytes)
             .await
             .context("write incoming file")?;
