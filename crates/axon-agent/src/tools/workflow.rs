@@ -3305,7 +3305,7 @@ async fn check_and_trigger_gmail(
         })
         .unwrap_or(10);
 
-    let query = gmail_query_for_label(label);
+    let query = gmail_trigger_query(trigger_config);
     let args = json!({
         "query": query,
         "max_results": max_results,
