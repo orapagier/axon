@@ -910,7 +910,7 @@ async fn call_action(
         let filename = opt_string_arg(args, "download_filename")
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| format!("{}_download.bin", spec.tool));
-        let download_dir = data_files_dir();
+        let download_dir = axon_core::data_files_dir();
         tokio::fs::create_dir_all(&download_dir).await?;
         let path = download_dir.join(&filename);
         let bytes = response.bytes().await?;
