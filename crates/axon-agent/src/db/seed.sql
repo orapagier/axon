@@ -9,13 +9,10 @@ INSERT OR IGNORE INTO settings VALUES
     ('agent.tool_timeout_secs',     '30',    'int',    'Python tool subprocess timeout seconds',         'agent',     datetime('now')),
     ('agent.allow_tool_writing',    'true',  'bool',   'Allow agent to write temporary tools',           'agent',     datetime('now')),
     ('agent.temp_tool_max_retries', '2',     'int',    'Retries for agent-written tools',               'agent',     datetime('now')),
-    ('agent.request_timeout_secs',  '45',    'int',    'Total wall-clock budget in seconds for one agent run', 'agent', datetime('now')),
     ('agent.stream_model_tokens',   'false', 'bool',   'Reserved switch for provider token streaming; disabled by default', 'agent', datetime('now')),
     ('agent.quality_check',         'true',  'bool',   'Run quality check on responses that used tools (requires quality_checker model role)', 'agent', datetime('now')),
-    ('router.rate_limit_cooldown',  '1',     'int',    'Base minutes before retrying a rate-limited model (first 429)',  'router',    datetime('now')),
-    ('router.rate_limit_max_cooldown','60',  'int',    'Max minutes a repeatedly rate-limited model stays quarantined (exponential-backoff cap)', 'router', datetime('now')),
-    ('router.error_threshold',      '3',     'int',    'Errors before marking a model unavailable',     'router',    datetime('now')),
-    ('router.model_call_timeout_secs','20',  'int',    'Default per-call model timeout in seconds when a model-specific timeout is not set', 'router', datetime('now')),
+    ('router.error_threshold',      '2',     'int',    'Consecutive non-rate-limit errors before parking a model until midnight', 'router', datetime('now')),
+    ('router.model_call_timeout_secs','30',  'int',    'Flat per-attempt model timeout in seconds (overridable per model); on timeout the router fails over immediately', 'router', datetime('now')),
     ('memory.short_term_max_msgs',  '50',    'int',    'Max messages kept per session',                 'memory',    datetime('now')),
     ('memory.long_term_top_k',      '5',     'int',    'Memories injected per agent call',              'memory',    datetime('now')),
     ('scheduler.max_jobs',          '100',   'int',    'Maximum active scheduled jobs',                 'scheduler', datetime('now')),
@@ -41,15 +38,9 @@ INSERT OR IGNORE INTO settings VALUES
      'You are Axon, a capable AI agent. Always provide responses in plain text only, no Markdown formatting (no asterisks, no bolding, no code blocks unless essential for data). Complete tasks efficiently using available tools. If a tool is missing and tool writing is enabled, write one. If a task needs follow-up later, schedule it.',
      'string', 'Agent system prompt', 'agent', datetime('now'));
 
--- Quality-check scoping + adaptive router timeouts.
+-- Quality-check scoping.
 INSERT OR IGNORE INTO settings VALUES
-    ('agent.quality_check_mode',    'mutating', 'string', 'When to spend an LLM quality check: all (every tool-backed answer), mutating (only state-changing actions, false refusals, or blank/fake-success responses), off', 'agent', datetime('now')),
-    ('agent.request_timeout_max_secs', '120', 'int', 'Hard cap for adaptive per-LLM fallback-chain timeout in seconds', 'agent', datetime('now')),
-    ('agent.min_model_chain_secs',  '60',  'int', 'Guaranteed minimum per-call budget in seconds to prevent starving slow models late in a run', 'agent', datetime('now')),
-    ('router.model_call_timeout_min_secs', '10', 'int', 'Minimum per-attempt timeout in seconds used by adaptive model timeout logic', 'router', datetime('now')),
-    ('router.model_call_timeout_max_secs', '90', 'int', 'Maximum per-attempt timeout in seconds used by adaptive model timeout logic', 'router', datetime('now')),
-    ('router.model_call_timeout_per_1k_chars_secs', '3', 'int', 'Extra timeout seconds added per 1k prompt characters for adaptive model timeout', 'router', datetime('now')),
-    ('router.model_call_timeout_fair_share_grace_secs', '4', 'int', 'Extra seconds above fair-share budget for each model attempt during fallback routing', 'router', datetime('now'));
+    ('agent.quality_check_mode',    'mutating', 'string', 'When to spend an LLM quality check: all (every tool-backed answer), mutating (only state-changing actions, false refusals, or blank/fake-success responses), off', 'agent', datetime('now'));
 
 -- Watcher / Smart Notifications.
 INSERT OR IGNORE INTO settings VALUES

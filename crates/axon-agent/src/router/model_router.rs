@@ -875,10 +875,9 @@ pub async fn get_status(router: &SharedRouter) -> Vec<serde_json::Value> {
             m.status = "available".into();
             m.rate_limit_reset_at = None;
             m.consecutive_errors = 0;
-            // NOTE: deliberately do NOT reset consecutive_rate_limits here.
-            // It must persist across cooldown expiries so the exponential
-            // backoff keeps escalating for a model stuck on a daily quota;
-            // only a genuine success (mark_success) clears it.
+            // Leave consecutive_rate_limits as-is: it's telemetry-only now (cooldowns
+            // are window-based, not escalated by it) and is most useful kept until a
+            // genuine success (mark_success) confirms the model actually recovered.
         }
     }
 

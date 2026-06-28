@@ -104,15 +104,6 @@ impl RuntimeSettings {
     pub fn temp_tool_max_retries(&self) -> u32 {
         self.get_int("agent.temp_tool_max_retries", 2) as u32
     }
-    pub fn request_timeout_secs(&self) -> u64 {
-        self.get_int("agent.request_timeout_secs", 45) as u64
-    }
-    pub fn request_timeout_max_secs(&self) -> u64 {
-        self.get_int("agent.request_timeout_max_secs", 120) as u64
-    }
-    pub fn min_model_chain_secs(&self) -> u64 {
-        self.get_int("agent.min_model_chain_secs", 60) as u64
-    }
     pub fn stream_model_tokens(&self) -> bool {
         self.get_bool("agent.stream_model_tokens", false)
     }
@@ -147,15 +138,6 @@ RESPONSE RULES:
 4. If a tool call fails, report the failure honestly. Do not make up results.
 5. If the user corrects you (e.g., 'no, I said mscal'), immediately call the CORRECT tool. Do not restate previous wrong results.
 6. CRITICAL: You MUST use the native JSON tool calling mechanism provided by the API. DO NOT output raw XML `<tool_call>` tags in your message body.")
-    }
-    pub fn rate_limit_cooldown(&self) -> i64 {
-        self.get_int("router.rate_limit_cooldown", 2)
-    }
-    /// Deprecated: rate-limit cooldowns are now window-based (per-minute/hour/day),
-    /// not an exponential backoff, so this cap is no longer consulted. Kept so the
-    /// existing seeded setting doesn't error; safe to remove later.
-    pub fn rate_limit_max_cooldown(&self) -> i64 {
-        self.get_int("router.rate_limit_max_cooldown", 60)
     }
     /// Consecutive non-rate-limit errors before a model is parked until the next
     /// midnight. Default 2 — one transient blip is tolerated, a genuinely broken

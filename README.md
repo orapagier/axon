@@ -214,10 +214,10 @@ enabled     = true                    # optional (defaults to true)
 Most behavior is tunable live via the **Settings** page (stored in the `settings` table). Notable keys and their defaults:
 
 - `agent.max_iterations` (`20`), `agent.max_parallel_tools` (`5`), `agent.tool_timeout_secs` (`30`)
-- `agent.request_timeout_secs` (`45`), `agent.request_timeout_max_secs` (`120`), `agent.run_timeout_secs` (`300`)
+- `agent.run_timeout_secs` (`300`) — total wall-clock budget for one run; the model-failover chain is bounded only by this.
 - `agent.quality_check` (`true`), `agent.allow_tool_writing` (`true`)
 - `agent.system_prompt` — the master system prompt (editable live).
-- `router.rate_limit_cooldown` (base minutes), `router.rate_limit_max_cooldown` (`60`, backoff cap), `router.error_threshold` (`3`), `router.model_call_timeout_secs` (`20`).
+- `router.error_threshold` (`2`, consecutive errors before a model is parked until midnight), `router.model_call_timeout_secs` (`30`, flat per-attempt timeout; overridable per model).
 - `memory.short_term_max_msgs` (`50`), `memory.long_term_top_k` (`5`).
 - `websearch.enabled`, `websearch.max_results`.
 - `watcher.user_name`, `watcher.user_title`, `watcher.quiet_hours_*`.
@@ -233,7 +233,7 @@ What happens on each request:
 1. **Context build** — loads short-term history for the session, searches long-term memory and recent tool observations (skipped for pure greetings), and routes an initial tool set.
 2. **Iterate** (bounded by `agent.max_iterations` and `agent.run_timeout_secs`):
    - Pick a model by role/priority (see [Model Router](#-the-model-router)), with **sticky routing** (stays on the model that worked last turn to avoid tool-format drift).
-   - Call the LLM with the filtered tool set and an adaptive timeout.
+   - Call the LLM with the filtered tool set and a flat per-attempt timeout.
    - If the model emits tool calls, execute them (up to `agent.max_parallel_tools` in parallel) and feed results back.
    - If the model answers, run the **validation pipeline**.
 3. **Validation pipeline** (cheapest checks first):
@@ -247,15 +247,15 @@ What happens on each request:
 
 ## 🔀 The Model Router
 
-- **Priority tiers:** models are grouped by `priority` (lower = higher). Within a tier, traffic is round-robined across distinct provider/model endpoints, biased away from endpoints critically close to their rate limit.
-- **Fallback order per request:** preferred model (if the caller picked one) → sticky model → role pool → general pool → a sweep over any remaining free model → `paid_model` last.
-- **Rate-limit quarantine:** a `429`/quota error puts the model on a cooldown and routing falls through to the next option without dropping the request. The cooldown is **inferred from what the provider tells us** — a `Retry-After` header, Gemini's `retryDelay`, or an inline "try again in …" — and from the limit window named in the error:
-  - *per-minute* limit → wait the provider's reset (≈ seconds),
-  - *daily* quota exhausted → parked until the window resets (provider reset if given, else next UTC midnight, 1h–24h), so a daily-capped model is retried a couple of times a day, not ~20×,
-  - *unknown* limit with no reset info → **exponential backoff** (`router.rate_limit_cooldown` → doubling → `router.rate_limit_max_cooldown`).
+- **Priority tiers:** models are grouped by `priority` (lower = higher). Within a tier the pick is a fair round-robin / pseudo-random rotation across distinct provider/model endpoints — no rate-limit-headroom steering; a model is only ever skipped when it's actually unavailable.
+- **Fallback order per request:** preferred model (if the caller picked one) → sticky model → role pool → general pool → a sweep over any remaining free model → `paid_model` last. Failover is **immediate** — on an error, 429, or per-attempt timeout the router moves straight to the next available model with no wait.
+- **Rate-limit quarantine:** a `429`/quota error parks the model for a window-based cooldown and routing falls through to the next option without dropping the request. An explicit provider reset always wins when given (a `Retry-After` header, Gemini's `retryDelay`, or an inline "try again in …"); otherwise a flat default per window:
+  - *per-minute* limit → 60 s,
+  - *per-hour* limit → 60 min,
+  - *daily* quota exhausted → until the window resets (provider reset if given, else next UTC midnight).
 
-  A successful call resets the backoff; cooldowns auto-expire.
-- **Adaptive timeouts:** per-call timeouts scale with prompt size (min/max bounds, per-1k-chars, fair-share grace) instead of a flat ceiling.
+  A non-rate-limit error parks the model until midnight after `router.error_threshold` consecutive failures. A successful call reinstates the model immediately; cooldowns otherwise auto-expire.
+- **Flat per-attempt timeout:** each call gets `router.model_call_timeout_secs` (default 30 s, overridable per model), bounded only by the overall run deadline — no adaptive/fair-share math.
 - **Alerts:** rate-limit, timeout, and "paid fallback used" events are collected per run and surfaced to the operator (dashboard + messaging notifications).
 
 Supported providers: **Google Gemini, Anthropic, Groq, Cerebras, NVIDIA, OpenRouter, OpenAI / OpenAI-compatible, Ollama.**

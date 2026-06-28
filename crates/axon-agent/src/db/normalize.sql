@@ -26,10 +26,6 @@ UPDATE settings
  WHERE key = 'agent.system_prompt'
    AND value LIKE '%or XML tags like <tool_call> in your message body%';
 
--- Lower the old 60-minute rate-limit cooldown default to 1 minute.
-UPDATE settings SET value = '1'
- WHERE key = 'router.rate_limit_cooldown' AND value = '60';
-
 -- Fix the old quiet-hours-end default (07:00 -> 04:00).
 UPDATE settings SET value = '04:00'
  WHERE key = 'watcher.quiet_hours_end' AND value = '07:00';
@@ -38,3 +34,28 @@ UPDATE settings SET value = '04:00'
 -- so existing installs also benefit from the small/shared-core default.
 UPDATE settings SET value = '3'
  WHERE key = 'agent.max_parallel_tools' AND value = '5';
+
+-- Router latency rework (flat per-window rate-limit cooldowns + flat per-attempt
+-- timeout, no adaptive/fair-share math or exponential backoff).
+-- Bump the flat per-model call timeout from the old 20s default to 30s, and park
+-- a model after 2 consecutive errors instead of 3 — only on hosts still on the
+-- old defaults (operator-customized values are left untouched).
+UPDATE settings SET value = '30'
+ WHERE key = 'router.model_call_timeout_secs' AND value = '20';
+UPDATE settings SET value = '2'
+ WHERE key = 'router.error_threshold' AND value = '3';
+
+-- Drop settings made defunct by the rework: the adaptive/fair-share timeout knobs,
+-- the exponential-backoff cap, and the per-iteration chain budget are no longer
+-- read (the per-iteration deadline is now just the run deadline). Harmless if absent.
+DELETE FROM settings WHERE key IN (
+    'router.model_call_timeout_min_secs',
+    'router.model_call_timeout_max_secs',
+    'router.model_call_timeout_per_1k_chars_secs',
+    'router.model_call_timeout_fair_share_grace_secs',
+    'router.rate_limit_max_cooldown',
+    'router.rate_limit_cooldown',
+    'agent.min_model_chain_secs',
+    'agent.request_timeout_secs',
+    'agent.request_timeout_max_secs'
+);
