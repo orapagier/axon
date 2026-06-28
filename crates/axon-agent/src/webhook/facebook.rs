@@ -166,7 +166,7 @@ pub async fn fb_event(
     StatusCode::OK
 }
 
-// ── Process a feed change (comment, post, reaction) ──────────────────────────
+// ── Process a feed change (comment, post, reaction, mention, rating, …) ───────
 
 async fn process_change(state: &AppState, page_id: &str, change: &Value) {
     let field = change.get("field").and_then(|f| f.as_str()).unwrap_or("");
@@ -178,11 +178,22 @@ async fn process_change(state: &AppState, page_id: &str, change: &Value) {
     let item = value.get("item").and_then(|i| i.as_str()).unwrap_or("");
     let verb = value.get("verb").and_then(|v| v.as_str()).unwrap_or("");
 
+    // Map Meta's webhook (field, item) onto our flat event_type vocabulary. The
+    // `feed` field carries most Page activity (split by `item`); `mention` and
+    // `ratings` are separate subscription fields. Anything we don't recognise is
+    // logged and dropped so an unexpected payload can't fire a workflow.
     let event_type = match (field, item) {
         ("feed", "comment") => "comment",
         ("feed", "post") => "post",
+        ("feed", "status") => "status",
+        ("feed", "photo") => "photo",
+        ("feed", "video") => "video",
+        ("feed", "album") => "album",
         ("feed", "reaction") => "reaction",
+        ("feed", "like") => "like",
         ("feed", "share") => "share",
+        ("mention", _) => "mention",
+        ("ratings", _) => "rating",
         _ => {
             tracing::debug!("FB webhook: unhandled field={}, item={}", field, item);
             return;
