@@ -24,6 +24,8 @@ impl FacebookService {
             Tool { name: "facebook_auth_url".into(),           description: "Get the Facebook OAuth URL. Open it in a browser to grant Page access.".into(),       input_schema: schema!({}, []) },
             Tool { name: "facebook_instagram_auth_url".into(), description: "Get the Instagram OAuth URL. Open it in a browser to grant Instagram access.".into(),       input_schema: schema!({}, []) },
             Tool { name: "facebook_exchange_code".into(),      description: "Exchange Facebook/Instagram OAuth code for a long-lived token.".into(),                    input_schema: schema!({"code":{"type":"string"},"service":{"type":"string"}}, ["code"]) },
+            Tool { name: "facebook_connect_url".into(),        description: "Get the OAuth URL for connecting a Page as a reusable credential (multi-account).".into(),    input_schema: schema!({}, []) },
+            Tool { name: "facebook_exchange_code_pages".into(),description: "Exchange an OAuth code for the list of Pages the user manages, each with its own Page token.".into(), input_schema: schema!({"code":{"type":"string"}}, ["code"]) },
             Tool { name: "facebook_auth_status".into(),        description: "Check Facebook and Instagram authentication status.".into(),                                        input_schema: schema!({}, []) },
             Tool { name: "facebook_revoke".into(),        description: "Delete stored Facebook and Instagram tokens.".into(),                                input_schema: schema!({}, []) },
             Tool { name: "facebook_debug_token".into(),   description: "Inspect the current token (expiry, scopes, app_id).".into(),                 input_schema: schema!({}, []) },
@@ -83,6 +85,8 @@ impl FacebookService {
                 )
                 .await
             }
+            "facebook_connect_url" => auth::connect_url(&self.0).await,
+            "facebook_exchange_code_pages" => auth::exchange_code_pages(&self.0, s("code")?).await,
             "facebook_auth_status" => auth::auth_status(&self.0).await,
             "facebook_revoke" => auth::revoke(&self.0).await,
             "facebook_debug_token" => auth::debug_token(&self.0).await,

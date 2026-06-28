@@ -34,9 +34,12 @@ pub(crate) async fn execute(
         }
     } else if config.get("type").and_then(|v| v.as_str()) == Some("webhook")
         || config.get("type").and_then(|v| v.as_str()) == Some("github")
+        || config.get("type").and_then(|v| v.as_str()) == Some("facebook")
     {
-        // GitHub deliveries share the external-trigger map (keyed by workflow_id);
-        // the payload here is the enriched {event, action, delivery, payload}.
+        // GitHub deliveries and Facebook webhook events share the external-trigger
+        // map (keyed by workflow_id). For Facebook the payload is the event object
+        // {event_type, from_name, from_id, message, object_id, page_id, ...} pushed
+        // by `webhook::facebook::fb_event`.
         let mut data = EXTERNAL_TRIGGER_DATA.lock().await;
         if let Some(val) = data.remove(workflow_id) {
             Ok(val)

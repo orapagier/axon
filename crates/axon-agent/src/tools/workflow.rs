@@ -1722,6 +1722,7 @@ async fn execute_node_by_type(
         "discord" => nodes::discord::execute(config).await,
         "slack" => nodes::slack::execute(config).await,
         "github" => nodes::github::execute(config).await,
+        "facebook" => nodes::facebook::execute(config).await,
         "shell" => nodes::shell::execute(config).await,
         "javascript" => {
             // Sort by position for deterministic $results[N] ordering.

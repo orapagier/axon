@@ -47,6 +47,123 @@ pub async fn auth_url(state: &AppState) -> Result<Value> {
     }))
 }
 
+/// OAuth URL for the "Connect a Page as a credential" flow (the Facebook node's
+/// Connect button). Identical to `auth_url` but carries `state=fbcred` so the
+/// callback saves every Page the user manages as its own credential instead of
+/// overwriting the global Page token.
+pub async fn connect_url(state: &AppState) -> Result<Value> {
+    let storage = state.storage.read().await;
+    let creds = storage.facebook_creds()?;
+    let scope = FB_SCOPES.join(",");
+    let redir = oauth::callback_uri("facebook");
+
+    let url = format!(
+        "https://www.facebook.com/v25.0/dialog/oauth?\
+         client_id={}&redirect_uri={}&scope={}&response_type=code&state=fbcred",
+        urlenc(&creds.app_id),
+        urlenc(&redir),
+        urlenc(&scope),
+    );
+    Ok(json!({
+        "url": url,
+        "instructions": format!("Open in browser, log in, then each Page you manage is saved as a credential via: {redir}")
+    }))
+}
+
+/// Exchange an OAuth `code` for the list of Pages the authenticated user
+/// manages, each with its own permanent Page access token. Used by the
+/// "Connect a Page" flow to create one credential per Page.
+///
+/// Returns `{ pages: [ { page_id, page_name, page_access_token, instagram_id } ] }`.
+pub async fn exchange_code_pages(state: &AppState, code: &str) -> Result<Value> {
+    let (app_id, app_secret) = {
+        let s = state.storage.read().await;
+        let c = s.facebook_creds()?;
+        (c.app_id.clone(), c.app_secret.clone())
+    };
+    let redir = oauth::callback_uri("facebook");
+
+    // Step 1 — short-lived user token
+    let resp = state
+        .client
+        .get(format!("{FB_API}/oauth/access_token"))
+        .query(&[
+            ("client_id", &app_id),
+            ("client_secret", &app_secret),
+            ("redirect_uri", &redir),
+            ("code", &code.to_owned()),
+        ])
+        .send()
+        .await?;
+    let short: Value = ensure_ok(resp).await?.json().await?;
+    let short_token = short["access_token"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("No access_token in short-lived response: {short}"))?;
+
+    // Step 2 — long-lived user token (~60 days)
+    let resp = state
+        .client
+        .get(format!("{FB_API}/oauth/access_token"))
+        .query(&[
+            ("grant_type", "fb_exchange_token"),
+            ("client_id", &app_id),
+            ("client_secret", &app_secret),
+            ("fb_exchange_token", short_token),
+        ])
+        .send()
+        .await?;
+    let long: Value = ensure_ok(resp).await?.json().await?;
+    let long_token = long["access_token"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("No access_token in long-lived response: {long}"))?;
+
+    // Step 3 — list every Page the user manages, each with a permanent page token
+    let resp = state
+        .client
+        .get(format!("{FB_API}/me/accounts"))
+        .query(&[
+            ("fields", "id,name,access_token,instagram_business_account"),
+            ("limit", "100"),
+            ("access_token", long_token),
+        ])
+        .send()
+        .await?;
+    let accounts: Value = ensure_ok(resp).await?.json().await?;
+
+    let pages: Vec<Value> = accounts
+        .get("data")
+        .and_then(|d| d.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|p| {
+                    let page_id = p.get("id").and_then(|v| v.as_str())?;
+                    let token = p.get("access_token").and_then(|v| v.as_str())?;
+                    let name = p.get("name").and_then(|v| v.as_str()).unwrap_or(page_id);
+                    let ig_id = p
+                        .get("instagram_business_account")
+                        .and_then(|i| i.get("id"))
+                        .and_then(|v| v.as_str());
+                    Some(json!({
+                        "page_id": page_id,
+                        "page_name": name,
+                        "page_access_token": token,
+                        "instagram_id": ig_id,
+                    }))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if pages.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No Pages found for this account. Make sure you granted the pages_show_list \
+             permission and that you are an admin of at least one Page."
+        ));
+    }
+
+    Ok(json!({ "pages": pages }))
+}
+
 pub async fn instagram_auth_url(state: &AppState) -> Result<Value> {
     let storage = state.storage.read().await;
     let creds = storage.facebook_creds()?;

@@ -24,6 +24,10 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/api/integrations/status", get(api::get_auth_status))
         .route(
+            "/api/facebook/connect-url",
+            get(api::get_facebook_connect_url),
+        )
+        .route(
             "/api/integrations/:platform/url",
             axum::routing::post(api::get_auth_url),
         )

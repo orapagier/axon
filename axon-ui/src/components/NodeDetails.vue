@@ -52,12 +52,7 @@ onMounted(async () => {
       if (parsed.right) panelWidths.value.right = parsed.right
     } catch (e) {}
   }
-  try {
-    const data = await get('/credentials')
-    credentials.value = data.credentials || []
-  } catch (e) {
-    console.error('Failed to load credentials', e)
-  }
+  await loadCredentials()
   // Fetch available models for Axon node dropdown
   try {
     const mData = await get('/models')
@@ -91,6 +86,45 @@ onMounted(async () => {
 function getCredentialsForService(service) {
   if (!credentials.value || !service) return []
   return credentials.value.filter(c => c.service && c.service.toLowerCase() === service.toLowerCase())
+}
+
+async function loadCredentials() {
+  try {
+    const data = await get('/credentials')
+    credentials.value = data.credentials || []
+  } catch (e) {
+    console.error('Failed to load credentials', e)
+  }
+}
+
+// Facebook "Connect a Page" — opens the OAuth popup; its callback saves one
+// credential per managed Page. We poll /credentials so newly-connected Pages
+// appear in the dropdown without a manual refresh.
+const fbConnecting = ref(false)
+async function connectFacebook() {
+  try {
+    const r = await get('/facebook/connect-url')
+    if (!r.url) { toast(r.error || 'Could not get Facebook connect URL', false); return }
+    const popup = window.open(r.url, '_blank', 'width=600,height=720')
+    fbConnecting.value = true
+    toast('Complete the Facebook login in the popup…')
+    const before = getCredentialsForService('facebook').length
+    let tries = 0
+    const timer = setInterval(async () => {
+      tries++
+      await loadCredentials()
+      const now = getCredentialsForService('facebook').length
+      if (now > before) {
+        toast(`Connected ${now - before} Page account(s)`)
+        clearInterval(timer); fbConnecting.value = false
+      } else if (tries >= 60 || (popup && popup.closed && tries > 2)) {
+        clearInterval(timer); fbConnecting.value = false
+      }
+    }, 2000)
+  } catch (e) {
+    fbConnecting.value = false
+    toast('Facebook connect failed: ' + e, false)
+  }
 }
 
 function getOptionDescription(prop, value) {
@@ -1644,10 +1678,20 @@ onUnmounted(() => {
                   </template>
                   <template v-else-if="prop.type === 'credential'">
                     <label class="field-label">{{ prop.displayName }}</label>
-                    <select v-model="node.data.config[prop.name]">
-                      <option value="">-- None --</option>
-                      <option v-for="cred in getCredentialsForService(prop.service)" :key="cred.id" :value="cred.id">{{ cred.name }}</option>
-                    </select>
+                    <div style="display:flex; gap:8px; align-items:center;">
+                      <select v-model="node.data.config[prop.name]" style="flex:1;">
+                        <option value="">-- None --</option>
+                        <option v-for="cred in getCredentialsForService(prop.service)" :key="cred.id" :value="cred.id">{{ cred.name }}</option>
+                      </select>
+                      <button
+                        v-if="prop.service === 'facebook'"
+                        type="button"
+                        :disabled="fbConnecting"
+                        @click="connectFacebook"
+                        style="white-space:nowrap; padding:6px 12px; border-radius:8px; border:none; background:#1877F2; color:#fff; font-weight:600; cursor:pointer;"
+                        title="Log in with Facebook and save each Page you manage as a credential"
+                      >{{ fbConnecting ? 'Connecting…' : '+ Connect' }}</button>
+                    </div>
                   </template>
                   <template v-else-if="prop.typeOptions?.rows">
                     <label>{{ prop.displayName }}</label>

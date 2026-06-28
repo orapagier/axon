@@ -58,6 +58,12 @@ const MIGRATIONS: &[Migration] = &[
         sql: include_str!("migrations/0005_durable_wait.sql"),
         tolerant_dup_column: true,
     },
+    Migration {
+        version: 6,
+        name: "facebook_webhook_page",
+        sql: include_str!("migrations/0006_facebook_webhook_page.sql"),
+        tolerant_dup_column: true,
+    },
 ];
 
 const SEED_SQL: &str = include_str!("seed.sql");

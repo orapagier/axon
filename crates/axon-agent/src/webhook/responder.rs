@@ -1,3 +1,8 @@
+// The built-in Facebook auto-reply pipeline is disabled — replies are now driven
+// by Stimulus→Facebook-node workflows (see `webhook::facebook::fb_event`). The
+// pipeline is kept here, unwired, so it can be re-enabled later if needed.
+#![allow(dead_code)]
+
 use crate::config::RuntimeSettings;
 use crate::memory::MemoryStore;
 use crate::messaging::{MessageGateway, MessagingHub};

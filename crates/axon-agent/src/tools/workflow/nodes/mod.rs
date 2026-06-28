@@ -16,6 +16,7 @@ pub(crate) mod condition;
 pub(crate) mod cortex;
 pub(crate) mod discord;
 pub(crate) mod engram;
+pub(crate) mod facebook;
 pub(crate) mod fovea;
 pub(crate) mod github;
 pub(crate) mod iterate;
