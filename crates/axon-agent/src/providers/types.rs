@@ -225,10 +225,9 @@ pub struct ModelRecord {
     pub rate_limit_reset_at: Option<String>,
     #[serde(default)]
     pub consecutive_errors: u32,
-    /// Consecutive rate-limit (429) hits with no intervening success. Drives the
-    /// exponential backoff in `mark_rate_limited` so a model that has burned a
-    /// *daily* free-tier quota isn't retried every cooldown for the rest of the
-    /// day. Reset to 0 on the next success.
+    /// Consecutive rate-limit (429) hits with no intervening success. Tracked for
+    /// telemetry/UI only — cooldown length is now window-based (per-minute/hour/day),
+    /// not escalated by this count. Reset to 0 on the next success.
     #[serde(default)]
     pub consecutive_rate_limits: u32,
     #[serde(default)]
@@ -240,17 +239,6 @@ pub struct ModelRecord {
     #[serde(default)]
     pub rl_snapshot: RateLimitSnapshot,
 }
-/// Exponential backoff (in minutes) for the Nth consecutive rate-limit hit:
-/// `base * 2^(strikes-1)`, clamped to `[base, cap]`. Overflow-safe — large
-/// `strikes` saturate at `cap` rather than wrapping.
-pub fn rate_limit_backoff_minutes(strikes: u32, base: i64, cap: i64) -> i64 {
-    let base = base.max(1);
-    let cap = cap.max(base);
-    let shift = strikes.saturating_sub(1).min(16);
-    let factor = 1i64.checked_shl(shift).unwrap_or(i64::MAX);
-    base.saturating_mul(factor).min(cap)
-}
-
 /// Which rate-limit window a 429 most likely refers to, inferred from the error text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RateLimitWindow {
@@ -410,44 +398,39 @@ pub fn secs_until_next_utc_midnight() -> i64 {
     (86_400 - secs_into_day).clamp(1, 86_400)
 }
 
-/// Decide how long (seconds) to quarantine a model after a 429.
+/// Decide how long (seconds) to quarantine a model after a 429, by window.
 ///
-/// - **Daily:** wait until the window resets — the provider's explicit delay if it
-///   gave a long one, else until next UTC midnight (clamped 1h–24h).
-/// - **Hourly:** the explicit delay, else ~1h.
-/// - **PerMinute / Unknown:** honor an explicit delay exactly (+3s buffer); with no
-///   number, fall back to exponential backoff so repeated hits still escalate.
-pub fn rate_limit_cooldown_secs(
-    hint: &RateLimitHint,
-    strikes: u32,
-    base_min: i64,
-    max_min: i64,
-    secs_until_utc_midnight: i64,
-) -> i64 {
+/// An explicit provider reset (retry-after / retryDelay) always wins when given;
+/// otherwise a flat per-window default is used — no exponential escalation:
+///
+/// - **PerMinute / Unknown:** the explicit delay (+3s buffer), else a flat 60s.
+/// - **Hourly:** the explicit delay, else 60 minutes.
+/// - **Daily:** the explicit delay if it's at least an hour, else until the next
+///   UTC midnight. Provider-specific reset times are honored through the explicit
+///   signal; UTC midnight is only the neutral fallback when none is given.
+pub fn rate_limit_cooldown_secs(hint: &RateLimitHint, secs_until_utc_midnight: i64) -> i64 {
     const HARD_MAX: i64 = 24 * 3600;
     const FLOOR: i64 = 5;
+    const PER_MINUTE_SECS: i64 = 60;
+    const HOURLY_SECS: i64 = 3600;
     match hint.window {
         RateLimitWindow::Daily => hint
             .explicit_secs
             .map(|s| s as i64)
-            .filter(|&s| s >= 3600)
-            .unwrap_or_else(|| secs_until_utc_midnight.max(3600))
-            .clamp(3600, HARD_MAX),
+            .filter(|&s| s >= HOURLY_SECS)
+            .unwrap_or_else(|| secs_until_utc_midnight.max(HOURLY_SECS))
+            .clamp(HOURLY_SECS, HARD_MAX),
         RateLimitWindow::Hourly => hint
             .explicit_secs
             .map(|s| s as i64)
             .filter(|&s| s >= 60)
-            .unwrap_or(3600)
+            .unwrap_or(HOURLY_SECS)
             .clamp(60, HARD_MAX),
-        RateLimitWindow::PerMinute | RateLimitWindow::Unknown => {
-            if let Some(s) = hint.explicit_secs {
-                (s as i64).saturating_add(3).clamp(FLOOR, HARD_MAX)
-            } else {
-                rate_limit_backoff_minutes(strikes, base_min, max_min)
-                    .saturating_mul(60)
-                    .clamp(FLOOR, HARD_MAX)
-            }
-        }
+        RateLimitWindow::PerMinute | RateLimitWindow::Unknown => hint
+            .explicit_secs
+            .map(|s| (s as i64).saturating_add(3))
+            .unwrap_or(PER_MINUTE_SECS)
+            .clamp(FLOOR, HARD_MAX),
     }
 }
 
@@ -466,43 +449,40 @@ impl ModelRecord {
             _ => true,
         }
     }
-    /// Quarantine a model after a 429. The cooldown is chosen from the parsed
-    /// `hint`: an explicit provider-supplied reset is honored, a daily cap waits
-    /// until the window rolls over, and an unknown limit with no reset info falls
-    /// back to exponential backoff (`base_min`..`max_min`). This keeps per-minute
-    /// limits recovering in ~a minute while a model that has burned its *daily*
-    /// free-tier quota is parked for hours instead of retried every minute.
-    pub fn mark_rate_limited(&mut self, hint: &RateLimitHint, base_min: i64, max_min: i64) {
+    /// Quarantine a model after a 429. The cooldown comes from the parsed `hint`:
+    /// an explicit provider-supplied reset is honored; otherwise a flat per-window
+    /// default applies (per-minute ≈ 60s, hourly ≈ 60m, daily until next midnight).
+    /// `consecutive_rate_limits` is still tracked for telemetry but no longer
+    /// lengthens the cooldown.
+    pub fn mark_rate_limited(&mut self, hint: &RateLimitHint) {
         self.consecutive_rate_limits = self.consecutive_rate_limits.saturating_add(1);
-        let secs = rate_limit_cooldown_secs(
-            hint,
-            self.consecutive_rate_limits,
-            base_min,
-            max_min,
-            secs_until_next_utc_midnight(),
-        );
+        let secs = rate_limit_cooldown_secs(hint, secs_until_next_utc_midnight());
         self.status = "rate_limited".into();
         self.rate_limit_reset_at =
             Some((chrono::Utc::now() + chrono::Duration::seconds(secs)).to_rfc3339());
         tracing::error!(
-            "{} rate-limited for {}s ({:?}, strike #{})",
+            "{} rate-limited for {}s ({:?})",
             self.name,
             secs,
-            hint.window,
-            self.consecutive_rate_limits
+            hint.window
         );
     }
-    pub fn mark_error(&mut self, threshold: u32, cooldown: i64) {
+    /// Record a non-rate-limit error. After `threshold` consecutive errors the
+    /// model is parked as unavailable until the next UTC midnight ("rest of the
+    /// day"), matching the daily rate-limit policy. A genuine success clears the
+    /// counter and reinstates the model immediately via `mark_success`.
+    pub fn mark_error(&mut self, threshold: u32) {
         self.consecutive_errors += 1;
         if self.consecutive_errors >= threshold {
             self.status = "unavailable".into();
+            let secs = secs_until_next_utc_midnight();
             self.rate_limit_reset_at =
-                Some((chrono::Utc::now() + chrono::Duration::minutes(cooldown)).to_rfc3339());
+                Some((chrono::Utc::now() + chrono::Duration::seconds(secs)).to_rfc3339());
             tracing::error!(
-                "{} unavailable after {} errors; will retry in {}m",
+                "{} unavailable after {} consecutive errors; parked until midnight (~{}s)",
                 self.name,
                 threshold,
-                cooldown
+                secs
             );
         }
     }
@@ -582,24 +562,6 @@ mod tests {
             provider_base_url("gemini"),
             Some("https://generativelanguage.googleapis.com/v1beta/openai/")
         );
-    }
-
-    #[test]
-    fn rate_limit_backoff_escalates_then_caps() {
-        // base 1, cap 60: 1, 2, 4, 8, 16, 32, then capped at 60.
-        assert_eq!(rate_limit_backoff_minutes(1, 1, 60), 1);
-        assert_eq!(rate_limit_backoff_minutes(2, 1, 60), 2);
-        assert_eq!(rate_limit_backoff_minutes(3, 1, 60), 4);
-        assert_eq!(rate_limit_backoff_minutes(6, 1, 60), 32);
-        assert_eq!(rate_limit_backoff_minutes(7, 1, 60), 60); // 64 -> cap
-        // Huge strike count must not overflow.
-        assert_eq!(rate_limit_backoff_minutes(100, 1, 60), 60);
-        // base 2, cap 30.
-        assert_eq!(rate_limit_backoff_minutes(4, 2, 30), 16);
-        assert_eq!(rate_limit_backoff_minutes(5, 2, 30), 30); // 32 -> cap
-        // Defensive edges: strike 0 -> base; cap below base -> base wins.
-        assert_eq!(rate_limit_backoff_minutes(0, 1, 60), 1);
-        assert_eq!(rate_limit_backoff_minutes(1, 5, 1), 5);
     }
 
     #[test]
