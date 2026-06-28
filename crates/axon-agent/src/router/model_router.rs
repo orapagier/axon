@@ -470,8 +470,7 @@ pub async fn call_llm_with_options(
             .collect()
     };
 
-    let general_total = ordered_models.len();
-    for (route_idx, (mi, name, tokens)) in ordered_models.into_iter().enumerate() {
+    for (mi, name, tokens) in ordered_models {
         attempted_indices.insert(mi);
         match try_call(
             mi,
@@ -481,11 +480,8 @@ pub async fn call_llm_with_options(
             tokens,
             &router,
             settings,
-            cooldown,
             threshold,
             timeout_secs,
-            route_idx,
-            general_total,
             &options,
         )
         .await
