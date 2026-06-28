@@ -969,14 +969,43 @@ async fn send_audio(client: &TelegramClient, config: &Value) -> Result<Value, St
     client.post("sendAudio", Value::Object(body)).await
 }
 
+/// Upload `part` as a sendDocument multipart, attaching caption + additional
+/// fields. Shared by every branch that sends actual bytes (resolved file or
+/// inline base64) so they stay byte-for-byte consistent.
+async fn send_document_part(
+    client: &TelegramClient,
+    chat_id: String,
+    part: multipart::Part,
+    config: &Value,
+) -> Result<Value, String> {
+    let mut form = multipart::Form::new()
+        .text("chat_id", chat_id)
+        .part("document", part);
+    if let Some(caption) = str_val(config, "caption") {
+        form = form.text("caption", caption);
+    }
+    apply_additional_fields_to_form(&mut form, config);
+    client.post_multipart("sendDocument", form).await
+}
+
 async fn send_document(client: &TelegramClient, config: &Value) -> Result<Value, String> {
     let chat_id = require_str(config, "chat_id")?;
 
+    // Prefer a resolvable local file WHENEVER one is provided — even if the
+    // "Binary Data" toggle is off. The alternative `document` string is handed to
+    // Telegram as-is, where a non-URL value is a `file_id`: an immutable pointer to
+    // the bytes of the FIRST upload. Re-exporting a fresh PDF to the same node then
+    // silently resends the original file forever (the bytes on disk are never read).
+    // Reading the file here uploads the CURRENT bytes every run.
+    if let Some(file) = try_read_binary_file(config, "document.pdf").await? {
+        let part = file_part(file.bytes, file.file_name, &file.mime_type)?;
+        return send_document_part(client, chat_id, part, config).await;
+    }
+
     if bool_val(config, "binary_data") {
-        // Prefer the resolved file path/object; fall back to inline base64 bytes.
-        let part = if let Some(file) = try_read_binary_file(config, "document.pdf").await? {
-            file_part(file.bytes, file.file_name, &file.mime_type)?
-        } else if config.get("file_bytes").is_some() {
+        // Binary Data was requested but no usable `file` resolved — accept inline
+        // base64 bytes, otherwise it's a misconfiguration.
+        if config.get("file_bytes").is_some() {
             let file_bytes_b64 = require_str(config, "file_bytes")?;
             let bytes = base64::engine::general_purpose::STANDARD
                 .decode(file_bytes_b64)
@@ -984,24 +1013,15 @@ async fn send_document(client: &TelegramClient, config: &Value) -> Result<Value,
             let name = str_val(config, "file_name").unwrap_or_else(|| "document".to_string());
             let mime = str_val(config, "mime_type")
                 .unwrap_or_else(|| "application/octet-stream".to_string());
-            file_part(bytes, name, &mime)?
-        } else {
-            return Err(
-                "Binary Data is enabled but no file was provided. Set the 'File' field to a \
-                 server path (e.g. /data/files/your-file.pdf) or a binary object from a \
-                 previous node, or supply base64 'file_bytes'."
-                    .to_string(),
-            );
-        };
-
-        let mut form = multipart::Form::new()
-            .text("chat_id", chat_id)
-            .part("document", part);
-        if let Some(caption) = str_val(config, "caption") {
-            form = form.text("caption", caption);
+            let part = file_part(bytes, name, &mime)?;
+            return send_document_part(client, chat_id, part, config).await;
         }
-        apply_additional_fields_to_form(&mut form, config);
-        return client.post_multipart("sendDocument", form).await;
+        return Err(
+            "Binary Data is enabled but no file was provided. Set the 'File' field to a \
+             server path (e.g. /data/files/your-file.pdf) or a binary object from a \
+             previous node, or supply base64 'file_bytes'."
+                .to_string(),
+        );
     }
 
     let document = require_str(config, "document")?;
