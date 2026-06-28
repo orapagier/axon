@@ -17,12 +17,13 @@ pub fn staging_dir() -> PathBuf {
     dir.canonicalize().unwrap_or(dir)
 }
 
-/// Save raw bytes to the staging directory with a UUID-prefixed filename.
+/// Save raw bytes to the staging directory under the file's original name.
+/// If a file with the same name already exists it is overwritten, so only the
+/// newest copy is kept.
 /// Returns the absolute path of the staged file.
 pub fn stage_bytes(data: &[u8], original_name: &str) -> Result<PathBuf> {
     let dir = staging_dir();
-    let sanitized = sanitize_filename(original_name);
-    let staged_name = format!("{}_{}", uuid::Uuid::new_v4(), sanitized);
+    let staged_name = sanitize_filename(original_name);
     let path = dir.join(&staged_name);
     std::fs::write(&path, data)?;
     Ok(path.canonicalize().unwrap_or(path))
