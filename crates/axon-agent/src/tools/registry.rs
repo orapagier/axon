@@ -719,8 +719,8 @@ impl ToolRegistry {
     ///   • internal tools that exist only as workflow-builder nodes (e.g. webhook
     ///     triggers) and have no `handle_internal` dispatch arm — offering them
     ///     would let the agent pick a tool that fails with "Unknown internal tool";
-    ///   • Facebook outward-facing write actions ([`WORKFLOW_ONLY_WRITE_TOOLS`]),
-    ///     which are restricted to the deliberate workflow path.
+    ///   • social-platform outward-facing write actions (Facebook/Instagram —
+    ///     [`WORKFLOW_ONLY_WRITE_TOOLS`]), restricted to the deliberate workflow path.
     /// The full set is still served to the UI via [`all`] and dispatched by name
     /// via [`run`], so the workflow node palette and execution are unaffected.
     pub async fn all_enabled_for_agent(&self) -> Vec<ToolDefinition> {
