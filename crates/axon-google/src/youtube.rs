@@ -932,8 +932,8 @@ async fn call_action(
             .unwrap_or_else(|| format!("{}_download.bin", spec.tool));
         let download_dir = data_files_dir();
         tokio::fs::create_dir_all(&download_dir).await?;
-        let path = download_dir.join(&filename);
         let bytes = response.bytes().await?;
+        let path = axon_core::resolve_dedup_path(&download_dir, &filename, bytes.len() as u64);
         tokio::fs::write(&path, &bytes).await?;
         return Ok(json!({
             "success": true,

@@ -644,17 +644,11 @@ async fn try_call(
         anyhow::bail!("No model IDs provided");
     }
 
-    let prompt_chars = estimate_prompt_chars(messages, system);
-    let min_timeout_secs = settings
-        .model_call_timeout_min_secs()
-        .max(1)
-        .min(timeout_secs.max(1));
-    let max_timeout_secs = settings.model_call_timeout_max_secs().max(min_timeout_secs);
-    let per_1k_chars_secs = settings.model_call_timeout_per_1k_chars_secs();
-    let fair_share_grace_secs = settings.model_call_timeout_fair_share_grace_secs();
-    let remaining_route_slots = route_attempt_total
-        .saturating_sub(route_attempt_index)
-        .max(1);
+    // Flat per-attempt timeout: the model's own `timeout_secs` if set, else the
+    // global default (router.model_call_timeout_secs, default 30s). No adaptive
+    // or fair-share math — a model either answers within this window or we fail
+    // over immediately to the next one, bounded only by the overall run deadline.
+    let flat_timeout_secs = timeout_secs.max(1);
 
     let mut last_error: Option<(anyhow::Error, bool, bool, String)> = None; // (error, is_rate_limit, is_timeout, model_id)
 
