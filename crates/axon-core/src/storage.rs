@@ -18,6 +18,30 @@ pub fn data_dir() -> PathBuf {
         .join("axon-mcp")
 }
 
+/// Resolve the app's `data/files` staging/download directory.
+///
+/// Every node and the agent must read and write binaries through the SAME
+/// directory so a file saved by one (e.g. a Sheets/Drive export) is found by
+/// another (e.g. the Telegram sender) and indexed by the Files page. Honors
+/// `AXON_DATA_DIR` when set, otherwise the relative `data/files` directory the
+/// app creates at startup.
+///
+/// NOTE: do NOT hardcode an absolute `/data/files` — that points at the
+/// filesystem root, a different directory from `$CWD/data/files`, and silently
+/// drops files where nothing else can find them.
+pub fn data_files_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("AXON_DATA_DIR") {
+        let base = PathBuf::from(dir);
+        // Accept a path that already points at the `files` dir; otherwise use the
+        // conventional `<AXON_DATA_DIR>/files` staging sub-dir.
+        if base.file_name().and_then(|n| n.to_str()) == Some("files") {
+            return base;
+        }
+        return base.join("files");
+    }
+    PathBuf::from("data/files")
+}
+
 fn creds_path() -> PathBuf {
     // Working-directory file always takes priority so admins can update
     // credentials.json in the deployment folder and have it picked up.
