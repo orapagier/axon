@@ -718,6 +718,9 @@ impl ToolRegistry {
                 !(t.source == ToolSource::Internal
                     && NON_AGENT_INTERNAL_TOOLS.contains(&t.name.as_str()))
             })
+            // Outward-facing Facebook write actions are workflow-only — never
+            // exposed to the agent (workflow nodes still reach them via `all`/`run`).
+            .filter(|t| !WORKFLOW_ONLY_WRITE_TOOLS.contains(&t.name.as_str()))
             .cloned()
             .collect()
     }
