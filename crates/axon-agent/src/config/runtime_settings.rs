@@ -151,14 +151,17 @@ RESPONSE RULES:
     pub fn rate_limit_cooldown(&self) -> i64 {
         self.get_int("router.rate_limit_cooldown", 2)
     }
-    /// Upper bound (minutes) for the exponential rate-limit backoff in
-    /// `ModelRecord::mark_rate_limited`. Caps how long a repeatedly-429'd model
-    /// (e.g. one that exhausted a daily free-tier quota) stays quarantined.
+    /// Deprecated: rate-limit cooldowns are now window-based (per-minute/hour/day),
+    /// not an exponential backoff, so this cap is no longer consulted. Kept so the
+    /// existing seeded setting doesn't error; safe to remove later.
     pub fn rate_limit_max_cooldown(&self) -> i64 {
         self.get_int("router.rate_limit_max_cooldown", 60)
     }
+    /// Consecutive non-rate-limit errors before a model is parked until the next
+    /// midnight. Default 2 — one transient blip is tolerated, a genuinely broken
+    /// endpoint drops out fast.
     pub fn error_threshold(&self) -> u32 {
-        self.get_int("router.error_threshold", 3) as u32
+        self.get_int("router.error_threshold", 2) as u32
     }
     pub fn long_term_top_k(&self) -> usize {
         self.get_int("memory.long_term_top_k", 5) as usize
@@ -190,22 +193,11 @@ RESPONSE RULES:
         self.get_int("websearch.max_results", 5)
     }
 
-    // FIX #5: Configurable per-model call timeout so a hung provider
-    // doesn't block the entire fallback chain. Defaults to 20s.
+    // Flat per-model call timeout: a model either answers within this window or
+    // the router fails over immediately to the next one. A model may override it
+    // via its own `timeout_secs`. Default 30s.
     pub fn model_call_timeout_secs(&self) -> u64 {
-        self.get_int("router.model_call_timeout_secs", 20) as u64
-    }
-    pub fn model_call_timeout_min_secs(&self) -> u64 {
-        self.get_int("router.model_call_timeout_min_secs", 10) as u64
-    }
-    pub fn model_call_timeout_max_secs(&self) -> u64 {
-        self.get_int("router.model_call_timeout_max_secs", 90) as u64
-    }
-    pub fn model_call_timeout_per_1k_chars_secs(&self) -> u64 {
-        self.get_int("router.model_call_timeout_per_1k_chars_secs", 3) as u64
-    }
-    pub fn model_call_timeout_fair_share_grace_secs(&self) -> u64 {
-        self.get_int("router.model_call_timeout_fair_share_grace_secs", 4) as u64
+        self.get_int("router.model_call_timeout_secs", 30) as u64
     }
 
     pub fn resolve(&self, input: &str) -> String {

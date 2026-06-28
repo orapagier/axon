@@ -598,8 +598,6 @@ pub(crate) async fn run_inner(
     let run_start = tokio::time::Instant::now();
     let run_timeout_secs = state.settings.get_int("agent.run_timeout_secs", 300) as u64;
     let run_deadline = run_start + tokio::time::Duration::from_secs(run_timeout_secs);
-    let model_chain_base_secs = state.settings.request_timeout_secs();
-    let model_chain_max_secs = state.settings.request_timeout_max_secs();
 
     // Derive a stable per-run base seed from run_id.
     // UUID v4 is already random; we just need a deterministic 64-bit mixer.
@@ -913,16 +911,6 @@ pub(crate) async fn run_inner(
         let model_wait_heartbeat =
             spawn_model_wait_heartbeat(tx.clone(), run_id.clone(), !filtered.is_empty());
 
-        let prompt_chars = sys.len() + messages.iter().map(message_char_len).sum::<usize>();
-        let prompt_bonus_secs = ((prompt_chars as u64).saturating_add(1499) / 1500) * 4;
-        let tool_bonus_secs = (filtered.len().min(8) as u64) * 2;
-        let adaptive_chain_secs = model_chain_base_secs
-            .saturating_add(prompt_bonus_secs)
-            .saturating_add(tool_bonus_secs)
-            .min(model_chain_max_secs);
-        let min_model_chain_secs = state.settings.get_int("agent.min_model_chain_secs", 60) as u64;
-        let model_chain_secs = adaptive_chain_secs.max(min_model_chain_secs);
-
         // Low sampling temperature reduces hallucinated tool syntax and
         // correction oscillation. Configurable; default 0.3.
         let temperature = state.settings.get_f64("agent.temperature", 0.3) as f32;
@@ -959,10 +947,11 @@ pub(crate) async fn run_inner(
                 // path (QC, claim-guard, blank, hallucinated, blocked-repair),
                 // so no additional guard_counts gate is needed here.
                 sticky_model_name: last_model.clone(),
-                deadline: Some(
-                    tokio::time::Instant::now()
-                        + tokio::time::Duration::from_secs(model_chain_secs),
-                ),
+                // Per-iteration failover is bounded only by the overall run
+                // deadline — each attempt uses a flat per-model timeout and we
+                // move on immediately, so the chain can sweep the whole pool
+                // (down to the paid fallback) without an artificial budget cap.
+                deadline: Some(run_deadline),
                 route_seed: Some(iter_seed),
                 temperature: Some(temperature),
                 tool_choice,
