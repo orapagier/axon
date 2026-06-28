@@ -267,10 +267,9 @@ async fn process_change(state: &AppState, page_id: &str, change: &Value) {
         }
     }
 
-    // Only drive workflows for content with a body (comments/posts with text).
-    if message.is_empty() {
-        return;
-    }
+    // Note: we no longer skip empty-body events — reactions, likes and photo/video
+    // posts legitimately carry no text, yet are valid triggers. The trigger node's
+    // Event Type filter (and the actor's own logic) decides what's actionable.
 
     let comment_id = if event_type == "comment" {
         object_id.clone()
