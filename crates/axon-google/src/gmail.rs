@@ -1433,10 +1433,8 @@ pub async fn download_all_attachments(state: &AppState, message_id: &str) -> Res
                 Ok(b) => b,
                 Err(_) => continue,
             };
-            // Same name + same size → overwrite (assumed identical); a different
-            // size is kept under a numbered variant.
-            let safe = sanitize_filename(filename);
-            let path = axon_core::resolve_dedup_path(&download_dir, &safe, bytes.len() as u64);
+            // Overwrite same-named attachments so only the newest copy is kept.
+            let path = download_dir.join(sanitize_filename(filename));
             if std::fs::write(&path, &bytes).is_err() {
                 continue;
             }
