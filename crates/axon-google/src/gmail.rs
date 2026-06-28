@@ -1394,29 +1394,6 @@ fn sanitize_filename(name: &str) -> String {
     }
 }
 
-/// Build a non-colliding path inside `dir` for `name`, inserting ` (n)` before
-/// the extension when a file by that name already exists.
-fn unique_path(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
-    let candidate = dir.join(name);
-    if !candidate.exists() {
-        return candidate;
-    }
-    let p = std::path::Path::new(name);
-    let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or(name);
-    let ext = p.extension().and_then(|s| s.to_str());
-    for n in 1..1000 {
-        let fname = match ext {
-            Some(e) => format!("{stem} ({n}).{e}"),
-            None => format!("{stem} ({n})"),
-        };
-        let c = dir.join(fname);
-        if !c.exists() {
-            return c;
-        }
-    }
-    dir.join(name)
-}
-
 pub async fn download_attachment(
     state: &AppState,
     message_id: &str,
