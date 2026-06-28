@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 
 /// Central staging directory for all file transfers.
 /// All files received from users or downloaded by tools land here.
-/// Files are named `{uuid}_{original_name}` to avoid collisions.
+/// Files are saved under their original (sanitized) name; saving the same name
+/// again overwrites the previous file so only the newest copy is kept.
 const STAGING_DIR: &str = "data/files";
 
 /// Ensure the staging directory exists and return its canonical path.
