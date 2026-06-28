@@ -677,41 +677,16 @@ async fn try_call(
             }
         }
 
-        let prompt_bonus_secs =
-            ((prompt_chars as u64).saturating_add(999) / 1000).saturating_mul(per_1k_chars_secs);
-        let tool_bonus_secs = (unique_tools.len().min(8) as u64) * 2;
-        let model_id_fallback_bonus_secs = (i as u64).min(2) * 2;
-        let desired_timeout_secs = timeout_secs
-            .max(1)
-            .saturating_add(prompt_bonus_secs)
-            .saturating_add(tool_bonus_secs)
-            .saturating_add(model_id_fallback_bonus_secs)
-            .clamp(min_timeout_secs, max_timeout_secs);
-
-        // Adaptive + fair-share timeout:
-        // - adaptive by prompt/tool complexity
-        // - bounded by remaining chain deadline
-        // - and fair-shared across remaining fallback attempts.
-        let total_remaining_slots = remaining_route_slots
-            .saturating_add(model_ids.len().saturating_sub(i + 1))
-            .max(1);
         let attempt_timeout = if let Some(deadline) = options.deadline {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 anyhow::bail!("Request budget exhausted before model call");
             }
-            let remaining_secs = remaining.as_secs().max(1);
-            let fair_share_secs = ((remaining_secs + total_remaining_slots as u64 - 1)
-                / total_remaining_slots as u64)
-                .max(min_timeout_secs);
-            let soft_cap_secs = fair_share_secs.saturating_add(fair_share_grace_secs);
-            let final_secs = desired_timeout_secs
-                .min(soft_cap_secs)
-                .min(remaining_secs)
-                .max(1);
-            Duration::from_secs(final_secs)
+            // Cap the flat timeout by whatever run budget is left so the last
+            // attempt before the run deadline doesn't overrun it.
+            Duration::from_secs(flat_timeout_secs.min(remaining.as_secs().max(1)))
         } else {
-            Duration::from_secs(desired_timeout_secs)
+            Duration::from_secs(flat_timeout_secs)
         };
 
         let provider_options = ProviderCallOptions {
