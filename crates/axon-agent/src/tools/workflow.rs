@@ -2245,21 +2245,28 @@ impl WorkflowEngine {
                 continue;
             }
 
-            // In a targeted ("Execute Step") run, never re-execute an upstream
-            // node that already produced a successful result on the previous run:
-            // reuse its cached output verbatim and just release its edges below,
-            // exactly like resume replay. This enforces the invariant that
-            // upstream nodes "with data" don't move or change when a downstream
-            // step runs, even on the full-chain fallback path (when single-node
-            // mode wasn't taken). Critically, it protects one-shot trigger
-            // payloads: a Telegram/Gmail/WhatsApp Stimulus consumes (removes) its
-            // live event the first time it's read, so re-running it under the
-            // 'manual' source would overwrite the real payload with
-            // {"trigger":"manual"}. Cached errors are NOT reused — those still
-            // re-run so the node gets a fresh, valid attempt (matches the
+            // In a targeted run, reuse a one-shot TRIGGER's cached payload instead
+            // of re-executing it: a Telegram/Gmail/WhatsApp Stimulus consumes
+            // (removes) its live event the first time it's read, so re-running it
+            // under the 'manual' source would overwrite the real payload with
+            // {"trigger":"manual"} (the "trigger flips to manual" bug).
+            //
+            // Regular action nodes are deliberately NOT reused here. The single-node
+            // "Execute Step" button never queues ancestors at all — it resolves them
+            // from the cached snapshot — so this branch only fires for the "run node
+            // + dependencies" play button, whose whole purpose is to re-run the chain
+            // up to the target. Reusing a cached action node on that path silently
+            // froze external-IO producers: e.g. a Google Sheets PDF export node never
+            // re-ran, the file on disk was never refreshed, and the downstream
+            // Telegram send shipped the stale/first file. Re-executing them keeps
+            // downstream consumers in sync with current external state. Cached errors
+            // are never reused — they re-run for a fresh attempt (matches the
             // frontend's `!r.error` "Has Data" gate).
+            let is_oneshot_trigger =
+                matches!(node.node_type.as_str(), "trigger" | "stimulus" | "circadian");
             let reuse_cached_upstream = target_node_id.is_some()
                 && target_node_id.as_deref() != Some(current_id.as_str())
+                && is_oneshot_trigger
                 && node_results
                     .get(&current_id)
                     .is_some_and(|r| r.status == "success");
