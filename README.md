@@ -322,7 +322,7 @@ Set the relevant token (env var or `messaging.*` setting) and restart:
 
 - **Scheduler** (Tasks page): natural-language or 6-field cron schedules ("every 5 minutes", "daily at 9am", "every Monday at 9am"). NL is converted to cron via the `router` model. Fired jobs run as agent tasks and can send reminders using `scheduler.nudge_prompt`.
 - **Watchers** (Watchers page): poll a source (e.g. an email inbox, a shell command's output) and notify the owner when something new/changed appears, with quiet-hours support.
-- **Workflows** (Workflows page): a visual DAG of nodes (Trigger, Shell, JS, Synapse/Axon agent node, IF, Switch) with edges, built on [Vue Flow](https://vueflow.dev/). Triggerable manually, on a schedule, or via `POST /webhook/external/:workflow_id`. On completion, a workflow can hand its output to the agent for post-processing.
+- **Workflows** (Workflows page): a visual DAG of nodes (Trigger, Shell, JS, Synapse/Axon agent node, IF, Switch) with edges, built on [Vue Flow](https://vueflow.dev/). Triggerable manually, on a schedule, or via `POST /webhook/external/:workflow_id`. On completion, a workflow can hand its output to the agent for post-processing. The **Stimulus** (Gmail) trigger supports optional **Subject** and **Body / Keyword** filters — applied server-side in the Gmail search query, so non-matching mail never fires the workflow; leave them empty to fire on every new email.
 
 ---
 
