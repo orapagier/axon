@@ -593,7 +593,7 @@ pub(crate) async fn execute_gmail_trigger(
         })
         .unwrap_or(10);
 
-    let query = gmail_query_for_label(label);
+    let query = gmail_trigger_query(config);
     let args = json!({
         "query": query,
         "max_results": max_results,
