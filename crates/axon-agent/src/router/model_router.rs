@@ -597,11 +597,8 @@ async fn try_call(
     max_tokens: u32,
     router: &SharedRouter,
     settings: &RuntimeSettings,
-    cooldown: i64,
     threshold: u32,
     default_timeout_secs: u64,
-    route_attempt_index: usize,
-    route_attempt_total: usize,
     options: &CallLlmOptions,
 ) -> anyhow::Result<UnifiedResponse> {
     // FIX #4: Clone the real ModelRecord and override only what differs per
