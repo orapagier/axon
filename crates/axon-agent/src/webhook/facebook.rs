@@ -428,13 +428,19 @@ async fn dispatch_facebook_workflows(
             let (workflow_id, cfg_str) = row;
             let cfg: Value = serde_json::from_str(&cfg_str).unwrap_or(Value::Null);
 
-            // event_type filter
+            // event_type filter. An explicit list fires only on the named types.
+            // An empty filter ("All Event Types") fires on everything actionable
+            // but deliberately skips the passive Messenger receipts — they're far
+            // too noisy to be swept up by a catch-all; select them by name to use.
             let events = cfg.get("events").and_then(|v| v.as_str()).unwrap_or("");
-            if !events.trim().is_empty()
-                && !events
-                    .split(',')
-                    .map(|s| s.trim())
-                    .any(|s| s.eq_ignore_ascii_case(event_type))
+            if events.trim().is_empty() {
+                if matches!(event_type, "message_delivery" | "message_read") {
+                    continue;
+                }
+            } else if !events
+                .split(',')
+                .map(|s| s.trim())
+                .any(|s| s.eq_ignore_ascii_case(event_type))
             {
                 continue;
             }
