@@ -350,7 +350,7 @@ pub async fn export_sheet(
     let export_name = format!("{}_{}.{}", title, sheet_id, ext);
     let download_dir = std::path::PathBuf::from("/data/files");
     std::fs::create_dir_all(&download_dir)?;
-    let path = download_dir.join(&export_name);
+    let path = axon_core::resolve_dedup_path(&download_dir, &export_name, bytes.len() as u64);
     std::fs::write(&path, &bytes)?;
 
     Ok(json!({

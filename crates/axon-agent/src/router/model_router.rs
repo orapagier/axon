@@ -512,8 +512,7 @@ pub async fn call_llm_with_options(
                 .map(|(i, m)| (i, m.name.clone(), max_tokens.unwrap_or(m.max_tokens)))
                 .collect()
         };
-        let sweep_total = sweep_models.len();
-        for (route_idx, (mi, name, tokens)) in sweep_models.into_iter().enumerate() {
+        for (mi, name, tokens) in sweep_models {
             match try_call(
                 mi,
                 messages,
@@ -522,11 +521,8 @@ pub async fn call_llm_with_options(
                 tokens,
                 &router,
                 settings,
-                cooldown,
                 threshold,
                 timeout_secs,
-                route_idx,
-                sweep_total,
                 &options,
             )
             .await
@@ -553,8 +549,7 @@ pub async fn call_llm_with_options(
             .collect()
     };
 
-    let paid_total = ordered_models.len();
-    for (route_idx, (mi, name, tokens)) in ordered_models.into_iter().enumerate() {
+    for (mi, name, tokens) in ordered_models {
         match try_call(
             mi,
             messages,
@@ -563,11 +558,8 @@ pub async fn call_llm_with_options(
             tokens,
             &router,
             settings,
-            cooldown,
             threshold,
             timeout_secs,
-            route_idx,
-            paid_total,
             &options,
         )
         .await
