@@ -18,44 +18,6 @@ pub fn data_dir() -> PathBuf {
         .join("axon-mcp")
 }
 
-/// Resolve where to save a binary file named `name` (of `new_size` bytes) inside
-/// `dir`, following the shared "overwrite same file, number different files"
-/// policy used by every node and the agent when persisting binaries:
-///
-/// - If no file with that name exists, use it.
-/// - If a file with that name exists **and has the same size**, it is assumed to
-///   be the same file and gets overwritten (only the newest copy is kept).
-/// - Otherwise the existing file is a genuinely different file, so a numbered
-///   variant `name (1)`, `name (2)`, … is used. The same size rule is applied to
-///   each numbered slot, so re-saving the same differing file overwrites its own
-///   numbered copy instead of endlessly piling up.
-pub fn resolve_dedup_path(dir: &std::path::Path, name: &str, new_size: u64) -> PathBuf {
-    let p = std::path::Path::new(name);
-    let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or(name);
-    let ext = p.extension().and_then(|s| s.to_str());
-
-    for n in 0..10_000 {
-        let candidate_name = if n == 0 {
-            name.to_string()
-        } else {
-            match ext {
-                Some(e) => format!("{stem} ({n}).{e}"),
-                None => format!("{stem} ({n})"),
-            }
-        };
-        let candidate = dir.join(&candidate_name);
-        match fs::metadata(&candidate) {
-            // Free slot — nothing there, use it.
-            Err(_) => return candidate,
-            // Same size → assume it's the same file and overwrite.
-            Ok(meta) if meta.len() == new_size => return candidate,
-            // Different size → a different file lives here; try the next slot.
-            Ok(_) => continue,
-        }
-    }
-    dir.join(name)
-}
-
 fn creds_path() -> PathBuf {
     // Working-directory file always takes priority so admins can update
     // credentials.json in the deployment folder and have it picked up.
