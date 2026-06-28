@@ -350,7 +350,13 @@ Set the relevant token (env var or `messaging.*` setting) and restart:
 - **Workflows** (Workflows page): a visual DAG of nodes (Trigger, Shell, JS, Synapse/Axon
   agent node) with edges. Triggerable manually, on a schedule, or via
   `POST /webhook/external/:workflow_id`. On completion a workflow can hand its output to the
-  agent for post-processing.
+  agent for post-processing. The **Stimulus** (Gmail) trigger takes optional **Subject** and
+  **Body / Keyword** filters: plain text (no `{{ }}` expressions, since a trigger has no
+  upstream input) that is appended to the Gmail search query and matched server-side — the
+  subject filter scopes to the subject line, the body/keyword filter matches anywhere in the
+  message (subject or body). Empty filters fire on every new email in the label; multi-word
+  input uses Gmail AND semantics (every word must match). Both the live poller and the manual
+  "Execute Step" test fetch apply the filters identically.
 
 ---
 
