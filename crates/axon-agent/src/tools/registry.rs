@@ -26,17 +26,20 @@ use tokio::sync::RwLock;
 const NON_AGENT_INTERNAL_TOOLS: &[&str] =
     &["telegram_trigger", "whatsapp_trigger", "telegram", "whatsapp"];
 
-/// Facebook *write* tools that perform outward-facing, public, hard-to-reverse
-/// actions (publish/edit/delete posts, reply/moderate comments, react, send DMs,
-/// edit Page settings). They are deliberately kept out of the agent's callable
-/// set so every public Page action flows through a defined, reviewable **workflow**
-/// path instead of the agent's ad-hoc discretion. The agent keeps the read tools
-/// (`fb_get_*`, `fb_list_*`, `fb_recent_comments`, `fb_*_insights`) for answering
-/// questions conversationally. These names are still served to the UI via [`all`]
-/// and dispatched by name via [`run`], so the Facebook workflow nodes are
-/// unaffected — only the agent is denied them here. Matched by name regardless of
-/// `ToolSource` (these are in-process MCP tools, not `Internal`).
+/// Social-platform *write* tools that perform outward-facing, public,
+/// hard-to-reverse actions (publish/edit/delete posts, reply/moderate comments,
+/// react, send DMs, edit Page settings). This is the standing pattern for social
+/// integrations: writes are workflow-only, reads stay on the agent. They are
+/// deliberately kept out of the agent's callable set so every public action flows
+/// through a defined, reviewable **workflow** path instead of the agent's ad-hoc
+/// discretion. The agent keeps the read tools (`*_get_*`, `*_list_*`,
+/// `fb_recent_comments`, `*_insights`) for answering questions conversationally.
+/// These names are still served to the UI via [`all`] and dispatched by name via
+/// [`run`], so the Facebook/Instagram workflow nodes are unaffected — only the
+/// agent is denied them here. Matched by name regardless of `ToolSource` (these are
+/// in-process MCP tools, not `Internal`). New social platforms follow suit.
 const WORKFLOW_ONLY_WRITE_TOOLS: &[&str] = &[
+    // ── Facebook ──
     // Page
     "fb_update_page",
     // Posts
@@ -56,6 +59,15 @@ const WORKFLOW_ONLY_WRITE_TOOLS: &[&str] = &[
     // Messenger
     "fb_send_message",
     "fb_send_message_image",
+    // ── Instagram ──
+    // Media
+    "ig_create_image_post",
+    "ig_create_video_reel",
+    "ig_create_post", // back-compat alias for older workflow nodes
+    // Comments
+    "ig_reply_to_comment",
+    // DMs
+    "ig_send_message",
 ];
 
 fn internal_tools() -> Vec<ToolDefinition> {
