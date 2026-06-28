@@ -192,9 +192,14 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("AXON v{} starting...", env!("CARGO_PKG_VERSION"));
     let cfg = AppConfig::from_env();
 
-    for dir in &["memory", "tools", "tools_temp", "data/files"] {
+    for dir in &["memory", "tools", "tools_temp"] {
         std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir))?;
     }
+    // Shared binary staging dir (honors AXON_DATA_DIR). Every node and the agent
+    // read/write here, so a file one saves is found by the sender / Files page.
+    let files_dir = axon_core::data_files_dir();
+    std::fs::create_dir_all(&files_dir)
+        .with_context(|| format!("create {}", files_dir.display()))?;
 
     // Clean up staged files on startup and periodically (every 24 hours)
     // Threshold set to 30 days for "permanent" feel
