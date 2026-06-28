@@ -115,6 +115,12 @@ impl FileHandler {
         platform: Option<String>,
     ) -> anyhow::Result<()> {
         let conn = self.db.get().context("DB pool")?;
+        // Keep only the newest record for a given on-disk path: drop any prior
+        // rows that point at the same (now overwritten) file under a different id.
+        conn.execute(
+            "DELETE FROM files WHERE path = ?1 AND id <> ?2",
+            rusqlite::params![path, id],
+        )?;
         conn.execute(
             "INSERT OR REPLACE INTO files (id,filename,mime_type,path,direction,size_bytes,platform,chat_id,created_at) VALUES (?1,?2,?3,?4,'incoming',?5,?6,?7,datetime('now'))",
             rusqlite::params![id, filename, mime_type, path, size as i64, platform, None::<String>],
