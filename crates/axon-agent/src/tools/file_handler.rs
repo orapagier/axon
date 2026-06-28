@@ -136,14 +136,18 @@ impl FileHandler {
             })
             .collect::<String>();
 
-        let staged_name = format!("{}_{}", &hash[..8], safe);
+        let staged_name = if safe.is_empty() {
+            "file".to_string()
+        } else {
+            safe
+        };
         let dest = self.incoming_dir.join(&staged_name);
 
-        if !dest.exists() {
-            tokio::fs::write(&dest, &file.bytes)
-                .await
-                .context("write incoming file")?;
-        }
+        // Overwrite any existing file with the same name so only the newest
+        // copy is kept on disk.
+        tokio::fs::write(&dest, &file.bytes)
+            .await
+            .context("write incoming file")?;
 
         let path_str = dest.to_string_lossy().to_string();
         self.store_path(
