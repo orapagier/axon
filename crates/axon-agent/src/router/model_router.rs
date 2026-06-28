@@ -328,8 +328,7 @@ pub async fn call_llm_with_options(
                 .collect()
         };
 
-        let preferred_total = preferred_models.len();
-        for (route_idx, (mi, name, tokens)) in preferred_models.into_iter().enumerate() {
+        for (mi, name, tokens) in preferred_models {
             attempted_indices.insert(mi);
             match try_call(
                 mi,
@@ -339,11 +338,8 @@ pub async fn call_llm_with_options(
                 tokens,
                 &router,
                 settings,
-                cooldown,
                 threshold,
                 timeout_secs,
-                route_idx,
-                preferred_total,
                 &options,
             )
             .await
