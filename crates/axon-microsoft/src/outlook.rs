@@ -239,7 +239,7 @@ pub async fn download_attachment(
 
     let download_dir = std::path::PathBuf::from("/data/files");
     std::fs::create_dir_all(&download_dir)?;
-    let path = download_dir.join(filename);
+    let path = axon_core::resolve_dedup_path(&download_dir, filename, decoded.len() as u64);
     std::fs::write(&path, &decoded)?;
 
     Ok(json!({
