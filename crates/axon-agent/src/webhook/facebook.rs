@@ -205,20 +205,23 @@ async fn process_change(state: &AppState, page_id: &str, change: &Value) {
         return;
     }
 
-    let from_name = value
-        .get("from")
+    // `ratings`/recommendations name the author under `reviewer` and put the body
+    // in `review_text`, so fall back to those when the usual `from`/`message`
+    // fields are absent.
+    let actor = value.get("from").or_else(|| value.get("reviewer"));
+    let from_name = actor
         .and_then(|f| f.get("name"))
         .and_then(|n| n.as_str())
         .unwrap_or("")
         .to_string();
-    let from_id = value
-        .get("from")
+    let from_id = actor
         .and_then(|f| f.get("id"))
         .and_then(|n| n.as_str())
         .unwrap_or("")
         .to_string();
     let message = value
         .get("message")
+        .or_else(|| value.get("review_text"))
         .and_then(|m| m.as_str())
         .unwrap_or("")
         .to_string();
