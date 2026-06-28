@@ -110,10 +110,9 @@ async fn save_file(state: &AppState, config: &Value) -> Result<Value, String> {
         chat_id: None,
     };
 
-    // store_incoming saves under the file's name: a same-name/same-size file is
-    // overwritten (assumed identical), a same-name file of a different size is
-    // kept under a numbered variant. The id is the SHA-256 of the bytes, so
-    // saving identical bytes returns the same id. Returns (id, path).
+    // store_incoming saves under the file's name, overwriting any existing copy
+    // so only the newest is kept. The id is the SHA-256 of the bytes, so saving
+    // identical bytes returns the same id. Returns (id, path).
     let (id, stored_path) = state
         .files
         .store_incoming(file)
