@@ -1402,7 +1402,7 @@ pub async fn download_attachment(
 ) -> Result<Value> {
     let bytes = fetch_attachment_bytes(state, message_id, attachment_id).await?;
 
-    let download_dir = std::path::PathBuf::from("/data/files");
+    let download_dir = axon_core::data_files_dir();
     std::fs::create_dir_all(&download_dir)?;
     let path = download_dir.join(filename);
     std::fs::write(&path, &bytes)?;
@@ -1418,7 +1418,7 @@ pub async fn download_attachment(
 /// a single failing attachment is skipped rather than aborting the rest.
 pub async fn download_all_attachments(state: &AppState, message_id: &str) -> Result<Value> {
     let msg = get(state, message_id).await?;
-    let download_dir = std::path::PathBuf::from("/data/files");
+    let download_dir = axon_core::data_files_dir();
     std::fs::create_dir_all(&download_dir)?;
 
     let mut files = Vec::new();

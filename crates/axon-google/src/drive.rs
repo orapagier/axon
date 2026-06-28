@@ -376,7 +376,7 @@ pub async fn download_binary(state: &AppState, file_id: &str) -> Result<Value> {
         (b, name.clone())
     };
 
-    let download_dir = std::path::PathBuf::from("/data/files");
+    let download_dir = axon_core::data_files_dir();
     std::fs::create_dir_all(&download_dir)?;
     let path = download_dir.join(&export_name);
     std::fs::write(&path, &bytes)?;
@@ -424,7 +424,7 @@ pub async fn export(state: &AppState, file_id: &str, mime_type: &str) -> Result<
     };
 
     let export_name = format!("{name}.{ext}");
-    let download_dir = std::path::PathBuf::from("/data/files");
+    let download_dir = axon_core::data_files_dir();
     std::fs::create_dir_all(&download_dir)?;
     let path = download_dir.join(&export_name);
     std::fs::write(&path, &bytes)?;

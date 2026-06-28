@@ -237,7 +237,7 @@ pub async fn download_attachment(
         .ok_or_else(|| anyhow::anyhow!("No contentBytes found in attachment"))?;
     let decoded = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64)?;
 
-    let download_dir = std::path::PathBuf::from("/data/files");
+    let download_dir = axon_core::data_files_dir();
     std::fs::create_dir_all(&download_dir)?;
     let path = download_dir.join(filename);
     std::fs::write(&path, &decoded)?;

@@ -8,26 +8,6 @@ use std::sync::Arc;
 const BASE: &str = "https://www.googleapis.com/youtube/v3";
 const UPLOAD_BASE: &str = "https://www.googleapis.com/upload/youtube/v3";
 
-/// Resolve the app's `data/files` staging directory for downloaded media.
-///
-/// Mirrors the resolution used elsewhere in the app (`files::staging_dir`,
-/// `image_tool::app_data_files_dir`): honor `AXON_DATA_DIR` when set, otherwise
-/// fall back to the relative `data/files` directory the app creates at startup.
-/// `axon-google` cannot call `axon-agent`'s helper (that would be a circular
-/// dependency), so the minimal env-or-relative logic is replicated here.
-fn data_files_dir() -> std::path::PathBuf {
-    if let Ok(dir) = std::env::var("AXON_DATA_DIR") {
-        let base = std::path::PathBuf::from(dir);
-        // Accept a path that already points at the `files` dir; otherwise use the
-        // conventional `<AXON_DATA_DIR>/files` staging sub-dir.
-        if base.file_name().and_then(|n| n.to_str()) == Some("files") {
-            return base;
-        }
-        return base.join("files");
-    }
-    std::path::PathBuf::from("data/files")
-}
-
 struct ActionSpec {
     tool: &'static str,
     description: &'static str,

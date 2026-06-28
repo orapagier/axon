@@ -118,7 +118,7 @@ pub async fn download_binary(state: &AppState, item_id: &str) -> Result<Value> {
         .bytes()
         .await?;
 
-    let download_dir = std::path::PathBuf::from("/data/files");
+    let download_dir = axon_core::data_files_dir();
     std::fs::create_dir_all(&download_dir)?;
     let path = download_dir.join(name);
     std::fs::write(&path, &bytes)?;

@@ -250,7 +250,7 @@ async fn call_action(
     let filename = opt_string_arg(args, "download_filename")
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| "places_photo.bin".to_string());
-    let download_dir = std::path::PathBuf::from("/data/files");
+    let download_dir = axon_core::data_files_dir();
     std::fs::create_dir_all(&download_dir)?;
     let path = download_dir.join(&filename);
     let bytes = response.bytes().await?;
