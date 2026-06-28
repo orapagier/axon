@@ -20,13 +20,13 @@ pub fn staging_dir() -> PathBuf {
 }
 
 /// Save raw bytes to the staging directory under the file's original name.
-/// If a file with the same name already exists it is overwritten, so only the
-/// newest copy is kept.
+/// A same-named file of the same size is overwritten (assumed identical); a
+/// same-named file of a different size is saved under a numbered variant.
 /// Returns the absolute path of the staged file.
 pub fn stage_bytes(data: &[u8], original_name: &str) -> Result<PathBuf> {
     let dir = staging_dir();
     let staged_name = sanitize_filename(original_name);
-    let path = dir.join(&staged_name);
+    let path = axon_core::resolve_dedup_path(&dir, &staged_name, data.len() as u64);
     std::fs::write(&path, data)?;
     Ok(path.canonicalize().unwrap_or(path))
 }

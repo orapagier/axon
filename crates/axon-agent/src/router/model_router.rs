@@ -297,7 +297,6 @@ pub async fn call_llm_with_options(
     settings: &RuntimeSettings,
     options: CallLlmOptions,
 ) -> anyhow::Result<(UnifiedResponse, String, String)> {
-    let cooldown = settings.rate_limit_cooldown();
     let threshold = settings.error_threshold();
     let timeout_secs = settings.model_call_timeout_secs();
     // Tracks every model index actually attempted across all passes.
