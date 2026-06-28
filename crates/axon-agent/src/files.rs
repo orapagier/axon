@@ -3,10 +3,8 @@ use std::path::{Path, PathBuf};
 
 /// Central staging directory for all file transfers.
 /// All files received from users or downloaded by tools land here.
-/// Files are saved under their original (sanitized) name. Saving a same-named
-/// file of the same size overwrites it (assumed identical); a same-named file of
-/// a different size is kept under a numbered variant. See
-/// [`axon_core::resolve_dedup_path`].
+/// Files are saved under their original (sanitized) name; saving the same name
+/// again overwrites the previous file so only the newest copy is kept.
 const STAGING_DIR: &str = "data/files";
 
 /// Ensure the staging directory exists and return its canonical path.
