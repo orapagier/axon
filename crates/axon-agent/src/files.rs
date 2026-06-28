@@ -1,15 +1,15 @@
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-/// Central staging directory for all file transfers.
-/// All files received from users or downloaded by tools land here.
-/// Files are saved under their original (sanitized) name; saving the same name
-/// again overwrites the previous file so only the newest copy is kept.
-const STAGING_DIR: &str = "data/files";
-
-/// Ensure the staging directory exists and return its canonical path.
+/// Ensure the central staging directory exists and return its canonical path.
+///
+/// All file transfers (received from users or downloaded by tools/nodes) land
+/// here. The directory is resolved by [`axon_core::data_files_dir`] so every
+/// node and the agent share ONE location — a file a node saves is found by the
+/// sender and the Files page. Files keep their original (sanitized) name and
+/// saving the same name overwrites the previous file (newest only).
 pub fn staging_dir() -> PathBuf {
-    let dir = PathBuf::from(STAGING_DIR);
+    let dir = axon_core::data_files_dir();
     if !dir.exists() {
         let _ = std::fs::create_dir_all(&dir);
     }
