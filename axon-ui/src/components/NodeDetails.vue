@@ -1890,7 +1890,7 @@ onUnmounted(() => {
                                           <span class="fc-toggle-slider"></span>
                                         </label>
                                       </div>
-                                      <button type="button" class="btn-fx-toggle" title="Use an expression" @click="enterExprMode('fc:'+prop.name+':'+idx+':'+subProp.name, () => item[subProp.name] = '')">ƒx</button>
+                                      <button v-if="!subProp.noExpr" type="button" class="btn-fx-toggle" title="Use an expression" @click="enterExprMode('fc:'+prop.name+':'+idx+':'+subProp.name, () => item[subProp.name] = '')">ƒx</button>
                                     </div>
                                   </template>
                                   <input
