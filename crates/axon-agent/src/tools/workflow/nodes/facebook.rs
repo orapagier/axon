@@ -52,6 +52,14 @@ fn fields_or(config: &Value, default: &str) -> String {
         .unwrap_or_else(|| default.to_string())
 }
 
+/// Parse the `limit` config as a page size clamped to Graph's 1–100 range.
+fn limit_or(config: &Value, default: u32) -> u32 {
+    str_val(config, "limit")
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .unwrap_or(default)
+        .clamp(1, 100)
+}
+
 /// Resolve the Page access token from merged credential data.
 fn page_token(config: &Value) -> Result<String, String> {
     str_val(config, "page_access_token")
