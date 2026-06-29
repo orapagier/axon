@@ -991,6 +991,8 @@ pub(crate) async fn execute(config: &Value) -> Result<Value, String> {
         "sendAction" => send_action(&client, &token, config).await,
         "getThread" => get_thread(&client, &token, config).await,
         "getConversations" => get_conversations(&client, &token, config).await,
+        "getChatDetails" => get_chat_details(&client, &token, config).await,
+        "getUserProfile" => get_user_profile(&client, &token, config).await,
         // Page
         "getPageInfo" => get_page_info(&client, &token, config).await,
         "updatePage" => update_page(&client, &token, config).await,
