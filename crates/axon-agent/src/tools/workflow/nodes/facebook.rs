@@ -262,10 +262,7 @@ async fn get_thread(
 ) -> Result<Value, String> {
     let page_id = require(config, "page_id")?;
     let recipient_id = require(config, "recipient_id")?;
-    let limit = str_val(config, "limit")
-        .and_then(|s| s.trim().parse::<u32>().ok())
-        .unwrap_or(25)
-        .clamp(1, 100);
+    let limit = limit_or(config, 25);
     // A `fields` override controls the entire projection (including the messages
     // subfield and its own limit). The default expands the thread metadata and
     // pulls full message objects — text, sender, attachments, stickers, shares.
