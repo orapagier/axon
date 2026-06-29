@@ -1330,6 +1330,22 @@ function normalizeConfig() {
       }
     });
   }
+
+  // Switch: the per-rule "Value to Test" replaced the old node-level value (+ the
+  // per-rule override). Push any legacy node-level value down into rules that
+  // don't have one of their own, so switches built before this change keep
+  // routing instead of suddenly testing an empty subject. Idempotent: once a
+  // rule has its own value, it is never overwritten.
+  if (props.node.data.node_type === 'switch') {
+    const legacy = props.node.data.config.value1
+    const rules = props.node.data.config.rules?.parameters
+    if (typeof legacy === 'string' && legacy.trim() && Array.isArray(rules)) {
+      rules.forEach(r => {
+        const own = r.value1
+        if (!own || (typeof own === 'string' && !own.trim())) r.value1 = legacy
+      })
+    }
+  }
 }
 
 watch(() => props.node.id, normalizeConfig, { immediate: true })
