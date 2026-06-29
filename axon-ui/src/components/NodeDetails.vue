@@ -69,6 +69,16 @@ onMounted(async () => {
   } catch (e) {
     console.error('Failed to load tools', e)
   }
+  // Fetch all workflows for the Execute Workflow (subflow) node dropdown,
+  // excluding the current workflow (a workflow cannot call itself).
+  try {
+    const wData = await get('/workflows')
+    availableWorkflows.value = (wData.workflows || [])
+      .filter(w => w.id !== props.workflowId)
+      .map(w => ({ name: w.name || w.id, value: w.id }))
+  } catch (e) {
+    console.error('Failed to load workflows', e)
+  }
   try {
     const folderData = await get('/fovea/folders')
     const folders = (folderData.folders || []).map((folder) => ({
