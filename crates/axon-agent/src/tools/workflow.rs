@@ -2313,6 +2313,16 @@ impl WorkflowEngine {
             _ => None,
         };
 
+        // A sub-workflow call may pin a single entry trigger for a multi-trigger
+        // child; start from only that trigger node (its downstream chain runs,
+        // sibling triggers stay dormant). Consumed here so a later call without a
+        // choice falls back to every trigger.
+        let subflow_entry_node: Option<String> = if trigger_source == "subflow" {
+            SUBFLOW_ENTRY_NODE.lock().await.remove(workflow_id)
+        } else {
+            None
+        };
+
         let mut queue: std::collections::VecDeque<_> = nodes
             .iter()
             .filter(|n| {
@@ -2328,10 +2338,14 @@ impl WorkflowEngine {
                     // This prevents separated, orphaned subgraphs from running accidentally.
                     // When the run is source-scoped, also require the trigger node's
                     // config.type to match so other trigger branches stay dormant.
+                    // A pinned sub-workflow entry narrows it further to that one node.
                     deg && matches!(n.node_type.as_str(), "trigger" | "circadian" | "stimulus")
                         && entry_trigger_type.map_or(true, |want| {
                             n.config.get("type").and_then(|v| v.as_str()) == Some(want)
                         })
+                        && subflow_entry_node
+                            .as_deref()
+                            .map_or(true, |chosen| n.id == chosen)
                 } else {
                     deg
                 }
