@@ -64,12 +64,12 @@ pub(crate) fn execute<'a>(
         }
         if stack.len() >= MAX_SUBFLOW_DEPTH {
             return Err(format!(
-                "Sub-workflow node: maximum nesting depth ({MAX_SUBFLOW_DEPTH}) exceeded"
+                "Execute Workflow node: maximum nesting depth ({MAX_SUBFLOW_DEPTH}) exceeded"
             ));
         }
         if stack.contains(&child_id) {
             return Err(format!(
-                "Sub-workflow node: cycle detected — workflow '{child_id}' is already \
+                "Execute Workflow node: cycle detected — workflow '{child_id}' is already \
                  running in this call chain"
             ));
         }
