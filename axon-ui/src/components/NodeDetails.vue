@@ -800,15 +800,26 @@ const nodeDefinition = computed(() => {
     return enriched
   }
 
-  // For the Execute Workflow node, inject the list of selectable workflows.
+  // For the Execute Workflow node, inject the selectable workflows and — only
+  // when the target has more than one trigger — the entry-trigger picker.
   if (type === 'subflow' && base.properties) {
+    const triggerOpts = entryTriggerOptions.value
+    const showEntry = triggerOpts.length >= 2
     return {
       ...base,
-      properties: base.properties.map(p => {
+      properties: base.properties.flatMap(p => {
         if (p.name === 'workflow_id' && p.type === 'options') {
-          return { ...p, options: availableWorkflows.value, searchable: true }
+          return [{ ...p, options: availableWorkflows.value, searchable: true }]
         }
-        return p
+        if (p.name === 'entry_node_id') {
+          if (!showEntry) return []
+          return [{
+            ...p,
+            options: [{ name: 'Run all triggers', value: '' }, ...triggerOpts],
+            searchable: true,
+          }]
+        }
+        return [p]
       }),
     }
   }
