@@ -4199,17 +4199,19 @@ select {
 
 /* ── Sizing variants ──────────────────────────────────────────────────────── */
 .btn-sm {
-    min-height: 30px !important;
-    padding: 0 11px !important;
-    border-radius: 9px !important;
-    font-size: 0.72rem !important;
+    height: var(--btn-sm-h) !important;
+    min-height: var(--btn-sm-h) !important;
+    padding: 0 var(--btn-sm-px) !important;
+    border-radius: var(--btn-sm-radius) !important;
+    font-size: var(--btn-sm-fs) !important;
 }
 
 .btn-xs {
-    min-height: 25px !important;
-    padding: 0 9px !important;
-    border-radius: 7px !important;
-    font-size: 0.67rem !important;
+    height: var(--btn-xs-h) !important;
+    min-height: var(--btn-xs-h) !important;
+    padding: 0 var(--btn-xs-px) !important;
+    border-radius: var(--btn-xs-radius) !important;
+    font-size: var(--btn-xs-fs) !important;
 }
 
 /* ── Primary action · mint→cyan gradient (Save / Success) ─────────────────── */
