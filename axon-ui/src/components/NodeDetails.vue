@@ -35,7 +35,12 @@ const startWidth = ref(0)
 const credentials = ref([])
 const availableModels = ref([])
 const availableTools = ref([])
-const availableWorkflows = ref([])
+// Full workflow objects (id, name, nodes…) for the Execute Workflow node, minus
+// the current one. availableWorkflows / entry-trigger options derive from this.
+const workflowsRaw = ref([])
+const availableWorkflows = computed(() =>
+  workflowsRaw.value.map(w => ({ name: w.name || w.id, value: w.id }))
+)
 const foveaFolderOptions = ref([
   {
     name: 'data/files',
