@@ -49,11 +49,11 @@ pub(crate) fn execute<'a>(
                 rusqlite::params![target],
                 |r| r.get::<_, String>(0),
             )
-            .map_err(|_| format!("Sub-workflow '{target}' not found"))?
+            .map_err(|_| format!("Execute Workflow: '{target}' not found"))?
         };
 
         if child_id == parent_workflow_id {
-            return Err("Sub-workflow node: a workflow cannot call itself".to_string());
+            return Err("Execute Workflow node: a workflow cannot call itself".to_string());
         }
 
         // Recursion / cycle guard via the task-local call stack. The top-level run
