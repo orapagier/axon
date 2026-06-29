@@ -219,6 +219,27 @@ async fn process_change(state: &AppState, page_id: &str, change: &Value) {
         .and_then(|n| n.as_str())
         .unwrap_or("")
         .to_string();
+
+    // Skip the Page's own engagement on its own content. A comment/reaction/like/
+    // share authored by the Page itself (from.id == entry.id) is almost always an
+    // echo of an action one of our workflows just performed (e.g. `reply_comment`,
+    // `react_object`). Letting it through re-triggers the workflow on its own
+    // output, producing the reply loop ("No reply needed…" posted over and over).
+    // This is the feed-side counterpart to the `is_echo` guard on the Messenger
+    // path. Content the Page *publishes* (post/status/photo/video/album) is an
+    // intentional action and is still allowed to fire triggers.
+    if !from_id.is_empty()
+        && from_id == page_id
+        && matches!(event_type, "comment" | "reaction" | "like" | "share")
+    {
+        tracing::info!(
+            "FB webhook: skipping Page's own {} on page {} (self-echo, prevents reply loop)",
+            event_type,
+            page_id
+        );
+        return;
+    }
+
     let message = value
         .get("message")
         .or_else(|| value.get("review_text"))
