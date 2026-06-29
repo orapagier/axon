@@ -223,16 +223,19 @@ async fn get_comments(
         .and_then(|s| s.trim().parse::<u32>().ok())
         .unwrap_or(25)
         .clamp(1, 100);
+    let fields = fields_or(
+        config,
+        "id,message,from{id,name},created_time,like_count,comment_count,parent{id},\
+         attachment,permalink_url,is_hidden,is_private,can_hide,can_remove,\
+         can_reply_privately,user_likes,message_tags,reactions.summary(true)",
+    );
     let resp = client
         .get(format!("{FB_API}/{object_id}/comments"))
         .bearer_auth(token)
         .query(&[
             ("limit", limit.to_string()),
             ("order", "reverse_chronological".to_string()),
-            (
-                "fields",
-                "id,message,from{id,name},created_time,like_count".to_string(),
-            ),
+            ("fields", fields),
         ])
         .send()
         .await
