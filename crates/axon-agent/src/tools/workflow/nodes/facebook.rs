@@ -13,6 +13,10 @@ use serde_json::{json, Value};
 
 const FB_API: &str = "https://graph.facebook.com/v25.0";
 
+/// Default field projection for a Page post/feed read.
+const POST_FIELDS: &str = "id,message,story,created_time,full_picture,permalink_url,\
+     likes.summary(true),comments.summary(true),shares";
+
 // ── Config helpers ──────────────────────────────────────────────────────────
 
 /// Read a scalar config value as a string. Objects/arrays (from resolved
