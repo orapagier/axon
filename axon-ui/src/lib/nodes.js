@@ -1082,18 +1082,20 @@ export const NODE_TYPES = {
         ],
     },
     subflow: {
-        displayName: 'Sub-workflow',
+        displayName: 'Execute Workflow',
         name: 'subflow',
         icon: '🧩',
-        description: 'Run another workflow and use its output (Execute Workflow)',
+        description: 'Run another workflow and use its output',
         properties: [
             {
-                displayName: 'Workflow (name or ID)',
+                displayName: 'Workflow',
                 name: 'workflow_id',
-                type: 'string',
+                type: 'options',
+                searchable: true,
                 default: '',
-                placeholder: 'Target workflow name or id',
-                hint: 'The workflow to run. Resolved by exact id first, then by name. A workflow cannot call itself; cycles and nesting deeper than 8 are rejected.',
+                options: [],
+                placeholder: 'Select a workflow…',
+                hint: 'The workflow to run. A workflow cannot call itself; cycles and nesting deeper than 8 are rejected.',
             },
             {
                 displayName: 'Input',
