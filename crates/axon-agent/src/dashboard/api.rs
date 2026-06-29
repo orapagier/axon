@@ -1958,7 +1958,7 @@ pub async fn get_workflows(State(state): State<AppState>) -> Json<Value> {
     let workflows: Vec<Value> = rows.filter_map(|r| r.ok()).map(|(wf_id, mut wf)| {
         // Load nodes for this workflow
         if let Ok(mut nstmt) = conn.prepare(
-            "SELECT id, workflow_id, position, node_type, name, config, enabled, position_x, position_y, continue_on_fail FROM workflow_nodes WHERE workflow_id = ?1 ORDER BY position ASC"
+            "SELECT id, workflow_id, position, node_type, name, config, enabled, position_x, position_y, continue_on_fail, retries, retry_wait_ms, retry_backoff FROM workflow_nodes WHERE workflow_id = ?1 ORDER BY position ASC"
         ) {
             let nodes: Vec<Value> = nstmt.query_map(rusqlite::params![wf_id], |r| {
                 Ok(json!({
@@ -1972,6 +1972,9 @@ pub async fn get_workflows(State(state): State<AppState>) -> Json<Value> {
                     "position_x": r.get::<_, f64>(7)?,
                     "position_y": r.get::<_, f64>(8)?,
                     "continue_on_fail": r.get::<_, i64>(9)? != 0,
+                    "retries": r.get::<_, i64>(10).unwrap_or(0),
+                    "retry_wait_ms": r.get::<_, i64>(11).unwrap_or(0),
+                    "retry_backoff": r.get::<_, Option<String>>(12)?.unwrap_or_else(|| "fixed".to_string()),
                 }))
             }).unwrap().filter_map(|r| r.ok()).collect();
             wf.as_object_mut().unwrap().insert("nodes".to_string(), json!(nodes));
@@ -2103,10 +2106,27 @@ pub async fn upsert_workflow(
                     .get("continue_on_fail")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
+                // Retry-on-fail config. Accept numbers arriving as JSON numbers or
+                // strings (UI widgets emit both); clamp to sane bounds.
+                let node_retries = node
+                    .get("retries")
+                    .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())))
+                    .unwrap_or(0)
+                    .clamp(0, 100);
+                let node_retry_wait = node
+                    .get("retry_wait_ms")
+                    .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())))
+                    .unwrap_or(0)
+                    .max(0);
+                let node_retry_backoff = node
+                    .get("retry_backoff")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| *s == "exponential")
+                    .unwrap_or("fixed");
 
                 let _ = conn.execute(
-                    "INSERT INTO workflow_nodes (id, workflow_id, position, position_x, position_y, node_type, name, config, enabled, continue_on_fail) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                    rusqlite::params![node_id, id, i as i64, position_x, position_y, node_type, node_name, config, node_enabled as i64, node_continue as i64],
+                    "INSERT INTO workflow_nodes (id, workflow_id, position, position_x, position_y, node_type, name, config, enabled, continue_on_fail, retries, retry_wait_ms, retry_backoff) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                    rusqlite::params![node_id, id, i as i64, position_x, position_y, node_type, node_name, config, node_enabled as i64, node_continue as i64, node_retries, node_retry_wait, node_retry_backoff],
                 );
             }
         }

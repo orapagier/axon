@@ -1,6 +1,7 @@
 use crate::state::AppState;
 use crate::tools::workflow::{
-    execute_gmail_trigger, EXTERNAL_TRIGGER_DATA, TELEGRAM_TRIGGER_DATA, WHATSAPP_TRIGGER_DATA,
+    execute_gmail_trigger, EXTERNAL_TRIGGER_DATA, SUBFLOW_TRIGGER_DATA, TELEGRAM_TRIGGER_DATA,
+    WHATSAPP_TRIGGER_DATA,
 };
 use serde_json::{json, Value};
 
@@ -10,6 +11,16 @@ pub(crate) async fn execute(
     trigger_source: &str,
     workflow_id: &str,
 ) -> Result<Value, String> {
+    // Invoked as a sub-workflow: the parent's input payload is injected here
+    // regardless of the configured trigger type, so a reusable workflow can read
+    // its caller's data from the trigger node like any other source.
+    if trigger_source == "subflow" {
+        let mut data = SUBFLOW_TRIGGER_DATA.lock().await;
+        if let Some(val) = data.remove(workflow_id) {
+            return Ok(val);
+        }
+        return Ok(json!({"trigger": "subflow"}));
+    }
     if config.get("type").and_then(|v| v.as_str()) == Some("gmail") {
         match execute_gmail_trigger(config, state, workflow_id).await {
             Ok(data) => Ok(data),

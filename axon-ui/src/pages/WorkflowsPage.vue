@@ -586,7 +586,7 @@ async function selectWorkflow(wf) {
     id: n.id,
     type: 'canvas-node',
     position: { x: n.position_x || 0, y: n.position_y || 0 },
-    data: { ...createNodeData(n.id, n.node_type, n.name, n.config, n.enabled !== false), continueOnFail: n.continue_on_fail === true },
+    data: { ...createNodeData(n.id, n.node_type, n.name, n.config, n.enabled !== false), continueOnFail: n.continue_on_fail === true, retries: n.retries || 0, retryWaitMs: n.retry_wait_ms || 0, retryBackoff: n.retry_backoff || 'fixed' },
   }))
 
   // Map backend edges to Vue Flow edges with proper data
@@ -1185,6 +1185,9 @@ function getWorkflowPayload() {
       config: n.data?.config || {},
       enabled: n.data?.enabled !== false,
       continue_on_fail: n.data?.continueOnFail === true,
+      retries: Number(n.data?.retries) || 0,
+      retry_wait_ms: Number(n.data?.retryWaitMs) || 0,
+      retry_backoff: n.data?.retryBackoff === 'exponential' ? 'exponential' : 'fixed',
       position: 0,
       position_x: n.position?.x || 0,
       position_y: n.position?.y || 0,

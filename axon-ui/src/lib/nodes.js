@@ -1081,6 +1081,30 @@ export const NODE_TYPES = {
             },
         ],
     },
+    subflow: {
+        displayName: 'Sub-workflow',
+        name: 'subflow',
+        icon: '🧩',
+        description: 'Run another workflow and use its output (Execute Workflow)',
+        properties: [
+            {
+                displayName: 'Workflow (name or ID)',
+                name: 'workflow_id',
+                type: 'string',
+                default: '',
+                placeholder: 'Target workflow name or id',
+                hint: 'The workflow to run. Resolved by exact id first, then by name. A workflow cannot call itself; cycles and nesting deeper than 8 are rejected.',
+            },
+            {
+                displayName: 'Input',
+                name: 'input',
+                type: 'string',
+                default: '',
+                placeholder: '{{ $json }}',
+                hint: 'Optional payload handed to the sub-workflow — its trigger node receives this as its output. Leave empty to pass the primary upstream item.',
+            },
+        ],
+    },
     javascript: {
         displayName: 'JavaScript',
         name: 'javascript',

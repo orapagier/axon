@@ -29,6 +29,21 @@ pub(crate) static EXTERNAL_TRIGGER_DATA: once_cell::sync::Lazy<
     tokio::sync::Mutex<std::collections::HashMap<String, Value>>,
 > = once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
 
+// Sub-workflow input: the parent's payload handed to a child workflow's trigger
+// node when it runs under trigger_source "subflow". Keyed by child workflow_id
+// and consumed (removed) by the trigger node on first read.
+pub(crate) static SUBFLOW_TRIGGER_DATA: once_cell::sync::Lazy<
+    tokio::sync::Mutex<std::collections::HashMap<String, Value>>,
+> = once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
+
+tokio::task_local! {
+    // Call stack of workflow ids currently executing as nested sub-workflows.
+    // Used by the Sub-workflow node to bound recursion depth and reject cycles.
+    // Unset at the top level (a normal trigger/manual run), where it reads as an
+    // empty stack via `try_with(..).unwrap_or_default()`.
+    pub(crate) static SUBFLOW_STACK: Vec<String>;
+}
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const JS_SCRIPT_MAX_BYTES: usize = 64 * 1024;
@@ -69,6 +84,16 @@ pub struct WorkflowNode {
     pub enabled: bool,
     #[serde(default)]
     pub continue_on_fail: bool,
+    /// Retry-on-fail: number of additional attempts after the first failure
+    /// (0 = no retry). Triggers, Wait, Loop and branch nodes never retry.
+    #[serde(default)]
+    pub retries: u32,
+    /// Milliseconds to wait between retry attempts.
+    #[serde(default)]
+    pub retry_wait_ms: u64,
+    /// "fixed" (default) or "exponential" — doubles the wait each attempt.
+    #[serde(default)]
+    pub retry_backoff: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1699,7 +1724,7 @@ fn find_iteration_source_node_id(
     None
 }
 
-async fn execute_node_by_type(
+async fn execute_node_dispatch(
     node: &WorkflowNode,
     config: &Value,
     state: &AppState,
@@ -1764,7 +1789,102 @@ async fn execute_node_by_type(
         "ifCondition" => nodes::condition::execute_if_condition_node(config),
         "switch" => nodes::condition::execute_switch_node(config),
         "loop" => nodes::iterate::execute(config),
+        "subflow" | "workflow" => {
+            nodes::subflow::execute(config, state, workflow_id, run_id, node_results).await
+        }
         _ => Err(format!("Unknown type: {}", node.node_type)),
+    }
+}
+
+/// Wait before retry attempt `attempt` (1-based). Floors the base at 1ms so a
+/// misconfigured 0ms still yields a real (cancellation-checking) pause, and
+/// doubles per attempt under exponential backoff. Saturating throughout so a
+/// large attempt count can't overflow.
+fn compute_retry_wait_ms(base_ms: u64, attempt: u32, backoff: &str) -> u64 {
+    let base = base_ms.max(1);
+    if backoff == "exponential" {
+        base.saturating_mul(2u64.saturating_pow(attempt.saturating_sub(1)))
+    } else {
+        base
+    }
+}
+
+/// Per-node entry point: wraps `execute_node_dispatch` with retry-on-fail. On
+/// failure the node is re-executed up to `node.retries` times, waiting
+/// `retry_wait_ms` between attempts (doubling each time when
+/// `retry_backoff == "exponential"`). The wait is cancellation-aware so a Stop
+/// request takes effect promptly. Trigger, Wait, Loop and branch nodes never
+/// retry — re-running them has no transient-failure semantics (they suspend,
+/// fan out, or route) and could double side effects. Every engine call site
+/// goes through here, so retry applies uniformly to single nodes and loop units.
+#[allow(clippy::too_many_arguments)]
+async fn execute_node_by_type(
+    node: &WorkflowNode,
+    config: &Value,
+    state: &AppState,
+    trigger_source: &str,
+    workflow_id: &str,
+    run_id: &str,
+    node_results: &std::collections::HashMap<String, NodeResult>,
+    durable_allowed: bool,
+) -> Result<Value, String> {
+    let no_retry = matches!(
+        node.node_type.as_str(),
+        "trigger" | "circadian" | "stimulus" | "wait" | "loop" | "ifCondition" | "switch"
+    );
+    let max_attempts = if no_retry { 0 } else { node.retries };
+
+    let mut attempt: u32 = 0;
+    loop {
+        match execute_node_dispatch(
+            node,
+            config,
+            state,
+            trigger_source,
+            workflow_id,
+            run_id,
+            node_results,
+            durable_allowed,
+        )
+        .await
+        {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                if attempt >= max_attempts {
+                    return Err(e);
+                }
+                attempt += 1;
+                let wait_ms =
+                    compute_retry_wait_ms(node.retry_wait_ms, attempt, &node.retry_backoff);
+                tracing::warn!(
+                    "Node '{}' ({}) attempt {}/{} failed: {} — retrying in {}ms",
+                    node.name,
+                    node.id,
+                    attempt,
+                    max_attempts,
+                    e,
+                    wait_ms
+                );
+                // Cancellation-aware sleep in <=1s slices (mirrors wait.rs).
+                let deadline = tokio::time::Instant::now()
+                    + tokio::time::Duration::from_millis(wait_ms);
+                loop {
+                    let now = tokio::time::Instant::now();
+                    if now >= deadline {
+                        break;
+                    }
+                    let slice = (deadline - now).min(tokio::time::Duration::from_secs(1));
+                    tokio::time::sleep(slice).await;
+                    let cancelled = {
+                        let c = state.workflow_cancellations.lock().await;
+                        c.contains(workflow_id) || c.contains(run_id)
+                    };
+                    if cancelled {
+                        return Err("Workflow cancelled during retry backoff".to_string());
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1966,7 +2086,7 @@ impl WorkflowEngine {
                 |r| r.get(0),
             )?;
 
-            let mut s = conn.prepare("SELECT id, workflow_id, position, position_x, position_y, node_type, name, config, enabled, continue_on_fail FROM workflow_nodes WHERE workflow_id = ?")?;
+            let mut s = conn.prepare("SELECT id, workflow_id, position, position_x, position_y, node_type, name, config, enabled, continue_on_fail, retries, retry_wait_ms, retry_backoff FROM workflow_nodes WHERE workflow_id = ?")?;
             let nodes: Vec<WorkflowNode> = s
                 .query_map([workflow_id], |r| {
                     Ok(WorkflowNode {
@@ -1981,6 +2101,9 @@ impl WorkflowEngine {
                             .unwrap_or(json!({})),
                         enabled: r.get::<_, i32>(8)? != 0,
                         continue_on_fail: r.get::<_, i32>(9)? != 0,
+                        retries: r.get::<_, i64>(10).unwrap_or(0).max(0) as u32,
+                        retry_wait_ms: r.get::<_, i64>(11).unwrap_or(0).max(0) as u64,
+                        retry_backoff: r.get::<_, Option<String>>(12)?.unwrap_or_default(),
                     })
                 })?
                 .filter_map(|r| r.ok())
@@ -2346,6 +2469,7 @@ impl WorkflowEngine {
                 && !matches!(
                     node.node_type.as_str(),
                     "loop" | "ifCondition" | "switch" | "trigger" | "circadian" | "stimulus"
+                        | "subflow" | "workflow"
                 );
 
             let result = if can_iterate {
@@ -3650,6 +3774,40 @@ fn should_trigger(wf: &Workflow) -> bool {
 }
 
 #[cfg(test)]
+mod retry_tests {
+    use super::compute_retry_wait_ms as w;
+
+    #[test]
+    fn fixed_backoff_is_constant() {
+        assert_eq!(w(100, 1, "fixed"), 100);
+        assert_eq!(w(100, 3, "fixed"), 100);
+        assert_eq!(w(250, 5, ""), 250); // empty backoff == fixed
+    }
+
+    #[test]
+    fn exponential_backoff_doubles_per_attempt() {
+        assert_eq!(w(100, 1, "exponential"), 100);
+        assert_eq!(w(100, 2, "exponential"), 200);
+        assert_eq!(w(100, 3, "exponential"), 400);
+        assert_eq!(w(100, 4, "exponential"), 800);
+    }
+
+    #[test]
+    fn wait_is_floored_at_one_ms() {
+        // A 0ms config still yields a >=1ms (cancellation-checking) pause.
+        assert_eq!(w(0, 1, "fixed"), 1);
+        assert_eq!(w(0, 3, "exponential"), 4);
+    }
+
+    #[test]
+    fn huge_attempt_count_saturates_without_overflow() {
+        // Must not panic on overflow for a pathological attempt number.
+        let _ = w(1_000_000, 100, "exponential");
+        assert_eq!(w(u64::MAX, 5, "exponential"), u64::MAX);
+    }
+}
+
+#[cfg(test)]
 mod condition_tests {
     use super::evaluate_condition_typed as ev;
     use serde_json::json;
@@ -3902,6 +4060,9 @@ mod resolve_tests {
             config: j!({}),
             enabled: true,
             continue_on_fail: false,
+            retries: 0,
+            retry_wait_ms: 0,
+            retry_backoff: String::new(),
         }];
         restamp_result_identities(&mut results, &mut [], &mut [], &nodes);
 

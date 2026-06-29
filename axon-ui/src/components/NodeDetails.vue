@@ -2176,6 +2176,22 @@ onUnmounted(() => {
                   <span class="toggle-label">{{ node.data.continueOnFail ? 'Continue On Fail' : 'Stop On Fail' }}</span>
                 </div>
               </div>
+              <div class="form-row row-number">
+                <label class="field-label">Retry On Fail</label>
+                <input type="number" min="0" max="100" v-model.number="node.data.retries" @change="onSettingsChange" placeholder="0" />
+                <span class="field-hint">Extra attempts after the first failure (0 = no retry). Triggers, Wait, Loop and branch nodes never retry.</span>
+              </div>
+              <div class="form-row row-number" v-if="node.data.retries > 0">
+                <label class="field-label">Retry Wait (ms)</label>
+                <input type="number" min="0" v-model.number="node.data.retryWaitMs" @change="onSettingsChange" placeholder="0" />
+              </div>
+              <div class="form-row row-options" v-if="node.data.retries > 0">
+                <label class="field-label">Backoff</label>
+                <select v-model="node.data.retryBackoff" @change="onSettingsChange">
+                  <option value="fixed">Fixed wait</option>
+                  <option value="exponential">Exponential (doubles each attempt)</option>
+                </select>
+              </div>
               <div class="form-row row-boolean-field" v-if="node.data && node.data.config">
                 <label class="field-label">Loop Items</label>
                 <div class="toggle-field">

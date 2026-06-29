@@ -25,6 +25,7 @@ pub(crate) mod nociceptor;
 pub(crate) mod shell;
 pub(crate) mod slack;
 pub(crate) mod soma;
+pub(crate) mod subflow;
 pub(crate) mod synapse;
 pub(crate) mod trigger;
 pub(crate) mod wait;

@@ -64,6 +64,12 @@ const MIGRATIONS: &[Migration] = &[
         sql: include_str!("migrations/0006_facebook_webhook_page.sql"),
         tolerant_dup_column: true,
     },
+    Migration {
+        version: 7,
+        name: "node_reliability",
+        sql: include_str!("migrations/0007_node_reliability.sql"),
+        tolerant_dup_column: true,
+    },
 ];
 
 const SEED_SQL: &str = include_str!("seed.sql");
@@ -206,7 +212,11 @@ mod tests {
         let max: i64 = conn
             .query_row("SELECT MAX(version) FROM schema_migrations", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(max, 5, "all migrations should be recorded");
+        assert_eq!(
+            max,
+            MIGRATIONS.last().unwrap().version,
+            "all migrations should be recorded"
+        );
 
         for t in [
             "settings",
@@ -229,6 +239,11 @@ mod tests {
         // Durable Wait: a suspended run records when/where to resume.
         assert!(col_exists(&conn, "workflow_runs", "resume_at"));
         assert!(col_exists(&conn, "workflow_runs", "resume_node_id"));
+        // Node reliability: retry config + sub-workflow parent linkage.
+        assert!(col_exists(&conn, "workflow_nodes", "retries"));
+        assert!(col_exists(&conn, "workflow_nodes", "retry_wait_ms"));
+        assert!(col_exists(&conn, "workflow_nodes", "retry_backoff"));
+        assert!(col_exists(&conn, "workflow_runs", "parent_run_id"));
 
         // Seeds + normalization: parallel-tool default is the lowered 3, and the
         // new quality-check mode is present.

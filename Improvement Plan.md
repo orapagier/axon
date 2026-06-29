@@ -47,8 +47,8 @@
 Ordered by leverage ÷ risk. Each milestone is independently shippable.
 
 ### Milestone A — "Trustworthy engine" (highest leverage, lowest risk)
-- A1. Per-node **retry on fail**
-- A2. **Sub-workflow** ("Execute Workflow") node
+- A1. Per-node **retry on fail** — ✅ done (migration 0007, `execute_node_by_type` retry wrapper, UI settings)
+- A2. **Sub-workflow** ("Execute Workflow") node — ✅ done (`nodes/subflow.rs`, depth/cycle guard, palette node)
 - A3. **Error workflow** / error trigger
 - A4. Finish **pinned data** (engine honors it)
 - A5. Workflow **export / import** (JSON)
