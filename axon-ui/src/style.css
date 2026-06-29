@@ -4153,8 +4153,8 @@ select {
     min-height: var(--btn-h) !important;
     padding: 0 var(--btn-px) !important;
     border-radius: var(--btn-radius) !important;
-    border: 1px solid rgba(255, 255, 255, 0.1) !important;
-    background: rgba(255, 255, 255, 0.05) !important;
+    border: 1px solid rgba(255, 255, 255, 0.14) !important;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.085), rgba(255, 255, 255, 0.035)) !important;
     color: var(--text) !important;
     font-size: var(--btn-fs) !important;
     font-weight: 600 !important;
