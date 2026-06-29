@@ -136,14 +136,23 @@ fn apply_migration(conn: &Connection, m: &Migration) -> Result<()> {
             .map_err(Into::into);
     }
 
-    for raw in m.sql.split(';') {
-        // Drop comment-only lines so a leading `-- ...` doesn't hide a statement.
-        let stmt: String = raw
-            .lines()
-            .filter(|l| !l.trim_start().starts_with("--"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let stmt = stmt.trim();
+    // Strip `-- ...` line comments BEFORE splitting on ';'. A semicolon *inside*
+    // a comment (e.g. "(ignored); the UPDATE ...") must not be treated as a
+    // statement boundary — otherwise the comment's tail leaks into the following
+    // statement and SQLite rejects it as a syntax error. (Migration SQL never
+    // puts `--` inside a string literal, so cutting at the first `--` is safe.)
+    let sql: String = m
+        .sql
+        .lines()
+        .map(|line| match line.find("--") {
+            Some(i) => &line[..i],
+            None => line,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    for raw in sql.split(';') {
+        let stmt = raw.trim();
         if stmt.is_empty() {
             continue;
         }
