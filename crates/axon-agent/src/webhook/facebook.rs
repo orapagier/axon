@@ -369,6 +369,20 @@ async fn process_messaging(state: &AppState, page_id: &str, msg: &Value) {
         );
     }
 
+    // High-value fields that the flat event historically dropped: the message id
+    // (mid), any attachments (images/files the user sent) and the event time.
+    let inner = msg.get("message");
+    let message_id = inner
+        .and_then(|m| m.get("mid"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let attachments = inner
+        .and_then(|m| m.get("attachments"))
+        .cloned()
+        .unwrap_or_else(|| json!([]));
+    let timestamp = msg.get("timestamp").cloned().unwrap_or(Value::Null);
+
     let event = json!({
         "trigger": "facebook",
         "page_id": page_id,
@@ -377,6 +391,12 @@ async fn process_messaging(state: &AppState, page_id: &str, msg: &Value) {
         "from_id": sender_id,
         "recipient_id": sender_id,
         "message": message_text,
+        "message_id": message_id,
+        "attachments": attachments,
+        "timestamp": timestamp,
+        // Full Meta messaging object — every field for this event, unfiltered.
+        // Reference anything not promoted above via {{ $json.raw.* }}.
+        "raw": msg,
     });
     dispatch_facebook_workflows(state, page_id, event_type, event).await;
 }
