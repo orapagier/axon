@@ -101,7 +101,7 @@ pub(crate) fn execute<'a>(
         let result = SUBFLOW_STACK
             .scope(stack, fut)
             .await
-            .map_err(|e| format!("Sub-workflow run failed: {e}"))?;
+            .map_err(|e| format!("Execute Workflow run failed: {e}"))?;
 
         // Link the child run to this parent run for history/observability.
         if let Ok(conn) = state.db.get() {
