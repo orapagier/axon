@@ -3026,6 +3026,8 @@ export const NODE_TYPES = {
                     { name: 'Send Sender Action', value: 'sendAction' },
                     { name: 'Get Chat Thread', value: 'getThread' },
                     { name: 'Get Conversations', value: 'getConversations' },
+                    { name: 'Get Chat Details (by PSID)', value: 'getChatDetails' },
+                    { name: 'Get User Profile (by PSID)', value: 'getUserProfile' },
                     // ── Page ──
                     { name: 'Get Page Info', value: 'getPageInfo' },
                     { name: 'Update Page', value: 'updatePage' },
