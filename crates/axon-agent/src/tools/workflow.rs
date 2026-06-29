@@ -36,6 +36,14 @@ pub(crate) static SUBFLOW_TRIGGER_DATA: once_cell::sync::Lazy<
     tokio::sync::Mutex<std::collections::HashMap<String, Value>>,
 > = once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
 
+// Sub-workflow entry trigger: the id of the single trigger node a parent chose to
+// start a child from when that child has multiple triggers. Keyed by child
+// workflow_id and consumed (removed) as the entry queue is built, so only that
+// trigger's chain runs. Absent ⇒ start from every trigger (the default).
+pub(crate) static SUBFLOW_ENTRY_NODE: once_cell::sync::Lazy<
+    tokio::sync::Mutex<std::collections::HashMap<String, String>>,
+> = once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
+
 tokio::task_local! {
     // Call stack of workflow ids currently executing as nested sub-workflows.
     // Used by the Sub-workflow node to bound recursion depth and reject cycles.
