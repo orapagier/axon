@@ -35,8 +35,9 @@ diff_ctx=$(
 raw=$(
   printf '%s' "$diff_ctx" | AXON_AUTOBACKUP=1 claude -p --model haiku \
     "Write a single-line Conventional Commits message (format: type(scope): summary, all lowercase, max 70 chars) summarizing this staged git diff. Output ONLY the message text — no quotes, no markdown, no code fences." \
-    2>/dev/null
+    2>"$CLAUDE_PROJECT_DIR/.claude/hooks/.lasterr"
 )
+printf 'rawbytes=%s\nraw=[%s]\n' "$(printf '%s' "$raw" | wc -c)" "$raw" > "$CLAUDE_PROJECT_DIR/.claude/hooks/.lastraw"
 # Drop any ``` fence lines, take the first non-blank line, trim whitespace and
 # any surrounding quotes/backticks.
 msg=$(printf '%s\n' "$raw" \
