@@ -308,7 +308,10 @@ async fn create_photo_post(
     let page_id = require(config, "page_id")?;
     let image_url = require(config, "image_url")?;
     let mut form: Vec<(&str, String)> = vec![("url", image_url)];
-    if let Some(caption) = str_val(config, "message").filter(|s| !s.trim().is_empty()) {
+    if let Some(caption) = str_val(config, "caption")
+        .or_else(|| str_val(config, "message"))
+        .filter(|s| !s.trim().is_empty())
+    {
         form.push(("caption", caption));
     }
     apply_schedule(config, &mut form);
