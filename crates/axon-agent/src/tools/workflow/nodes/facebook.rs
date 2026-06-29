@@ -758,6 +758,202 @@ async fn get_post_insights(
     finish(resp).await
 }
 
+// ── Chat details by PSID (unreviewed-app friendly) ───────────────────────────
+
+/// Fetch the Messenger User Profile for a PSID. Tries the richest field tier
+/// first, then falls back so a single permission-gated field (common on an
+/// unreviewed app) can't blank the whole response. Returns the profile (Null if
+/// every tier failed) and the last error seen.
+async fn fetch_user_profile(
+    client: &reqwest::Client,
+    token: &str,
+    psid: &str,
+    custom_fields: Option<String>,
+) -> (Value, Option<String>) {
+    let tiers: Vec<String> = match custom_fields {
+        Some(f) => vec![f],
+        None => vec![
+            "id,name,first_name,last_name,profile_pic,locale,timezone,gender".to_string(),
+            "id,first_name,last_name,profile_pic".to_string(),
+            "id,first_name,last_name".to_string(),
+        ],
+    };
+    let mut last_err = None;
+    for fields in tiers {
+        match client
+            .get(format!("{FB_API}/{psid}"))
+            .bearer_auth(token)
+            .query(&[("fields", fields.as_str())])
+            .send()
+            .await
+        {
+            Ok(resp) => match finish(resp).await {
+                Ok(v) => return (v, None),
+                Err(e) => last_err = Some(e),
+            },
+            Err(e) => last_err = Some(format!("Facebook request error: {e}")),
+        }
+    }
+    (Value::Null, last_err)
+}
+
+/// Fetch the conversation thread for a PSID via the Page `conversations` edge
+/// (`user_id` filter). Tries a rich field set, then progressively simpler ones so
+/// a gated metadata field doesn't cost us the participant names + message history.
+/// Returns the raw `conversations` response (best-effort; never fails the op).
+async fn fetch_psid_thread(
+    client: &reqwest::Client,
+    token: &str,
+    page_id: &str,
+    psid: &str,
+    limit: u32,
+) -> Value {
+    let tiers = [
+        format!(
+            "id,link,snippet,updated_time,message_count,unread_count,can_reply,is_subscribed,\
+             participants,senders,former_participants,\
+             messages.limit({limit}){{id,message,from,to,created_time,attachments,sticker,shares,tags}}"
+        ),
+        format!(
+            "id,snippet,updated_time,message_count,participants,\
+             messages.limit({limit}){{id,message,from,created_time,attachments}}"
+        ),
+        format!("participants,messages.limit({limit}){{message,from,created_time}}"),
+    ];
+    let mut last = json!(null);
+    for fields in tiers {
+        match client
+            .get(format!("{FB_API}/{page_id}/conversations"))
+            .bearer_auth(token)
+            .query(&[
+                ("user_id", psid.to_string()),
+                ("platform", "messenger".to_string()),
+                ("fields", fields),
+            ])
+            .send()
+            .await
+        {
+            Ok(resp) => match finish(resp).await {
+                Ok(v) => return v,
+                Err(e) => last = json!({ "error": e }),
+            },
+            Err(e) => last = json!({ "error": format!("Facebook request error: {e}") }),
+        }
+    }
+    last
+}
+
+/// Pull the other party's display name from a thread's participants/senders,
+/// skipping the Page itself — this is how we still get a name when the User
+/// Profile API is gated on an unreviewed app.
+fn participant_name(thread: Option<&Value>, page_id: &str) -> Option<String> {
+    let thread = thread?;
+    for key in ["participants", "senders"] {
+        if let Some(arr) = thread
+            .get(key)
+            .and_then(|p| p.get("data"))
+            .and_then(|d| d.as_array())
+        {
+            if let Some(name) = arr
+                .iter()
+                .find(|p| p.get("id").and_then(|i| i.as_str()) != Some(page_id))
+                .and_then(|p| p.get("name"))
+                .and_then(|n| n.as_str())
+                .filter(|s| !s.trim().is_empty())
+            {
+                return Some(name.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Messenger User Profile for a PSID (name/picture/locale/…), with graceful
+/// field-tier fallback. A `fields` override requests exactly those fields.
+async fn get_user_profile(
+    client: &reqwest::Client,
+    token: &str,
+    config: &Value,
+) -> Result<Value, String> {
+    let psid = require(config, "recipient_id")?;
+    let custom = str_val(config, "fields").filter(|s| !s.trim().is_empty());
+    let (profile, err) = fetch_user_profile(client, token, &psid, custom).await;
+    if profile.is_null() {
+        Err(err.unwrap_or_else(|| "Facebook: user profile unavailable".to_string()))
+    } else {
+        Ok(profile)
+    }
+}
+
+/// Everything obtainable about a Messenger user from just their PSID — the User
+/// Profile API merged with the conversation thread. Resolves the best available
+/// display name (profile name → participant name) and returns the message
+/// history. Built to keep working on an unreviewed app: each source is
+/// best-effort and degrades instead of failing.
+async fn get_chat_details(
+    client: &reqwest::Client,
+    token: &str,
+    config: &Value,
+) -> Result<Value, String> {
+    let page_id = require(config, "page_id")?;
+    let psid = require(config, "recipient_id")?;
+    let limit = limit_or(config, 25);
+
+    let (profile, profile_error) = fetch_user_profile(client, token, &psid, None).await;
+    let conversation = fetch_psid_thread(client, token, &page_id, &psid, limit).await;
+
+    // The conversations edge returns { data: [ {…thread…} ] } — take the thread.
+    let thread = conversation
+        .get("data")
+        .and_then(|d| d.as_array())
+        .and_then(|a| a.first())
+        .cloned();
+
+    // Best display name: profile name → profile first+last → participant name.
+    let name = profile
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            let f = profile.get("first_name").and_then(|v| v.as_str()).unwrap_or("");
+            let l = profile.get("last_name").and_then(|v| v.as_str()).unwrap_or("");
+            let full = format!("{f} {l}").trim().to_string();
+            (!full.is_empty()).then_some(full)
+        })
+        .or_else(|| participant_name(thread.as_ref(), &page_id));
+
+    let field = |key: &str| {
+        thread
+            .as_ref()
+            .and_then(|t| t.get(key))
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+
+    Ok(json!({
+        "psid": psid,
+        "name": name,
+        "first_name": profile.get("first_name").cloned().unwrap_or(Value::Null),
+        "last_name": profile.get("last_name").cloned().unwrap_or(Value::Null),
+        "profile_pic": profile.get("profile_pic").cloned().unwrap_or(Value::Null),
+        "locale": profile.get("locale").cloned().unwrap_or(Value::Null),
+        "timezone": profile.get("timezone").cloned().unwrap_or(Value::Null),
+        "gender": profile.get("gender").cloned().unwrap_or(Value::Null),
+        "profile": profile,
+        // Surfaced so a workflow can tell apart "no profile" from "gated profile".
+        "profile_error": profile_error,
+        "conversation_id": field("id"),
+        "message_count": field("message_count"),
+        "updated_time": field("updated_time"),
+        "participants": field("participants"),
+        "messages": field("messages"),
+        "thread": thread,
+        // The full unfiltered conversations response, for anything not promoted.
+        "raw_conversation": conversation,
+    }))
+}
+
 // ── Public executor ───────────────────────────────────────────────────────────
 
 pub(crate) async fn execute(config: &Value) -> Result<Value, String> {
