@@ -153,7 +153,7 @@ export const NODE_TYPES = {
                 displayName: 'Webhook Setup',
                 name: 'facebook_webhook_hint',
                 type: 'notice',
-                default: 'Inbound events arrive via your Meta App webhook (Callback URL: /webhook/facebook). Subscribe the Page to the webhook fields you want: feed (comments, posts, reactions, likes, shares, photos/videos), mention, ratings, messages, messaging_postbacks, message_reactions, message_deliveries, message_reads. The trigger node outputs { event_type, from_name, from_id, message, object_id, comment_id, recipient_id, page_id }.',
+                default: 'Inbound events arrive via your Meta App webhook (Callback URL: /webhook/facebook). Subscribe the Page to the webhook fields you want: feed (comments, posts, reactions, likes, shares, photos/videos), mention, ratings, messages, messaging_postbacks, message_reactions, message_deliveries, message_reads. The trigger node outputs the promoted fields { event_type, from_name, from_id, message, object_id, comment_id, parent_id, post_id, permalink, created_time, recipient_id, message_id, attachments, timestamp, page_id } plus the complete unfiltered Meta payload at {{ $json.raw }} — use that to reach any field not promoted above.',
                 displayOptions: { show: { type: ['facebook'] } },
             },
             {
