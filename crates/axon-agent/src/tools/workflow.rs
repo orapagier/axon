@@ -2862,32 +2862,41 @@ impl WorkflowEngine {
                                     .unwrap_or(0)]
                             });
 
-                        if let Some(ref sh) = e.source_handle {
-                            let lower = sh.to_lowercase();
-                            let matches = active.iter().any(|&oi| {
-                                sh == &format!("output_main_{}", oi)
-                                    || (node.node_type == "ifCondition"
-                                        && ((oi == 0 && lower == "true")
-                                            || (oi == 1 && lower == "false")))
-                            });
+                        // A branch edge MUST be gated even when its handle is
+                        // missing/empty: an ungated edge let the NOT-taken branch
+                        // run (e.g. the False branch firing while the condition is
+                        // True). A handle-less edge defaults to the first output
+                        // (index 0 / "true"), matching the editor — which renders
+                        // and persists a bare edge as `output_main_0`.
+                        let sh = e
+                            .source_handle
+                            .as_deref()
+                            .filter(|s| !s.is_empty())
+                            .unwrap_or("output_main_0");
+                        let lower = sh.to_lowercase();
+                        let matches = active.iter().any(|&oi| {
+                            format!("output_main_{}", oi) == sh
+                                || (node.node_type == "ifCondition"
+                                    && ((oi == 0 && lower == "true")
+                                        || (oi == 1 && lower == "false")))
+                        });
 
-                            if !matches {
-                                tracing::info!(
-                                    "Branch node {}: skipping edge to {} (handle '{}' not in active outputs {:?})",
-                                    current_id,
-                                    e.target_id,
-                                    sh,
-                                    active
-                                );
-                                live = false;
-                            } else {
-                                tracing::info!(
-                                    "Branch node {}: following edge to {} (handle '{}')",
-                                    current_id,
-                                    e.target_id,
-                                    sh
-                                );
-                            }
+                        if !matches {
+                            tracing::info!(
+                                "Branch node {}: skipping edge to {} (handle '{}' not in active outputs {:?})",
+                                current_id,
+                                e.target_id,
+                                sh,
+                                active
+                            );
+                            live = false;
+                        } else {
+                            tracing::info!(
+                                "Branch node {}: following edge to {} (handle '{}')",
+                                current_id,
+                                e.target_id,
+                                sh
+                            );
                         }
                     }
                 }
