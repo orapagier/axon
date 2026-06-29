@@ -1748,9 +1748,10 @@ onUnmounted(() => {
                       <button
                         v-if="prop.service === 'facebook'"
                         type="button"
+                        class="btn"
                         :disabled="fbConnecting"
                         @click="connectFacebook"
-                        style="white-space:nowrap; display:flex; align-items:center; padding:0 12px; border-radius:8px; border:none; background:#1877F2; color:#fff; font-weight:600; font-size:13px; line-height:1; cursor:pointer;"
+                        style="flex-shrink:0; background:#1877F2 !important; border-color:#1877F2 !important; color:#fff !important;"
                         title="Log in with Facebook and save each Page you manage as a credential"
                       >{{ fbConnecting ? 'Connecting…' : '+ Connect' }}</button>
                     </div>
