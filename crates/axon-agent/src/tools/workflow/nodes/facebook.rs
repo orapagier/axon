@@ -760,15 +760,40 @@ pub(crate) async fn execute(config: &Value) -> Result<Value, String> {
     let operation = str_val(config, "operation").unwrap_or_else(|| "replyComment".to_string());
 
     match operation.as_str() {
+        // Comments
         "replyComment" => reply_comment(&client, &token, config).await,
         "comment" => comment(&client, &token, config).await,
-        "sendMessage" => send_message(&client, &token, config).await,
-        "createPost" => create_post(&client, &token, config).await,
-        "likeObject" => like_object(&client, &token, config).await,
+        "getComments" => get_comments(&client, &token, config).await,
+        "getComment" => get_comment(&client, &token, config).await,
         "hideComment" => hide_comment(&client, &token, config).await,
         "deleteComment" => delete_comment(&client, &token, config).await,
-        "getComments" => get_comments(&client, &token, config).await,
+        "privateReply" => private_reply(&client, &token, config).await,
+        // Reactions / likes
+        "likeObject" => like_object(&client, &token, config).await,
+        "unlikeObject" => unlike_object(&client, &token, config).await,
+        "reactObject" => react_object(&client, &token, config).await,
+        "getReactions" => get_reactions(&client, &token, config).await,
+        "getLikes" => get_likes(&client, &token, config).await,
+        // Posts
+        "createPost" => create_post(&client, &token, config).await,
+        "createPhotoPost" => create_photo_post(&client, &token, config).await,
+        "createVideoPost" => create_video_post(&client, &token, config).await,
+        "updatePost" => update_post(&client, &token, config).await,
+        "deletePost" => delete_post(&client, &token, config).await,
+        "getPosts" => get_posts(&client, &token, config).await,
+        "getPost" => get_post(&client, &token, config).await,
+        "getScheduledPosts" => get_scheduled_posts(&client, &token, config).await,
+        // Messenger
+        "sendMessage" => send_message(&client, &token, config).await,
+        "sendImage" => send_image(&client, &token, config).await,
+        "sendAction" => send_action(&client, &token, config).await,
         "getThread" => get_thread(&client, &token, config).await,
+        "getConversations" => get_conversations(&client, &token, config).await,
+        // Page
+        "getPageInfo" => get_page_info(&client, &token, config).await,
+        "updatePage" => update_page(&client, &token, config).await,
+        "getPageInsights" => get_page_insights(&client, &token, config).await,
+        "getPostInsights" => get_post_insights(&client, &token, config).await,
         other => Err(format!("Unsupported Facebook operation '{other}'")),
     }
 }
