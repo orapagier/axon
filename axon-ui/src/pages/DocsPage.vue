@@ -615,7 +615,7 @@ onBeforeUnmount(() => {
                 type="text"
                 placeholder="Search pages, endpoints, workflows, tasks, settings..."
               />
-              <button type="button" class="docs-clear-btn" @click="clearSearch" :disabled="!searchQuery">
+              <button type="button" class="btn docs-clear-btn" @click="clearSearch" :disabled="!searchQuery">
                 Clear
               </button>
             </div>
@@ -732,7 +732,7 @@ onBeforeUnmount(() => {
         <section v-else class="docs-empty-state">
           <h2>No matching sections</h2>
           <p>Try broader keywords, shorter terms, or clear search to browse the complete guide.</p>
-          <button type="button" class="docs-clear-btn" @click="clearSearch">Reset Search</button>
+          <button type="button" class="btn docs-clear-btn" @click="clearSearch">Reset Search</button>
         </section>
       </div>
     </section>
