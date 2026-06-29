@@ -2677,8 +2677,7 @@ onUnmounted(() => {
 .btn-save:active { transform: translateY(0); }
 
 .btn-execute {
-  height: 34px;
-  padding: 0 16px;
+  /* Size comes from the global --btn-* tokens in style.css (single source of truth). */
   box-sizing: border-box;
   background: linear-gradient(135deg, #4f46e5 0%, #6366f1 100%);
   color: #fff;
