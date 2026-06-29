@@ -35,6 +35,7 @@ const startWidth = ref(0)
 const credentials = ref([])
 const availableModels = ref([])
 const availableTools = ref([])
+const availableWorkflows = ref([])
 const foveaFolderOptions = ref([
   {
     name: 'data/files',
