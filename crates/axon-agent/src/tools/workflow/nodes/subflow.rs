@@ -113,7 +113,7 @@ pub(crate) fn execute<'a>(
 
         if result.status == "error" {
             return Err(format!(
-                "Sub-workflow '{target}' finished with errors (run {})",
+                "Execute Workflow: '{target}' finished with errors (run {})",
                 result.run_id
             ));
         }
