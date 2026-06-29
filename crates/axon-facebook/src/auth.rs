@@ -315,7 +315,7 @@ pub async fn exchange_code(state: &AppState, code: &str, _service: Option<&str>)
     // Subscribe this Page to the App's webhooks so Meta delivers its events.
     // Non-fatal: posting still works without it, but triggers won't fire.
     if let Err(e) = subscribe_page(state, &page_id, page_token).await {
-        tracing::warn!("FB exchange_code: failed to subscribe page {page_id} to webhooks: {e}");
+        eprintln!("FB exchange_code: failed to subscribe page {page_id} to webhooks: {e}");
     }
 
     state
