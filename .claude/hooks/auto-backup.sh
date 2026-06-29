@@ -29,11 +29,15 @@ diff_ctx=$(
   git diff --cached | head -c 12000
 )
 
-msg=$(
+# Capture the full reply into a variable first. Piping claude directly into
+# `head` makes head close the pipe early and SIGPIPE-kill claude, which in a
+# non-interactive script truncates the output to nothing. Post-process after.
+raw=$(
   printf '%s' "$diff_ctx" | AXON_AUTOBACKUP=1 claude -p --model haiku \
     "Write a single-line Conventional Commits message (format: type(scope): summary, all lowercase, max 70 chars) summarizing this staged git diff. Output ONLY the message text — no quotes, no body, no code fences." \
-    2>/dev/null | head -n1 | sed -e 's/^[`"]*//' -e 's/[`"]*$//'
+    2>/dev/null
 )
+msg=$(printf '%s\n' "$raw" | sed -e 's/^[`"]*//' -e 's/[`"]*$//' | head -n1)
 
 # Fallback if the model returned nothing usable.
 [ -z "$msg" ] && msg="claude: auto-backup $(date +%H:%M:%S)"

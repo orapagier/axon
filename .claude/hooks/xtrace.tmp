@@ -1,4 +1,0 @@
-+ set -u
-+ '[' -n '' ']'
-+ cd '/mnt/c/Users/Admin/OneDrive - samuzziel/Documents/Dev/Axon'
-+ git add -A
