@@ -401,7 +401,17 @@ async fn facebook_connect_callback(state: &AppState, code: &str) -> axum::respon
                 rusqlite::params![cred_id, page_name, data_str],
             );
             match res {
-                Ok(_) => saved.push(page_name.to_string()),
+                Ok(_) => {
+                    // `webhooks_subscribed` is set by exchange_code_pages when it
+                    // calls subscribed_apps for this Page. Show it so the user knows
+                    // the Page will actually receive events, not just post.
+                    let subscribed = page
+                        .get("webhooks_subscribed")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let mark = if subscribed { "✅ webhooks active" } else { "⚠️ webhooks not subscribed" };
+                    saved.push(format!("{page_name} — {mark}"));
+                }
                 Err(e) => tracing::error!("FB connect: failed to save credential for {page_name}: {e}"),
             }
         }
