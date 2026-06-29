@@ -4121,6 +4121,16 @@ select {
 .btn-styled,
 .btn-neutral,
 .btn-execute,
+.btn-save,
+.btn-primary,
+.btn-success,
+.btn-danger,
+.btn-warn,
+.btn-ghost,
+.btn-auth-connect,
+.btn-auth-disconnect,
+.btn-premium-action,
+.btn-copy-url,
 .btn-import,
 .btn-curl-import,
 .btn-copy-output,
@@ -4138,14 +4148,15 @@ select {
     display: inline-flex !important;
     align-items: center !important;
     justify-content: center !important;
-    gap: 8px !important;
-    min-height: 36px !important;
-    padding: 0 16px !important;
-    border-radius: 10px !important;
+    gap: var(--btn-gap) !important;
+    height: var(--btn-h) !important;
+    min-height: var(--btn-h) !important;
+    padding: 0 var(--btn-px) !important;
+    border-radius: var(--btn-radius) !important;
     border: 1px solid rgba(255, 255, 255, 0.1) !important;
     background: rgba(255, 255, 255, 0.05) !important;
     color: var(--text) !important;
-    font-size: 0.78rem !important;
+    font-size: var(--btn-fs) !important;
     font-weight: 600 !important;
     letter-spacing: 0.01em !important;
     line-height: 1 !important;
