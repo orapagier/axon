@@ -38,7 +38,7 @@ pub(crate) fn execute<'a>(
             .trim()
             .to_string();
         if target.is_empty() {
-            return Err("Sub-workflow node: no target workflow selected".to_string());
+            return Err("Execute Workflow node: no target workflow selected".to_string());
         }
 
         // Resolve by id first, then by name (same lookup as the agent run_workflow tool).
