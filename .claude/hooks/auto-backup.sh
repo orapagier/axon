@@ -40,5 +40,3 @@ msg=$(
 
 git commit -m "$msg" >/dev/null 2>&1
 git push origin HEAD >/dev/null 2>&1 || true
-
-# trace probe 1782738167
