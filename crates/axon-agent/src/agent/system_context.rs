@@ -176,8 +176,24 @@ pub(crate) async fn build_run_context(
         format!("\n\n[User attached files]\n{}", lines.join("\n"))
     };
 
-    let sys = format!(
-        "{}\n\n[Context]\n{}{}{}{}\n\n\
+    // A tool-free run (explicit empty allow-list, e.g. the Classifier node) is a
+    // single structured completion whose own system prompt fully defines the
+    // output contract. The conversational scaffolding below — tool-calling
+    // CRITICAL RULES + FILE HANDLING — would fight that contract: rule #4
+    // ("PLAIN TEXT ONLY") in particular makes the model paraphrase its JSON as
+    // prose. So for these runs we keep base_system + context blocks only.
+    let tool_free = matches!(ctx.allowed_tools.as_deref(), Some([]));
+    let context_block = format!("{}{}{}{}", time_ctx, mem_ctx, obs_ctx, files_ctx);
+
+    let sys = if tool_free {
+        if context_block.is_empty() {
+            base_system.to_string()
+        } else {
+            format!("{}\n\n[Context]\n{}", base_system, context_block)
+        }
+    } else {
+        format!(
+            "{}\n\n[Context]\n{}\n\n\
 CRITICAL RULES:\n\
 1. ALWAYS call the relevant tool to get current data. NEVER answer from memories or past observations alone.\n\
 2. Memories and observations above are HINTS for context — they may be outdated or wrong. Always verify by calling tools.\n\
@@ -195,8 +211,9 @@ FILE HANDLING:\n\
 - Outlook with attachment: outlook_send_with_attachment, local_path=<path>\n\
 - SSH download saves to local path; use <send_file> to deliver it to user.\n\
 - GDrive/OneDrive download tools return local path; use <send_file> to deliver.",
-        base_system, time_ctx, mem_ctx, obs_ctx, files_ctx
-    );
+            base_system, context_block
+        )
+    };
 
     RunSystemContext {
         sys,
