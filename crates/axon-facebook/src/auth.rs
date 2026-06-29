@@ -185,6 +185,35 @@ pub async fn exchange_code_pages(state: &AppState, code: &str) -> Result<Value> 
     Ok(json!({ "pages": pages }))
 }
 
+/// Page webhook fields to activate on subscription. These mirror exactly what
+/// the webhook handler (`webhook::facebook`) knows how to process: `feed`
+/// (posts/comments/reactions/likes/shares), `mention`, `ratings`, and the
+/// Messenger events (`messages`, `messaging_postbacks`, `message_reactions`).
+/// Passive receipts (`message_deliveries`, `message_reads`) are intentionally
+/// omitted — they're high-volume and the dispatcher skips them by default; add
+/// them here if a workflow ever needs to trigger on them.
+const FB_WEBHOOK_FIELDS: &str =
+    "feed,mention,ratings,messages,messaging_postbacks,message_reactions";
+
+/// Subscribe a Page to this App's webhooks via `POST /{page-id}/subscribed_apps`
+/// using the Page's own access token. This is the step OAuth does *not* perform:
+/// without it Meta delivers no events for the Page, so a connected Page shows in
+/// the dropdown and can post but never fires a trigger. Idempotent — calling it
+/// again just refreshes the subscribed field set.
+pub async fn subscribe_page(state: &AppState, page_id: &str, page_token: &str) -> Result<Value> {
+    let resp = state
+        .client
+        .post(format!("{FB_API}/{page_id}/subscribed_apps"))
+        .query(&[
+            ("subscribed_fields", FB_WEBHOOK_FIELDS),
+            ("access_token", page_token),
+        ])
+        .send()
+        .await?;
+    let v: Value = ensure_ok(resp).await?.json().await?;
+    Ok(v)
+}
+
 pub async fn instagram_auth_url(state: &AppState) -> Result<Value> {
     let storage = state.storage.read().await;
     let creds = storage.facebook_creds()?;
