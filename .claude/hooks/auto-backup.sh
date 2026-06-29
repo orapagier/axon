@@ -29,11 +29,11 @@ diff_ctx=$(
   git diff --cached | head -c 12000
 )
 
-msg=$(
-  printf '%s' "$diff_ctx" | AXON_AUTOBACKUP=1 claude -p --model haiku \
-    "Write a single-line Conventional Commits message (format: type(scope): summary, all lowercase, max 70 chars) summarizing this staged git diff. Output ONLY the message text — no quotes, no body, no code fences." \
-    2>/dev/null | head -n1 | sed -e 's/^[`"]*//' -e 's/[`"]*$//'
-)
+printf '%s' "$diff_ctx" | AXON_AUTOBACKUP=1 claude -p --model haiku \
+  "Write a single-line Conventional Commits message (format: type(scope): summary, all lowercase, max 70 chars) summarizing this staged git diff. Output ONLY the message text — no quotes, no body, no code fences." \
+  >/tmp/claude-1001/raw.out 2>/tmp/claude-1001/raw.err
+echo "DBG rawexit=$? rawbytes=$(wc -c </tmp/claude-1001/raw.out)" >/tmp/claude-1001/dbg.log
+msg=$(head -n1 /tmp/claude-1001/raw.out | sed -e 's/^[`"]*//' -e 's/[`"]*$//')
 
 # Fallback if the model returned nothing usable.
 [ -z "$msg" ] && msg="claude: auto-backup $(date +%H:%M:%S)"
