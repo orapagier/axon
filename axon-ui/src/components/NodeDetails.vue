@@ -773,6 +773,19 @@ const nodeDefinition = computed(() => {
     return enriched
   }
 
+  // For the Execute Workflow node, inject the list of selectable workflows.
+  if (type === 'subflow' && base.properties) {
+    return {
+      ...base,
+      properties: base.properties.map(p => {
+        if (p.name === 'workflow_id' && p.type === 'options') {
+          return { ...p, options: availableWorkflows.value, searchable: true }
+        }
+        return p
+      }),
+    }
+  }
+
   if (type === 'fovea' && base.properties) {
     return {
       ...base,
