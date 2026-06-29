@@ -2223,11 +2223,11 @@ onUnmounted(() => {
             />
           </div>
           <div class="toolbar-right">
-            <button v-if="isExecuting" class="btn btn-sm workflow-action-btn workflow-action-btn-danger" @click="stopWorkflow">Stop</button>
-            <button class="btn btn-sm workflow-action-btn workflow-action-btn-danger" @click="removeWorkflow">Delete</button>
-            <button class="btn btn-sm workflow-action-btn workflow-action-btn-neutral" @click.stop="loadHistory">History</button>
-            <button class="btn btn-sm workflow-action-btn workflow-action-btn-primary" @click="runActive">Run</button>
-            <button class="btn btn-sm workflow-action-btn workflow-action-btn-success" @click="save">Save</button>
+            <button v-if="isExecuting" class="btn btn-sm workflow-action-btn btn-danger" @click="stopWorkflow">Stop</button>
+            <button class="btn btn-sm workflow-action-btn btn-danger" @click="removeWorkflow">Delete</button>
+            <button class="btn btn-sm workflow-action-btn btn-neutral" @click.stop="loadHistory">History</button>
+            <button class="btn btn-sm workflow-action-btn btn-primary" @click="runActive">Run</button>
+            <button class="btn btn-sm workflow-action-btn btn-success" @click="save">Save</button>
           </div>
         </header>
 
