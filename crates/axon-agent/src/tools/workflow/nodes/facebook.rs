@@ -334,7 +334,10 @@ async fn create_video_post(
     let page_id = require(config, "page_id")?;
     let video_url = require(config, "video_url")?;
     let mut form: Vec<(&str, String)> = vec![("file_url", video_url)];
-    if let Some(desc) = str_val(config, "message").filter(|s| !s.trim().is_empty()) {
+    if let Some(desc) = str_val(config, "caption")
+        .or_else(|| str_val(config, "message"))
+        .filter(|s| !s.trim().is_empty())
+    {
         form.push(("description", desc));
     }
     let resp = client
