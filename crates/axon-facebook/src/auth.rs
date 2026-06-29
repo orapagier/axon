@@ -159,7 +159,7 @@ pub async fn exchange_code_pages(state: &AppState, code: &str) -> Result<Value> 
         let subscribed = match subscribe_page(state, page_id, token).await {
             Ok(_) => true,
             Err(e) => {
-                tracing::warn!(
+                eprintln!(
                     "FB connect: failed to subscribe page '{name}' ({page_id}) to webhooks: {e}"
                 );
                 false
