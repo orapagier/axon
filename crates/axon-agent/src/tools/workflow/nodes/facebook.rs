@@ -38,6 +38,16 @@ fn require(config: &Value, key: &str) -> Result<String, String> {
     }
 }
 
+/// The Graph API `fields` projection for a read: an explicit `fields` config
+/// value (power users requesting exactly what they want) overrides the
+/// comprehensive `default`. Graph rejects the whole call if any requested field
+/// is inaccessible, so `default` stays to the broadly-safe set for a Page token.
+fn fields_or(config: &Value, default: &str) -> String {
+    str_val(config, "fields")
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| default.to_string())
+}
+
 /// Resolve the Page access token from merged credential data.
 fn page_token(config: &Value) -> Result<String, String> {
     str_val(config, "page_access_token")
