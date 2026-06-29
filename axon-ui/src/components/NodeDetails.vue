@@ -2657,8 +2657,7 @@ onUnmounted(() => {
 .header-actions { display: flex; align-items: center; gap: 8px; }
 
 .btn-save {
-  height: 34px;
-  padding: 0 14px;
+  /* Size comes from the global --btn-* tokens in style.css (single source of truth). */
   box-sizing: border-box;
   background: rgba(255, 255, 255, 0.05);
   color: #d7dbe8;
