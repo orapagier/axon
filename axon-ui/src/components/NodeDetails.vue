@@ -1872,7 +1872,7 @@ onUnmounted(() => {
                                       <select v-else v-model="item[subProp.name]">
                                         <option v-for="opt in filteredOptions(subProp, item)" :key="opt.value" :value="opt.value">{{ optionDisplayName(opt) }}</option>
                                       </select>
-                                      <button type="button" class="btn-fx-toggle" title="Use an expression" @click="enterExprMode('fc:'+prop.name+':'+idx+':'+subProp.name, () => item[subProp.name] = '')">ƒx</button>
+                                      <button v-if="!subProp.noExpr" type="button" class="btn-fx-toggle" title="Use an expression" @click="enterExprMode('fc:'+prop.name+':'+idx+':'+subProp.name, () => item[subProp.name] = '')">ƒx</button>
                                     </div>
                                   </template>
                                   <template v-else-if="subProp.type === 'boolean'">
