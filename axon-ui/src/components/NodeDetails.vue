@@ -758,6 +758,30 @@ function filteredOptions(subProp, item = null) {
   return opts.filter(o => !o.show || (current !== undefined && o.show.includes(current)))
 }
 
+// Trigger nodes of the workflow the Execute Workflow node currently targets,
+// as { name, value: nodeId } options for the "Entry Trigger" dropdown.
+const TRIGGER_NODE_TYPES = ['trigger', 'circadian', 'stimulus']
+const entryTriggerOptions = computed(() => {
+  const wfId = props.node.data.config?.workflow_id
+  const wf = workflowsRaw.value.find(w => w.id === wfId)
+  return (wf?.nodes || [])
+    .filter(n => TRIGGER_NODE_TYPES.includes(n.node_type))
+    .map(n => ({ name: n.name || n.node_type || n.id, value: n.id }))
+})
+
+// If the targeted workflow changes (or its triggers do), drop a now-invalid
+// entry-trigger choice so a stale node id can't be saved. Skipped until the
+// target workflow is actually loaded, so we never clear a valid value mid-fetch.
+watch(entryTriggerOptions, (opts) => {
+  if (props.node.data.node_type !== 'subflow') return
+  const wf = workflowsRaw.value.find(w => w.id === props.node.data.config?.workflow_id)
+  if (!wf) return
+  const cur = props.node.data.config?.entry_node_id
+  if (cur && !opts.some(o => o.value === cur)) {
+    props.node.data.config.entry_node_id = ''
+  }
+})
+
 const nodeDefinition = computed(() => {
   const type = props.node.data.node_type === 'trigger' ? 'trigger' : props.node.data.node_type
   const base = NODE_TYPES[type] || { properties: [], displayName: 'Neuron', icon: '📦' }
