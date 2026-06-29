@@ -39,6 +39,25 @@
     --blue: #56a6ff;
     --purple: #8f8cff;
 
+    /* Button sizing — SINGLE SOURCE OF TRUTH.
+       Every standard button derives its size from these tokens via the global
+       button block below. To resize ALL buttons app-wide, change them here.
+       Any new button just needs the `.btn` class (or one of the listed variants)
+       to automatically inherit this exact size. */
+    --btn-h: 31px;
+    --btn-px: 13px;
+    --btn-radius: 9px;
+    --btn-fs: 0.745rem;
+    --btn-gap: 7px;
+    --btn-sm-h: 27px;
+    --btn-sm-px: 10px;
+    --btn-sm-radius: 8px;
+    --btn-sm-fs: 0.7rem;
+    --btn-xs-h: 22px;
+    --btn-xs-px: 8px;
+    --btn-xs-radius: 7px;
+    --btn-xs-fs: 0.64rem;
+
     /* Layout, shadows & surface tints */
     --sidebar-w: 272px;
     --shadow-sm: 0 16px 36px rgba(0, 0, 0, 0.22);
