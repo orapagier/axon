@@ -160,14 +160,25 @@ async fn create_post(
     if let Some(link) = str_val(config, "link").filter(|s| !s.trim().is_empty()) {
         form.push(("link", link));
     }
+    apply_schedule(config, &mut form);
     let resp = client
         .post(format!("{FB_API}/{page_id}/feed"))
         .bearer_auth(token)
+        .query(&[("fields", "id,permalink_url")])
         .form(&form)
         .send()
         .await
         .map_err(|e| format!("Facebook request error: {e}"))?;
     finish(resp).await
+}
+
+/// When `scheduled_publish_time` (a future unix timestamp) is set, flip the feed/
+/// photo create into a scheduled draft: Graph needs `published=false` alongside it.
+fn apply_schedule(config: &Value, form: &mut Vec<(&str, String)>) {
+    if let Some(ts) = str_val(config, "scheduled_publish_time").filter(|s| !s.trim().is_empty()) {
+        form.push(("published", "false".to_string()));
+        form.push(("scheduled_publish_time", ts));
+    }
 }
 
 /// Like a post/comment/photo.
