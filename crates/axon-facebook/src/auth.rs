@@ -130,29 +130,50 @@ pub async fn exchange_code_pages(state: &AppState, code: &str) -> Result<Value> 
         .await?;
     let accounts: Value = ensure_ok(resp).await?.json().await?;
 
-    let pages: Vec<Value> = accounts
+    let raw_pages = accounts
         .get("data")
         .and_then(|d| d.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|p| {
-                    let page_id = p.get("id").and_then(|v| v.as_str())?;
-                    let token = p.get("access_token").and_then(|v| v.as_str())?;
-                    let name = p.get("name").and_then(|v| v.as_str()).unwrap_or(page_id);
-                    let ig_id = p
-                        .get("instagram_business_account")
-                        .and_then(|i| i.get("id"))
-                        .and_then(|v| v.as_str());
-                    Some(json!({
-                        "page_id": page_id,
-                        "page_name": name,
-                        "page_access_token": token,
-                        "instagram_id": ig_id,
-                    }))
-                })
-                .collect()
-        })
+        .cloned()
         .unwrap_or_default();
+
+    // Build the credential list AND subscribe every Page to this App's webhooks.
+    // OAuth alone only yields tokens — Meta does not deliver a Page's events
+    // until the Page is subscribed via `POST /{page-id}/subscribed_apps`. Doing
+    // it here for *every* managed Page is what makes "whichever Page I pick in
+    // the dropdown" actually receive webhook events, not just the one Page that
+    // happened to be subscribed by hand in the App Dashboard.
+    let mut pages: Vec<Value> = Vec::new();
+    for p in &raw_pages {
+        let Some(page_id) = p.get("id").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(token) = p.get("access_token").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let name = p.get("name").and_then(|v| v.as_str()).unwrap_or(page_id);
+        let ig_id = p
+            .get("instagram_business_account")
+            .and_then(|i| i.get("id"))
+            .and_then(|v| v.as_str());
+
+        let subscribed = match subscribe_page(state, page_id, token).await {
+            Ok(_) => true,
+            Err(e) => {
+                tracing::warn!(
+                    "FB connect: failed to subscribe page '{name}' ({page_id}) to webhooks: {e}"
+                );
+                false
+            }
+        };
+
+        pages.push(json!({
+            "page_id": page_id,
+            "page_name": name,
+            "page_access_token": token,
+            "instagram_id": ig_id,
+            "webhooks_subscribed": subscribed,
+        }));
+    }
 
     if pages.is_empty() {
         return Err(anyhow::anyhow!(
