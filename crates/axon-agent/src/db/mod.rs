@@ -70,6 +70,12 @@ const MIGRATIONS: &[Migration] = &[
         sql: include_str!("migrations/0007_node_reliability.sql"),
         tolerant_dup_column: true,
     },
+    Migration {
+        version: 8,
+        name: "workflow_updated_at",
+        sql: include_str!("migrations/0008_workflow_updated_at.sql"),
+        tolerant_dup_column: true,
+    },
 ];
 
 const SEED_SQL: &str = include_str!("seed.sql");

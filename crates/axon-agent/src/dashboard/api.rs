@@ -1927,7 +1927,9 @@ pub async fn get_workflows(State(state): State<AppState>) -> Json<Value> {
         Err(_) => return Json(json!({"workflows": []})),
     };
     let mut stmt = match conn.prepare(
-        "SELECT id, name, description, enabled, trigger_type, trigger_config, last_run_at, last_status, created_at FROM workflows ORDER BY created_at DESC"
+        // Most-recently added or edited workflow first: updated_at is bumped on
+        // every save; COALESCE falls back to created_at for rows predating it.
+        "SELECT id, name, description, enabled, trigger_type, trigger_config, last_run_at, last_status, created_at FROM workflows ORDER BY COALESCE(updated_at, created_at) DESC, created_at DESC"
     ) {
         Ok(s) => s,
         Err(e) => {
@@ -2064,8 +2066,10 @@ pub async fn upsert_workflow(
 
     if let Ok(conn) = state.db.get() {
         let _ = conn.execute(
-            "INSERT INTO workflows (id, name, description, enabled, trigger_type, trigger_config) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-             ON CONFLICT(id) DO UPDATE SET name=?2, description=?3, enabled=?4, trigger_type=?5, trigger_config=?6",
+            // Stamp updated_at on every save so the workflow list can order
+            // most-recently added/edited first (see get_workflows ORDER BY).
+            "INSERT INTO workflows (id, name, description, enabled, trigger_type, trigger_config, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'))
+             ON CONFLICT(id) DO UPDATE SET name=?2, description=?3, enabled=?4, trigger_type=?5, trigger_config=?6, updated_at=datetime('now')",
             rusqlite::params![id, name, description, enabled as i64, trigger_type, trigger_config],
         );
 
