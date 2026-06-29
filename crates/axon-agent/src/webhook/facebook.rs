@@ -276,6 +276,7 @@ async fn process_change(state: &AppState, page_id: &str, change: &Value) {
     } else {
         String::new()
     };
+    let created_time = value.get("created_time").cloned().unwrap_or(Value::Null);
     let event = json!({
         "trigger": "facebook",
         "page_id": page_id,
@@ -288,6 +289,10 @@ async fn process_change(state: &AppState, page_id: &str, change: &Value) {
         "parent_id": parent_id,
         "post_id": post_id,
         "permalink": permalink,
+        "created_time": created_time,
+        // Full Meta `value` object — every field for this event, unfiltered.
+        // Reference anything not promoted above via {{ $json.raw.* }}.
+        "raw": value,
     });
     dispatch_facebook_workflows(state, page_id, event_type, event).await;
 }
