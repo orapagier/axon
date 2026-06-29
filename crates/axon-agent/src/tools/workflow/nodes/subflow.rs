@@ -125,6 +125,13 @@ pub(crate) fn execute<'a>(
             .lock()
             .await
             .insert(child_id.clone(), input);
+        // Pin the entry trigger (if chosen) so only its chain starts in the child.
+        if let Some(node_id) = entry_node {
+            SUBFLOW_ENTRY_NODE
+                .lock()
+                .await
+                .insert(child_id.clone(), node_id);
+        }
 
         // Run the child inline (same task) so the task-local stack scopes its whole
         // execution and any nested sub-workflows see the updated call chain.
