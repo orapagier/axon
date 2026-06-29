@@ -32,7 +32,7 @@ diff_ctx=$(
 msg=$(
   printf '%s' "$diff_ctx" | AXON_AUTOBACKUP=1 claude -p --model haiku \
     "Write a single-line Conventional Commits message (format: type(scope): summary, all lowercase, max 70 chars) summarizing this staged git diff. Output ONLY the message text — no quotes, no body, no code fences." \
-    2>/dev/null | head -n1 | sed -e 's/^["'\''`]*//' -e 's/["'\''`]*$//'
+    2>/dev/null | head -n1 | sed -e 's/^[`"]*//' -e 's/[`"]*$//'
 )
 
 # Fallback if the model returned nothing usable.
