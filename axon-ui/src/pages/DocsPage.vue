@@ -809,16 +809,8 @@ onBeforeUnmount(() => {
 }
 
 .docs-clear-btn {
-  min-height: 42px;
-  border-radius: 11px;
-  border: 1px solid var(--docs-border);
-  padding: 0 12px;
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--docs-ink);
-  font-size: 0.8rem;
-  font-weight: 600;
+  /* Uses the `.btn` class — size/colors come from the global --btn-* tokens. */
   cursor: pointer;
-  transition: transform 0.16s ease, background 0.16s ease;
 }
 
 .docs-clear-btn:hover:not(:disabled) {
