@@ -280,6 +280,7 @@ pub(crate) async fn execute(config: &Value) -> Result<Value, String> {
         "hideComment" => hide_comment(&client, &token, config).await,
         "deleteComment" => delete_comment(&client, &token, config).await,
         "getComments" => get_comments(&client, &token, config).await,
+        "getThread" => get_thread(&client, &token, config).await,
         other => Err(format!("Unsupported Facebook operation '{other}'")),
     }
 }
