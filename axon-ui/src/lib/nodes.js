@@ -3005,6 +3005,7 @@ export const NODE_TYPES = {
                     { name: 'Hide Comment', value: 'hideComment' },
                     { name: 'Delete Comment', value: 'deleteComment' },
                     { name: 'Get Comments', value: 'getComments' },
+                    { name: 'Get Chat Thread', value: 'getThread' },
                 ],
                 default: 'replyComment',
             },
