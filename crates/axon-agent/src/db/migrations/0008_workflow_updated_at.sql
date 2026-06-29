@@ -4,6 +4,6 @@
 -- the column is added nullable and backfilled from created_at. Every save through
 -- the upsert in get_workflows' POST path then sets updated_at = datetime('now').
 -- TOLERANT: on databases that already have the column the ALTER raises
--- "duplicate column name" (ignored); the UPDATE is idempotent (only fills NULLs).
+-- "duplicate column name" (ignored) and the UPDATE only ever fills NULLs.
 ALTER TABLE workflows ADD COLUMN updated_at TEXT;
 UPDATE workflows SET updated_at = created_at WHERE updated_at IS NULL;
