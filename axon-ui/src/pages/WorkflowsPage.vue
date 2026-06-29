@@ -3558,35 +3558,10 @@ onUnmounted(() => {
 }
 
 .workflow-action-btn {
+  /* Structural only — color comes from the global .btn-primary/.btn-success/
+     .btn-danger/.btn-neutral palette in style.css (single source of truth). */
   min-width: 88px;
   justify-content: center;
-  border-radius: 12px !important;
-  border-width: 1px !important;
-  font-weight: 700 !important;
-}
-
-.workflow-action-btn-neutral {
-  background: rgba(255, 255, 255, 0.04) !important;
-  border-color: rgba(255, 255, 255, 0.08) !important;
-  color: #f4f2ed !important;
-}
-
-.workflow-action-btn-primary {
-  background: linear-gradient(180deg, #f7f4ee, #e8e0d3) !important;
-  border-color: transparent !important;
-  color: #101412 !important;
-}
-
-.workflow-action-btn-success {
-  background: linear-gradient(180deg, #d8e6be, #b8ce97) !important;
-  border-color: transparent !important;
-  color: #0d1411 !important;
-}
-
-.workflow-action-btn-danger {
-  background: rgba(227, 162, 162, 0.08) !important;
-  border-color: rgba(227, 162, 162, 0.14) !important;
-  color: #f3caca !important;
 }
 
 .wf-title-input {
