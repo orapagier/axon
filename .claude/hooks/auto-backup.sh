@@ -29,15 +29,20 @@ diff_ctx=$(
   git diff --cached | head -c 12000
 )
 
-# Capture the full reply into a variable first. Piping claude directly into
-# `head` makes head close the pipe early and SIGPIPE-kill claude, which in a
-# non-interactive script truncates the output to nothing. Post-process after.
+# Capture the full reply into a variable, then post-process. (Don't pipe claude
+# straight into head/sed — the model sometimes wraps the message in ``` code
+# fences, and we need the whole reply to strip them reliably.)
 raw=$(
   printf '%s' "$diff_ctx" | AXON_AUTOBACKUP=1 claude -p --model haiku \
-    "Write a single-line Conventional Commits message (format: type(scope): summary, all lowercase, max 70 chars) summarizing this staged git diff. Output ONLY the message text — no quotes, no body, no code fences." \
+    "Write a single-line Conventional Commits message (format: type(scope): summary, all lowercase, max 70 chars) summarizing this staged git diff. Output ONLY the message text — no quotes, no markdown, no code fences." \
     2>/dev/null
 )
-msg=$(printf '%s\n' "$raw" | sed -e 's/^[`"]*//' -e 's/[`"]*$//' | head -n1)
+# Drop any ``` fence lines, take the first non-blank line, trim whitespace and
+# any surrounding quotes/backticks.
+msg=$(printf '%s\n' "$raw" \
+  | grep -vE '^[[:space:]]*```' \
+  | grep -m1 -E '[^[:space:]]' \
+  | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^["`]*//' -e 's/["`]*$//')
 
 # Fallback if the model returned nothing usable.
 [ -z "$msg" ] && msg="claude: auto-backup $(date +%H:%M:%S)"
