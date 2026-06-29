@@ -257,19 +257,24 @@ async fn get_thread(
         .and_then(|s| s.trim().parse::<u32>().ok())
         .unwrap_or(25)
         .clamp(1, 100);
+    // A `fields` override controls the entire projection (including the messages
+    // subfield and its own limit). The default expands the thread metadata and
+    // pulls full message objects — text, sender, attachments, stickers, shares.
+    let fields = fields_or(
+        config,
+        &format!(
+            "id,link,snippet,updated_time,message_count,unread_count,can_reply,\
+             is_subscribed,participants,senders,former_participants,\
+             messages.limit({limit}){{id,message,from,to,created_time,attachments,sticker,shares,tags}}"
+        ),
+    );
     let resp = client
         .get(format!("{FB_API}/{page_id}/conversations"))
         .bearer_auth(token)
         .query(&[
             ("user_id", recipient_id),
             ("platform", "messenger".to_string()),
-            (
-                "fields",
-                format!(
-                    "id,participants,updated_time,message_count,unread_count,snippet,\
-                     messages.limit({limit}){{id,message,from,created_time}}"
-                ),
-            ),
+            ("fields", fields),
         ])
         .send()
         .await
