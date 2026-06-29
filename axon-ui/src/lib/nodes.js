@@ -3036,8 +3036,8 @@ export const NODE_TYPES = {
                 default: '',
                 placeholder: 'e.g. {{ $json.recipient_id }}',
                 required: true,
-                displayOptions: { show: { operation: ['sendMessage'] } },
-                hint: 'The user\'s page-scoped ID (PSID). From a Messenger trigger use {{ $json.recipient_id }}.',
+                displayOptions: { show: { operation: ['sendMessage', 'getThread'] } },
+                hint: 'The user\'s page-scoped ID (PSID). From a Messenger trigger use {{ $json.recipient_id }}. For Get Chat Thread this selects whose conversation to load.',
             },
             {
                 displayName: 'Message',
