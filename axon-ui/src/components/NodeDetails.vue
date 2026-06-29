@@ -78,9 +78,7 @@ onMounted(async () => {
   // excluding the current workflow (a workflow cannot call itself).
   try {
     const wData = await get('/workflows')
-    availableWorkflows.value = (wData.workflows || [])
-      .filter(w => w.id !== props.workflowId)
-      .map(w => ({ name: w.name || w.id, value: w.id }))
+    workflowsRaw.value = (wData.workflows || []).filter(w => w.id !== props.workflowId)
   } catch (e) {
     console.error('Failed to load workflows', e)
   }
