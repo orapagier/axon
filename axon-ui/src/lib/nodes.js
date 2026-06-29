@@ -3230,8 +3230,8 @@ export const NODE_TYPES = {
                 name: 'limit',
                 type: 'number',
                 default: 25,
-                displayOptions: { show: { operation: ['getComments', 'getThread', 'getPosts', 'getScheduledPosts', 'getReactions', 'getLikes', 'getConversations'] } },
-                hint: 'Max items to fetch (1–100).',
+                displayOptions: { show: { operation: ['getComments', 'getThread', 'getChatDetails', 'getPosts', 'getScheduledPosts', 'getReactions', 'getLikes', 'getConversations'] } },
+                hint: 'Max items to fetch (1–100). For Get Chat Details this caps how many past messages come back.',
             },
             {
                 displayName: 'Fields',
