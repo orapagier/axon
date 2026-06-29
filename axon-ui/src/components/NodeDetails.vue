@@ -1740,8 +1740,8 @@ onUnmounted(() => {
                   </template>
                   <template v-else-if="prop.type === 'credential'">
                     <label class="field-label">{{ prop.displayName }}</label>
-                    <div style="display:flex; gap:8px; align-items:stretch;">
-                      <select v-model="node.data.config[prop.name]" style="flex:1;">
+                    <div style="display:flex; gap:8px; align-items:stretch; margin-bottom:10px;">
+                      <select v-model="node.data.config[prop.name]" style="flex:1; margin-bottom:0;">
                         <option value="">-- None --</option>
                         <option v-for="cred in getCredentialsForService(prop.service)" :key="cred.id" :value="cred.id">{{ cred.name }}</option>
                       </select>
