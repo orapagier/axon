@@ -231,10 +231,7 @@ async fn get_comments(
     config: &Value,
 ) -> Result<Value, String> {
     let object_id = require(config, "object_id")?;
-    let limit = str_val(config, "limit")
-        .and_then(|s| s.trim().parse::<u32>().ok())
-        .unwrap_or(25)
-        .clamp(1, 100);
+    let limit = limit_or(config, 25);
     let fields = fields_or(
         config,
         "id,message,from{id,name},created_time,like_count,comment_count,parent{id},\
