@@ -3073,6 +3073,15 @@ export const NODE_TYPES = {
                 displayOptions: { show: { operation: ['getComments', 'getThread'] } },
                 hint: 'Max items to fetch (1–100) — comments for Get Comments, thread messages for Get Chat Thread.',
             },
+            {
+                displayName: 'Fields',
+                name: 'fields',
+                type: 'string',
+                default: '',
+                placeholder: 'leave empty for the full default field set',
+                displayOptions: { show: { operation: ['getComments', 'getThread'] } },
+                hint: 'Optional Graph API field projection controlling exactly which metadata returns. Leave empty to get the comprehensive default set. Example: id,message,from{id,name},reactions.summary(true). Note: requesting a field your Page token can\'t access makes Graph reject the whole call.',
+            },
         ],
     },
     slack: {
