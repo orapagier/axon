@@ -1098,6 +1098,16 @@ export const NODE_TYPES = {
                 hint: 'The workflow to run. A workflow cannot call itself; cycles and nesting deeper than 8 are rejected.',
             },
             {
+                displayName: 'Entry Trigger',
+                name: 'entry_node_id',
+                type: 'options',
+                searchable: true,
+                default: '',
+                options: [],
+                placeholder: 'Run all triggers',
+                hint: 'When the chosen workflow has more than one trigger, pick which one starts — only that trigger and its chain run. Leave as "Run all triggers" to start from every trigger (the default).',
+            },
+            {
                 displayName: 'Input',
                 name: 'input',
                 type: 'string',
