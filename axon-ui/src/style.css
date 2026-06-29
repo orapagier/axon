@@ -4325,10 +4325,10 @@ select {
 .btn-reconnect-inline:hover,
 .search-btn-styled:hover {
     transform: translateY(-1px) !important;
-    background: rgba(255, 255, 255, 0.1) !important;
-    border-color: rgba(86, 230, 200, 0.32) !important;
-    color: var(--text) !important;
-    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.28) !important;
+    background: linear-gradient(180deg, rgba(86, 230, 200, 0.18), rgba(86, 230, 200, 0.06)) !important;
+    border-color: rgba(86, 230, 200, 0.42) !important;
+    color: #eafff9 !important;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
 }
 
 /* ── Square icon-only buttons ─────────────────────────────────────────────── */
