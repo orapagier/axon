@@ -2981,7 +2981,7 @@ export const NODE_TYPES = {
         displayName: 'Facebook',
         name: 'facebook',
         icon: '/icons/facebook.png',
-        description: 'Reply to comments and Messenger chats, post to the Page, like/hide/delete comments — as any connected Page account.',
+        description: 'Full Page toolkit — comments (reply/get/hide/delete/private reply), reactions & likes, posts (text/photo/video/scheduled, update, delete, read), Messenger (message/image/action, conversations, thread), and Page info/update/insights — as any connected Page account.',
         properties: [
             {
                 displayName: 'Facebook Account',
