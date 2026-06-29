@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Auto-backup Stop hook: stage all changes, commit with an LLM-generated
+# Conventional Commits message describing the diff, then push to origin.
+#
+# The message is produced by the `claude` CLI in headless mode (`-p`), which
+# reuses Claude Code's existing OAuth auth — no ANTHROPIC_API_KEY required.
+# If generation yields nothing usable, we fall back to a timestamp so the
+# backup never gets skipped.
+#
+# AXON_AUTOBACKUP guards against recursion: the nested `claude -p` below runs
+# in this same project and would otherwise fire this Stop hook again forever.
+set -u
+
+# Recursion guard — the nested claude inherits this and exits immediately.
+[ -n "${AXON_AUTOBACKUP:-}" ] && exit 0
+
+cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0
+git add -A
+
+# Nothing staged -> nothing to back up.
+git diff-index --quiet HEAD && exit 0
+
+# Compact context for the model: filename stat + a bounded slice of the diff
+# (keeps token cost low on large changes).
+diff_ctx=$(
+  git diff --cached --stat
+  echo '---'
+  git diff --cached | head -c 12000
+)
+
+msg=$(
+  printf '%s' "$diff_ctx" | AXON_AUTOBACKUP=1 claude -p --model haiku \
+    "Write a single-line Conventional Commits message (format: type(scope): summary, all lowercase, max 70 chars) summarizing this staged git diff. Output ONLY the message text — no quotes, no body, no code fences." \
+    2>/dev/null | head -n1 | sed -e 's/^["'\''`]*//' -e 's/["'\''`]*$//'
+)
+
+# Fallback if the model returned nothing usable.
+[ -z "$msg" ] && msg="claude: auto-backup $(date +%H:%M:%S)"
+
+git commit -m "$msg" >/dev/null 2>&1
+git push origin HEAD >/dev/null 2>&1 || true
