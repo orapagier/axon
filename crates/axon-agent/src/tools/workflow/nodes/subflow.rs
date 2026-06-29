@@ -67,8 +67,9 @@ pub(crate) fn execute<'a>(
             .get("entry_node_id")
             .and_then(|v| v.as_str())
             .map(str::trim)
-            .filter(|s| !s.is_empty());
-        if let Some(node_id) = entry_node {
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        if let Some(node_id) = &entry_node {
             let conn = state.db.get().map_err(|e| format!("DB error: {e}"))?;
             let is_trigger = conn
                 .query_row(
@@ -84,10 +85,6 @@ pub(crate) fn execute<'a>(
                     "Execute Workflow: chosen entry trigger is not a trigger in '{target}'"
                 ));
             }
-            SUBFLOW_ENTRY_NODE
-                .lock()
-                .await
-                .insert(child_id.clone(), node_id.to_string());
         }
 
         // Recursion / cycle guard via the task-local call stack. The top-level run
