@@ -230,6 +230,40 @@ async fn get_comments(
     finish(resp).await
 }
 
+/// Fetch a Messenger conversation thread by user PSID — participant names and
+/// recent messages. Queries the Page `conversations` edge filtered by `user_id`,
+/// expanding `participants` (names) and `messages` (the thread history).
+async fn get_thread(
+    client: &reqwest::Client,
+    token: &str,
+    config: &Value,
+) -> Result<Value, String> {
+    let page_id = require(config, "page_id")?;
+    let recipient_id = require(config, "recipient_id")?;
+    let limit = str_val(config, "limit")
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .unwrap_or(25)
+        .clamp(1, 100);
+    let resp = client
+        .get(format!("{FB_API}/{page_id}/conversations"))
+        .bearer_auth(token)
+        .query(&[
+            ("user_id", recipient_id),
+            ("platform", "messenger".to_string()),
+            (
+                "fields",
+                format!(
+                    "id,participants,updated_time,message_count,unread_count,snippet,\
+                     messages.limit({limit}){{id,message,from,created_time}}"
+                ),
+            ),
+        ])
+        .send()
+        .await
+        .map_err(|e| format!("Facebook request error: {e}"))?;
+    finish(resp).await
+}
+
 // ── Public executor ───────────────────────────────────────────────────────────
 
 pub(crate) async fn execute(config: &Value) -> Result<Value, String> {
