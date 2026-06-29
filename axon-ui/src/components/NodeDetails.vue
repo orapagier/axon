@@ -1649,10 +1649,10 @@ onUnmounted(() => {
               <button class="header-tab" v-if="nodeResult" @click="emit('clear-execution', node.id)" title="Clear execution data">CLEAR</button>
             </div>
             <div class="header-actions">
-              <button class="btn-save" @click="emit('save')" title="Save workflow">
+              <button class="btn btn-sm btn-save" @click="emit('save')" title="Save workflow">
                 <span class="btn-content">💾 Save</span>
               </button>
-              <button class="btn-execute" :class="{ 'is-executing': executing }" @click="emit('execute', node.id, { single: true })">
+              <button class="btn btn-sm btn-execute" :class="{ 'is-executing': executing }" @click="emit('execute', node.id, { single: true })">
                 <span class="btn-content">⚡ Execute Step</span>
               </button>
             </div>
