@@ -4149,6 +4149,9 @@ select {
 .btn-cancel,
 .btn-close {
     position: relative !important;
+    /* border-box so <label class="btn"> (content-box by default) matches the
+       height of real <button> elements (border-box) — keeps mixed rows aligned. */
+    box-sizing: border-box !important;
     display: inline-flex !important;
     align-items: center !important;
     justify-content: center !important;
