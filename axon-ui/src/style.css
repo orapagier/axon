@@ -41,22 +41,25 @@
 
     /* Button sizing — SINGLE SOURCE OF TRUTH.
        Every standard button derives its size from these tokens via the global
-       button block below. To resize ALL buttons app-wide, change them here.
+       button block below. To resize ALL buttons app-wide, change --btn-h here.
        Any new button just needs the `.btn` class (or one of the listed variants)
-       to automatically inherit this exact size. */
-    --btn-h: 31px;
-    --btn-px: 13px;
-    --btn-radius: 9px;
-    --btn-fs: 0.745rem;
-    --btn-gap: 7px;
-    --btn-sm-h: 27px;
+       to automatically inherit this exact size.
+       HEIGHT IS UNIFORM across base / -sm / -xs by design (all = --btn-h), so
+       every button in the app is exactly the same height. The variants differ
+       only in horizontal padding / font for denser or roomier rows. */
+    --btn-h: 27px;
+    --btn-px: 12px;
+    --btn-radius: 8px;
+    --btn-fs: 0.72rem;
+    --btn-gap: 6px;
+    --btn-sm-h: var(--btn-h);
     --btn-sm-px: 10px;
-    --btn-sm-radius: 8px;
-    --btn-sm-fs: 0.7rem;
-    --btn-xs-h: 22px;
-    --btn-xs-px: 8px;
+    --btn-sm-radius: var(--btn-radius);
+    --btn-sm-fs: 0.71rem;
+    --btn-xs-h: var(--btn-h);
+    --btn-xs-px: 9px;
     --btn-xs-radius: 7px;
-    --btn-xs-fs: 0.64rem;
+    --btn-xs-fs: 0.7rem;
 
     /* Layout, shadows & surface tints */
     --sidebar-w: 272px;
