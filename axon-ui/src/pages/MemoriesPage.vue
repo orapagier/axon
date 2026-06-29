@@ -353,20 +353,21 @@ onMounted(() => {
 }
 
 .search-input-styled {
-  height: 40px;
-  padding-left: 36px !important;
-  border-radius: 10px;
+  height: 30px;
+  padding-left: 32px !important;
+  border-radius: 8px;
   flex: 1;
   margin: 0;
 }
 
 .search-btn-styled {
-  height: 40px;
+  height: 30px !important;
+  min-height: 30px !important;
   flex-shrink: 0;
-  padding: 0 22px !important;
+  padding: 0 16px !important;
   border: none !important;
-  border-radius: 10px !important;
-  font-size: 13px !important;
+  border-radius: 8px !important;
+  font-size: 0.72rem !important;
   font-weight: 600 !important;
   letter-spacing: 0.2px;
   cursor: pointer;
