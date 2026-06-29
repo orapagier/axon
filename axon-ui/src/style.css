@@ -4303,8 +4303,8 @@ select {
 .btn-tab-action,
 .btn-reconnect-inline,
 .search-btn-styled {
-    background: rgba(255, 255, 255, 0.05) !important;
-    border-color: rgba(255, 255, 255, 0.1) !important;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.085), rgba(255, 255, 255, 0.035)) !important;
+    border-color: rgba(255, 255, 255, 0.14) !important;
     color: var(--text) !important;
 }
 
