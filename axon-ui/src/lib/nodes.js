@@ -886,33 +886,27 @@ export const NODE_TYPES = {
         description: 'Route data to one of many branches — one output per rule, added automatically as you add rules, with full filters',
         properties: [
             {
-                displayName: 'Default Data Type',
-                name: 'dataType',
-                type: 'options',
-                options: CONDITION_DATA_TYPES,
-                default: 'string',
-                hint: 'Fallback type for rules that do not set their own.',
-            },
-            {
-                displayName: 'Value to Test',
-                name: 'value1',
-                type: 'string',
-                default: '',
-                placeholder: '{{ $node["NodeName"].data.someField }}',
-                hint: 'Expression or literal value to evaluate against the switch rules.',
-            },
-            {
                 displayName: 'Routing Rules',
                 name: 'rules',
                 type: 'fixedCollection',
-                default: { parameters: [{ dataType: 'string', operation: 'equals', value1: '', value2: '', outputName: '' }] },
+                default: { parameters: [{ value1: '', dataType: 'string', operation: 'equals', value2: '', outputName: '' }] },
                 placeholder: 'Add Rule',
                 typeOptions: { multipleValues: true },
-                hint: 'Each rule adds its own output handle. Add as many as you need; unmatched values go to Default (unless the fallback is set to None).',
+                hint: 'Each rule is self-contained — its own Value to Test, Type, Operation and Rule Value — and adds its own output handle. Unmatched values go to Default (unless the fallback is set to None).',
                 options: [
+                    {
+                        name: 'value1',
+                        displayName: 'Value to Test',
+                        type: 'string',
+                        default: '',
+                        placeholder: '{{ $node["NodeName"].data.someField }}',
+                        hint: 'The value this rule evaluates — drag an upstream field here, or type an expression/literal.',
+                    },
                     {
                         name: 'dataType', displayName: 'Type', type: 'options', default: 'string',
                         options: CONDITION_DATA_TYPES,
+                        // A literal data-type picker; an expression here makes no sense, so no ƒx.
+                        noExpr: true,
                     },
                     {
                         name: 'operation',
@@ -921,13 +915,8 @@ export const NODE_TYPES = {
                         default: 'equals',
                         filterBy: 'dataType',
                         options: CONDITION_OPERATIONS,
-                    },
-                    {
-                        name: 'value1',
-                        displayName: 'Value Override (optional)',
-                        type: 'string',
-                        default: '',
-                        placeholder: 'Leave blank to use the node-level Value to Test',
+                        // The operator is a fixed choice, never an expression — no ƒx.
+                        noExpr: true,
                     },
                     {
                         name: 'value2',
