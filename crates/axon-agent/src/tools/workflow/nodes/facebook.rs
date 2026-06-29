@@ -299,6 +299,459 @@ async fn get_thread(
     finish(resp).await
 }
 
+/// Create a photo post from an image URL (`message` becomes the caption).
+async fn create_photo_post(
+    client: &reqwest::Client,
+    token: &str,
+    config: &Value,
+) -> Result<Value, String> {
+    let page_id = require(config, "page_id")?;
+    let image_url = require(config, "image_url")?;
+    let mut form: Vec<(&str, String)> = vec![("url", image_url)];
+    if let Some(caption) = str_val(config, "message").filter(|s| !s.trim().is_empty()) {
+        form.push(("caption", caption));
+    }
+    apply_schedule(config, &mut form);
+    let resp = client
+        .post(format!("{FB_API}/{page_id}/photos"))
+        .bearer_auth(token)
+        .form(&form)
+        .send()
+        .await
+        .map_err(|e| format!("Facebook request error: {e}"))?;
+    finish(resp).await
+}
+
+/// Create a video post from a hosted video URL (`message` becomes the description).
+async fn create_video_post(
+    client: &reqwest::Client,
+    token: &str,
+    config: &Value,
+) -> Result<Value, String> {
+    let page_id = require(config, "page_id")?;
+    let video_url = require(config, "video_url")?;
+    let mut form: Vec<(&str, String)> = vec![("file_url", video_url)];
+    if let Some(desc) = str_val(config, "message").filter(|s| !s.trim().is_empty()) {
+        form.push(("description", desc));
+    }
+    let resp = client
+        .post(format!("{FB_API}/{page_id}/videos"))
+        .bearer_auth(token)
+        .query(&[("fields", "id,permalink_url")])
+        .form(&form)
+        .send()
+        .await
+        .map_err(|e| format!("Facebook request error: {e}"))?;
+    finish(resp).await
+}
+
+/// Edit the text of an existing post.
+async fn update_post(
+    client: &reqwest::Client,
+    token: &str,
+    config: &Value,
+) -> Result<Value, String> {
+    let post_id = require(config, "post_id")?;
+    let message = require(config, "message")?;
+    let resp = client
+        .post(format!("{FB_API}/{post_id}"))
+        .bearer_auth(token)
+        .form(&[("message", message.as_str())])
+        .send()
+        .await
+        .map_err(|e| format!("Facebook request error: {e}"))?;
+    finish(resp).await
+}
+
+/// Delete a post.
+async fn delete_post(
+    client: &reqwest::Client,
+    token: &str,
+    config: &Value,
+) -> Result<Value, String> {
+    let post_id = require(config, "post_id")?;
+    let resp = client
+        .delete(format!("{FB_API}/{post_id}"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| format!("Facebook request error: {e}"))?;
+    finish(resp).await
+}
+
+/// List recent posts on the Page feed.
+async fn get_posts(
+    client: &reqwest::Client,
+    token: &str,
+    config: &Value,
+) -> Result<Value, String> {
+    let page_id = require(config, "page_id")?;
+    let limit = limit_or(config, 25);
+    let fields = fields_or(config, POST_FIELDS);
+    let resp = client
+        .get(format!("{FB_API}/{page_id}/feed"))
+        .bearer_auth(token)
+        .query(&[("limit", limit.to_string()), ("fields", fields)])
+        .send()
+        .await
+        .map_err(|e| format!("Facebook request error: {e}"))?;
+    finish(resp).await
+}
+
+/// Fetch a single post by id.
+async fn get_post(
+    client: &reqwest::Client,
+    token: &str,
+    config: &Value,
+) -> Result<Value, String> {
+    let post_id = require(config, "post_id")?;
+    let fields = fields_or(config, POST_FIELDS);
+    let resp = client
+        .get(format!("{FB_API}/{post_id}"))
+        .bearer_auth(token)
+        .query(&[("fields", fields)])
+        .send()
+        .await
+        .map_err(|e| format!("Facebook request error: {e}"))?;
+    finish(resp).await
+}
+
+/// List scheduled (not-yet-published) posts.
+async fn get_scheduled_posts(
+    client: &reqwest::Client,
+    token: &str,
+    config: &Value,
+) -> Result<Value, String> {
+    let page_id = require(config, "page_id")?;
+    let limit = limit_or(config, 25);
+    let resp = client
+        .get(format!("{FB_API}/{page_id}/feed"))
+        .bearer_auth(token)
+        .query(&[
+            ("limit", limit.to_string()),
+            ("is_published", "false".to_string()),
+            (
+                "fields",
+                "id,message,scheduled_publish_time,permalink_url".to_string(),
+            ),
+        ])
+        .send()
+        .await
+        .map_err(|e| format!("Facebook request error: {e}"))?;
+    finish(resp).await
+}
+
+/// Remove the Page's like from a post/comment/photo.
+async fn unlike_object(
+    client: &reqwest::Client,
+    token: &str,
+    config: &Value,
+) -> Result<Value, String> {
+    let object_id = require(config, "object_id")?;
+    let resp = client
+        .delete(format!("{FB_API}/{object_id}/likes"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| format!("Facebook request error: {e}"))?;
+    finish(resp).await
+}
+
+/// React to an object as the Page. LIKE goes through the `likes` edge; any other
+/// type through `reactions`. ANGRY is blocked as a guardrail (mirrors the agent).
+async fn react_object(
+    client: &reqwest::Client,
+    token: &str,
+    config: &Value,
+) -> Result<Value, String> {
+    let object_id = require(config, "object_id")?;
+    let reaction = str_val(config, "reaction_type")
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "LIKE".to_string())
+        .to_uppercase();
+    if reaction == "ANGRY" {
+        return Err("ANGRY reaction is not allowed (guardrail)".to_string());
+    }
+    let req = if reaction == "LIKE" {
+        client.post(format!("{FB_API}/{object_id}/likes"))
+    } else {
+        client
+            .post(format!("{FB_API}/{object_id}/reactions"))
+            .query(&[("type", reaction)])
+    };
+    let resp = req
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| format!("Facebook request error: {e}"))?;
+    finish(resp).await
+}
+
+/// List the reactions on an object.
+async fn get_reactions(
+    client: &reqwest::Client,
+    token: &str,
+    config: &Value,
+) -> Result<Value, String> {
+    let object_id = require(config, "object_id")?;
+    let limit = limit_or(config, 25);
+    let resp = client
+        .get(format!("{FB_API}/{object_id}/reactions"))
+        .bearer_auth(token)
+        .query(&[
+            ("limit", limit.to_string()),
+            ("summary", "true".to_string()),
+            ("fields", fields_or(config, "id,name,type")),
+        ])
+        .send()
+        .await
+        .map_err(|e| format!("Facebook request error: {e}"))?;
+    finish(resp).await
+}
+
+/// List the likes on an object.
+async fn get_likes(
+    client: &reqwest::Client,
+    token: &str,
+    config: &Value,
+) -> Result<Value, String> {
+    let object_id = require(config, "object_id")?;
+    let limit = limit_or(config, 25);
+    let resp = client
+        .get(format!("{FB_API}/{object_id}/likes"))
+        .bearer_auth(token)
+        .query(&[
+            ("limit", limit.to_string()),
+            ("summary", "true".to_string()),
+        ])
+        .send()
+        .await
+        .map_err(|e| format!("Facebook request error: {e}"))?;
+    finish(resp).await
+}
+
+/// Fetch a single comment by id.
+async fn get_comment(
+    client: &reqwest::Client,
+    token: &str,
+    config: &Value,
+) -> Result<Value, String> {
+    let comment_id = require(config, "comment_id")?;
+    let fields = fields_or(
+        config,
+        "id,message,from{id,name},created_time,like_count,comment_count,parent{id},\
+         attachment,permalink_url,is_hidden,is_private,can_hide,can_remove,\
+         can_reply_privately,user_likes,message_tags,reactions.summary(true)",
+    );
+    let resp = client
+        .get(format!("{FB_API}/{comment_id}"))
+        .bearer_auth(token)
+        .query(&[("fields", fields)])
+        .send()
+        .await
+        .map_err(|e| format!("Facebook request error: {e}"))?;
+    finish(resp).await
+}
+
+/// Send a private (Messenger) reply to a public comment, addressed by comment id.
+async fn private_reply(
+    client: &reqwest::Client,
+    token: &str,
+    config: &Value,
+) -> Result<Value, String> {
+    let page_id = require(config, "page_id")?;
+    let comment_id = require(config, "comment_id")?;
+    let message = require(config, "message")?;
+    let resp = client
+        .post(format!("{FB_API}/{page_id}/messages"))
+        .bearer_auth(token)
+        .json(&json!({
+            "recipient": { "comment_id": comment_id },
+            "message": { "text": message },
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Facebook request error: {e}"))?;
+    finish(resp).await
+}
+
+/// Send a Messenger image to a PSID via an image attachment URL.
+async fn send_image(
+    client: &reqwest::Client,
+    token: &str,
+    config: &Value,
+) -> Result<Value, String> {
+    let page_id = require(config, "page_id")?;
+    let recipient_id = require(config, "recipient_id")?;
+    let image_url = require(config, "image_url")?;
+    let resp = client
+        .post(format!("{FB_API}/{page_id}/messages"))
+        .bearer_auth(token)
+        .json(&json!({
+            "recipient": { "id": recipient_id },
+            "message": {
+                "attachment": {
+                    "type": "image",
+                    "payload": { "url": image_url, "is_reusable": true },
+                },
+            },
+            "messaging_type": "RESPONSE",
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Facebook request error: {e}"))?;
+    finish(resp).await
+}
+
+/// Send a Messenger sender action to a PSID (typing_on / typing_off / mark_seen).
+async fn send_action(
+    client: &reqwest::Client,
+    token: &str,
+    config: &Value,
+) -> Result<Value, String> {
+    let page_id = require(config, "page_id")?;
+    let recipient_id = require(config, "recipient_id")?;
+    let action = str_val(config, "sender_action")
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "typing_on".to_string());
+    let resp = client
+        .post(format!("{FB_API}/{page_id}/messages"))
+        .bearer_auth(token)
+        .json(&json!({
+            "recipient": { "id": recipient_id },
+            "sender_action": action,
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Facebook request error: {e}"))?;
+    finish(resp).await
+}
+
+/// List Messenger conversations for the Page.
+async fn get_conversations(
+    client: &reqwest::Client,
+    token: &str,
+    config: &Value,
+) -> Result<Value, String> {
+    let page_id = require(config, "page_id")?;
+    let limit = limit_or(config, 25);
+    let fields = fields_or(
+        config,
+        "id,participants,updated_time,message_count,unread_count,snippet,can_reply",
+    );
+    let resp = client
+        .get(format!("{FB_API}/{page_id}/conversations"))
+        .bearer_auth(token)
+        .query(&[
+            ("platform", "messenger".to_string()),
+            ("limit", limit.to_string()),
+            ("fields", fields),
+        ])
+        .send()
+        .await
+        .map_err(|e| format!("Facebook request error: {e}"))?;
+    finish(resp).await
+}
+
+/// Fetch the Page's profile/metadata.
+async fn get_page_info(
+    client: &reqwest::Client,
+    token: &str,
+    config: &Value,
+) -> Result<Value, String> {
+    let page_id = require(config, "page_id")?;
+    let fields = fields_or(
+        config,
+        "id,name,username,about,category,fan_count,followers_count,link,website,\
+         phone,emails,hours,location,rating_count,overall_star_rating,\
+         verification_status,description,cover,picture,is_published",
+    );
+    let resp = client
+        .get(format!("{FB_API}/{page_id}"))
+        .bearer_auth(token)
+        .query(&[("fields", fields)])
+        .send()
+        .await
+        .map_err(|e| format!("Facebook request error: {e}"))?;
+    finish(resp).await
+}
+
+/// Update editable Page profile fields (about / description / phone / website).
+async fn update_page(
+    client: &reqwest::Client,
+    token: &str,
+    config: &Value,
+) -> Result<Value, String> {
+    let page_id = require(config, "page_id")?;
+    let mut form: Vec<(&str, String)> = Vec::new();
+    for key in ["about", "description", "phone", "website"] {
+        if let Some(v) = str_val(config, key).filter(|s| !s.trim().is_empty()) {
+            form.push((key, v));
+        }
+    }
+    if form.is_empty() {
+        return Err(
+            "Provide at least one Page field to update (about, description, phone, website)."
+                .to_string(),
+        );
+    }
+    let resp = client
+        .post(format!("{FB_API}/{page_id}"))
+        .bearer_auth(token)
+        .form(&form)
+        .send()
+        .await
+        .map_err(|e| format!("Facebook request error: {e}"))?;
+    finish(resp).await
+}
+
+/// Page-level insights for one or more metrics over a period.
+async fn get_page_insights(
+    client: &reqwest::Client,
+    token: &str,
+    config: &Value,
+) -> Result<Value, String> {
+    let page_id = require(config, "page_id")?;
+    let metric = str_val(config, "metric")
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "page_impressions,page_post_engagements,page_daily_follows".to_string());
+    let period = str_val(config, "period")
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "day".to_string());
+    let resp = client
+        .get(format!("{FB_API}/{page_id}/insights"))
+        .bearer_auth(token)
+        .query(&[("metric", metric), ("period", period)])
+        .send()
+        .await
+        .map_err(|e| format!("Facebook request error: {e}"))?;
+    finish(resp).await
+}
+
+/// Post-level insights (impressions, engaged users, clicks, reactions).
+async fn get_post_insights(
+    client: &reqwest::Client,
+    token: &str,
+    config: &Value,
+) -> Result<Value, String> {
+    let post_id = require(config, "post_id")?;
+    let metric = str_val(config, "metric")
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| {
+            "post_impressions,post_impressions_unique,post_engaged_users,post_clicks,\
+             post_reactions_by_type_total"
+                .to_string()
+        });
+    let resp = client
+        .get(format!("{FB_API}/{post_id}/insights"))
+        .bearer_auth(token)
+        .query(&[("metric", metric)])
+        .send()
+        .await
+        .map_err(|e| format!("Facebook request error: {e}"))?;
+    finish(resp).await
+}
+
 // ── Public executor ───────────────────────────────────────────────────────────
 
 pub(crate) async fn execute(config: &Value) -> Result<Value, String> {
