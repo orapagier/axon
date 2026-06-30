@@ -171,3 +171,33 @@ fn wait_timeout_seconds(config: &Value) -> Option<f64> {
         _ => amount * 3600.0,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn timeout_none_when_unset_or_zero() {
+        assert_eq!(wait_timeout_seconds(&json!({})), None);
+        assert_eq!(wait_timeout_seconds(&json!({ "timeout_amount": 0 })), None);
+        assert_eq!(wait_timeout_seconds(&json!({ "timeout_seconds": 0 })), None);
+    }
+
+    #[test]
+    fn timeout_unit_conversion_and_default() {
+        assert_eq!(
+            wait_timeout_seconds(&json!({ "timeout_amount": 2, "timeout_unit": "minutes" })),
+            Some(120.0)
+        );
+        // Bare timeout_seconds wins; string numbers parse.
+        assert_eq!(
+            wait_timeout_seconds(&json!({ "timeout_seconds": "90" })),
+            Some(90.0)
+        );
+        // Default unit is hours.
+        assert_eq!(
+            wait_timeout_seconds(&json!({ "timeout_amount": 1 })),
+            Some(3600.0)
+        );
+    }
+}
