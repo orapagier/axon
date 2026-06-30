@@ -1863,7 +1863,14 @@ async fn execute_node_by_type(
 ) -> Result<Value, String> {
     let no_retry = matches!(
         node.node_type.as_str(),
-        "trigger" | "circadian" | "stimulus" | "wait" | "loop" | "ifCondition" | "switch"
+        "trigger"
+            | "circadian"
+            | "stimulus"
+            | "wait"
+            | "approval"
+            | "loop"
+            | "ifCondition"
+            | "switch"
     );
     let max_attempts = if no_retry { 0 } else { node.retries };
 
@@ -1887,6 +1894,7 @@ async fn execute_node_by_type(
                     return Err(e);
                 }
                 attempt += 1;
+                crate::observability::record_node_retry(&node.node_type);
                 let wait_ms =
                     compute_retry_wait_ms(node.retry_wait_ms, attempt, &node.retry_backoff);
                 tracing::warn!(
@@ -2464,6 +2472,10 @@ impl WorkflowEngine {
                     let conn = state.db.get()?;
                     conn.execute("UPDATE workflow_runs SET status = 'cancelled', finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?", [&run_id])?;
                 }
+                crate::observability::record_run_complete(
+                    "cancelled",
+                    start.elapsed().as_secs_f64(),
+                );
                 return Ok(WorkflowRunResult {
                     run_id,
                     workflow_id: workflow_id.to_string(),
@@ -2836,6 +2848,7 @@ impl WorkflowEngine {
                 .await
             };
             let duration = n_start.elapsed().as_millis() as u64;
+            crate::observability::record_node_exec(&node.node_type, duration as f64 / 1000.0);
             let (status, output, error) = match result {
                 Ok(v) => ("success".to_string(), v, None),
                 Err(e) => ("error".to_string(), json!({}), Some(e)),
@@ -3209,6 +3222,9 @@ impl WorkflowEngine {
             conn.execute("UPDATE workflow_runs SET status = ?, finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), node_results = ? WHERE id = ?", [status, &res_json, &run_id])?;
             conn.execute("UPDATE workflows SET last_status = ?, last_run_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?", [status, workflow_id])?;
         }
+        // C3: terminal run metric (success/error). 'waiting' suspends return early
+        // above, so they're never double-counted here.
+        crate::observability::record_run_complete(status, total_ms as f64 / 1000.0);
 
         let failed_nodes: Vec<&NodeResult> =
             results_vec.iter().filter(|r| r.status == "error").collect();

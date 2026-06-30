@@ -190,6 +190,8 @@ async fn main() -> anyhow::Result<()> {
     }
 
     tracing::info!("AXON v{} starting...", env!("CARGO_PKG_VERSION"));
+    // C3: install the Prometheus recorder before anything emits metrics.
+    axon::observability::init();
     let cfg = AppConfig::from_env();
 
     for dir in &["memory", "tools", "tools_temp"] {

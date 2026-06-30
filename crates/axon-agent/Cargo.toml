@@ -52,6 +52,10 @@ opentelemetry-otlp = { version = "0.14.0", features = ["grpc-tonic"] }
 tracing-opentelemetry = "0.22.0"
 chrono-tz = "0.10.4"
 dirs = "5.0"
+# C3 observability: Prometheus /metrics. default-features off so we don't pull the
+# crate's own HTTP listener — we render via our existing axum router instead.
+metrics = "0.24"
+metrics-exporter-prometheus = { version = "0.16", default-features = false }
 boa_engine = "0.20.0"
 cron = "0.16.0"
 image_processor  = { path = "../axon-image" }

@@ -728,8 +728,11 @@ impl TelegramGateway {
                 let status: String = r.get(0)?;
                 let finished_at: Option<String> = r.get(1)?;
                 let node_results_str: String = r.get(2)?;
-                let node_results =
+                // B2: rehydrate any offloaded binary descriptors so the reply
+                // shows real output, never a `{_axon_binary}` placeholder.
+                let mut node_results =
                     serde_json::from_str::<Value>(&node_results_str).unwrap_or(json!([]));
+                crate::tools::workflow::binary::rehydrate_value(&mut node_results);
                 Ok(WorkflowRunSummary {
                     status,
                     finished_at,

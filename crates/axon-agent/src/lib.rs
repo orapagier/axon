@@ -9,6 +9,7 @@ pub mod maintenance;
 pub mod mcp;
 pub mod memory;
 pub mod messaging;
+pub mod observability;
 
 pub mod providers;
 pub mod router;
