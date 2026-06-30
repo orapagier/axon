@@ -2077,6 +2077,14 @@ pub async fn upsert_workflow(
         }
     }
     let trigger_config = trigger_config_val.to_string();
+    // Error workflow (A3): the handler id to run when this workflow fails. Empty/
+    // null clears it (falls back to the global default at runtime).
+    let error_workflow_id: Option<String> = payload
+        .get("error_workflow_id")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
     let nodes = payload.get("nodes").and_then(|v| v.as_array());
     let edges = payload.get("edges").and_then(|v| v.as_array());
 
@@ -2084,9 +2092,9 @@ pub async fn upsert_workflow(
         let _ = conn.execute(
             // Stamp updated_at on every save so the workflow list can order
             // most-recently added/edited first (see get_workflows ORDER BY).
-            "INSERT INTO workflows (id, name, description, enabled, trigger_type, trigger_config, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'))
-             ON CONFLICT(id) DO UPDATE SET name=?2, description=?3, enabled=?4, trigger_type=?5, trigger_config=?6, updated_at=datetime('now')",
-            rusqlite::params![id, name, description, enabled as i64, trigger_type, trigger_config],
+            "INSERT INTO workflows (id, name, description, enabled, trigger_type, trigger_config, error_workflow_id, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'))
+             ON CONFLICT(id) DO UPDATE SET name=?2, description=?3, enabled=?4, trigger_type=?5, trigger_config=?6, error_workflow_id=?7, updated_at=datetime('now')",
+            rusqlite::params![id, name, description, enabled as i64, trigger_type, trigger_config, error_workflow_id],
         );
 
         // Replace all nodes for this workflow
