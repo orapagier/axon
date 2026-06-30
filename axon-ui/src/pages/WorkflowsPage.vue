@@ -3549,9 +3549,9 @@ onUnmounted(() => {
 }
 
 .workflow-menu-trigger {
-  min-width: 200px;
-  max-width: 280px;
-  min-height: 34px;
+  min-width: 150px;
+  max-width: 200px;
+  min-height: 30px;
   display: inline-flex;
   align-items: center;
   justify-content: space-between;
