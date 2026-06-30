@@ -235,12 +235,37 @@ pub fn gc_unreferenced(referenced: &HashSet<String>) -> usize {
     removed
 }
 
+/// Test-only serialization guard. `blob_dir()` reads the process-global
+/// `AXON_WF_BLOB_DIR`; every test that sets it (here and in `maintenance`) holds
+/// this lock so one test's set_var can't redirect another's reads mid-run.
+#[cfg(test)]
+pub(crate) static BLOB_DIR_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Lock the shared guard and point the blob store at a unique temp dir, so
+    /// these unit tests never write into a dev instance's real `wf_blobs`.
+    fn test_blob_guard() -> std::sync::MutexGuard<'static, ()> {
+        let g = BLOB_DIR_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var(
+            "AXON_WF_BLOB_DIR",
+            std::env::temp_dir().join(format!(
+                "axon_blob_unit_{}_{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            )),
+        );
+        g
+    }
+
     #[test]
     fn offload_then_rehydrate_round_trips_large_strings() {
+        let _g = test_blob_guard();
         let big = "x".repeat(2000);
         let mut v = serde_json::json!({
             "small": "keep me",
