@@ -2322,12 +2322,18 @@ impl WorkflowEngine {
             .any(|n| matches!(n.node_type.as_str(), "trigger" | "circadian" | "stimulus"));
 
         // When a run is initiated by a specific event source (a Telegram reply/
-        // callback, a Gmail poll, etc.), only start from trigger nodes OF THAT
-        // TYPE. This isolates trigger branches in a multi-trigger workflow: e.g.
-        // a Telegram reply must NOT also fire a Gmail trigger sitting in the same
-        // workflow. "manual"/scheduled runs (None) start from every trigger node.
+        // callback, a Gmail poll, a Circadian/cron tick, etc.), only start from
+        // trigger nodes OF THAT TYPE. This isolates trigger branches in a
+        // multi-trigger workflow: e.g. a Circadian tick must NOT also fire a
+        // Telegram trigger sitting in the same workflow, and a Telegram reply must
+        // NOT fire a Gmail trigger. The source strings here line up with a
+        // Stimulus node's `config.type` ("cron" is the Circadian type). Only a
+        // genuinely untyped run — "manual" (the Run button) or a "subflow" entry
+        // (narrowed separately by the pin below) — starts from every trigger node.
         let entry_trigger_type: Option<&str> = match trigger_source {
-            "telegram" | "gmail" | "whatsapp" | "webhook" | "github" => Some(trigger_source),
+            "telegram" | "gmail" | "whatsapp" | "webhook" | "github" | "facebook" | "cron" => {
+                Some(trigger_source)
+            }
             // An error run (A3) starts ONLY from error-type trigger nodes; a normal
             // run never does (handled by `is_error_trigger` exclusion below).
             "error" => Some("error"),
@@ -2358,17 +2364,28 @@ impl WorkflowEngine {
                     // Strict pipeline definition: Only start from Trigger nodes if they exist.
                     // This prevents separated, orphaned subgraphs from running accidentally.
                     // When the run is source-scoped, also require the trigger node's
-                    // config.type to match so other trigger branches stay dormant.
+                    // type to match so other trigger branches stay dormant.
                     // A pinned sub-workflow entry narrows it further to that one node.
+                    //
+                    // Effective kind: a unified Stimulus node carries its kind in
+                    // `config.type`; a legacy bare `circadian` node predates that and
+                    // stores no `config.type` but means a cron trigger. Falling back
+                    // to the node_type keeps those firing on a scheduled run instead
+                    // of silently matching nothing.
+                    let node_trigger_kind = n
+                        .config
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(match n.node_type.as_str() {
+                            "circadian" => "cron",
+                            _ => "manual",
+                        });
                     deg && matches!(n.node_type.as_str(), "trigger" | "circadian" | "stimulus")
-                        && entry_trigger_type.map_or(true, |want| {
-                            n.config.get("type").and_then(|v| v.as_str()) == Some(want)
-                        })
+                        && entry_trigger_type.map_or(true, |want| node_trigger_kind == want)
                         // Error triggers (A3) are eligible ONLY on an error run; a
                         // normal/manual run must never start from one (it's a
                         // failure handler, not a regular entry point).
-                        && (trigger_source == "error"
-                            || n.config.get("type").and_then(|v| v.as_str()) != Some("error"))
+                        && (trigger_source == "error" || node_trigger_kind != "error")
                         && subflow_entry_node
                             .as_deref()
                             .map_or(true, |chosen| n.id == chosen)
