@@ -2100,7 +2100,7 @@ impl WorkflowEngine {
                 |r| r.get(0),
             )?;
 
-            let mut s = conn.prepare("SELECT id, workflow_id, position, position_x, position_y, node_type, name, config, enabled, continue_on_fail, retries, retry_wait_ms, retry_backoff FROM workflow_nodes WHERE workflow_id = ?")?;
+            let mut s = conn.prepare("SELECT id, workflow_id, position, position_x, position_y, node_type, name, config, enabled, continue_on_fail, retries, retry_wait_ms, retry_backoff, pinned_data FROM workflow_nodes WHERE workflow_id = ?")?;
             let nodes: Vec<WorkflowNode> = s
                 .query_map([workflow_id], |r| {
                     Ok(WorkflowNode {
@@ -2118,6 +2118,11 @@ impl WorkflowEngine {
                         retries: r.get::<_, i64>(10).unwrap_or(0).max(0) as u32,
                         retry_wait_ms: r.get::<_, i64>(11).unwrap_or(0).max(0) as u64,
                         retry_backoff: r.get::<_, Option<String>>(12)?.unwrap_or_default(),
+                        // NULL/blank/unparseable ⇒ not pinned.
+                        pinned_data: r
+                            .get::<_, Option<String>>(13)?
+                            .filter(|s| !s.trim().is_empty())
+                            .and_then(|s| serde_json::from_str::<Value>(&s).ok()),
                     })
                 })?
                 .filter_map(|r| r.ok())
