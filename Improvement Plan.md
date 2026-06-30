@@ -62,15 +62,36 @@ Ordered by leverage ÷ risk. Each milestone is independently shippable.
 
 ### Milestone B — "Production data model"
 - B1. **Workflow versioning / history** — ✅ done (migration `0010_workflow_versions.sql`, `snapshot_workflow_version` at top of `upsert_workflow`, content-hash dedupe + throttle + per-workflow cap with labeled-row exemption, versions/restore/label endpoints, Version History drawer in `WorkflowsPage.vue`)
-- B2. **Binary / large-payload** offloading
-- B3. **Execution concurrency** control + bounded queue
+- B2. **Binary / large-payload** offloading — ✅ done (content-addressed blob store `tools/workflow/binary.rs`, offload-at-persist + rehydrate-at-read across all 4 write / 4 read seams, retention GC sweep, `workflow.binary_inline_max_bytes` setting; no schema change)
+- B3. **Execution concurrency** control + bounded queue — ✅ done (`run_semaphore` + active/queue gauges on `AppState`, `acquire_run_slot` RAII permit at both background-spawn sites, shed-on-full-queue, permit released on durable-wait suspend & re-acquired on resume, subflows ride the parent permit; `workflow.max_concurrent_runs` / `max_queue_depth` settings)
 
 > **B1 shipped.** Migration numbering shifted: B1 took `0010` (the plan originally
-> penciled `0008`, since taken by `workflow_updated_at`). Remaining migrations:
-> B2 → `0011`, C1/C2 resume-tokens+dedup → `0012`. Snapshots reuse the A5 bundle
-> serializer (`build_workflow_bundle`). Versions hold *prior* states (snapshot
-> taken before each overwrite), so restore writes a snapshot back and re-versions
-> the current state first (undoable). Covered by 2 unit tests in `api.rs`.
+> penciled `0008`, since taken by `workflow_updated_at`). B2 and B3 needed **no
+> migration** (B2 is a disk blob store + settings; B3 is in-process). Next
+> migration `0011` is for C1/C2 (resume-tokens + dedup). Snapshots reuse the A5
+> bundle serializer (`build_workflow_bundle`). Versions hold *prior* states
+> (snapshot taken before each overwrite), so restore writes a snapshot back and
+> re-versions the current state first (undoable). Covered by 2 unit tests in `api.rs`.
+>
+> **B2 shipped.** Large node-output strings (base64 images, file bytes, big
+> bodies) are offloaded to `<data_files>/wf_blobs/<sha256>` and replaced with a
+> `{_axon_binary:{id,size}}` descriptor *only* when persisting to the DB; the
+> engine's in-memory results stay full, so same-run downstream nodes are
+> unaffected. Every DB read seam rehydrates (engine prior-run cache, durable-wait
+> resume, both run-read APIs) so no consumer ever sees a descriptor. Content
+> addressing makes repeated/identical payloads idempotent (dedup, no leaks); a
+> retention sweep GCs blobs no surviving run references (1h grace window). 2 unit
+> tests. *v1 win is at-rest DB size + dedup; lazy on-demand loading deferred.*
+>
+> **B3 shipped.** A startup-sized semaphore bounds concurrently *executing* runs;
+> both background-spawn entry points (`run_in_background_inner`, the durable-wait
+> resume waker) acquire a `RunSlot` permit before running. A bounded wait queue
+> (`max_queue_depth`, default 500) sheds new fires when full (marked failed) and
+> defers resumes (kept 'waiting' for the next tick). Suspending a durable Wait
+> ends the task → permit released; resume re-acquires. Subflows run inline within
+> the parent's permit (no second acquire → no deadlock). Gauges (`active_runs`,
+> `run_queue_depth`) are ready for C3's `/metrics`. *Per-trigger queue/shed policy
+> (interactive always-queue) left as a refinement; uniform policy for v1.*
 
 ### Milestone C — "Ops & resume"
 - C1. **Wait-for-webhook** + **Approval** node (human-in-the-loop)
@@ -375,7 +396,7 @@ Restore must re-version, never destroy the current state silently.
 
 ---
 
-### B2. Binary / large-payload offloading
+### B2. Binary / large-payload offloading — ✅ implemented (see Milestone B banner)
 
 **Problem.** A whole run's `node_results` is one `TEXT` JSON blob in `workflow_runs`
 (`0002:83`). Base64 images, file bytes, or big API responses bloat SQLite, slow the
@@ -414,7 +435,7 @@ hold references.
 
 ---
 
-### B3. Execution concurrency control + bounded queue
+### B3. Execution concurrency control + bounded queue — ✅ implemented (see Milestone B banner)
 
 **Problem.** Triggers spawn runs via `run_in_background_with_source` with no global cap. A
 burst (many Telegram messages, a webhook storm, a fan-out of subflows) can spawn unbounded
