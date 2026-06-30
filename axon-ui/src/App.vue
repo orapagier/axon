@@ -225,7 +225,6 @@ function logout() {
           </button>
 
           <div class="shell-page-meta" :style="{ '--page-tint': activeNav.tint }">
-            <span class="shell-eyebrow">Axon Command Center</span>
             <div class="shell-page-heading-row">
               <span class="shell-page-dot" aria-hidden="true"></span>
               <div class="shell-page-heading">{{ activeNav.label }}</div>
