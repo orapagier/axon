@@ -637,12 +637,19 @@ function createNew() {
   wfId.value = ''
   wfName.value = 'New Workflow'
   wfDesc.value = ''
+  wfErrorWorkflowId.value = null
   trigger.value = { type: 'manual', config: {} }
   nodes.value = []
   edges.value = []
   selectedWorkflow.value = { id: 'new', name: 'New Workflow' }
   selectedNode.value = null
 }
+
+// Workflows eligible as THIS workflow's failure handler (A3): every other
+// saved workflow. A workflow can't be its own error handler.
+const errorHandlerOptions = computed(() =>
+  (workflows.value || []).filter((w) => w.id !== wfId.value)
+)
 
 // `opts.save` (default true) lets composite operations (splice / add-from-handle)
 // add the node WITHOUT triggering an immediate save, so they can push the
