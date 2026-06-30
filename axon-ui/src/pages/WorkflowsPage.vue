@@ -100,6 +100,14 @@ watch(isNodePickerOpen, (open) => {
   }
 })
 
+// Auto-focus the workflow search field whenever the workflows dropdown opens so
+// the user can start typing without clicking into it first.
+watch(isWorkflowMenuOpen, (open) => {
+  if (open) {
+    nextTick(() => workflowMenuSearchRef.value?.focus())
+  }
+})
+
 const filteredWorkflows = computed(() => {
   const query = workflowMenuSearch.value.trim().toLowerCase()
   if (!query) return workflows.value
