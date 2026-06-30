@@ -248,7 +248,11 @@ mod tests {
     #[test]
     fn retention_bounds_workflow_runs_and_prunes_old_history() {
         // Isolate the B2 blob-GC sweep onto a throwaway dir so it can never touch
-        // a dev instance's real wf_blobs while running the suite.
+        // a dev instance's real wf_blobs while running the suite. The shared guard
+        // serializes against the binary unit tests, which also set this env var.
+        let _g = crate::tools::workflow::binary::BLOB_DIR_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         std::env::set_var(
             "AXON_WF_BLOB_DIR",
             std::env::temp_dir().join(format!("axon_blobs_test_{}", std::process::id())),
