@@ -44,6 +44,8 @@ const wfDesc = ref('')
 // = use the global default. Edited via the toolbar settings popover.
 const wfErrorWorkflowId = ref(null)
 const showWfSettings = ref(false)
+// Hidden file input used by the Import button (A5).
+const importFileRef = ref(null)
 const trigger = ref({ type: 'manual', config: {} })
 const nodes = ref([])
 const edges = ref([])
