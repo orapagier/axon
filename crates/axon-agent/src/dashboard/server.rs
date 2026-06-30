@@ -167,6 +167,11 @@ pub fn build_router(state: AppState) -> Router {
             get(api::get_workflows).post(api::upsert_workflow),
         )
         .route(
+            "/api/workflows/import",
+            axum::routing::post(api::import_workflow),
+        )
+        .route("/api/workflows/:id/export", get(api::export_workflow))
+        .route(
             "/api/workflows/:id",
             axum::routing::delete(api::delete_workflow),
         )
