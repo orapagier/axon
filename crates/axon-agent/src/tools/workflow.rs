@@ -36,6 +36,13 @@ pub(crate) static SUBFLOW_TRIGGER_DATA: once_cell::sync::Lazy<
     tokio::sync::Mutex<std::collections::HashMap<String, Value>>,
 > = once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
 
+// Error-trigger payload (A3): the structured failure description handed to an
+// error workflow's trigger node when it runs under trigger_source "error".
+// Keyed by the error workflow's id and consumed (removed) by the trigger node.
+pub(crate) static ERROR_TRIGGER_DATA: once_cell::sync::Lazy<
+    tokio::sync::Mutex<std::collections::HashMap<String, Value>>,
+> = once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
+
 // Sub-workflow entry trigger: the id of the single trigger node a parent chose to
 // start a child from when that child has multiple triggers. Keyed by child
 // workflow_id and consumed (removed) as the entry queue is built, so only that
