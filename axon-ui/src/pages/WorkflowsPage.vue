@@ -2837,6 +2837,11 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
+/* Execution History is compact — narrower than the node-details side panel */
+.history-panel {
+  width: 320px;
+}
+
 .panel-header {
   padding: 24px;
   display: flex;
