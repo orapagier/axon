@@ -2301,8 +2301,16 @@ onUnmounted(() => {
                     <option v-for="w in errorHandlerOptions" :key="w.id" :value="w.id">{{ w.name }}</option>
                   </select>
                   <div class="wf-settings-hint">Runs the chosen workflow's Error trigger when this one errors. Build a handler by adding a Stimulus neuron with trigger type “On Error”.</div>
+                  <div class="wf-settings-divider"></div>
+                  <label class="wf-settings-label">Backup &amp; share</label>
+                  <div class="wf-settings-actions">
+                    <button class="btn btn-sm btn-neutral" @click="exportWorkflow">Export JSON</button>
+                    <button class="btn btn-sm btn-neutral" @click="triggerImport">Import JSON</button>
+                  </div>
+                  <div class="wf-settings-hint">Export bundles nodes, edges &amp; pins (never secrets). Imported workflows arrive disabled — re-map credentials, then enable.</div>
                 </div>
               </Transition>
+              <input ref="importFileRef" type="file" accept="application/json,.json" style="display:none" @change="importWorkflow" />
             </div>
             <button v-if="isExecuting" class="btn btn-sm workflow-action-btn btn-danger" @click="stopWorkflow">Stop</button>
             <button class="btn btn-sm workflow-action-btn btn-danger" @click="removeWorkflow">Delete</button>
