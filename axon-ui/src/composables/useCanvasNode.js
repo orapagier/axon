@@ -56,7 +56,7 @@ export function useCanvasNode() {
   const executionWaiting = computed(() => data.value?.execution?.waiting ?? false)
   const executionWaitingForNext = computed(() => data.value?.execution?.waitingForNext ?? false)
 
-  const hasPinnedData = computed(() => data.value?.pinnedData?.length > 0 ?? false)
+  const hasPinnedData = computed(() => data.value?.pinnedData != null)
   const hasRunData = computed(() => {
     return (data.value?.runData?.length > 0) || (data.value?.execution?.status === 'success')
   })
