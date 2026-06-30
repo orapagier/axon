@@ -76,8 +76,16 @@ export const NODE_TYPES = {
                     { name: 'Webhook', value: 'webhook' },
                     { name: 'GitHub', value: 'github' },
                     { name: 'Facebook', value: 'facebook' },
+                    { name: 'On Error (Failure Handler)', value: 'error' },
                 ],
                 default: 'manual',
+            },
+            {
+                displayName: 'Error Trigger',
+                name: 'error_trigger_hint',
+                type: 'notice',
+                default: 'This workflow runs as a FAILURE HANDLER. It only fires when another workflow that names it (Workflow Settings → On failure) reports an error. It is skipped by normal/manual runs. The trigger outputs { workflow, run_id, failed_node, error, trigger_type, ts }.',
+                displayOptions: { show: { type: ['error'] } },
             },
             {
                 displayName: 'Webhook URL',
