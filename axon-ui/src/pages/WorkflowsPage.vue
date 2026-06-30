@@ -3839,6 +3839,10 @@ onUnmounted(() => {
   border-radius: 6px;
   font-size: 12px;
 }
+.wf-settings-select option {
+  background: #15151a;
+  color: #e6f1ee;
+}
 .wf-settings-hint {
   margin-top: 8px;
   font-size: 10.5px;
