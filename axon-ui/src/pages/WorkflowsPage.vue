@@ -2841,6 +2841,12 @@ onUnmounted(() => {
 .history-panel {
   width: 320px;
 }
+.history-panel .panel-header {
+  padding: 16px 18px;
+}
+.history-panel .panel-body {
+  padding: 14px 18px;
+}
 
 .panel-header {
   padding: 24px;
