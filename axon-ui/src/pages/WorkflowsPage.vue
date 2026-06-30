@@ -3745,5 +3745,46 @@ onUnmounted(() => {
   color: #97a59f;
   line-height: 1.5;
 }
+
+/* Workflow settings popover (A3 error-workflow picker) */
+.wf-settings-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  width: 280px;
+  padding: 12px;
+  background: #15151a;
+  border: 1px solid rgba(129, 230, 217, 0.2);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+.wf-settings-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #e6f1ee;
+  margin-bottom: 10px;
+}
+.wf-settings-label {
+  display: block;
+  font-size: 11px;
+  color: #97a59f;
+  margin-bottom: 4px;
+}
+.wf-settings-select {
+  width: 100%;
+  padding: 6px 8px;
+  background: #0e0e12;
+  color: #e6f1ee;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.wf-settings-hint {
+  margin-top: 8px;
+  font-size: 10.5px;
+  color: #6f7d77;
+  line-height: 1.45;
+}
 </style>
 
