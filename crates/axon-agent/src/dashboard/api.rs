@@ -1970,7 +1970,7 @@ pub async fn get_workflows(State(state): State<AppState>) -> Json<Value> {
     let workflows: Vec<Value> = rows.filter_map(|r| r.ok()).map(|(wf_id, mut wf)| {
         // Load nodes for this workflow
         if let Ok(mut nstmt) = conn.prepare(
-            "SELECT id, workflow_id, position, node_type, name, config, enabled, position_x, position_y, continue_on_fail, retries, retry_wait_ms, retry_backoff FROM workflow_nodes WHERE workflow_id = ?1 ORDER BY position ASC"
+            "SELECT id, workflow_id, position, node_type, name, config, enabled, position_x, position_y, continue_on_fail, retries, retry_wait_ms, retry_backoff, pinned_data FROM workflow_nodes WHERE workflow_id = ?1 ORDER BY position ASC"
         ) {
             let nodes: Vec<Value> = nstmt.query_map(rusqlite::params![wf_id], |r| {
                 Ok(json!({
@@ -1987,6 +1987,10 @@ pub async fn get_workflows(State(state): State<AppState>) -> Json<Value> {
                     "retries": r.get::<_, i64>(10).unwrap_or(0),
                     "retry_wait_ms": r.get::<_, i64>(11).unwrap_or(0),
                     "retry_backoff": r.get::<_, Option<String>>(12)?.unwrap_or_else(|| "fixed".to_string()),
+                    // Pinned output (A4): parsed JSON value, or null when not pinned.
+                    "pinned_data": r.get::<_, Option<String>>(13)?
+                        .filter(|s| !s.trim().is_empty())
+                        .and_then(|s| serde_json::from_str::<Value>(&s).ok()),
                 }))
             }).unwrap().filter_map(|r| r.ok()).collect();
             wf.as_object_mut().unwrap().insert("nodes".to_string(), json!(nodes));
