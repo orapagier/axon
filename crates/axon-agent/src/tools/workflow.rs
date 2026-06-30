@@ -4137,6 +4137,7 @@ mod resolve_tests {
             retries: 0,
             retry_wait_ms: 0,
             retry_backoff: String::new(),
+            pinned_data: None,
         }];
         restamp_result_identities(&mut results, &mut [], &mut [], &nodes);
 
