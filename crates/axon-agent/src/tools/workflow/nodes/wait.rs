@@ -29,6 +29,27 @@ pub(crate) async fn execute(
         .and_then(|v| v.as_str())
         .unwrap_or("interval");
 
+    // C1: human-in-the-loop. "webhook"/"approval" don't wait on a clock — they
+    // suspend the run durably until an external caller hits a tokenized resume
+    // URL. The engine mints the token, persists the suspend, and surfaces the
+    // links (it has the node id + DB); here we just emit the marker. An optional
+    // `timeout` (amount+unit) becomes a hard deadline the engine mirrors into
+    // resume_at so the time poller can fire a timeout branch.
+    if mode == "webhook" || mode == "approval" {
+        if !durable_allowed {
+            return Err(format!(
+                "Wait node ({mode} mode) needs a real run to suspend — it can't \
+                 run inside a Loop body or a single-step/test run"
+            ));
+        }
+        let expires_seconds = wait_timeout_seconds(config);
+        return Ok(json!({
+            SUSPEND_MARKER: { "mode": mode, "expires_seconds": expires_seconds },
+            "mode": mode,
+            "waiting": true,
+        }));
+    }
+
     // How long to sleep, in seconds.
     let seconds = if mode == "until" {
         // Absolute resume time (n8n "At Specified Time"). A time already in
@@ -117,4 +138,36 @@ pub(crate) async fn execute(
         }
     }
     Ok(json!({ "waited_seconds": seconds, "resume_at": resume_at, "mode": mode }))
+}
+
+/// C1: optional hard timeout for a webhook/approval Wait, in seconds. Reads
+/// `timeout_amount` + `timeout_unit` (same units as the interval form) or a bare
+/// `timeout_seconds`. Returns `None` (engine falls back to the configured default
+/// TTL) when no positive timeout is set.
+fn wait_timeout_seconds(config: &Value) -> Option<f64> {
+    if let Some(s) = config
+        .get("timeout_seconds")
+        .and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())))
+    {
+        return (s > 0.0).then_some(s);
+    }
+    let amount = config.get("timeout_amount").and_then(|v| {
+        v.as_f64()
+            .or_else(|| v.as_str().and_then(|s| s.trim().parse::<f64>().ok()))
+    })?;
+    if amount <= 0.0 {
+        return None;
+    }
+    let unit = config
+        .get("timeout_unit")
+        .and_then(|v| v.as_str())
+        .unwrap_or("hours");
+    Some(match unit {
+        "seconds" | "s" => amount,
+        "minutes" => amount * 60.0,
+        "hours" => amount * 3600.0,
+        "days" => amount * 86400.0,
+        "weeks" => amount * 604_800.0,
+        _ => amount * 3600.0,
+    })
 }

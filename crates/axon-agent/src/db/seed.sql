@@ -61,7 +61,9 @@ INSERT OR IGNORE INTO settings VALUES
     ('workflow.version_min_interval_secs',    '30',   'int',  'Minimum seconds between version snapshots of the same workflow (throttles editor autosave noise)', 'workflow', datetime('now')),
     ('workflow.binary_inline_max_bytes',      '65536','int',  'Node-output strings larger than this are offloaded to the blob store instead of stored inline in run history (0 disables)', 'workflow', datetime('now')),
     ('workflow.max_concurrent_runs',          '16',   'int',  'Maximum workflow runs executing at once (bounds CPU/memory under trigger bursts; applied at startup)', 'workflow', datetime('now')),
-    ('workflow.max_queue_depth',              '500',  'int',  'Maximum runs queued waiting to execute before new trigger fires are shed (0 = unbounded queue)', 'workflow', datetime('now'));
+    ('workflow.max_queue_depth',              '500',  'int',  'Maximum runs queued waiting to execute before new trigger fires are shed (0 = unbounded queue)', 'workflow', datetime('now')),
+    ('workflow.public_base_url',              '',     'string','Public HTTPS base URL used to build resume/approve/reject links for Wait-for-webhook & Approval nodes (blank = emit relative paths)', 'workflow', datetime('now')),
+    ('workflow.resume_token_default_ttl_secs','604800','int', 'Default lifetime of a Wait-for-webhook/Approval resume token when the node sets no explicit timeout (0 = wait forever)', 'workflow', datetime('now'));
 
 -- Web search.
 INSERT OR IGNORE INTO settings VALUES

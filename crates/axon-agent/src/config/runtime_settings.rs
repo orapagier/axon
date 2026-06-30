@@ -194,6 +194,22 @@ RESPONSE RULES:
     pub fn workflow_max_queue_depth(&self) -> i64 {
         self.get_int("workflow.max_queue_depth", 500).max(0)
     }
+    /// C1: public base URL used to build the resume/approve/reject links a
+    /// Wait-for-webhook or Approval node surfaces. Blank → the node emits
+    /// relative paths (`/webhook/resume/<token>`) for the operator to prefix.
+    pub fn workflow_public_base_url(&self) -> String {
+        self.get_str("workflow.public_base_url", "")
+            .trim()
+            .trim_end_matches('/')
+            .to_string()
+    }
+    /// C1: default resume-token lifetime (seconds) when an Approval/webhook Wait
+    /// node sets no explicit timeout. `0` = the token never expires (wait
+    /// forever). Drives the run's `resume_at` so the time poller fires a timeout
+    /// branch if no one resumes it.
+    pub fn workflow_resume_token_default_ttl_secs(&self) -> i64 {
+        self.get_int("workflow.resume_token_default_ttl_secs", 604_800).max(0)
+    }
 
     pub fn websearch_enabled(&self) -> bool {
         self.get_bool("websearch.enabled", false)

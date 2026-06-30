@@ -1799,6 +1799,16 @@ async fn execute_node_dispatch(
         "fovea" => nodes::fovea::execute(config, state).await,
         t if t == "mcp" || t.starts_with("mcp_") => nodes::mcp::execute(config, state).await,
         "wait" => nodes::wait::execute(config, state, workflow_id, run_id, durable_allowed).await,
+        "approval" => {
+            // C1: Approval is a Wait preset that suspends for a human decision and
+            // routes Approve→output 0 / Reject→output 1. Force approval mode so it
+            // behaves correctly regardless of saved config.
+            let mut cfg = config.clone();
+            if let Some(o) = cfg.as_object_mut() {
+                o.insert("mode".to_string(), json!("approval"));
+            }
+            nodes::wait::execute(&cfg, state, workflow_id, run_id, durable_allowed).await
+        }
         "soma" => {
             // Soma's "Include Other Input Fields" merges over the incoming item.
             // Use the same primary-input convention as $json: the most recent
@@ -2857,19 +2867,89 @@ impl WorkflowEngine {
             // background poller re-enters the workflow once resume_at passes, so
             // the pause survives an agent restart.
             if let Some(marker) = nr.output.get(nodes::wait::SUSPEND_MARKER).cloned() {
-                let seconds = marker.get("seconds").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                // Anchor the wake time to the suspend instant, in the same
-                // canonical UTC format the poller compares against strftime(now).
-                let resume_at_db = (chrono::Utc::now()
-                    + chrono::Duration::milliseconds((seconds * 1000.0) as i64))
-                .format("%Y-%m-%dT%H:%M:%SZ")
-                .to_string();
+                let suspend_mode = marker
+                    .get("mode")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("interval")
+                    .to_string();
 
                 // Drop the internal sentinel from the visible result but keep the
-                // node marked 'waiting' so the editor shows the Wait paused.
+                // node marked 'waiting' so the editor shows the node paused.
                 if let Some(obj) = nr.output.as_object_mut() {
                     obj.remove(nodes::wait::SUSPEND_MARKER);
                 }
+
+                // Compute the wake deadline. A timed Wait anchors it to the suspend
+                // instant. A webhook/approval Wait (C1) instead parks until a
+                // tokenized resume URL is hit: mint + store the token, surface the
+                // links on the node output, and use any timeout as the deadline
+                // (NULL deadline = wait forever, only a resume URL wakes it).
+                let resume_at_db: Option<String> = if suspend_mode == "webhook"
+                    || suspend_mode == "approval"
+                {
+                    let token = uuid::Uuid::new_v4().simple().to_string();
+                    let ttl = match marker.get("expires_seconds").and_then(|v| v.as_f64()) {
+                        Some(s) if s > 0.0 => s,
+                        _ => state.settings.workflow_resume_token_default_ttl_secs() as f64,
+                    };
+                    let expires_at: Option<String> = (ttl > 0.0).then(|| {
+                        (chrono::Utc::now()
+                            + chrono::Duration::milliseconds((ttl * 1000.0) as i64))
+                        .format("%Y-%m-%dT%H:%M:%SZ")
+                        .to_string()
+                    });
+                    {
+                        let conn = state.db.get()?;
+                        conn.execute(
+                            "INSERT INTO workflow_resume_tokens \
+                             (token, run_id, workflow_id, node_id, mode, expires_at) \
+                             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                            rusqlite::params![
+                                token,
+                                run_id,
+                                workflow_id,
+                                current_id,
+                                suspend_mode,
+                                expires_at
+                            ],
+                        )?;
+                    }
+                    let base = state.settings.workflow_public_base_url();
+                    let link = |p: &str| {
+                        if base.is_empty() {
+                            p.to_string()
+                        } else {
+                            format!("{base}{p}")
+                        }
+                    };
+                    let resume_path = format!("/webhook/resume/{token}");
+                    if let Some(obj) = nr.output.as_object_mut() {
+                        obj.insert("resume_token".into(), json!(token));
+                        obj.insert("resume_path".into(), json!(resume_path));
+                        obj.insert("resume_url".into(), json!(link(&resume_path)));
+                        if suspend_mode == "approval" {
+                            let approve_path = format!("/webhook/approve/{token}");
+                            let reject_path = format!("/webhook/reject/{token}");
+                            obj.insert("approve_path".into(), json!(approve_path));
+                            obj.insert("approve_url".into(), json!(link(&approve_path)));
+                            obj.insert("reject_path".into(), json!(reject_path));
+                            obj.insert("reject_url".into(), json!(link(&reject_path)));
+                        }
+                        // Read by the time poller to pick the timeout branch if the
+                        // deadline fires before anyone resumes (see resume path).
+                        obj.insert("__axon_resume".into(), json!({ "mode": suspend_mode }));
+                    }
+                    expires_at
+                } else {
+                    let seconds = marker.get("seconds").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    Some(
+                        (chrono::Utc::now()
+                            + chrono::Duration::milliseconds((seconds * 1000.0) as i64))
+                        .format("%Y-%m-%dT%H:%M:%SZ")
+                        .to_string(),
+                    )
+                };
+
                 nr.status = "waiting".to_string();
                 node_results.insert(current_id.clone(), nr.clone());
                 ordered_results.push(nr.clone());
@@ -2890,10 +2970,14 @@ impl WorkflowEngine {
                     )?;
                 }
                 tracing::info!(
-                    "Workflow run {} suspended at Wait node '{}' until {} (durable)",
+                    "Workflow run {} suspended at node '{}' ({} mode){} (durable)",
                     run_id,
                     node.name,
-                    resume_at_db
+                    suspend_mode,
+                    match &resume_at_db {
+                        Some(t) => format!(" until {t}"),
+                        None => String::new(),
+                    }
                 );
                 return Ok(WorkflowRunResult {
                     run_id,
@@ -2948,7 +3032,10 @@ impl WorkflowEngine {
                 // handle(s). A Switch in "all" mode reports several active outputs
                 // (outputIndices); an edge is live if its handle matches ANY of them.
                 let mut live = true;
-                if node.node_type == "ifCondition" || node.node_type == "switch" {
+                if node.node_type == "ifCondition"
+                    || node.node_type == "switch"
+                    || node.node_type == "approval"
+                {
                     if let Some(nr) = node_results.get(&current_id) {
                         // Prefer outputIndices (multi-match); fall back to the single
                         // outputIndex for IF and legacy results.
@@ -3509,12 +3596,42 @@ impl WorkflowEngine {
             // B2: restore any offloaded payloads before the resumed run reads them.
             binary::rehydrate_results(&mut results);
 
-            // The Wait node we paused on is stored as 'waiting'; flip it to
-            // 'success' now that the run is continuing past it.
+            // The node we paused on is stored as 'waiting'; flip it to 'success'
+            // now the run continues past it. A webhook/approval node (C1) that
+            // reaches the time poller did so by TIMEOUT — a genuine resume claims
+            // the run first — so route it down its timeout branch: approval →
+            // reject (output 1), webhook → continue with a `timed_out` flag.
             for r in results.iter_mut() {
                 if r.node_id == resume_node_id || r.status == "waiting" {
                     r.status = "success".to_string();
                 }
+                if r.node_id == resume_node_id {
+                    let rmode = r
+                        .output
+                        .get("__axon_resume")
+                        .and_then(|m| m.get("mode"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    if let Some(rmode) = rmode {
+                        if let Some(obj) = r.output.as_object_mut() {
+                            obj.remove("__axon_resume");
+                            obj.insert("timed_out".to_string(), json!(true));
+                            obj.insert("outcome".to_string(), json!("timeout"));
+                            if rmode == "approval" {
+                                obj.insert("approved".to_string(), json!(false));
+                                obj.insert("outputIndex".to_string(), json!(1));
+                            }
+                        }
+                    }
+                }
+            }
+            // The run is no longer waiting: drop any resume tokens so a late URL
+            // hit returns 410 rather than racing a finished run.
+            if let Ok(conn) = state.db.get() {
+                let _ = conn.execute(
+                    "DELETE FROM workflow_resume_tokens WHERE run_id = ?1",
+                    [&run_id],
+                );
             }
 
             let completed: std::collections::HashSet<String> =
@@ -3556,6 +3673,183 @@ impl WorkflowEngine {
                 }
             });
         }
+    }
+
+    /// C1: resume a run durably suspended at a Wait-for-webhook / Approval node,
+    /// driven by an external hit on its tokenized resume URL. `outcome` is one of
+    /// `"resumed"` | `"approved"` | `"rejected"`; `payload` is the request body
+    /// (attached to the resumed node so downstream nodes read it as `$json`). The
+    /// run continues in the background; this returns once the resume is committed.
+    pub async fn resume_by_token(
+        state: &AppState,
+        token: &str,
+        outcome: &str,
+        payload: Value,
+    ) -> Result<Value, String> {
+        // 1. Look up the token (mode tells approval vs plain webhook).
+        let row: Option<(String, String, String, String, Option<String>)> = {
+            let conn = state.db.get().map_err(|e| e.to_string())?;
+            conn.query_row(
+                "SELECT run_id, workflow_id, node_id, mode, expires_at \
+                 FROM workflow_resume_tokens WHERE token = ?1",
+                [token],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, String>(3)?,
+                        r.get::<_, Option<String>>(4)?,
+                    ))
+                },
+            )
+            .ok()
+        };
+        let Some((run_id, workflow_id, node_id, mode, expires_at)) = row else {
+            return Err("unknown or already-used resume token".to_string());
+        };
+
+        // 2. Reject an expired token (the poller usually times these out first).
+        if let Some(exp) = expires_at.as_deref() {
+            let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+            if exp <= now.as_str() {
+                if let Ok(conn) = state.db.get() {
+                    let _ = conn
+                        .execute("DELETE FROM workflow_resume_tokens WHERE token = ?1", [token]);
+                }
+                return Err("resume token expired".to_string());
+            }
+        }
+
+        // 3. Claim the run: only a still-'waiting' run can be resumed once.
+        let (trigger_source, results_json): (String, String) = {
+            let conn = state.db.get().map_err(|e| e.to_string())?;
+            conn.query_row(
+                "SELECT COALESCE(trigger_type, 'manual'), node_results \
+                 FROM workflow_runs WHERE id = ?1 AND status = 'waiting'",
+                [&run_id],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+            )
+            .map_err(|_| "run already resumed, finished, or cancelled".to_string())?
+        };
+        let claimed = {
+            let conn = state.db.get().map_err(|e| e.to_string())?;
+            conn.execute(
+                "UPDATE workflow_runs SET status = 'running' WHERE id = ?1 AND status = 'waiting'",
+                [&run_id],
+            )
+            .map_err(|e| e.to_string())?
+        };
+        if claimed != 1 {
+            return Err("run already resumed, finished, or cancelled".to_string());
+        }
+
+        // 4. Consume the token (single-use); drop any siblings for the run too.
+        if let Ok(conn) = state.db.get() {
+            let _ = conn.execute(
+                "DELETE FROM workflow_resume_tokens WHERE run_id = ?1",
+                [&run_id],
+            );
+        }
+
+        // 5. Rebuild the chain and patch the resumed node with the payload +
+        //    decision so downstream nodes see it and approval branches route.
+        let mut results: Vec<NodeResult> = serde_json::from_str(&results_json).map_err(|e| {
+            if let Ok(conn) = state.db.get() {
+                let _ = conn.execute(
+                    "UPDATE workflow_runs SET status = 'failed', finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
+                    [&run_id],
+                );
+            }
+            format!("corrupt node_results on resume: {e}")
+        })?;
+        binary::rehydrate_results(&mut results);
+
+        let approved = mode == "approval" && outcome != "rejected";
+        let now_iso = chrono::Utc::now().to_rfc3339();
+        for r in results.iter_mut() {
+            if r.node_id == node_id || r.status == "waiting" {
+                r.status = "success".to_string();
+            }
+            if r.node_id == node_id {
+                if let Some(obj) = r.output.as_object_mut() {
+                    obj.remove("__axon_resume");
+                    // Spread an object body so `$json.<field>` works, then stamp
+                    // the reserved decision keys (they win over body fields).
+                    if let Some(body) = payload.as_object() {
+                        for (k, v) in body {
+                            obj.insert(k.clone(), v.clone());
+                        }
+                    }
+                    obj.insert("data".to_string(), payload.clone());
+                    obj.insert("resumed".to_string(), json!(true));
+                    obj.insert("outcome".to_string(), json!(outcome));
+                    obj.insert("resumed_at".to_string(), json!(now_iso));
+                    if mode == "approval" {
+                        obj.insert("approved".to_string(), json!(approved));
+                        obj.insert("outputIndex".to_string(), json!(if approved { 0 } else { 1 }));
+                    }
+                }
+            }
+        }
+
+        let completed: std::collections::HashSet<String> =
+            results.iter().map(|r| r.node_id.clone()).collect();
+        // Serialized patched chain, used only to re-park if the queue is full:
+        // the token is already consumed, so a wait-forever run must fall back to
+        // the time poller (which reads node_results from the DB) to retry.
+        let patched_json = serde_json::to_string(&results).unwrap_or_else(|_| "[]".to_string());
+        let resume = ResumeState { completed, results };
+
+        let s = state.clone();
+        let wf = workflow_id.clone();
+        let src = trigger_source.clone();
+        let rid = run_id.clone();
+        tracing::info!(
+            "Resuming run {} via {} token (outcome={})",
+            run_id,
+            mode,
+            outcome
+        );
+        tokio::spawn(async move {
+            let _slot = match acquire_run_slot(&s).await {
+                Some(slot) => slot,
+                None => {
+                    // Queue full: persist the patched chain and re-park on a
+                    // now-deadline so the time poller retries — the consumed token
+                    // can't, and a wait-forever run would otherwise stick.
+                    tracing::warn!("Token resume of {} deferred: run queue full", rid);
+                    if let Ok(conn) = s.db.get() {
+                        let _ = conn.execute(
+                            "UPDATE workflow_runs SET status = 'waiting', node_results = ?1, \
+                             resume_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?2",
+                            rusqlite::params![patched_json, rid],
+                        );
+                    }
+                    return;
+                }
+            };
+            if let Err(e) =
+                Self::run_inner(&wf, &s, &src, None, false, Some(rid.clone()), Some(resume)).await
+            {
+                tracing::error!("Token-resumed workflow run {} failed: {}", rid, e);
+                if let Ok(conn) = s.db.get() {
+                    let _ = conn.execute(
+                        "UPDATE workflow_runs SET status = 'failed', finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
+                        [&rid],
+                    );
+                }
+            }
+        });
+
+        Ok(json!({
+            "ok": true,
+            "run_id": run_id,
+            "workflow_id": workflow_id,
+            "node_id": node_id,
+            "outcome": outcome,
+            "approved": approved,
+        }))
     }
 
     pub async fn start_background_loop(state: AppState) {

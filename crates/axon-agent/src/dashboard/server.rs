@@ -244,6 +244,24 @@ pub fn build_router(state: AppState) -> Router {
             "/webhook/github/:workflow_id",
             axum::routing::post(crate::webhook::github::handle_github_webhook),
         )
+        // C1: tokenized resume URLs for Wait-for-webhook / Approval nodes. No auth
+        // by necessity — the unguessable single-use token IS the credential. GET is
+        // allowed so an approval link clicked from an email resumes the run.
+        .route(
+            "/webhook/resume/:token",
+            get(crate::webhook::external::handle_resume)
+                .post(crate::webhook::external::handle_resume),
+        )
+        .route(
+            "/webhook/approve/:token",
+            get(crate::webhook::external::handle_approve)
+                .post(crate::webhook::external::handle_approve),
+        )
+        .route(
+            "/webhook/reject/:token",
+            get(crate::webhook::external::handle_reject)
+                .post(crate::webhook::external::handle_reject),
+        )
         // OAuth callback — Google/Microsoft/Facebook redirect here after login
         .route("/auth/:service/callback", get(api::oauth_callback))
         // Temporary local-media for Instagram publishing (Meta fetches these;

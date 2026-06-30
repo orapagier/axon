@@ -149,6 +149,20 @@ pub fn run_retention(
         Err(e) => tracing::warn!("Retention: webhook_events prune failed: {}", e),
     }
 
+    // ── resume tokens (C1): drop tokens whose run is no longer waiting (resumed,
+    //    finished, or cancelled) plus any past their expiry. A live token belongs
+    //    to a still-suspended approval/webhook run; survivors here are abandoned. ─
+    match conn.execute(
+        "DELETE FROM workflow_resume_tokens \
+         WHERE (expires_at IS NOT NULL AND expires_at < strftime('%Y-%m-%dT%H:%M:%SZ','now')) \
+            OR run_id NOT IN (SELECT id FROM workflow_runs WHERE status = 'waiting')",
+        [],
+    ) {
+        Ok(n) if n > 0 => tracing::debug!("Retention: pruned {} dead resume tokens", n),
+        Ok(_) => {}
+        Err(e) => tracing::warn!("Retention: resume_tokens prune failed: {}", e),
+    }
+
     // ── workflow binary blobs (B2): drop payloads no surviving run references ──
     // Gather every blob id still referenced by a remaining run, then delete the
     // rest. A blob shared by several runs is kept until the last is pruned.
