@@ -367,6 +367,35 @@ function onSettingsChange() {
   emit('save')
 }
 
+// Pin this node's last output (A4). The engine then returns it for the node on
+// manual runs without executing — deterministic building, no side-effects. The
+// pin is persisted immediately by the endpoint and again on the workflow save
+// (round-tripped via node.data.pinnedData), so it survives later edits.
+async function pinOutput() {
+  const out = nodeResult.value?.output
+  if (out == null) { toast('Run this node first to pin its output'); return }
+  try {
+    const res = await post(`/workflows/${props.workflowId}/nodes/${props.node.id}/pin`, out)
+    if (res && res.ok === false) { toast(res.error || 'Pin failed'); return }
+    props.node.data.pinnedData = out
+    toast('Output pinned')
+    emit('save')
+  } catch (e) {
+    toast('Pin failed')
+  }
+}
+
+async function unpinOutput() {
+  try {
+    await del(`/workflows/${props.workflowId}/nodes/${props.node.id}/pin`)
+    props.node.data.pinnedData = null
+    toast('Pin cleared')
+    emit('save')
+  } catch (e) {
+    toast('Unpin failed')
+  }
+}
+
 function finishRename() {
   const oldLabel = originalLabel.value;
   isRenaming.value = false;
