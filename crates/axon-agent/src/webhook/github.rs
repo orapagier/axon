@@ -141,6 +141,21 @@ pub async fn handle_github_webhook(
         }
     }
 
+    // C2: idempotency. GitHub redelivers failed/old deliveries with the SAME
+    // X-Github-Delivery id; ack with 200 and skip if we've already fired for it
+    // (scoped per workflow so the same hook on two workflow URLs fires both).
+    if !delivery.is_empty()
+        && crate::tools::workflow::trigger_dedup_seen(
+            &state,
+            "github",
+            &format!("{workflow_id}:{delivery}"),
+        )
+    {
+        tracing::info!("GitHub webhook {workflow_id}: duplicate delivery {delivery}, skipped");
+        return Json(json!({ "ok": true, "duplicate": true, "delivery": delivery }))
+            .into_response();
+    }
+
     // The trigger node receives this whole object as its output, so downstream
     // expressions can read {{ $json.event }}, {{ $json.action }}, and the full
     // {{ $json.payload.* }} from GitHub.

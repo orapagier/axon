@@ -63,7 +63,9 @@ INSERT OR IGNORE INTO settings VALUES
     ('workflow.max_concurrent_runs',          '16',   'int',  'Maximum workflow runs executing at once (bounds CPU/memory under trigger bursts; applied at startup)', 'workflow', datetime('now')),
     ('workflow.max_queue_depth',              '500',  'int',  'Maximum runs queued waiting to execute before new trigger fires are shed (0 = unbounded queue)', 'workflow', datetime('now')),
     ('workflow.public_base_url',              '',     'string','Public HTTPS base URL used to build resume/approve/reject links for Wait-for-webhook & Approval nodes (blank = emit relative paths)', 'workflow', datetime('now')),
-    ('workflow.resume_token_default_ttl_secs','604800','int', 'Default lifetime of a Wait-for-webhook/Approval resume token when the node sets no explicit timeout (0 = wait forever)', 'workflow', datetime('now'));
+    ('workflow.resume_token_default_ttl_secs','604800','int', 'Default lifetime of a Wait-for-webhook/Approval resume token when the node sets no explicit timeout (0 = wait forever)', 'workflow', datetime('now')),
+    ('workflow.webhook_dedup_window_secs',    '0',    'int',  'Seconds to dedup generic webhooks by body hash when they send no Idempotency-Key/event_id (0 = off; explicit-key dedup is always on)', 'workflow', datetime('now')),
+    ('retention.trigger_dedup_days',          '7',    'int',  'Days of trigger idempotency keys (webhook/github redelivery dedup) kept before pruning', 'retention', datetime('now'));
 
 -- Web search.
 INSERT OR IGNORE INTO settings VALUES

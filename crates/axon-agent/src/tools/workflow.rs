@@ -3997,6 +3997,30 @@ impl WorkflowEngine {
 /// Gmail watcher: polls for new emails, compares against stored seen IDs,
 /// and only triggers the workflow when genuinely new messages arrive.
 /// Stores new email data so the stimulus node can inject it as trigger output.
+/// C2: record an event-sourced trigger's idempotency key and report whether it
+/// was already seen. Returns `true` when the `(source, event_key)` pair already
+/// existed (the caller should skip firing). An empty key, or a DB error, returns
+/// `false` (fail-open: never drop a real event because dedup itself failed).
+pub fn trigger_dedup_seen(state: &AppState, source: &str, event_key: &str) -> bool {
+    if event_key.is_empty() {
+        return false;
+    }
+    let Ok(conn) = state.db.get() else {
+        return false;
+    };
+    match conn.execute(
+        "INSERT OR IGNORE INTO trigger_dedup (source, event_key) VALUES (?1, ?2)",
+        rusqlite::params![source, event_key],
+    ) {
+        Ok(0) => true,  // row already present → duplicate event
+        Ok(_) => false, // freshly inserted → first time seen
+        Err(e) => {
+            tracing::warn!("trigger_dedup insert failed ({source}): {e}");
+            false
+        }
+    }
+}
+
 async fn check_and_trigger_gmail(
     workflow_id: &str,
     workflow_name: &str,

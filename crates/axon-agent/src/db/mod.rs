@@ -94,6 +94,12 @@ const MIGRATIONS: &[Migration] = &[
         sql: include_str!("migrations/0011_resume_tokens.sql"),
         tolerant_dup_column: false,
     },
+    Migration {
+        version: 12,
+        name: "trigger_dedup",
+        sql: include_str!("migrations/0012_trigger_dedup.sql"),
+        tolerant_dup_column: false,
+    },
 ];
 
 const SEED_SQL: &str = include_str!("seed.sql");

@@ -163,6 +163,18 @@ pub fn run_retention(
         Err(e) => tracing::warn!("Retention: resume_tokens prune failed: {}", e),
     }
 
+    // ── trigger idempotency keys (C2): age-based. Keys only need to outlive a
+    //    sender's retry window; old ones are dead weight. ─────────────────────
+    let dd_days = settings.retention_trigger_dedup_days();
+    match conn.execute(
+        "DELETE FROM trigger_dedup WHERE seen_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?1)",
+        params![format!("-{} days", dd_days)],
+    ) {
+        Ok(n) if n > 0 => tracing::debug!("Retention: pruned {} trigger_dedup keys", n),
+        Ok(_) => {}
+        Err(e) => tracing::warn!("Retention: trigger_dedup prune failed: {}", e),
+    }
+
     // ── workflow binary blobs (B2): drop payloads no surviving run references ──
     // Gather every blob id still referenced by a remaining run, then delete the
     // rest. A blob shared by several runs is kept until the last is pruned.
@@ -328,6 +340,42 @@ mod tests {
         // Disabled flag short-circuits.
         settings.set("retention.enabled", "false").unwrap();
         assert_eq!(run_retention(&pool, &settings).unwrap().total_rows(), 0);
+
+        drop(pool);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn trigger_dedup_is_idempotent_and_pruned_by_age() {
+        let (pool, path) = temp_db();
+        {
+            let conn = pool.get().unwrap();
+            // INSERT OR IGNORE: the first mark inserts (1 row), a re-mark of the
+            // same key is a no-op (0 rows) — this is what makes a retried webhook
+            // skip. A different key still inserts.
+            let mark = |k: &str| {
+                conn.execute(
+                    "INSERT OR IGNORE INTO trigger_dedup (source, event_key) VALUES ('webhook', ?1)",
+                    params![k],
+                )
+                .unwrap()
+            };
+            assert_eq!(mark("evt-1"), 1, "first time inserts");
+            assert_eq!(mark("evt-1"), 0, "duplicate is ignored");
+            assert_eq!(mark("evt-2"), 1, "distinct key inserts");
+
+            // Backdate one key past the retention horizon.
+            conn.execute(
+                "UPDATE trigger_dedup SET seen_at = strftime('%Y-%m-%dT%H:%M:%SZ','now','-30 days') WHERE event_key = 'evt-1'",
+                [],
+            )
+            .unwrap();
+        }
+
+        let settings = RuntimeSettings::new(Arc::clone(&pool));
+        run_retention(&pool, &settings).unwrap();
+        // Old key pruned (default 7-day horizon), recent one kept.
+        assert_eq!(count(&pool, "trigger_dedup"), 1);
 
         drop(pool);
         let _ = std::fs::remove_file(&path);

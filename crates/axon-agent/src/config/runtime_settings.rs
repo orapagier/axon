@@ -210,6 +210,18 @@ RESPONSE RULES:
     pub fn workflow_resume_token_default_ttl_secs(&self) -> i64 {
         self.get_int("workflow.resume_token_default_ttl_secs", 604_800).max(0)
     }
+    /// C2: time window (seconds) for body-hash dedup of generic webhooks that
+    /// supply no explicit Idempotency-Key/event_id. `0` (default) disables the
+    /// body-hash fallback so identical payloads are never silently dropped;
+    /// explicit-key dedup is always on. A positive value buckets the body hash so
+    /// retries within the window dedup but a later resend still fires.
+    pub fn workflow_webhook_dedup_window_secs(&self) -> i64 {
+        self.get_int("workflow.webhook_dedup_window_secs", 0).max(0)
+    }
+    /// C2: days of `trigger_dedup` idempotency keys kept before pruning.
+    pub fn retention_trigger_dedup_days(&self) -> i64 {
+        self.get_int("retention.trigger_dedup_days", 7).max(1)
+    }
 
     pub fn websearch_enabled(&self) -> bool {
         self.get_bool("websearch.enabled", false)
