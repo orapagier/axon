@@ -3845,5 +3845,17 @@ onUnmounted(() => {
   color: #6f7d77;
   line-height: 1.45;
 }
+.wf-settings-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+  margin: 12px 0;
+}
+.wf-settings-actions {
+  display: flex;
+  gap: 8px;
+}
+.wf-settings-actions .btn {
+  flex: 1;
+}
 </style>
 
