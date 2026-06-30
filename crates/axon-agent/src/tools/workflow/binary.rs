@@ -62,9 +62,26 @@ fn load_blob(id: &str) -> Option<Vec<u8>> {
     std::fs::read(blob_path(id)).ok()
 }
 
-/// True when `map` is exactly an offload descriptor (`{ "_axon_binary": … }`).
+/// True when `map` is exactly a descriptor we wrote: a single `_axon_binary`
+/// key whose value is `{ id: <64-hex sha256>, size: <number> }`. The strict
+/// id/size shape keeps genuine node output that merely *contains* an
+/// `_axon_binary` key from being mistaken for a descriptor — which would
+/// otherwise corrupt it on read (rehydrate would try to load a nonexistent blob
+/// and replace the value with a "[missing binary blob]" marker).
 fn is_descriptor_map(map: &serde_json::Map<String, Value>) -> bool {
-    map.len() == 1 && map.contains_key(BINARY_KEY)
+    if map.len() != 1 {
+        return false;
+    }
+    let Some(d) = map.get(BINARY_KEY).and_then(|v| v.as_object()) else {
+        return false;
+    };
+    let id_ok = d
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))
+        .unwrap_or(false);
+    let size_ok = d.get("size").map(|v| v.is_number()).unwrap_or(false);
+    id_ok && size_ok
 }
 
 /// Replace large string leaves with descriptors, in place. Existing descriptors
