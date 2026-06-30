@@ -586,7 +586,7 @@ async function selectWorkflow(wf) {
     id: n.id,
     type: 'canvas-node',
     position: { x: n.position_x || 0, y: n.position_y || 0 },
-    data: { ...createNodeData(n.id, n.node_type, n.name, n.config, n.enabled !== false), continueOnFail: n.continue_on_fail === true, retries: n.retries || 0, retryWaitMs: n.retry_wait_ms || 0, retryBackoff: n.retry_backoff || 'fixed' },
+    data: { ...createNodeData(n.id, n.node_type, n.name, n.config, n.enabled !== false), continueOnFail: n.continue_on_fail === true, retries: n.retries || 0, retryWaitMs: n.retry_wait_ms || 0, retryBackoff: n.retry_backoff || 'fixed', pinnedData: n.pinned_data ?? null },
   }))
 
   // Map backend edges to Vue Flow edges with proper data
