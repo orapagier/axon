@@ -2092,6 +2092,12 @@ function handleClickOutside(e) {
   // If right-click, don't let this close the menu immediately as we're likely opening a new one
   if (e.button === 2) return
 
+  // Close the Workflow Settings popover when clicking anywhere outside it
+  // (the cog button and popover both use @click.stop, so reaching here means the click was outside)
+  if (showWfSettings.value && wfSettingsRef.value && !wfSettingsRef.value.contains(e.target)) {
+    showWfSettings.value = false
+  }
+
   // If clicking inside the history panel, don't close it
   if (showHistory.value && historyRef.value && historyRef.value.contains(e.target)) {
     return
