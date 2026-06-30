@@ -40,6 +40,10 @@ const collapsedRuns = ref({}) // runId (or index) -> boolean
 const wfId = ref('')
 const wfName = ref('')
 const wfDesc = ref('')
+// Error workflow (A3): id of the handler to run when THIS workflow fails. Null
+// = use the global default. Edited via the toolbar settings popover.
+const wfErrorWorkflowId = ref(null)
+const showWfSettings = ref(false)
 const trigger = ref({ type: 'manual', config: {} })
 const nodes = ref([])
 const edges = ref([])
