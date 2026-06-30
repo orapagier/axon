@@ -2298,6 +2298,247 @@ pub async fn unpin_workflow_node(
     }
 }
 
+/// Export a workflow as a self-contained JSON bundle (A5): metadata + nodes +
+/// edges + pins. Node configs reference credentials only by `credential_id` (a
+/// UUID), never secret material — secrets live in the `credentials` table and
+/// never leave the box. `credentials_required` lists those references (with
+/// service/name) so an importer knows what to re-map. `$node["Name"]`
+/// expressions survive because node names are preserved on import.
+pub async fn export_workflow(State(state): State<AppState>, Path(id): Path<String>) -> Json<Value> {
+    let Ok(conn) = state.db.get() else {
+        return Json(json!({"ok": false, "error": "DB error"}));
+    };
+
+    let wf = match conn.query_row(
+        "SELECT name, description, trigger_type, trigger_config, error_workflow_id FROM workflows WHERE id = ?1",
+        [&id],
+        |r| {
+            Ok(json!({
+                "name": r.get::<_, String>(0)?,
+                "description": r.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                "trigger_type": r.get::<_, Option<String>>(2)?.unwrap_or_else(|| "manual".into()),
+                "trigger_config": serde_json::from_str::<Value>(&r.get::<_, Option<String>>(3)?.unwrap_or_else(|| "{}".into())).unwrap_or(json!({})),
+                "error_workflow_id": r.get::<_, Option<String>>(4)?,
+            }))
+        },
+    ) {
+        Ok(v) => v,
+        Err(_) => return Json(json!({"ok": false, "error": "Workflow not found"})),
+    };
+
+    let nodes: Vec<Value> = match conn.prepare(
+        "SELECT id, node_type, name, config, enabled, continue_on_fail, retries, retry_wait_ms, retry_backoff, position_x, position_y, pinned_data FROM workflow_nodes WHERE workflow_id = ?1 ORDER BY position ASC",
+    ) {
+        Ok(mut stmt) => stmt
+            .query_map([&id], |r| {
+                Ok(json!({
+                    "local_id": r.get::<_, String>(0)?,
+                    "node_type": r.get::<_, String>(1)?,
+                    "name": r.get::<_, String>(2)?,
+                    "config": serde_json::from_str::<Value>(&r.get::<_, Option<String>>(3)?.unwrap_or_else(|| "{}".into())).unwrap_or(json!({})),
+                    "enabled": r.get::<_, i64>(4)? != 0,
+                    "continue_on_fail": r.get::<_, i64>(5)? != 0,
+                    "retries": r.get::<_, i64>(6).unwrap_or(0),
+                    "retry_wait_ms": r.get::<_, i64>(7).unwrap_or(0),
+                    "retry_backoff": r.get::<_, Option<String>>(8)?.unwrap_or_else(|| "fixed".into()),
+                    "position_x": r.get::<_, f64>(9)?,
+                    "position_y": r.get::<_, f64>(10)?,
+                    "pinned_data": r.get::<_, Option<String>>(11)?.filter(|s| !s.trim().is_empty()).and_then(|s| serde_json::from_str::<Value>(&s).ok()),
+                }))
+            })
+            .map(|rows| rows.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default(),
+        Err(_) => Vec::new(),
+    };
+
+    let edges: Vec<Value> = match conn.prepare(
+        "SELECT source_id, target_id, source_handle, target_handle FROM workflow_edges WHERE workflow_id = ?1",
+    ) {
+        Ok(mut stmt) => stmt
+            .query_map([&id], |r| {
+                Ok(json!({
+                    "source_local_id": r.get::<_, String>(0)?,
+                    "target_local_id": r.get::<_, String>(1)?,
+                    "source_handle": r.get::<_, Option<String>>(2)?,
+                    "target_handle": r.get::<_, Option<String>>(3)?,
+                }))
+            })
+            .map(|rows| rows.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default(),
+        Err(_) => Vec::new(),
+    };
+
+    // Distinct credential references (ids only — service/name are metadata).
+    let mut cred_ids: Vec<String> = Vec::new();
+    for n in &nodes {
+        if let Some(cid) = n
+            .get("config")
+            .and_then(|c| c.get("credential_id"))
+            .and_then(|v| v.as_str())
+        {
+            if !cid.is_empty() && !cred_ids.iter().any(|c| c == cid) {
+                cred_ids.push(cid.to_string());
+            }
+        }
+    }
+    let credentials_required: Vec<Value> = cred_ids
+        .iter()
+        .map(|cid| {
+            let meta = conn
+                .query_row(
+                    "SELECT service, name FROM credentials WHERE id = ?1",
+                    [cid],
+                    |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+                )
+                .ok();
+            json!({
+                "credential_id": cid,
+                "service": meta.as_ref().map(|m| m.0.clone()),
+                "name": meta.as_ref().map(|m| m.1.clone()),
+            })
+        })
+        .collect();
+
+    Json(json!({
+        "axon_format": 1,
+        "exported_at": chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+        "workflow": wf,
+        "nodes": nodes,
+        "edges": edges,
+        "credentials_required": credentials_required,
+    }))
+}
+
+/// Import a workflow bundle (A5). Generates a fresh workflow id and fresh node
+/// ids, rewrites edges onto the new ids, and drops edges whose endpoints didn't
+/// import. The new workflow is created DISABLED so an imported trigger can't
+/// fire before the operator reviews it and maps credentials. `credential_id`
+/// references are preserved as-is (they resolve on the same box; on a different
+/// box the node UI prompts to re-select). Returns the new workflow id.
+pub async fn import_workflow(State(state): State<AppState>, Json(bundle): Json<Value>) -> Json<Value> {
+    let fmt = bundle.get("axon_format").and_then(|v| v.as_i64()).unwrap_or(0);
+    if fmt != 1 {
+        return Json(json!({
+            "ok": false,
+            "error": "Unsupported or missing axon_format (expected 1)"
+        }));
+    }
+
+    let wf = bundle.get("workflow").cloned().unwrap_or_else(|| json!({}));
+    let name = wf
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Imported Workflow");
+    let description = wf.get("description").and_then(|v| v.as_str()).unwrap_or("");
+    let trigger_type = wf
+        .get("trigger_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("manual");
+    let trigger_config = wf
+        .get("trigger_config")
+        .cloned()
+        .unwrap_or_else(|| json!({}))
+        .to_string();
+
+    let new_id = Uuid::new_v4().to_string();
+    let nodes = bundle
+        .get("nodes")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let edges = bundle
+        .get("edges")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    // local_id → fresh id remap for nodes and edge endpoints.
+    let mut id_map: HashMap<String, String> = HashMap::new();
+    for n in &nodes {
+        if let Some(local) = n.get("local_id").and_then(|v| v.as_str()) {
+            id_map.insert(local.to_string(), Uuid::new_v4().to_string());
+        }
+    }
+
+    let Ok(conn) = state.db.get() else {
+        return Json(json!({"ok": false, "error": "DB error"}));
+    };
+
+    // Keep error_workflow_id only if the referenced handler still exists here.
+    let error_wf_id: Option<String> = wf
+        .get("error_workflow_id")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .filter(|eid| {
+            conn.query_row("SELECT 1 FROM workflows WHERE id = ?1", [eid], |_| Ok(()))
+                .is_ok()
+        })
+        .map(str::to_string);
+
+    if let Err(e) = conn.execute(
+        "INSERT INTO workflows (id, name, description, enabled, trigger_type, trigger_config, error_workflow_id, updated_at) VALUES (?1, ?2, ?3, 0, ?4, ?5, ?6, datetime('now'))",
+        rusqlite::params![new_id, name, description, trigger_type, trigger_config, error_wf_id],
+    ) {
+        return Json(json!({"ok": false, "error": format!("Insert failed: {e}")}));
+    }
+
+    for (i, n) in nodes.iter().enumerate() {
+        let local = n.get("local_id").and_then(|v| v.as_str()).unwrap_or("");
+        let nid = id_map
+            .get(local)
+            .cloned()
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
+        let node_type = n.get("node_type").and_then(|v| v.as_str()).unwrap_or("http");
+        let nname = n.get("name").and_then(|v| v.as_str()).unwrap_or("Step");
+        let config = n.get("config").cloned().unwrap_or_else(|| json!({})).to_string();
+        let enabled = n.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+        let continue_on_fail = n
+            .get("continue_on_fail")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let retries = n.get("retries").and_then(|v| v.as_i64()).unwrap_or(0).clamp(0, 100);
+        let retry_wait = n.get("retry_wait_ms").and_then(|v| v.as_i64()).unwrap_or(0).max(0);
+        let retry_backoff = n
+            .get("retry_backoff")
+            .and_then(|v| v.as_str())
+            .filter(|s| *s == "exponential")
+            .unwrap_or("fixed");
+        let position_x = n.get("position_x").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let position_y = n.get("position_y").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let pinned: Option<String> = match n.get("pinned_data") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(s)) if s.trim().is_empty() => None,
+            Some(v) => Some(v.to_string()),
+        };
+        let _ = conn.execute(
+            "INSERT INTO workflow_nodes (id, workflow_id, position, position_x, position_y, node_type, name, config, enabled, continue_on_fail, retries, retry_wait_ms, retry_backoff, pinned_data) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            rusqlite::params![nid, new_id, i as i64, position_x, position_y, node_type, nname, config, enabled as i64, continue_on_fail as i64, retries, retry_wait, retry_backoff, pinned],
+        );
+    }
+
+    for (i, e) in edges.iter().enumerate() {
+        let src_local = e.get("source_local_id").and_then(|v| v.as_str()).unwrap_or("");
+        let tgt_local = e.get("target_local_id").and_then(|v| v.as_str()).unwrap_or("");
+        let (Some(src), Some(tgt)) = (id_map.get(src_local), id_map.get(tgt_local)) else {
+            continue; // endpoint didn't import — drop the dangling edge
+        };
+        let edge_id = format!("edge_{}_{}", new_id, i);
+        let source_handle = e.get("source_handle").and_then(|v| v.as_str());
+        let target_handle = e.get("target_handle").and_then(|v| v.as_str());
+        let _ = conn.execute(
+            "INSERT INTO workflow_edges (id, workflow_id, source_id, target_id, source_handle, target_handle) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![edge_id, new_id, src, tgt, source_handle, target_handle],
+        );
+    }
+
+    let cred_count = bundle
+        .get("credentials_required")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    Json(json!({"ok": true, "id": new_id, "name": name, "credentials_required": cred_count}))
+}
+
 pub async fn get_workflow_runs(
     State(state): State<AppState>,
     Path(id): Path<String>,
