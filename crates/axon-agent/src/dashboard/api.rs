@@ -2141,10 +2141,19 @@ pub async fn upsert_workflow(
                     .and_then(|v| v.as_str())
                     .filter(|s| *s == "exponential")
                     .unwrap_or("fixed");
+                // Pinned output (A4): persist the saved value as a JSON string, or
+                // NULL when absent/null/empty so the engine treats the node as not
+                // pinned. Round-trips through get_workflows so a normal save keeps
+                // an existing pin instead of wiping it on the DELETE+reinsert.
+                let node_pinned: Option<String> = match node.get("pinned_data") {
+                    None | Some(Value::Null) => None,
+                    Some(Value::String(s)) if s.trim().is_empty() => None,
+                    Some(v) => Some(v.to_string()),
+                };
 
                 let _ = conn.execute(
-                    "INSERT INTO workflow_nodes (id, workflow_id, position, position_x, position_y, node_type, name, config, enabled, continue_on_fail, retries, retry_wait_ms, retry_backoff) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-                    rusqlite::params![node_id, id, i as i64, position_x, position_y, node_type, node_name, config, node_enabled as i64, node_continue as i64, node_retries, node_retry_wait, node_retry_backoff],
+                    "INSERT INTO workflow_nodes (id, workflow_id, position, position_x, position_y, node_type, name, config, enabled, continue_on_fail, retries, retry_wait_ms, retry_backoff, pinned_data) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                    rusqlite::params![node_id, id, i as i64, position_x, position_y, node_type, node_name, config, node_enabled as i64, node_continue as i64, node_retries, node_retry_wait, node_retry_backoff, node_pinned],
                 );
             }
         }
