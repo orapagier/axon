@@ -2364,6 +2364,11 @@ impl WorkflowEngine {
                         && entry_trigger_type.map_or(true, |want| {
                             n.config.get("type").and_then(|v| v.as_str()) == Some(want)
                         })
+                        // Error triggers (A3) are eligible ONLY on an error run; a
+                        // normal/manual run must never start from one (it's a
+                        // failure handler, not a regular entry point).
+                        && (trigger_source == "error"
+                            || n.config.get("type").and_then(|v| v.as_str()) != Some("error"))
                         && subflow_entry_node
                             .as_deref()
                             .map_or(true, |chosen| n.id == chosen)
