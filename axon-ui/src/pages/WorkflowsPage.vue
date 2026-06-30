@@ -51,6 +51,10 @@ const nodes = ref([])
 const edges = ref([])
 const selectedNode = ref(null)
 const showHistory = ref(false)
+// Version history (B1): snapshot list for the current workflow.
+const showVersions = ref(false)
+const versions = ref([])
+const versionsLoading = ref(false)
 const isNodeDetailsOpen = ref(false)
 const lastRunResult = ref(null)
 const pollTimer = ref(null)
@@ -1708,6 +1712,55 @@ async function loadHistory() {
   }
 }
 
+// Version history (B1): list the snapshots saved before each edit.
+async function loadVersions() {
+  if (!wfId.value || wfId.value === 'new') { toast('Save the workflow first', false); return }
+  showWfSettings.value = false
+  versionsLoading.value = true
+  showVersions.value = true
+  try {
+    const d = await get(`/workflows/${wfId.value}/versions`)
+    versions.value = (d && d.versions) || []
+  } catch (e) {
+    toast('Failed to load versions', false)
+    versions.value = []
+  } finally {
+    versionsLoading.value = false
+  }
+}
+
+// Restore a snapshot. The backend re-versions the current state first, so this
+// is itself undoable; we reload the editor afterwards to show the restored graph.
+async function restoreVersion(v) {
+  if (!wfId.value) return
+  if (!confirm(`Restore version ${v.version}? The current state is saved to history first, so you can undo this.`)) return
+  try {
+    const res = await post(`/workflows/${wfId.value}/versions/${v.version}/restore`, {})
+    if (!res || res.ok === false) { toast(res?.error || 'Restore failed', false); return }
+    const keepId = wfId.value
+    await load()
+    const wf = (workflows.value || []).find((w) => w.id === keepId)
+    if (wf) selectWorkflow(wf)
+    showVersions.value = false
+    toast(`Restored version ${v.version}`)
+  } catch (e) {
+    toast('Restore failed', false)
+  }
+}
+
+// Label (or clear) a version so it survives pruning. Empty string clears it.
+async function labelVersion(v) {
+  const label = prompt('Label for this version (keeps it from being pruned). Leave blank to clear:', v.label || '')
+  if (label === null) return
+  try {
+    const res = await post(`/workflows/${wfId.value}/versions/${v.version}`, { label })
+    if (!res || res.ok === false) { toast(res?.error || 'Could not label version', false); return }
+    v.label = label.trim() || null
+  } catch (e) {
+    toast('Could not label version', false)
+  }
+}
+
 function nodeOutput(nr) {
   const o = nr.output || {}
   const stdout = String(o.stdout || '').trim()
@@ -2325,6 +2378,12 @@ onUnmounted(() => {
                     <button class="btn btn-sm btn-neutral" @click="triggerImport">Import JSON</button>
                   </div>
                   <div class="wf-settings-hint">Export bundles nodes, edges &amp; pins (never secrets). Imported workflows arrive disabled — re-map credentials, then enable.</div>
+                  <div class="wf-settings-divider"></div>
+                  <label class="wf-settings-label">Version history</label>
+                  <div class="wf-settings-actions">
+                    <button class="btn btn-sm btn-neutral" @click="loadVersions">View versions</button>
+                  </div>
+                  <div class="wf-settings-hint">Every save snapshots the prior state. Restore an earlier version (the current one is saved first, so it's undoable).</div>
                 </div>
               </Transition>
               <input ref="importFileRef" type="file" accept="application/json,.json" style="display:none" @change="importWorkflow" />
@@ -2489,6 +2548,32 @@ onUnmounted(() => {
                   </Transition>
                 </div>
                 <div v-if="!expandedRuns[wfId] || expandedRuns[wfId].length === 0" class="empty">No runs yet</div>
+              </div>
+            </div>
+          </Transition>
+
+          <!-- Version History Overlay (B1) -->
+          <Transition name="slide-rtl">
+            <div v-if="showVersions" class="side-panel history-panel">
+              <div class="panel-header">
+                <h3>Version History</h3>
+                <button class="close-btn" @click="showVersions = false">✕</button>
+              </div>
+              <div class="panel-body">
+                <div v-if="versionsLoading" class="empty">Loading…</div>
+                <div v-for="v in versions" :key="v.version" class="history-item">
+                  <div class="history-item-header" style="cursor:default;">
+                    <div class="h-meta">
+                      v{{ v.version }} • {{ timeAgo(v.created_at) }}
+                      <span v-if="v.label" class="h-status">🏷 {{ v.label }}</span>
+                    </div>
+                    <div style="display:flex; gap:4px;">
+                      <button class="btn btn-icon" title="Label / keep" @click.stop="labelVersion(v)">🏷</button>
+                      <button class="btn btn-icon" title="Restore this version" @click.stop="restoreVersion(v)">↩ Restore</button>
+                    </div>
+                  </div>
+                </div>
+                <div v-if="!versionsLoading && versions.length === 0" class="empty">No saved versions yet</div>
               </div>
             </div>
           </Transition>

@@ -56,7 +56,9 @@ INSERT OR IGNORE INTO settings VALUES
     ('retention.runs_days',                   '30',   'int',  'Days of agent run history kept (runs, run_iterations, tool_calls)', 'retention', datetime('now')),
     ('retention.observations_days',           '30',   'int',  'Days of compressed tool observations kept (only the last 24h are ever read)', 'retention', datetime('now')),
     ('retention.webhook_events_days',         '30',   'int',  'Days of inbound webhook events kept', 'retention', datetime('now')),
-    ('retention.vacuum_min_free_mb',          '20',   'int',  'Run VACUUM after a sweep only when at least this many MB are reclaimable', 'retention', datetime('now'));
+    ('retention.vacuum_min_free_mb',          '20',   'int',  'Run VACUUM after a sweep only when at least this many MB are reclaimable', 'retention', datetime('now')),
+    ('retention.workflow_versions_per_workflow', '50', 'int', 'Workflow version snapshots kept per workflow (labeled ones are always kept beyond this cap)', 'retention', datetime('now')),
+    ('workflow.version_min_interval_secs',    '30',   'int',  'Minimum seconds between version snapshots of the same workflow (throttles editor autosave noise)', 'workflow', datetime('now'));
 
 -- Web search.
 INSERT OR IGNORE INTO settings VALUES

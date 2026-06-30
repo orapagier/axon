@@ -167,6 +167,17 @@ RESPONSE RULES:
     pub fn retention_vacuum_min_free_mb(&self) -> i64 {
         self.get_int("retention.vacuum_min_free_mb", 20)
     }
+    /// Max version snapshots kept per workflow (B1). Labeled snapshots are kept
+    /// beyond this cap; only unlabeled ones are pruned oldest-first.
+    pub fn retention_workflow_versions_per_workflow(&self) -> i64 {
+        self.get_int("retention.workflow_versions_per_workflow", 50)
+    }
+    /// Throttle (seconds) between version snapshots of the same workflow (B1).
+    /// Editor autosaves fire often; a snapshot is skipped when the latest one is
+    /// younger than this, so rapid-edit bursts don't each become a version.
+    pub fn workflow_version_min_interval_secs(&self) -> i64 {
+        self.get_int("workflow.version_min_interval_secs", 30)
+    }
 
     pub fn websearch_enabled(&self) -> bool {
         self.get_bool("websearch.enabled", false)

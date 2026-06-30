@@ -37,7 +37,7 @@
 | Agent-triggered run (reuse for sub-workflow) | `handle_run_workflow` — `agent/internal_tools.rs:392` |
 | Workflow CRUD API | `upsert_workflow`, `run_workflow`, `get_workflow_runs` — `dashboard/api.rs` |
 | Routes | `dashboard/server.rs:166`+ |
-| Schema | `db/migrations/0001..0006`, latest is `0006`; **next is `0007`** |
+| Schema | `db/migrations/0001..0010`, latest is `0010`; **next is `0011`** |
 | Secret crypto | `crypto.rs` |
 
 ---
@@ -61,9 +61,16 @@ Ordered by leverage ÷ risk. Each milestone is independently shippable.
 > compile + the existing 45 workflow unit tests + a frontend build.
 
 ### Milestone B — "Production data model"
-- B1. **Workflow versioning / history** (single-operator undo + restore)
+- B1. **Workflow versioning / history** — ✅ done (migration `0010_workflow_versions.sql`, `snapshot_workflow_version` at top of `upsert_workflow`, content-hash dedupe + throttle + per-workflow cap with labeled-row exemption, versions/restore/label endpoints, Version History drawer in `WorkflowsPage.vue`)
 - B2. **Binary / large-payload** offloading
 - B3. **Execution concurrency** control + bounded queue
+
+> **B1 shipped.** Migration numbering shifted: B1 took `0010` (the plan originally
+> penciled `0008`, since taken by `workflow_updated_at`). Remaining migrations:
+> B2 → `0011`, C1/C2 resume-tokens+dedup → `0012`. Snapshots reuse the A5 bundle
+> serializer (`build_workflow_bundle`). Versions hold *prior* states (snapshot
+> taken before each overwrite), so restore writes a snapshot back and re-versions
+> the current state first (undoable). Covered by 2 unit tests in `api.rs`.
 
 ### Milestone C — "Ops & resume"
 - C1. **Wait-for-webhook** + **Approval** node (human-in-the-loop)
@@ -335,17 +342,18 @@ team collaboration — in scope.)
 **Target.** Every save snapshots the prior state; operator can list, diff, and restore
 versions.
 
-**Approach.**
+**Approach.** *(shipped as migration `0010`, not `0008` — see note above.)*
 
-1. Migration `0008_workflow_versions.sql`:
+1. Migration `0010_workflow_versions.sql` (added a `content_hash` column for dedupe):
    ```sql
    CREATE TABLE IF NOT EXISTS workflow_versions (
-     id          TEXT PRIMARY KEY,
-     workflow_id TEXT NOT NULL,
-     version     INTEGER NOT NULL,
-     label       TEXT,
-     snapshot    TEXT NOT NULL,      -- full AxonWorkflowBundle (reuse A5 schema)
-     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+     id           TEXT PRIMARY KEY,
+     workflow_id  TEXT NOT NULL,
+     version      INTEGER NOT NULL,
+     label        TEXT,
+     content_hash TEXT,              -- sha256 of {workflow,nodes,edges}; dedupe key
+     snapshot     TEXT NOT NULL,      -- full AxonWorkflowBundle (reuse A5 schema)
+     created_at   TEXT NOT NULL DEFAULT (datetime('now'))
    );
    CREATE INDEX IF NOT EXISTS idx_wv_workflow ON workflow_versions(workflow_id, version DESC);
    ```

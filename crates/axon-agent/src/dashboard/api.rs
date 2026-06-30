@@ -2089,6 +2089,11 @@ pub async fn upsert_workflow(
     let edges = payload.get("edges").and_then(|v| v.as_array());
 
     if let Ok(conn) = state.db.get() {
+        // B1: snapshot the prior persisted state before this edit overwrites it.
+        // No-op on first save (nothing to snapshot) and on unchanged/throttled
+        // saves; bounded by the per-workflow version cap.
+        snapshot_workflow_version(&conn, &state.settings, &id, false);
+
         let _ = conn.execute(
             // Stamp updated_at on every save so the workflow list can order
             // most-recently added/edited first (see get_workflows ORDER BY).
@@ -2215,6 +2220,10 @@ pub async fn delete_workflow(State(state): State<AppState>, Path(id): Path<Strin
             "DELETE FROM workflow_runs WHERE workflow_id = ?1",
             rusqlite::params![id],
         );
+        let _ = conn.execute(
+            "DELETE FROM workflow_versions WHERE workflow_id = ?1",
+            rusqlite::params![id],
+        );
         let _ = conn.execute("DELETE FROM workflows WHERE id = ?1", rusqlite::params![id]);
         Json(json!({"ok": true}))
     } else {
@@ -2298,39 +2307,33 @@ pub async fn unpin_workflow_node(
     }
 }
 
-/// Export a workflow as a self-contained JSON bundle (A5): metadata + nodes +
-/// edges + pins. Node configs reference credentials only by `credential_id` (a
-/// UUID), never secret material — secrets live in the `credentials` table and
-/// never leave the box. `credentials_required` lists those references (with
-/// service/name) so an importer knows what to re-map. `$node["Name"]`
-/// expressions survive because node names are preserved on import.
-pub async fn export_workflow(State(state): State<AppState>, Path(id): Path<String>) -> Json<Value> {
-    let Ok(conn) = state.db.get() else {
-        return Json(json!({"ok": false, "error": "DB error"}));
-    };
-
-    let wf = match conn.query_row(
-        "SELECT name, description, trigger_type, trigger_config, error_workflow_id FROM workflows WHERE id = ?1",
-        [&id],
-        |r| {
-            Ok(json!({
-                "name": r.get::<_, String>(0)?,
-                "description": r.get::<_, Option<String>>(1)?.unwrap_or_default(),
-                "trigger_type": r.get::<_, Option<String>>(2)?.unwrap_or_else(|| "manual".into()),
-                "trigger_config": serde_json::from_str::<Value>(&r.get::<_, Option<String>>(3)?.unwrap_or_else(|| "{}".into())).unwrap_or(json!({})),
-                "error_workflow_id": r.get::<_, Option<String>>(4)?,
-            }))
-        },
-    ) {
-        Ok(v) => v,
-        Err(_) => return Json(json!({"ok": false, "error": "Workflow not found"})),
-    };
+/// Build the self-contained workflow bundle (A5 format) for a workflow id, or
+/// `None` if the workflow doesn't exist. Shared by `export_workflow` (download)
+/// and `snapshot_workflow_version` (B1 history) so export and history use one
+/// format. Node configs reference credentials only by `credential_id` — secret
+/// material never enters the bundle.
+fn build_workflow_bundle(conn: &rusqlite::Connection, id: &str) -> Option<Value> {
+    let wf = conn
+        .query_row(
+            "SELECT name, description, trigger_type, trigger_config, error_workflow_id FROM workflows WHERE id = ?1",
+            [id],
+            |r| {
+                Ok(json!({
+                    "name": r.get::<_, String>(0)?,
+                    "description": r.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    "trigger_type": r.get::<_, Option<String>>(2)?.unwrap_or_else(|| "manual".into()),
+                    "trigger_config": serde_json::from_str::<Value>(&r.get::<_, Option<String>>(3)?.unwrap_or_else(|| "{}".into())).unwrap_or(json!({})),
+                    "error_workflow_id": r.get::<_, Option<String>>(4)?,
+                }))
+            },
+        )
+        .ok()?;
 
     let nodes: Vec<Value> = match conn.prepare(
         "SELECT id, node_type, name, config, enabled, continue_on_fail, retries, retry_wait_ms, retry_backoff, position_x, position_y, pinned_data FROM workflow_nodes WHERE workflow_id = ?1 ORDER BY position ASC",
     ) {
         Ok(mut stmt) => stmt
-            .query_map([&id], |r| {
+            .query_map([id], |r| {
                 Ok(json!({
                     "local_id": r.get::<_, String>(0)?,
                     "node_type": r.get::<_, String>(1)?,
@@ -2355,7 +2358,7 @@ pub async fn export_workflow(State(state): State<AppState>, Path(id): Path<Strin
         "SELECT source_id, target_id, source_handle, target_handle FROM workflow_edges WHERE workflow_id = ?1",
     ) {
         Ok(mut stmt) => stmt
-            .query_map([&id], |r| {
+            .query_map([id], |r| {
                 Ok(json!({
                     "source_local_id": r.get::<_, String>(0)?,
                     "target_local_id": r.get::<_, String>(1)?,
@@ -2399,7 +2402,7 @@ pub async fn export_workflow(State(state): State<AppState>, Path(id): Path<Strin
         })
         .collect();
 
-    Json(json!({
+    Some(json!({
         "axon_format": 1,
         "exported_at": chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
         "workflow": wf,
@@ -2407,6 +2410,290 @@ pub async fn export_workflow(State(state): State<AppState>, Path(id): Path<Strin
         "edges": edges,
         "credentials_required": credentials_required,
     }))
+}
+
+/// Export a workflow as a self-contained JSON bundle (A5): metadata + nodes +
+/// edges + pins. Secrets never leave the box — see `build_workflow_bundle`.
+pub async fn export_workflow(State(state): State<AppState>, Path(id): Path<String>) -> Json<Value> {
+    let Ok(conn) = state.db.get() else {
+        return Json(json!({"ok": false, "error": "DB error"}));
+    };
+    match build_workflow_bundle(&conn, &id) {
+        Some(bundle) => Json(bundle),
+        None => Json(json!({"ok": false, "error": "Workflow not found"})),
+    }
+}
+
+/// B1: snapshot the CURRENT persisted state of a workflow as a new version row.
+/// Called at the top of `upsert_workflow` BEFORE the incoming edit overwrites the
+/// live rows, so versions hold the chain of prior states (single-operator undo).
+///
+/// No-ops when there is nothing or no point to snapshot:
+///   * the workflow doesn't exist yet (first save) → `build_workflow_bundle` None
+///   * content is byte-identical to the latest snapshot (content-hash dedupe)
+///   * the latest snapshot is younger than the throttle window, unless `force`
+///     (set by restore so the pre-restore state is always preserved)
+///
+/// After inserting, prunes to the per-workflow cap, always keeping labeled rows.
+fn snapshot_workflow_version(
+    conn: &rusqlite::Connection,
+    settings: &crate::config::RuntimeSettings,
+    workflow_id: &str,
+    force: bool,
+) {
+    let Some(bundle) = build_workflow_bundle(conn, workflow_id) else {
+        return;
+    };
+
+    // Hash the content only (exclude the volatile `exported_at`) so an unchanged
+    // workflow re-saved repeatedly never spawns duplicate versions.
+    let content = json!({
+        "workflow": bundle.get("workflow"),
+        "nodes": bundle.get("nodes"),
+        "edges": bundle.get("edges"),
+    });
+    let hash = {
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        h.update(content.to_string().as_bytes());
+        format!("{:x}", h.finalize())
+    };
+
+    // Latest version for this workflow: (version, content_hash, age in seconds).
+    let latest: Option<(i64, Option<String>, i64)> = conn
+        .query_row(
+            "SELECT version, content_hash,
+                    CAST((julianday('now') - julianday(created_at)) * 86400 AS INTEGER)
+             FROM workflow_versions WHERE workflow_id = ?1
+             ORDER BY version DESC LIMIT 1",
+            [workflow_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .ok();
+
+    let next_version = match &latest {
+        Some((v, last_hash, age_secs)) => {
+            // Dedupe: identical content as the most recent snapshot → skip.
+            if last_hash.as_deref() == Some(hash.as_str()) {
+                return;
+            }
+            // Throttle autosave storms (restore bypasses this with `force`).
+            if !force && *age_secs < settings.workflow_version_min_interval_secs() {
+                return;
+            }
+            v + 1
+        }
+        None => 1,
+    };
+
+    let _ = conn.execute(
+        "INSERT INTO workflow_versions (id, workflow_id, version, content_hash, snapshot)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![
+            Uuid::new_v4().to_string(),
+            workflow_id,
+            next_version,
+            hash,
+            bundle.to_string(),
+        ],
+    );
+
+    // Prune: keep the newest N overall plus any labeled rows beyond the cap.
+    let cap = settings.retention_workflow_versions_per_workflow().max(1);
+    let _ = conn.execute(
+        "DELETE FROM workflow_versions WHERE id IN (
+             SELECT id FROM (
+                 SELECT id, label, ROW_NUMBER() OVER (
+                     PARTITION BY workflow_id ORDER BY version DESC
+                 ) AS rn
+                 FROM workflow_versions WHERE workflow_id = ?1
+             ) WHERE rn > ?2 AND (label IS NULL OR label = '')
+         )",
+        rusqlite::params![workflow_id, cap],
+    );
+}
+
+/// Write a snapshot bundle back onto an EXISTING workflow id (B1 restore),
+/// preserving node ids so pins and `$node` references survive. Replaces the
+/// workflow's nodes/edges and metadata; leaves `enabled` untouched (the bundle
+/// doesn't carry it). Mirrors the node/edge columns written by `upsert_workflow`.
+fn restore_bundle_into_workflow(
+    conn: &rusqlite::Connection,
+    workflow_id: &str,
+    bundle: &Value,
+) -> Result<(), String> {
+    let wf = bundle.get("workflow").cloned().unwrap_or_else(|| json!({}));
+    let name = wf.get("name").and_then(|v| v.as_str()).unwrap_or("Untitled");
+    let description = wf.get("description").and_then(|v| v.as_str()).unwrap_or("");
+    let trigger_type = wf.get("trigger_type").and_then(|v| v.as_str()).unwrap_or("manual");
+    let trigger_config = wf.get("trigger_config").cloned().unwrap_or_else(|| json!({})).to_string();
+    let error_workflow_id: Option<String> = wf
+        .get("error_workflow_id")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+
+    conn.execute(
+        "UPDATE workflows SET name=?2, description=?3, trigger_type=?4, trigger_config=?5, error_workflow_id=?6, updated_at=datetime('now') WHERE id=?1",
+        rusqlite::params![workflow_id, name, description, trigger_type, trigger_config, error_workflow_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    conn.execute("DELETE FROM workflow_nodes WHERE workflow_id = ?1", [workflow_id])
+        .map_err(|e| e.to_string())?;
+    if let Some(nodes) = bundle.get("nodes").and_then(|v| v.as_array()) {
+        for (i, node) in nodes.iter().enumerate() {
+            let node_id = node.get("local_id").and_then(|v| v.as_str()).unwrap_or("");
+            if node_id.is_empty() {
+                continue;
+            }
+            let node_type = node.get("node_type").and_then(|v| v.as_str()).unwrap_or("http");
+            let node_name = node.get("name").and_then(|v| v.as_str()).unwrap_or("Step");
+            let config = node.get("config").map(|v| v.to_string()).unwrap_or_else(|| "{}".to_string());
+            let node_enabled = node.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+            let position_x = node.get("position_x").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let position_y = node.get("position_y").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let node_continue = node.get("continue_on_fail").and_then(|v| v.as_bool()).unwrap_or(false);
+            let node_retries = node.get("retries").and_then(|v| v.as_i64()).unwrap_or(0).clamp(0, 100);
+            let node_retry_wait = node.get("retry_wait_ms").and_then(|v| v.as_i64()).unwrap_or(0).max(0);
+            let node_retry_backoff = node
+                .get("retry_backoff")
+                .and_then(|v| v.as_str())
+                .filter(|s| *s == "exponential")
+                .unwrap_or("fixed");
+            let node_pinned: Option<String> = match node.get("pinned_data") {
+                None | Some(Value::Null) => None,
+                Some(Value::String(s)) if s.trim().is_empty() => None,
+                Some(v) => Some(v.to_string()),
+            };
+            let _ = conn.execute(
+                "INSERT INTO workflow_nodes (id, workflow_id, position, position_x, position_y, node_type, name, config, enabled, continue_on_fail, retries, retry_wait_ms, retry_backoff, pinned_data) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                rusqlite::params![node_id, workflow_id, i as i64, position_x, position_y, node_type, node_name, config, node_enabled as i64, node_continue as i64, node_retries, node_retry_wait, node_retry_backoff, node_pinned],
+            );
+        }
+    }
+
+    conn.execute("DELETE FROM workflow_edges WHERE workflow_id = ?1", [workflow_id])
+        .map_err(|e| e.to_string())?;
+    if let Some(edges) = bundle.get("edges").and_then(|v| v.as_array()) {
+        for (i, edge) in edges.iter().enumerate() {
+            let source_id = edge.get("source_local_id").and_then(|v| v.as_str()).unwrap_or("");
+            let target_id = edge.get("target_local_id").and_then(|v| v.as_str()).unwrap_or("");
+            if source_id.is_empty() || target_id.is_empty() {
+                continue;
+            }
+            let source_handle = edge.get("source_handle").and_then(|v| v.as_str());
+            let target_handle = edge.get("target_handle").and_then(|v| v.as_str());
+            let _ = conn.execute(
+                "INSERT INTO workflow_edges (id, workflow_id, source_id, target_id, source_handle, target_handle) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![format!("edge_{}_{}", workflow_id, i), workflow_id, source_id, target_id, source_handle, target_handle],
+            );
+        }
+    }
+    Ok(())
+}
+
+/// B1: list a workflow's version snapshots (metadata only — no snapshot blob).
+pub async fn get_workflow_versions(State(state): State<AppState>, Path(id): Path<String>) -> Json<Value> {
+    let Ok(conn) = state.db.get() else {
+        return Json(json!({"ok": false, "error": "DB error"}));
+    };
+    let versions: Vec<Value> = match conn.prepare(
+        "SELECT version, label, content_hash, created_at FROM workflow_versions WHERE workflow_id = ?1 ORDER BY version DESC",
+    ) {
+        Ok(mut stmt) => stmt
+            .query_map([&id], |r| {
+                Ok(json!({
+                    "version": r.get::<_, i64>(0)?,
+                    "label": r.get::<_, Option<String>>(1)?,
+                    "content_hash": r.get::<_, Option<String>>(2)?,
+                    "created_at": r.get::<_, String>(3)?,
+                }))
+            })
+            .map(|rows| rows.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default(),
+        Err(_) => Vec::new(),
+    };
+    Json(json!({"ok": true, "versions": versions}))
+}
+
+/// B1: full snapshot bundle for one version (preview / diff source).
+pub async fn get_workflow_version(
+    State(state): State<AppState>,
+    Path((id, version)): Path<(String, i64)>,
+) -> Json<Value> {
+    let Ok(conn) = state.db.get() else {
+        return Json(json!({"ok": false, "error": "DB error"}));
+    };
+    match conn.query_row(
+        "SELECT snapshot FROM workflow_versions WHERE workflow_id = ?1 AND version = ?2",
+        rusqlite::params![id, version],
+        |r| r.get::<_, String>(0),
+    ) {
+        Ok(snap) => Json(json!({
+            "ok": true,
+            "version": version,
+            "snapshot": serde_json::from_str::<Value>(&snap).unwrap_or(json!({})),
+        })),
+        Err(_) => Json(json!({"ok": false, "error": "Version not found"})),
+    }
+}
+
+/// B1: label (or rename) a version. Labeled versions survive pruning. An empty
+/// label clears it (the version becomes prunable again).
+pub async fn label_workflow_version(
+    State(state): State<AppState>,
+    Path((id, version)): Path<(String, i64)>,
+    Json(body): Json<Value>,
+) -> Json<Value> {
+    let label = body
+        .get("label")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let Ok(conn) = state.db.get() else {
+        return Json(json!({"ok": false, "error": "DB error"}));
+    };
+    match conn.execute(
+        "UPDATE workflow_versions SET label = ?1 WHERE workflow_id = ?2 AND version = ?3",
+        rusqlite::params![label, id, version],
+    ) {
+        Ok(n) if n > 0 => Json(json!({"ok": true})),
+        Ok(_) => Json(json!({"ok": false, "error": "Version not found"})),
+        Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
+    }
+}
+
+/// B1: restore a workflow to a prior version. Re-versions the CURRENT state first
+/// (forced past the throttle) so restoring is itself undoable and never silently
+/// discards the live state, then writes the chosen snapshot back onto the live
+/// rows (node ids preserved).
+pub async fn restore_workflow_version(
+    State(state): State<AppState>,
+    Path((id, version)): Path<(String, i64)>,
+) -> Json<Value> {
+    let Ok(conn) = state.db.get() else {
+        return Json(json!({"ok": false, "error": "DB error"}));
+    };
+    // Load the target snapshot first so a bad version number changes nothing.
+    let snap = match conn.query_row(
+        "SELECT snapshot FROM workflow_versions WHERE workflow_id = ?1 AND version = ?2",
+        rusqlite::params![id, version],
+        |r| r.get::<_, String>(0),
+    ) {
+        Ok(s) => s,
+        Err(_) => return Json(json!({"ok": false, "error": "Version not found"})),
+    };
+    let bundle = match serde_json::from_str::<Value>(&snap) {
+        Ok(b) => b,
+        Err(e) => return Json(json!({"ok": false, "error": format!("Corrupt snapshot: {e}")})),
+    };
+    snapshot_workflow_version(&conn, &state.settings, &id, true);
+    match restore_bundle_into_workflow(&conn, &id, &bundle) {
+        Ok(()) => Json(json!({"ok": true, "id": id, "restored_version": version})),
+        Err(e) => Json(json!({"ok": false, "error": e})),
+    }
 }
 
 /// Import a workflow bundle (A5). Generates a fresh workflow id and fresh node
@@ -3052,4 +3339,176 @@ pub async fn whatsapp_webhook_messages(
     }
 
     axum::http::StatusCode::OK
+}
+
+#[cfg(test)]
+mod version_tests {
+    //! B1 workflow versioning: exercises the snapshot helpers directly (no
+    //! AppState harness exists yet), covering dedupe, throttle, force, the
+    //! per-workflow cap, labeled-row retention, and restore round-trip.
+    use super::*;
+    use crate::config::RuntimeSettings;
+    use r2d2::Pool;
+    use r2d2_sqlite::SqliteConnectionManager;
+
+    fn temp_pool() -> (Arc<Pool<SqliteConnectionManager>>, std::path::PathBuf) {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "axon_versions_{}_{}.db",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let manager = SqliteConnectionManager::file(&path);
+        let pool = Pool::new(manager).unwrap();
+        {
+            let conn = pool.get().unwrap();
+            crate::db::init(&conn).unwrap();
+        }
+        (Arc::new(pool), path)
+    }
+
+    /// Create/overwrite a workflow with a single node whose name encodes the
+    /// content, so changing `node_name` produces a distinct content hash.
+    fn seed_workflow(conn: &rusqlite::Connection, id: &str, node_name: &str) {
+        conn.execute(
+            "INSERT INTO workflows (id, name, trigger_type) VALUES (?1, 'WF', 'manual')
+             ON CONFLICT(id) DO UPDATE SET name='WF'",
+            [id],
+        )
+        .unwrap();
+        conn.execute("DELETE FROM workflow_nodes WHERE workflow_id = ?1", [id])
+            .unwrap();
+        conn.execute(
+            "INSERT INTO workflow_nodes (id, workflow_id, position, position_x, position_y, node_type, name, config, enabled)
+             VALUES ('n1', ?1, 0, 0, 0, 'http', ?2, '{}', 1)",
+            rusqlite::params![id, node_name],
+        )
+        .unwrap();
+    }
+
+    fn version_count(conn: &rusqlite::Connection, id: &str) -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM workflow_versions WHERE workflow_id = ?1",
+            [id],
+            |r| r.get(0),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn snapshot_dedupes_throttles_prunes_and_restores() {
+        let (pool, path) = temp_pool();
+        let settings = RuntimeSettings::new(Arc::clone(&pool));
+        settings.set("workflow.version_min_interval_secs", "0").unwrap();
+        settings
+            .set("retention.workflow_versions_per_workflow", "3")
+            .unwrap();
+        let conn = pool.get().unwrap();
+
+        // Nothing to snapshot before the workflow exists.
+        snapshot_workflow_version(&conn, &settings, "wf1", false);
+        assert_eq!(version_count(&conn, "wf1"), 0);
+
+        // First content → one version.
+        seed_workflow(&conn, "wf1", "Alpha");
+        snapshot_workflow_version(&conn, &settings, "wf1", false);
+        assert_eq!(version_count(&conn, "wf1"), 1);
+
+        // Identical content → deduped.
+        snapshot_workflow_version(&conn, &settings, "wf1", false);
+        assert_eq!(version_count(&conn, "wf1"), 1, "identical content deduped");
+
+        // Changed content → second version.
+        seed_workflow(&conn, "wf1", "Beta");
+        snapshot_workflow_version(&conn, &settings, "wf1", false);
+        assert_eq!(version_count(&conn, "wf1"), 2);
+
+        // Throttle blocks a changed save inside the interval; force overrides it.
+        settings
+            .set("workflow.version_min_interval_secs", "3600")
+            .unwrap();
+        seed_workflow(&conn, "wf1", "Gamma");
+        snapshot_workflow_version(&conn, &settings, "wf1", false);
+        assert_eq!(version_count(&conn, "wf1"), 2, "throttled within interval");
+        snapshot_workflow_version(&conn, &settings, "wf1", true);
+        assert_eq!(version_count(&conn, "wf1"), 3, "force bypasses throttle");
+
+        // Cap = 3: a fourth distinct version prunes the oldest (unlabeled) one.
+        settings.set("workflow.version_min_interval_secs", "0").unwrap();
+        seed_workflow(&conn, "wf1", "Delta");
+        snapshot_workflow_version(&conn, &settings, "wf1", false);
+        assert_eq!(version_count(&conn, "wf1"), 3, "capped at 3");
+        let min_v: i64 = conn
+            .query_row(
+                "SELECT MIN(version) FROM workflow_versions WHERE workflow_id='wf1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(min_v, 2, "oldest version pruned");
+
+        // Restore version 2 (content 'Beta') back onto the live workflow.
+        let snap: String = conn
+            .query_row(
+                "SELECT snapshot FROM workflow_versions WHERE workflow_id='wf1' AND version=2",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let bundle: Value = serde_json::from_str(&snap).unwrap();
+        restore_bundle_into_workflow(&conn, "wf1", &bundle).unwrap();
+        let live_name: String = conn
+            .query_row(
+                "SELECT name FROM workflow_nodes WHERE workflow_id='wf1' AND id='n1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(live_name, "Beta", "restored node content");
+
+        drop(conn);
+        drop(pool);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn labeled_versions_survive_the_cap() {
+        let (pool, path) = temp_pool();
+        let settings = RuntimeSettings::new(Arc::clone(&pool));
+        settings.set("workflow.version_min_interval_secs", "0").unwrap();
+        settings
+            .set("retention.workflow_versions_per_workflow", "2")
+            .unwrap();
+        let conn = pool.get().unwrap();
+
+        // Two versions within the cap, then label the oldest.
+        seed_workflow(&conn, "wf2", "A");
+        snapshot_workflow_version(&conn, &settings, "wf2", true);
+        seed_workflow(&conn, "wf2", "B");
+        snapshot_workflow_version(&conn, &settings, "wf2", true);
+        conn.execute(
+            "UPDATE workflow_versions SET label='keep' WHERE workflow_id='wf2' AND version=1",
+            [],
+        )
+        .unwrap();
+
+        // A third version would normally evict v1, but its label exempts it.
+        seed_workflow(&conn, "wf2", "C");
+        snapshot_workflow_version(&conn, &settings, "wf2", true);
+        let labeled_present: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM workflow_versions WHERE workflow_id='wf2' AND version=1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(labeled_present, 1, "labeled version retained past cap");
+
+        drop(conn);
+        drop(pool);
+        let _ = std::fs::remove_file(&path);
+    }
 }

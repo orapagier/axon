@@ -187,6 +187,18 @@ pub fn build_router(state: AppState) -> Router {
             "/api/workflows/:id/nodes/:node_id/pin",
             axum::routing::post(api::pin_workflow_node).delete(api::unpin_workflow_node),
         )
+        .route(
+            "/api/workflows/:id/versions",
+            get(api::get_workflow_versions),
+        )
+        .route(
+            "/api/workflows/:id/versions/:version",
+            get(api::get_workflow_version).post(api::label_workflow_version),
+        )
+        .route(
+            "/api/workflows/:id/versions/:version/restore",
+            axum::routing::post(api::restore_workflow_version),
+        )
         .route("/api/workflows/:id/runs", get(api::get_workflow_runs))
         .route(
             "/api/workflow-runs/:run_id",
@@ -270,6 +282,13 @@ mod route_conflict_tests {
             .route("/api/workflows/import", post(|| async {}))
             .route("/api/workflows/:id/export", get(|| async {}))
             .route("/api/workflows/:id", delete(|| async {}))
-            .route("/api/workflows/:id/run", post(|| async {}));
+            .route("/api/workflows/:id/run", post(|| async {}))
+            // B1: versioning routes share the `:id` prefix with the above.
+            .route("/api/workflows/:id/versions", get(|| async {}))
+            .route(
+                "/api/workflows/:id/versions/:version",
+                get(|| async {}).post(|| async {}),
+            )
+            .route("/api/workflows/:id/versions/:version/restore", post(|| async {}));
     }
 }
