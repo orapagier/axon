@@ -1939,7 +1939,7 @@ pub async fn get_workflows(State(state): State<AppState>) -> Json<Value> {
     let mut stmt = match conn.prepare(
         // Most-recently added or edited workflow first: updated_at is bumped on
         // every save; COALESCE falls back to created_at for rows predating it.
-        "SELECT id, name, description, enabled, trigger_type, trigger_config, last_run_at, last_status, created_at FROM workflows ORDER BY COALESCE(updated_at, created_at) DESC, created_at DESC"
+        "SELECT id, name, description, enabled, trigger_type, trigger_config, last_run_at, last_status, created_at, error_workflow_id FROM workflows ORDER BY COALESCE(updated_at, created_at) DESC, created_at DESC"
     ) {
         Ok(s) => s,
         Err(e) => {
@@ -1959,6 +1959,8 @@ pub async fn get_workflows(State(state): State<AppState>) -> Json<Value> {
             "last_run_at": r.get::<_, Option<String>>(6)?,
             "last_status": r.get::<_, Option<String>>(7)?.unwrap_or_else(|| "idle".to_string()),
             "created_at": r.get::<_, Option<String>>(8)?.unwrap_or_default(),
+            // Error workflow (A3): the handler to run when this workflow fails.
+            "error_workflow_id": r.get::<_, Option<String>>(9)?,
         })))
     }) {
         Ok(r) => r,
