@@ -3990,19 +3990,23 @@ impl WorkflowEngine {
                             wf.name,
                             wf.id
                         );
-                        let s = state.clone();
-                        tokio::spawn(async move {
-                            let _ =
-                                Self::run_with_trigger(
-                                    &wf.id,
-                                    &s,
-                                    &wf.trigger_type,
-                                    None,
-                                    false,
-                                    None,
-                                )
-                                .await;
-                        });
+                        // B3: route scheduled/watcher fires through the bounded
+                        // background spawner so they honor the run-concurrency cap
+                        // (raw run_with_trigger bypassed the semaphore). The run row
+                        // is pre-created, so the is_workflow_run_active guard above
+                        // still de-dupes while a run waits for a slot.
+                        if let Err(e) = Self::run_in_background_with_source(
+                            &wf.id,
+                            state.as_ref(),
+                            &wf.trigger_type,
+                            None,
+                        ) {
+                            tracing::warn!(
+                                "Scheduled run of '{}' failed to spawn: {}",
+                                wf.name,
+                                e
+                            );
+                        }
                     }
                 }
             }

@@ -135,3 +135,31 @@ pub async fn health_json(State(state): State<AppState>) -> Json<serde_json::Valu
         "max_queue_depth": state.settings.workflow_max_queue_depth(),
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recorder_installs_and_renders_emitted_metrics() {
+        init(); // idempotent; installs the single global recorder
+        record_run_complete("success", 1.5);
+        record_node_exec("synapse", 0.2);
+        record_node_retry("synapse");
+        let out = HANDLE
+            .get()
+            .expect("recorder should be installed")
+            .render();
+        assert!(out.contains("axon_workflow_runs_total"), "missing runs counter:\n{out}");
+        assert!(
+            out.contains("axon_node_exec_duration_seconds"),
+            "missing node histogram:\n{out}"
+        );
+        assert!(
+            out.contains("axon_node_retries_total"),
+            "missing retries counter:\n{out}"
+        );
+        // The success label is rendered on the counter.
+        assert!(out.contains("status=\"success\""), "missing status label:\n{out}");
+    }
+}
