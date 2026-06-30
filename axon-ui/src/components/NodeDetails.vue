@@ -2281,6 +2281,21 @@ onUnmounted(() => {
                   <span class="toggle-label">{{ node.data.config.execute_once ? 'Run Once (aggregate all items)' : 'Run Per Item' }}</span>
                 </div>
               </div>
+              <!-- Pinned data (A4): manual runs use the saved output instead of
+                   executing the node. Production/trigger runs always execute. -->
+              <div class="form-row row-boolean-field">
+                <label class="field-label">Pinned Data</label>
+                <div class="toggle-field" style="flex-direction:column; align-items:flex-start; gap:6px;">
+                  <template v-if="node.data.pinnedData != null">
+                    <span class="toggle-label" style="color:#a78bfa;">Pinned — manual runs use saved data, not executing</span>
+                    <button class="btn-curl-import" @click="unpinOutput">Unpin</button>
+                  </template>
+                  <template v-else>
+                    <button class="btn-curl-import" :disabled="!nodeResult || nodeResult.output == null" @click="pinOutput">Pin output</button>
+                    <span class="field-hint">Saves this node's last output so manual runs skip execution and reuse it. Run the node first.</span>
+                  </template>
+                </div>
+              </div>
             </div>
           </div>
 
