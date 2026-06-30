@@ -2271,6 +2271,7 @@ onUnmounted(() => {
                     <span class="workflow-menu-kicker">Workflows</span>
                   </div>
                   <input
+                    ref="workflowMenuSearchRef"
                     v-model="workflowMenuSearch"
                     type="text"
                     class="workflow-menu-search"
