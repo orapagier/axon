@@ -102,6 +102,12 @@ pub struct WorkflowNode {
     /// "fixed" (default) or "exponential" — doubles the wait each attempt.
     #[serde(default)]
     pub retry_backoff: String,
+    /// Pinned output (A4): on manual/editor runs the node is NOT executed — this
+    /// saved value is routed downstream as its result so building/testing is
+    /// deterministic and side-effects don't fire. `None` = not pinned. Ignored on
+    /// production/trigger/scheduled runs.
+    #[serde(default)]
+    pub pinned_data: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
