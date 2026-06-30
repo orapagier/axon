@@ -580,6 +580,7 @@ async function selectWorkflow(wf) {
   wfId.value = wf.id
   wfName.value = wf.name
   wfDesc.value = wf.description || ''
+  wfErrorWorkflowId.value = wf.error_workflow_id || null
   trigger.value = {
     type: wf.trigger_type || 'manual',
     config: { ...(wf.trigger_config || {}) },
