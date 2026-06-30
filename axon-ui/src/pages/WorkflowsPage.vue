@@ -2290,7 +2290,7 @@ onUnmounted(() => {
             />
           </div>
           <div class="toolbar-right">
-            <div class="wf-settings-wrap" style="position:relative;">
+            <div ref="wfSettingsRef" class="wf-settings-wrap" style="position:relative;">
               <button class="btn btn-sm workflow-action-btn btn-neutral" title="Workflow settings" @click.stop="showWfSettings = !showWfSettings">⚙</button>
               <Transition name="scale-fade">
                 <div v-if="showWfSettings" class="wf-settings-pop" @click.stop>
