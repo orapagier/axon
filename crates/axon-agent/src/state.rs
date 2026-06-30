@@ -29,4 +29,12 @@ pub struct AppState {
     pub db: Arc<Pool<SqliteConnectionManager>>,
     pub workflow_tx: tokio::sync::mpsc::UnboundedSender<WorkflowCompletion>,
     pub workflow_cancellations: Arc<tokio::sync::Mutex<std::collections::HashSet<String>>>,
+    /// B3: bounds how many workflow runs execute concurrently. Sized at startup
+    /// from `workflow.max_concurrent_runs`. Background runs acquire a permit
+    /// before executing and release it on completion or durable-wait suspend.
+    pub run_semaphore: Arc<tokio::sync::Semaphore>,
+    /// B3 gauges: runs currently executing, and runs queued waiting for a permit.
+    /// Read by observability (C3) and used to enforce `workflow.max_queue_depth`.
+    pub active_runs: Arc<std::sync::atomic::AtomicI64>,
+    pub run_queue_depth: Arc<std::sync::atomic::AtomicI64>,
 }

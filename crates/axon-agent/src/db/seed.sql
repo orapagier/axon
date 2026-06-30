@@ -58,7 +58,10 @@ INSERT OR IGNORE INTO settings VALUES
     ('retention.webhook_events_days',         '30',   'int',  'Days of inbound webhook events kept', 'retention', datetime('now')),
     ('retention.vacuum_min_free_mb',          '20',   'int',  'Run VACUUM after a sweep only when at least this many MB are reclaimable', 'retention', datetime('now')),
     ('retention.workflow_versions_per_workflow', '50', 'int', 'Workflow version snapshots kept per workflow (labeled ones are always kept beyond this cap)', 'retention', datetime('now')),
-    ('workflow.version_min_interval_secs',    '30',   'int',  'Minimum seconds between version snapshots of the same workflow (throttles editor autosave noise)', 'workflow', datetime('now'));
+    ('workflow.version_min_interval_secs',    '30',   'int',  'Minimum seconds between version snapshots of the same workflow (throttles editor autosave noise)', 'workflow', datetime('now')),
+    ('workflow.binary_inline_max_bytes',      '65536','int',  'Node-output strings larger than this are offloaded to the blob store instead of stored inline in run history (0 disables)', 'workflow', datetime('now')),
+    ('workflow.max_concurrent_runs',          '16',   'int',  'Maximum workflow runs executing at once (bounds CPU/memory under trigger bursts; applied at startup)', 'workflow', datetime('now')),
+    ('workflow.max_queue_depth',              '500',  'int',  'Maximum runs queued waiting to execute before new trigger fires are shed (0 = unbounded queue)', 'workflow', datetime('now'));
 
 -- Web search.
 INSERT OR IGNORE INTO settings VALUES

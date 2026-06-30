@@ -10,6 +10,8 @@ use std::time::Duration;
 // dispatches to them. `nodes` is a child module so it can reach this module's
 // shared helpers/statics (exposed as `pub(crate)`).
 pub(crate) mod nodes;
+// B2: large/binary payload offloading for persisted node_results.
+pub(crate) mod binary;
 
 // Gmail trigger data: holds new email data between the background poll check
 // and the actual workflow execution so the stimulus node can inject it.
@@ -2037,6 +2039,42 @@ struct ResumeState {
     results: Vec<NodeResult>,
 }
 
+/// B3: RAII guard holding a run's concurrency permit. Dropping it releases the
+/// semaphore permit (so the next queued run can start) and decrements the
+/// active-runs gauge. A durably-suspended run drops this when its task returns,
+/// freeing the slot while it waits; the resume path acquires a fresh one.
+struct RunSlot {
+    _permit: tokio::sync::OwnedSemaphorePermit,
+    active: std::sync::Arc<std::sync::atomic::AtomicI64>,
+}
+impl Drop for RunSlot {
+    fn drop(&mut self) {
+        self.active.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// B3: acquire a concurrency slot for a background run. Returns `None` when the
+/// wait queue is already at `workflow.max_queue_depth` (caller sheds the run) or
+/// the semaphore is closed. Otherwise awaits a permit, counting the wait in the
+/// queue-depth gauge.
+async fn acquire_run_slot(state: &AppState) -> Option<RunSlot> {
+    use std::sync::atomic::Ordering;
+    let cap = state.settings.workflow_max_queue_depth();
+    let depth = state.run_queue_depth.fetch_add(1, Ordering::SeqCst) + 1;
+    if cap > 0 && depth > cap {
+        state.run_queue_depth.fetch_sub(1, Ordering::SeqCst);
+        return None;
+    }
+    let permit = state.run_semaphore.clone().acquire_owned().await.ok();
+    state.run_queue_depth.fetch_sub(1, Ordering::SeqCst);
+    let permit = permit?;
+    state.active_runs.fetch_add(1, Ordering::SeqCst);
+    Some(RunSlot {
+        _permit: permit,
+        active: state.active_runs.clone(),
+    })
+}
+
 pub struct WorkflowEngine;
 impl WorkflowEngine {
     pub async fn run(
@@ -2152,6 +2190,9 @@ impl WorkflowEngine {
         // of collapsing the saved run down to just the one node it actually ran.
         let mut prior_ordered: Vec<NodeResult> = Vec::new();
         let mut ordered_results = Vec::new();
+        // B2: byte cap above which node-output strings are offloaded to the blob
+        // store before each DB persist (in-memory results stay full).
+        let bin_threshold = state.settings.workflow_binary_inline_max_bytes();
 
         // Nodes already completed *in this run* before a durable Wait suspended
         // it. On resume these are replayed for edge-routing only (never re-run),
@@ -2223,11 +2264,12 @@ impl WorkflowEngine {
                         // newest row doesn't demote the next run to backfill-only.
                         let mut seeded = false;
                         for results_str in &rows {
-                            let Ok(results) =
+                            let Ok(mut results) =
                                 serde_json::from_str::<Vec<NodeResult>>(results_str)
                             else {
                                 continue;
                             };
+                            binary::rehydrate_results(&mut results);
                             let complete = fold_prior_run_into_cache(
                                 &mut node_results,
                                 &mut prior_ordered,
@@ -2446,13 +2488,12 @@ impl WorkflowEngine {
                     ordered_results.push(nr);
 
                     // Incremental DB update so the frontend poll sees it immediately
-                    if let Ok(res_json) = serde_json::to_string(&ordered_results) {
-                        if let Ok(conn) = state.db.get() {
-                            let _ = conn.execute(
-                                "UPDATE workflow_runs SET node_results = ? WHERE id = ?",
-                                rusqlite::params![res_json, run_id.clone()],
-                            );
-                        }
+                    let res_json = binary::results_to_db_json(&ordered_results, bin_threshold);
+                    if let Ok(conn) = state.db.get() {
+                        let _ = conn.execute(
+                            "UPDATE workflow_runs SET node_results = ? WHERE id = ?",
+                            rusqlite::params![res_json, run_id.clone()],
+                        );
                     }
                 }
 
@@ -2833,7 +2874,7 @@ impl WorkflowEngine {
                 node_results.insert(current_id.clone(), nr.clone());
                 ordered_results.push(nr.clone());
 
-                let chain_json = serde_json::to_string(&ordered_results).unwrap_or_default();
+                let chain_json = binary::results_to_db_json(&ordered_results, bin_threshold);
                 {
                     let conn = state.db.get()?;
                     conn.execute(
@@ -3037,17 +3078,18 @@ impl WorkflowEngine {
             // Single-node runs persist the merged chain so polling never wipes the
             // upstream nodes' data off the editor mid-step.
             let res_json = if single_node_ready {
-                serde_json::to_string(&merge_single_node_results(&prior_ordered, &ordered_results))
+                binary::results_to_db_json(
+                    &merge_single_node_results(&prior_ordered, &ordered_results),
+                    bin_threshold,
+                )
             } else {
-                serde_json::to_string(&ordered_results)
+                binary::results_to_db_json(&ordered_results, bin_threshold)
             };
-            if let Ok(res_json) = res_json {
-                if let Ok(conn) = state.db.get() {
-                    let _ = conn.execute(
-                        "UPDATE workflow_runs SET node_results = ? WHERE id = ?",
-                        rusqlite::params![res_json, run_id.clone()],
-                    );
-                }
+            if let Ok(conn) = state.db.get() {
+                let _ = conn.execute(
+                    "UPDATE workflow_runs SET node_results = ? WHERE id = ?",
+                    rusqlite::params![res_json, run_id.clone()],
+                );
             }
         }
 
@@ -3070,10 +3112,12 @@ impl WorkflowEngine {
             // node we just re-ran) so reloads, expression fallbacks, and later
             // steps keep every upstream node's data.
             let res_json = if single_node_ready {
-                serde_json::to_string(&merge_single_node_results(&prior_ordered, &results_vec))
-                    .unwrap_or_default()
+                binary::results_to_db_json(
+                    &merge_single_node_results(&prior_ordered, &results_vec),
+                    bin_threshold,
+                )
             } else {
-                serde_json::to_string(&results_vec).unwrap_or_default()
+                binary::results_to_db_json(&results_vec, bin_threshold)
             };
             conn.execute("UPDATE workflow_runs SET status = ?, finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), node_results = ? WHERE id = ?", [status, &res_json, &run_id])?;
             conn.execute("UPDATE workflows SET last_status = ?, last_run_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?", [status, workflow_id])?;
@@ -3317,6 +3361,23 @@ impl WorkflowEngine {
         let src = trigger_source.to_string();
 
         tokio::spawn(async move {
+            // B3: acquire a concurrency slot before executing. Held for the run's
+            // duration; released on completion or durable-wait suspend (task end).
+            // A full queue sheds the run rather than piling up unbounded tasks.
+            let Some(_slot) = acquire_run_slot(&s).await else {
+                tracing::warn!(
+                    "Workflow run {} shed: run queue full (workflow.max_queue_depth)",
+                    rid
+                );
+                if let Ok(conn) = s.db.get() {
+                    let _ = conn.execute(
+                        "UPDATE workflow_runs SET status = 'failed', finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
+                        [&rid],
+                    );
+                }
+                return;
+            };
+
             // Pass the pre-created run_id so run_with_trigger reuses it rather
             // than inserting a duplicate record.
             if let Err(e) =
@@ -3445,6 +3506,9 @@ impl WorkflowEngine {
                 }
             };
 
+            // B2: restore any offloaded payloads before the resumed run reads them.
+            binary::rehydrate_results(&mut results);
+
             // The Wait node we paused on is stored as 'waiting'; flip it to
             // 'success' now that the run is continuing past it.
             for r in results.iter_mut() {
@@ -3463,6 +3527,22 @@ impl WorkflowEngine {
             let rid = run_id.clone();
             tracing::info!("Resuming durably-suspended workflow run {}", run_id);
             tokio::spawn(async move {
+                // B3: a resumed run re-acquires a concurrency slot (the original
+                // was released when the run suspended). If the queue is full it
+                // stays 'waiting' and a later tick retries — never shed mid-flight.
+                let _slot = match acquire_run_slot(&s).await {
+                    Some(slot) => slot,
+                    None => {
+                        tracing::warn!("Resume of {} deferred: run queue full", rid);
+                        if let Ok(conn) = s.db.get() {
+                            let _ = conn.execute(
+                                "UPDATE workflow_runs SET status = 'waiting' WHERE id = ?1",
+                                [&rid],
+                            );
+                        }
+                        return;
+                    }
+                };
                 if let Err(e) =
                     Self::run_inner(&wf, &s, &src, None, false, Some(rid.clone()), Some(resume)).await
                 {

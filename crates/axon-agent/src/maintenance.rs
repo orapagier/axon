@@ -31,6 +31,7 @@ pub struct RetentionStats {
     pub tool_calls: usize,
     pub observations: usize,
     pub webhook_events: usize,
+    pub blobs_deleted: usize,
     pub vacuumed: bool,
     pub freed_mb: i64,
 }
@@ -50,7 +51,7 @@ impl fmt::Display for RetentionStats {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{} rows pruned (workflow_runs={}, runs={}, run_iterations={}, tool_calls={}, observations={}, webhook_events={}); vacuum={} (~{}MB reclaimable)",
+            "{} rows pruned (workflow_runs={}, runs={}, run_iterations={}, tool_calls={}, observations={}, webhook_events={}); blobs_deleted={}; vacuum={} (~{}MB reclaimable)",
             self.total_rows(),
             self.workflow_runs,
             self.runs,
@@ -58,6 +59,7 @@ impl fmt::Display for RetentionStats {
             self.tool_calls,
             self.observations,
             self.webhook_events,
+            self.blobs_deleted,
             self.vacuumed,
             self.freed_mb,
         )
@@ -147,6 +149,22 @@ pub fn run_retention(
         Err(e) => tracing::warn!("Retention: webhook_events prune failed: {}", e),
     }
 
+    // ── workflow binary blobs (B2): drop payloads no surviving run references ──
+    // Gather every blob id still referenced by a remaining run, then delete the
+    // rest. A blob shared by several runs is kept until the last is pruned.
+    {
+        use std::collections::HashSet;
+        let mut referenced: HashSet<String> = HashSet::new();
+        if let Ok(mut stmt) = conn.prepare("SELECT node_results FROM workflow_runs") {
+            if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
+                for nr in rows.flatten() {
+                    crate::tools::workflow::binary::collect_referenced_ids(&nr, &mut referenced);
+                }
+            }
+        }
+        stats.blobs_deleted = crate::tools::workflow::binary::gc_unreferenced(&referenced);
+    }
+
     // ── reclaim space ─────────────────────────────────────────────────────────
     // Freed rows become free pages, not a smaller file. Truncate the WAL each
     // sweep (cheap) and run a full VACUUM only when enough is reclaimable, since
@@ -203,6 +221,12 @@ mod tests {
 
     #[test]
     fn retention_bounds_workflow_runs_and_prunes_old_history() {
+        // Isolate the B2 blob-GC sweep onto a throwaway dir so it can never touch
+        // a dev instance's real wf_blobs while running the suite.
+        std::env::set_var(
+            "AXON_WF_BLOB_DIR",
+            std::env::temp_dir().join(format!("axon_blobs_test_{}", std::process::id())),
+        );
         let (pool, path) = temp_db();
         {
             let conn = pool.get().unwrap();

@@ -396,6 +396,11 @@ async fn main() -> anyhow::Result<()> {
     let workflow_cancellations =
         Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new()));
 
+    // B3: size the run semaphore from settings once at startup. Changing the
+    // limit takes effect on restart (tokio semaphores don't cleanly shrink).
+    let max_concurrent_runs = settings.workflow_max_concurrent_runs().max(1) as usize;
+    tracing::info!("Workflow run concurrency limit: {}", max_concurrent_runs);
+
     let state = AppState {
         router: Arc::clone(&router),
         tool_router,
@@ -409,6 +414,9 @@ async fn main() -> anyhow::Result<()> {
         db,
         workflow_tx,
         workflow_cancellations,
+        run_semaphore: Arc::new(tokio::sync::Semaphore::new(max_concurrent_runs)),
+        active_runs: Arc::new(std::sync::atomic::AtomicI64::new(0)),
+        run_queue_depth: Arc::new(std::sync::atomic::AtomicI64::new(0)),
     };
 
     // Stored files cleanup (every 6 hours)

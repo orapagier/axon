@@ -178,6 +178,22 @@ RESPONSE RULES:
     pub fn workflow_version_min_interval_secs(&self) -> i64 {
         self.get_int("workflow.version_min_interval_secs", 30)
     }
+    /// B2: byte size above which a node-output string is offloaded to the blob
+    /// store instead of being persisted inline in `node_results`. `0` disables.
+    pub fn workflow_binary_inline_max_bytes(&self) -> usize {
+        self.get_int("workflow.binary_inline_max_bytes", 65536).max(0) as usize
+    }
+    /// B3: max workflow runs executing concurrently. Read once at startup to size
+    /// the run semaphore; changing it takes effect on restart.
+    pub fn workflow_max_concurrent_runs(&self) -> i64 {
+        self.get_int("workflow.max_concurrent_runs", 16).max(1)
+    }
+    /// B3: max runs allowed to queue waiting for a permit. Beyond this, new
+    /// trigger fires are shed (logged + marked failed) instead of piling up. `0`
+    /// disables the cap (unbounded queue, still bounded *execution*).
+    pub fn workflow_max_queue_depth(&self) -> i64 {
+        self.get_int("workflow.max_queue_depth", 500).max(0)
+    }
 
     pub fn websearch_enabled(&self) -> bool {
         self.get_bool("websearch.enabled", false)

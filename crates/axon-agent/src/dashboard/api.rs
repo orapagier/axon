@@ -2842,13 +2842,22 @@ pub async fn get_workflow_runs(
                 "trigger_type": r.get::<_, Option<String>>(3)?,
                 "started_at": r.get::<_, String>(4)?,
                 "finished_at": r.get::<_, Option<String>>(5)?,
-                "node_results": serde_json::from_str::<Value>(&r.get::<_, String>(6)?).unwrap_or(json!([])),
+                "node_results": rehydrated_node_results(&r.get::<_, String>(6)?),
             }))
         }).unwrap().filter_map(|r| r.ok()).collect();
         Json(json!({"runs": runs}))
     } else {
         Json(json!({"runs": []}))
     }
+}
+
+/// Parse a stored `node_results` JSON string and rehydrate any B2 binary
+/// descriptors back to their full values, so the UI never sees a `_axon_binary`
+/// placeholder. Falls back to an empty array on parse failure.
+fn rehydrated_node_results(stored: &str) -> Value {
+    let mut v = serde_json::from_str::<Value>(stored).unwrap_or(json!([]));
+    crate::tools::workflow::binary::rehydrate_value(&mut v);
+    v
 }
 
 /// Lightweight single-run poll endpoint — direct primary-key lookup.
@@ -2870,7 +2879,7 @@ pub async fn get_workflow_run_by_id(
                     "trigger_type": r.get::<_, Option<String>>(3)?,
                     "started_at": r.get::<_, String>(4)?,
                     "finished_at": r.get::<_, Option<String>>(5)?,
-                    "node_results": serde_json::from_str::<Value>(&r.get::<_, String>(6)?).unwrap_or(json!([])),
+                    "node_results": rehydrated_node_results(&r.get::<_, String>(6)?),
                 }))
             },
         ) {
