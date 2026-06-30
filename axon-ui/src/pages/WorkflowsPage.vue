@@ -3683,9 +3683,9 @@ onUnmounted(() => {
 
 .wf-title-input {
   width: auto;
-  min-width: 160px;
-  max-width: min(100%, 520px);
-  font-size: 1rem;
+  min-width: 120px;
+  max-width: min(100%, 320px);
+  font-size: 0.9rem;
   font-weight: 700;
   letter-spacing: -0.03em;
   padding: 0 0 2px 0;
