@@ -45,6 +45,13 @@ UPDATE settings SET value = '30'
 UPDATE settings SET value = '2'
  WHERE key = 'router.error_threshold' AND value = '3';
 
+-- C1 correction: the resume-token default TTL shipped as 604800 (7 days), which
+-- contradicted the documented "Approval/webhook Wait parks forever until resumed"
+-- contract. Reset hosts still on that old seeded default to 0 (wait forever); a
+-- deliberately-chosen TTL is left untouched.
+UPDATE settings SET value = '0'
+ WHERE key = 'workflow.resume_token_default_ttl_secs' AND value = '604800';
+
 -- Drop settings made defunct by the rework: the adaptive/fair-share timeout knobs,
 -- the exponential-backoff cap, and the per-iteration chain budget are no longer
 -- read (the per-iteration deadline is now just the run deadline). Harmless if absent.

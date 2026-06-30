@@ -204,11 +204,14 @@ RESPONSE RULES:
             .to_string()
     }
     /// C1: default resume-token lifetime (seconds) when an Approval/webhook Wait
-    /// node sets no explicit timeout. `0` = the token never expires (wait
-    /// forever). Drives the run's `resume_at` so the time poller fires a timeout
-    /// branch if no one resumes it.
+    /// node sets no explicit timeout. Defaults to `0` = the token never expires and
+    /// the run parks forever (NULL `resume_at`) until someone hits the resume URL —
+    /// the documented C1 contract. Set this >0 to give every untimed Approval/webhook
+    /// Wait a fallback deadline, which drives the run's `resume_at` so the time poller
+    /// fires the timeout branch (approval → Reject) if no one resumes it. A per-node
+    /// `timeout` always overrides this.
     pub fn workflow_resume_token_default_ttl_secs(&self) -> i64 {
-        self.get_int("workflow.resume_token_default_ttl_secs", 604_800).max(0)
+        self.get_int("workflow.resume_token_default_ttl_secs", 0).max(0)
     }
     /// C2: time window (seconds) for body-hash dedup of generic webhooks that
     /// supply no explicit Idempotency-Key/event_id. `0` (default) disables the

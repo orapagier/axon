@@ -3178,11 +3178,18 @@ pub async fn telegram_webhook(
                     )
                     .await;
 
-                    if let Err(e) = crate::tools::workflow::WorkflowEngine::run_in_background(
-                        &wf_id,
-                        &state_clone,
-                        None,
-                    ) {
+                    // Fire as a real "telegram" trigger (matches the long-poll path
+                    // in messaging/telegram.rs): scopes the run to the telegram
+                    // trigger node and stays on the production path so A4 pinned data
+                    // is not applied to this live button callback.
+                    if let Err(e) =
+                        crate::tools::workflow::WorkflowEngine::run_in_background_with_source(
+                            &wf_id,
+                            &state_clone,
+                            "telegram",
+                            None,
+                        )
+                    {
                         tracing::error!(
                             "[TELEGRAM] WorkflowEngine failed for '{}' (id={}): {}",
                             wf_name,
@@ -3340,9 +3347,12 @@ pub async fn whatsapp_webhook_messages(
             )
             .await;
 
-            if let Err(e) =
-                crate::tools::workflow::WorkflowEngine::run_in_background(&wf_id, &state, None)
-            {
+            // Fire as a real "whatsapp" trigger (these workflows were selected
+            // precisely because they have a whatsapp trigger): scopes the run to it
+            // and stays on the production path so A4 pinned data is not applied.
+            if let Err(e) = crate::tools::workflow::WorkflowEngine::run_in_background_with_source(
+                &wf_id, &state, "whatsapp", None,
+            ) {
                 tracing::error!("Failed to trigger background whatsapp workflow: {}", e);
             }
         }

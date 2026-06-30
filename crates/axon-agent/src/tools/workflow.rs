@@ -139,6 +139,12 @@ pub struct NodeResult {
     pub output: Value,
     pub duration_ms: u64,
     pub error: Option<String>,
+    /// A1: total times the node body was invoked (1 = succeeded first try, N>1 =
+    /// retried). 0 for nodes that never executed (disabled/skipped/pinned). For an
+    /// iterated (loop-body) node it's the max attempts any single unit took;
+    /// per-unit counts also ride along in each `errors[]` entry.
+    #[serde(default)]
+    pub attempts: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1860,7 +1866,7 @@ async fn execute_node_by_type(
     run_id: &str,
     node_results: &std::collections::HashMap<String, NodeResult>,
     durable_allowed: bool,
-) -> Result<Value, String> {
+) -> (Result<Value, String>, u32) {
     let no_retry = matches!(
         node.node_type.as_str(),
         "trigger"
@@ -1874,8 +1880,12 @@ async fn execute_node_by_type(
     );
     let max_attempts = if no_retry { 0 } else { node.retries };
 
+    // `attempt` is the 0-based retry index; `attempts_made` counts every dispatch
+    // invocation (the value reported to the UI via NodeResult.attempts).
     let mut attempt: u32 = 0;
+    let mut attempts_made: u32 = 0;
     loop {
+        attempts_made += 1;
         match execute_node_dispatch(
             node,
             config,
@@ -1888,10 +1898,10 @@ async fn execute_node_by_type(
         )
         .await
         {
-            Ok(v) => return Ok(v),
+            Ok(v) => return (Ok(v), attempts_made),
             Err(e) => {
                 if attempt >= max_attempts {
-                    return Err(e);
+                    return (Err(e), attempts_made);
                 }
                 attempt += 1;
                 crate::observability::record_node_retry(&node.node_type);
@@ -1921,7 +1931,10 @@ async fn execute_node_by_type(
                         c.contains(workflow_id) || c.contains(run_id)
                     };
                     if cancelled {
-                        return Err("Workflow cancelled during retry backoff".to_string());
+                        return (
+                            Err("Workflow cancelled during retry backoff".to_string()),
+                            attempts_made,
+                        );
                     }
                 }
             }
@@ -2505,6 +2518,7 @@ impl WorkflowEngine {
                         output: json!({"skipped": true, "reason": "Node is disabled"}),
                         duration_ms: 0,
                         error: None,
+                        attempts: 0,
                     };
                     node_results.insert(current_id.clone(), nr.clone());
                     ordered_results.push(nr);
@@ -2596,6 +2610,7 @@ impl WorkflowEngine {
                     output: pinned,
                     duration_ms: 0,
                     error: None,
+                    attempts: 0,
                 };
                 node_results.insert(current_id.clone(), nr.clone());
                 ordered_results.push(nr);
@@ -2632,7 +2647,7 @@ impl WorkflowEngine {
                         | "subflow" | "workflow"
                 );
 
-            let result = if can_iterate {
+            let (result, attempts): (Result<Value, String>, u32) = if can_iterate {
                 if let Some(source_node_id) = iteration_source_id {
                     if let Some(source_result) = node_results.get(&source_node_id) {
                         if let Some(items) =
@@ -2700,6 +2715,10 @@ impl WorkflowEngine {
 
                             let mut iteration_outputs = Vec::new();
                             let mut iteration_errors = Vec::new();
+                            // A1: worst-case retry count across units becomes the
+                            // body node's reported attempts; per-unit counts also
+                            // ride along in each errors[] entry.
+                            let mut max_unit_attempts: u32 = 0;
 
                             if parallelism > 1 {
                                 // Concurrent fan-out — a real edge over n8n's
@@ -2709,7 +2728,7 @@ impl WorkflowEngine {
                                 let futs = units.into_iter().map(|(idx, current)| {
                                     let (item_config, temp_results) = build_unit(idx, &current);
                                     async move {
-                                        let r = execute_node_by_type(
+                                        let (r, a) = execute_node_by_type(
                                             node,
                                             &item_config,
                                             state,
@@ -2722,19 +2741,20 @@ impl WorkflowEngine {
                                             false,
                                         )
                                         .await;
-                                        (idx, current, r)
+                                        (idx, current, r, a)
                                     }
                                 });
-                                let collected: Vec<(usize, Value, Result<Value, String>)> =
+                                let collected: Vec<(usize, Value, Result<Value, String>, u32)> =
                                     futures::stream::iter(futs)
                                         .buffered(parallelism)
                                         .collect()
                                         .await;
-                                for (idx, item, r) in collected {
+                                for (idx, item, r, a) in collected {
+                                    max_unit_attempts = max_unit_attempts.max(a);
                                     match r {
                                         Ok(v) => iteration_outputs.push(v),
                                         Err(e) => iteration_errors.push(json!({
-                                            "index": idx, "item": item, "error": e
+                                            "index": idx, "item": item, "error": e, "attempts": a
                                         })),
                                     }
                                 }
@@ -2743,7 +2763,7 @@ impl WorkflowEngine {
                                 // unless continue_on_fail is set.
                                 for (idx, current) in units {
                                     let (item_config, temp_results) = build_unit(idx, &current);
-                                    match execute_node_by_type(
+                                    let (r, a) = execute_node_by_type(
                                         node,
                                         &item_config,
                                         state,
@@ -2754,12 +2774,13 @@ impl WorkflowEngine {
                                         // Iterated Wait: in-process sleep per item.
                                         false,
                                     )
-                                    .await
-                                    {
+                                    .await;
+                                    max_unit_attempts = max_unit_attempts.max(a);
+                                    match r {
                                         Ok(v) => iteration_outputs.push(v),
                                         Err(e) => {
                                             iteration_errors.push(json!({
-                                                "index": idx, "item": current, "error": e
+                                                "index": idx, "item": current, "error": e, "attempts": a
                                             }));
                                             if !node.continue_on_fail {
                                                 break;
@@ -2769,7 +2790,9 @@ impl WorkflowEngine {
                                 }
                             }
 
-                            if !iteration_errors.is_empty() && !node.continue_on_fail {
+                            let loop_result = if !iteration_errors.is_empty()
+                                && !node.continue_on_fail
+                            {
                                 Err(format!(
                                     "Iteration failed in node '{}' ({} errors)",
                                     node.name,
@@ -2790,7 +2813,8 @@ impl WorkflowEngine {
                                     "error_count": iteration_errors.len(),
                                     "errors": iteration_errors
                                 }))
-                            }
+                            };
+                            (loop_result, max_unit_attempts.max(1))
                         } else {
                             let config = interpolate_config(&node.config, &node_results, state, Some(&node_ancestors));
                             execute_node_by_type(
@@ -2872,6 +2896,7 @@ impl WorkflowEngine {
                 output,
                 duration_ms: duration,
                 error,
+                attempts,
             };
 
             // Durable Wait suspension: a long Wait returns a sentinel instead of
@@ -3150,6 +3175,7 @@ impl WorkflowEngine {
                         output: json!({"skipped": true, "reason": "Branch not taken"}),
                         duration_ms: 0,
                         error: None,
+                        attempts: 0,
                     };
                     // Keep any preloaded last-run result for expression
                     // fallback; only record the skip for this run's sequence.
@@ -3267,7 +3293,23 @@ impl WorkflowEngine {
             // `workflow.default_error_workflow_id`. Loop-guarded: never fired from
             // an error run, never targets this same workflow, target must exist and
             // be enabled.
-            if trigger_source != "error" {
+            //
+            // Two n8n-parity guards, both required:
+            //   * Only a TERMINAL failure fires it (`workflow_status == "error"`: a
+            //     node failed with continue_on_fail OFF and halted the run). A node
+            //     that errored under continue_on_fail leaves `workflow_status` at
+            //     "success" — the run handled it by design — so it must not trip the
+            //     Error Trigger.
+            //   * Only AUTOMATIC runs fire it. "manual" is the editor Run/Execute
+            //     Step (and agent/`/run` explicit invocations); n8n never runs the
+            //     Error Trigger for those, so a failing test run while building can't
+            //     spam the production error handler. Real event triggers now carry
+            //     their own source (telegram/webhook/gmail/…), not "manual".
+            // The global notification above still fires for any errored node.
+            if trigger_source != "error"
+                && trigger_source != "manual"
+                && workflow_status == "error"
+            {
                 // Resolve the handler id (workflow-level, then global default).
                 // Each DB read is scoped so no pooled connection is held across an
                 // await on the ERROR_TRIGGER_DATA mutex.
@@ -3314,10 +3356,14 @@ impl WorkflowEngine {
                             .unwrap_or(false);
 
                     if eligible {
-                        let first = failed_nodes.first();
+                        // The node that actually halted the run is the LAST errored
+                        // node in execution order (the run breaks on a terminal
+                        // failure), not the first — an earlier continue_on_fail error
+                        // may sit ahead of it in `failed_nodes`.
+                        let culprit = failed_nodes.last();
                         // Bound the error string so a giant node error can't bloat
                         // the handler's trigger payload.
-                        let err_str: String = first
+                        let err_str: String = culprit
                             .and_then(|f| f.error.clone())
                             .unwrap_or_default()
                             .chars()
@@ -3327,7 +3373,7 @@ impl WorkflowEngine {
                             "trigger": "error",
                             "workflow": { "id": workflow_id, "name": workflow_name },
                             "run_id": run_id,
-                            "failed_node": first.map(|f| json!({
+                            "failed_node": culprit.map(|f| json!({
                                 "id": f.node_id,
                                 "name": f.node_name,
                                 "type": f.node_type,
@@ -4562,6 +4608,7 @@ mod resolve_tests {
             output,
             duration_ms: 0,
             error: None,
+            attempts: 1,
         }
     }
 
@@ -4833,6 +4880,7 @@ mod upstream_cache_tests {
             } else {
                 None
             },
+            attempts: 1,
         }
     }
 
