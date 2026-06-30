@@ -1,7 +1,7 @@
 use crate::state::AppState;
 use crate::tools::workflow::{
-    execute_gmail_trigger, EXTERNAL_TRIGGER_DATA, SUBFLOW_TRIGGER_DATA, TELEGRAM_TRIGGER_DATA,
-    WHATSAPP_TRIGGER_DATA,
+    execute_gmail_trigger, ERROR_TRIGGER_DATA, EXTERNAL_TRIGGER_DATA, SUBFLOW_TRIGGER_DATA,
+    TELEGRAM_TRIGGER_DATA, WHATSAPP_TRIGGER_DATA,
 };
 use serde_json::{json, Value};
 
