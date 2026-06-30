@@ -4187,7 +4187,19 @@ async fn check_and_trigger_gmail(
             .insert(workflow_id.to_string(), data);
     }
 
-    // Trigger the workflow
+    // Trigger the workflow. B3: hold a concurrency slot across the inline run so
+    // gmail-triggered runs honor the same cap as other triggers. The seen-ids were
+    // already committed above, so a queue-full *shed* would silently drop these
+    // emails — in that rare case fall back to running unbounded rather than losing
+    // them. The cleanup / mark-as-read below still run afterward.
+    let _slot = acquire_run_slot(state).await;
+    if _slot.is_none() {
+        tracing::warn!(
+            "Gmail trigger '{}': run queue full; running unbounded to avoid dropping {} email(s)",
+            workflow_name,
+            enriched_count
+        );
+    }
     WorkflowEngine::run_with_trigger(workflow_id, state, "gmail", None, false, None)
         .await
         .map_err(|e| e.to_string())?;
