@@ -252,3 +252,24 @@ pub fn build_router(state: AppState) -> Router {
         .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024))
         .with_state(state)
 }
+
+#[cfg(test)]
+mod route_conflict_tests {
+    use axum::{
+        routing::{delete, get, post},
+        Router,
+    };
+
+    // A5 added `/api/workflows/import` (static) at the same position as the
+    // existing `/api/workflows/:id` (param). axum panics at construction on a
+    // route conflict, so building this router is the assertion.
+    #[test]
+    fn workflows_import_and_param_routes_coexist() {
+        let _r: Router<()> = Router::new()
+            .route("/api/workflows", get(|| async {}).post(|| async {}))
+            .route("/api/workflows/import", post(|| async {}))
+            .route("/api/workflows/:id/export", get(|| async {}))
+            .route("/api/workflows/:id", delete(|| async {}))
+            .route("/api/workflows/:id/run", post(|| async {}));
+    }
+}
