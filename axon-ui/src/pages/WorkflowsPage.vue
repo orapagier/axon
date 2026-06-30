@@ -2239,6 +2239,20 @@ onUnmounted(() => {
             />
           </div>
           <div class="toolbar-right">
+            <div class="wf-settings-wrap" style="position:relative;">
+              <button class="btn btn-sm workflow-action-btn btn-neutral" title="Workflow settings" @click.stop="showWfSettings = !showWfSettings">⚙</button>
+              <Transition name="scale-fade">
+                <div v-if="showWfSettings" class="wf-settings-pop" @click.stop>
+                  <div class="wf-settings-title">Workflow Settings</div>
+                  <label class="wf-settings-label">On failure, run workflow</label>
+                  <select v-model="wfErrorWorkflowId" class="wf-settings-select" @change="save({ silent: true })">
+                    <option :value="null">— Global default —</option>
+                    <option v-for="w in errorHandlerOptions" :key="w.id" :value="w.id">{{ w.name }}</option>
+                  </select>
+                  <div class="wf-settings-hint">Runs the chosen workflow's Error trigger when this one errors. Build a handler by adding a Stimulus neuron with trigger type “On Error”.</div>
+                </div>
+              </Transition>
+            </div>
             <button v-if="isExecuting" class="btn btn-sm workflow-action-btn btn-danger" @click="stopWorkflow">Stop</button>
             <button class="btn btn-sm workflow-action-btn btn-danger" @click="removeWorkflow">Delete</button>
             <button class="btn btn-sm workflow-action-btn btn-neutral" @click.stop="loadHistory">History</button>
