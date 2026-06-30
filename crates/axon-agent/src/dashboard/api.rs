@@ -2236,6 +2236,58 @@ pub async fn run_workflow_node(
     }
 }
 
+/// Pin a node's output (A4). Body is the JSON value to pin — typically a prior
+/// run's node output. On manual/editor runs the engine then returns this value
+/// for the node WITHOUT executing it (deterministic builds, no side-effects).
+/// The pin is also round-tripped through get_workflows → upsert so a later save
+/// keeps it. Capped so pins stay editor-sized, not a binary dumping ground.
+pub async fn pin_workflow_node(
+    State(state): State<AppState>,
+    Path((id, node_id)): Path<(String, String)>,
+    Json(body): Json<Value>,
+) -> Json<Value> {
+    const PIN_MAX_BYTES: usize = 256 * 1024;
+    let serialized = body.to_string();
+    if serialized.len() > PIN_MAX_BYTES {
+        return Json(json!({
+            "ok": false,
+            "error": format!(
+                "Pinned data too large ({} bytes, max {}). Use a real run instead.",
+                serialized.len(),
+                PIN_MAX_BYTES
+            )
+        }));
+    }
+    if let Ok(conn) = state.db.get() {
+        match conn.execute(
+            "UPDATE workflow_nodes SET pinned_data = ?1 WHERE workflow_id = ?2 AND id = ?3",
+            rusqlite::params![serialized, id, node_id],
+        ) {
+            Ok(n) if n > 0 => Json(json!({"ok": true})),
+            Ok(_) => Json(json!({"ok": false, "error": "Node not found"})),
+            Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
+        }
+    } else {
+        Json(json!({"ok": false, "error": "DB error"}))
+    }
+}
+
+/// Clear a node's pin (A4): the node executes normally again on the next run.
+pub async fn unpin_workflow_node(
+    State(state): State<AppState>,
+    Path((id, node_id)): Path<(String, String)>,
+) -> Json<Value> {
+    if let Ok(conn) = state.db.get() {
+        let _ = conn.execute(
+            "UPDATE workflow_nodes SET pinned_data = NULL WHERE workflow_id = ?1 AND id = ?2",
+            rusqlite::params![id, node_id],
+        );
+        Json(json!({"ok": true}))
+    } else {
+        Json(json!({"ok": false, "error": "DB error"}))
+    }
+}
+
 pub async fn get_workflow_runs(
     State(state): State<AppState>,
     Path(id): Path<String>,
