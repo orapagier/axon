@@ -3473,9 +3473,22 @@ impl WorkflowEngine {
                     rid
                 );
                 if let Ok(conn) = s.db.get() {
+                    // Record *why* it failed so run history (and the Telegram
+                    // report) show a reason instead of an empty failed run.
+                    let reason = serde_json::json!([{
+                        "node_id": "__queue__",
+                        "node_name": "Concurrency queue",
+                        "node_type": "system",
+                        "position": 0,
+                        "status": "error",
+                        "output": Value::Null,
+                        "duration_ms": 0,
+                        "error": "Run shed: concurrency queue full — raise workflow.max_concurrent_runs / workflow.max_queue_depth",
+                    }])
+                    .to_string();
                     let _ = conn.execute(
-                        "UPDATE workflow_runs SET status = 'failed', finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
-                        [&rid],
+                        "UPDATE workflow_runs SET status = 'failed', finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), node_results = ?2 WHERE id = ?1",
+                        rusqlite::params![&rid, reason],
                     );
                 }
                 return;
