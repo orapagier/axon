@@ -178,6 +178,10 @@ pub fn build_router(state: AppState) -> Router {
             "/api/workflows/:id/run/:node_id",
             axum::routing::post(api::run_workflow_node),
         )
+        .route(
+            "/api/workflows/:id/nodes/:node_id/pin",
+            axum::routing::post(api::pin_workflow_node).delete(api::unpin_workflow_node),
+        )
         .route("/api/workflows/:id/runs", get(api::get_workflow_runs))
         .route(
             "/api/workflow-runs/:run_id",
