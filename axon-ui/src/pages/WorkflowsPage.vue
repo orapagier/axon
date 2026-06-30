@@ -1188,6 +1188,8 @@ function getWorkflowPayload() {
       retries: Number(n.data?.retries) || 0,
       retry_wait_ms: Number(n.data?.retryWaitMs) || 0,
       retry_backoff: n.data?.retryBackoff === 'exponential' ? 'exponential' : 'fixed',
+      // Pinned output (A4): round-tripped so a normal save keeps the pin.
+      pinned_data: n.data?.pinnedData ?? null,
       position: 0,
       position_x: n.position?.x || 0,
       position_y: n.position?.y || 0,
