@@ -3677,7 +3677,7 @@ onUnmounted(() => {
 .workflow-action-btn {
   /* Structural only — color comes from the global .btn-primary/.btn-success/
      .btn-danger/.btn-neutral palette in style.css (single source of truth). */
-  min-width: 88px;
+  min-width: 0;
   justify-content: center;
 }
 
