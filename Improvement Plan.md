@@ -94,9 +94,22 @@ Ordered by leverage ÷ risk. Each milestone is independently shippable.
 > (interactive always-queue) left as a refinement; uniform policy for v1.*
 
 ### Milestone C — "Ops & resume"
-- C1. **Wait-for-webhook** + **Approval** node (human-in-the-loop)
-- C2. **Trigger idempotency / dedup**
-- C3. **Observability**: `/metrics` + structured run events
+- C1. **Wait-for-webhook** + **Approval** node — ✅ done (migration `0011_resume_tokens.sql`, Wait `webhook`/`approval` modes + new `approval` palette node with Approve/Reject branches, engine mints a single-use token on suspend & surfaces resume/approve/reject URLs, `resume_by_token` + public `/webhook/{resume,approve,reject}/:token` routes, timeout→reject branch via the time poller, `workflow.public_base_url` / `resume_token_default_ttl_secs` settings)
+- C2. **Trigger idempotency / dedup** — ✅ done (migration `0012_trigger_dedup.sql`, fail-open `trigger_dedup_seen`, GitHub dedup on `X-Github-Delivery`, generic-webhook dedup on Idempotency-Key/event_id with opt-in body-hash window; Gmail already dedups via `gmail_last_seen_ids`; age-pruned in `maintenance.rs`)
+- C3. **Observability**: `/metrics` + structured run events — ✅ done (`observability.rs` Prometheus recorder, `GET /metrics` + `GET /api/health` behind the dashboard bearer, run/node duration histograms + status/retry counters + active/queue gauges; `metrics` + `metrics-exporter-prometheus` with the exporter's own HTTP listener disabled)
+
+> **Milestone C complete.** C1 took migration `0011`, C2 `0012` (the plan
+> originally penciled both into one `0009`; numbering had already advanced).
+> Resume tokens are single-use and consumed on resume; a webhook/approval Wait
+> parks with a NULL `resume_at` (waits forever) unless a timeout is set, in which
+> case the existing time poller fires the timeout branch (approval → Reject).
+> `approval` joins the no-retry node set so a retry can't double-mint a token.
+> Gmail was left on its existing per-message dedup rather than double-guarded.
+> `/metrics` is auth-gated (Prometheus scrapes with `bearer_token:
+> $AXON_MASTER_KEY`); only success/error/cancelled terminal runs are counted —
+> durable suspends are not. Covered by unit tests for the timeout parser, dedup
+> insert/prune, and recorder render. After A–C, every reliability/data behavior an
+> n8n migrator reaches for now exists in Axon.
 
 ### Milestone D — "Polish that closes the feel gap"
 - D1. **Credential hardening** (KDF, no plaintext fallback, credential test)
@@ -468,7 +481,7 @@ into the suspend path in `wait.rs`/the engine's `__axon_wait_suspend` handling.
 
 ## 4. Milestone C — Ops & resume
 
-### C1. Wait-for-webhook + Approval node (human-in-the-loop)
+### C1. Wait-for-webhook + Approval node (human-in-the-loop) — ✅ implemented (see Milestone C banner)
 
 **Problem.** `Wait` is time-only (`wait.rs`: `interval`/`until`). n8n can suspend a run until
 an external webhook/form resumes it — the backbone of approvals ("approve this refund"),
@@ -513,7 +526,7 @@ doesn't hold permits.
 
 ---
 
-### C2. Trigger idempotency / dedup
+### C2. Trigger idempotency / dedup — ✅ implemented (see Milestone C banner)
 
 **Problem.** Polling triggers (Gmail `check_and_trigger_gmail` `workflow.rs:3291`, webhooks)
 can reprocess the same event after a restart or an overlapping poll, double-firing workflows.
@@ -543,7 +556,7 @@ distinct) — scope dedup to event-sourced triggers only.
 
 ---
 
-### C3. Observability — `/metrics` + structured run events
+### C3. Observability — `/metrics` + structured run events — ✅ implemented (see Milestone C banner)
 
 **Problem.** You have `tracing` but no metrics surface. Operating Axon at volume means
 flying blind on run rate, failure rate, latency, queue depth.
