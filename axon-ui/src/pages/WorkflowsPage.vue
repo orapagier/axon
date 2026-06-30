@@ -653,6 +653,55 @@ const errorHandlerOptions = computed(() =>
   (workflows.value || []).filter((w) => w.id !== wfId.value)
 )
 
+// Export the current workflow as a downloadable JSON bundle (A5). Secrets never
+// leave the box — node configs carry only credential_id references.
+async function exportWorkflow() {
+  if (!wfId.value || wfId.value === 'new') { toast('Save the workflow first', false); return }
+  try {
+    const bundle = await get(`/workflows/${wfId.value}/export`)
+    if (bundle && bundle.ok === false) { toast(bundle.error || 'Export failed', false); return }
+    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    const safe = (wfName.value || 'workflow').replace(/[^\w.-]+/g, '_')
+    a.download = `${safe}.axon.json`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+    showWfSettings.value = false
+  } catch (e) {
+    toast('Export failed', false)
+  }
+}
+
+function triggerImport() {
+  importFileRef.value?.click()
+}
+
+// Import a bundle (A5): parse the file and POST it. The new workflow lands
+// disabled so an imported trigger can't fire before review.
+async function importWorkflow(event) {
+  const file = event.target.files?.[0]
+  event.target.value = '' // allow re-importing the same file
+  if (!file) return
+  try {
+    const text = await file.text()
+    const bundle = JSON.parse(text)
+    const res = await post('/workflows/import', bundle)
+    if (!res || res.ok === false || !res.id) { toast(res?.error || 'Import failed', false); return }
+    await load()
+    const imported = (workflows.value || []).find((w) => w.id === res.id)
+    if (imported) selectWorkflow(imported)
+    showWfSettings.value = false
+    const credMsg = res.credentials_required ? ` — review ${res.credentials_required} credential(s)` : ''
+    toast(`Imported "${res.name}" (disabled)${credMsg}`)
+  } catch (e) {
+    toast('Import failed — invalid bundle', false)
+  }
+}
+
 // `opts.save` (default true) lets composite operations (splice / add-from-handle)
 // add the node WITHOUT triggering an immediate save, so they can push the
 // accompanying edges and persist everything in a single atomic POST. Saving
