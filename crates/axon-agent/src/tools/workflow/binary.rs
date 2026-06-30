@@ -291,6 +291,7 @@ mod tests {
 
     #[test]
     fn offload_is_idempotent_and_threshold_zero_disables() {
+        let _g = test_blob_guard();
         let big = "y".repeat(5000);
         let mut a = serde_json::json!({ "b": big.clone() });
         let mut b = serde_json::json!({ "b": big.clone() });
