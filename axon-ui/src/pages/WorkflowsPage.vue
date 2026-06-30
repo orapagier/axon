@@ -3526,8 +3526,8 @@ onUnmounted(() => {
 }
 
 .workflow-toolbar {
-  min-height: 56px;
-  padding: 10px 12px;
+  min-height: 40px;
+  padding: 4px 12px;
   position: relative;
   z-index: 80;
   background:
