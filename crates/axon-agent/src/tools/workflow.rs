@@ -3096,6 +3096,111 @@ impl WorkflowEngine {
             {
                 tracing::warn!("Workflow global error notification failed: {}", e);
             }
+
+            // Error workflow (A3): hand off the failure to a designated handler so
+            // the operator can notify/compensate (the n8n "Error Trigger" pattern).
+            // Resolution: this workflow's `error_workflow_id` → global default
+            // `workflow.default_error_workflow_id`. Loop-guarded: never fired from
+            // an error run, never targets this same workflow, target must exist and
+            // be enabled.
+            if trigger_source != "error" {
+                // Resolve the handler id (workflow-level, then global default).
+                // Each DB read is scoped so no pooled connection is held across an
+                // await on the ERROR_TRIGGER_DATA mutex.
+                let configured: Option<String> = {
+                    let level = state
+                        .db
+                        .get()
+                        .ok()
+                        .and_then(|conn| {
+                            conn.query_row(
+                                "SELECT error_workflow_id FROM workflows WHERE id = ?1",
+                                [workflow_id],
+                                |r| r.get::<_, Option<String>>(0),
+                            )
+                            .ok()
+                            .flatten()
+                        })
+                        .filter(|s| !s.trim().is_empty());
+                    level.or_else(|| {
+                        let d = state
+                            .settings
+                            .get_str("workflow.default_error_workflow_id", "");
+                        (!d.trim().is_empty()).then_some(d)
+                    })
+                };
+
+                if let Some(error_wf_id) = configured {
+                    let error_wf_id = error_wf_id.trim().to_string();
+                    // Target must be a different, enabled workflow.
+                    let eligible = error_wf_id != workflow_id
+                        && state
+                            .db
+                            .get()
+                            .ok()
+                            .and_then(|conn| {
+                                conn.query_row(
+                                    "SELECT enabled FROM workflows WHERE id = ?1",
+                                    [&error_wf_id],
+                                    |r| r.get::<_, i64>(0),
+                                )
+                                .ok()
+                            })
+                            .map(|enabled| enabled != 0)
+                            .unwrap_or(false);
+
+                    if eligible {
+                        let first = failed_nodes.first();
+                        // Bound the error string so a giant node error can't bloat
+                        // the handler's trigger payload.
+                        let err_str: String = first
+                            .and_then(|f| f.error.clone())
+                            .unwrap_or_default()
+                            .chars()
+                            .take(2000)
+                            .collect();
+                        let payload = json!({
+                            "trigger": "error",
+                            "workflow": { "id": workflow_id, "name": workflow_name },
+                            "run_id": run_id,
+                            "failed_node": first.map(|f| json!({
+                                "id": f.node_id,
+                                "name": f.node_name,
+                                "type": f.node_type,
+                            })),
+                            "error": err_str,
+                            "trigger_type": trigger_source,
+                            "ts": chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+                        });
+                        ERROR_TRIGGER_DATA
+                            .lock()
+                            .await
+                            .insert(error_wf_id.clone(), payload);
+                        match Self::run_in_background_with_source(
+                            &error_wf_id,
+                            state,
+                            "error",
+                            None,
+                        ) {
+                            Ok(child) => tracing::info!(
+                                "Workflow '{}' failed — spawned error workflow {} (run {})",
+                                workflow_id,
+                                error_wf_id,
+                                child
+                            ),
+                            Err(e) => {
+                                // Don't leave a stale payload if the spawn failed.
+                                ERROR_TRIGGER_DATA.lock().await.remove(&error_wf_id);
+                                tracing::warn!(
+                                    "Failed to spawn error workflow {}: {}",
+                                    error_wf_id,
+                                    e
+                                );
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         Ok(WorkflowRunResult {
