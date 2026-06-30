@@ -2474,12 +2474,44 @@ impl WorkflowEngine {
                 }
             }
 
+            // Pinned data (A4): on a manual/editor run ONLY, a node that has
+            // saved pinned output is not executed — its pin is routed downstream
+            // as the result so building/testing is deterministic and external
+            // side-effects (sends, writes) don't fire while iterating. Any
+            // non-"manual" source (telegram/gmail/webhook/cron/subflow/error…) is
+            // a production/trigger run and ignores pins entirely. A node replayed
+            // on resume keeps its already-stored result rather than its pin.
+            let use_pin = trigger_source == "manual"
+                && !resumed_completed.contains(&current_id)
+                && !reuse_cached_upstream
+                && node.pinned_data.is_some();
+            if use_pin {
+                let pinned = node.pinned_data.clone().unwrap_or_else(|| json!({}));
+                tracing::info!(
+                    "Node '{}' ({}) using pinned data — skipping execution (manual run)",
+                    node.name,
+                    current_id
+                );
+                let nr = NodeResult {
+                    node_id: current_id.clone(),
+                    node_name: node.name.clone(),
+                    node_type: node.node_type.clone(),
+                    position: node.position,
+                    status: "success".to_string(),
+                    output: pinned,
+                    duration_ms: 0,
+                    error: None,
+                };
+                node_results.insert(current_id.clone(), nr.clone());
+                ordered_results.push(nr);
+            }
+
             // Replay-only on resume: a node already completed in THIS run keeps
             // its stored result and just releases its edges below — it is never
             // re-executed, so triggers don't re-fire and side effects (Telegram
             // sends, file registration) don't repeat. Freshly-reached nodes run
             // normally. The block is closed right before edge routing.
-            if !resumed_completed.contains(&current_id) && !reuse_cached_upstream {
+            if !resumed_completed.contains(&current_id) && !reuse_cached_upstream && !use_pin {
             let n_start = std::time::Instant::now();
             // Upstream node ids of the node about to run — used so a
             // `$node["Name"]` reference whose name collides with another node
