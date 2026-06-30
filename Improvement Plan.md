@@ -49,9 +49,16 @@ Ordered by leverage ÷ risk. Each milestone is independently shippable.
 ### Milestone A — "Trustworthy engine" (highest leverage, lowest risk)
 - A1. Per-node **retry on fail** — ✅ done (migration 0007, `execute_node_by_type` retry wrapper, UI settings)
 - A2. **Sub-workflow** ("Execute Workflow") node — ✅ done (`nodes/subflow.rs`, depth/cycle guard, palette node)
-- A3. **Error workflow** / error trigger
-- A4. Finish **pinned data** (engine honors it)
-- A5. Workflow **export / import** (JSON)
+- A3. **Error workflow** / error trigger — ✅ done (migration 0009 `error_workflow_id`, `ERROR_TRIGGER_DATA`, error-trigger entry filter, terminal-failure fire with loop guard, "On Error" stimulus type + workflow Settings picker)
+- A4. Finish **pinned data** (engine honors it) — ✅ done (migration 0009 `pinned_data`, manual-run short-circuit in `run_inner`, pin/unpin endpoints, NodeDetails Pin control, status icon fixed)
+- A5. Workflow **export / import** (JSON) — ✅ done (`/api/workflows/:id/export` + `/api/workflows/import`, `axon_format:1` bundle, id remap, secrets never exported, Settings Export/Import buttons)
+
+> **Milestone A complete.** Migration `0009_error_workflow_and_pins.sql` carries A3+A4.
+> Imported workflows arrive **disabled** for review. Pins apply only on
+> `trigger_source == "manual"` (editor runs); cron/watcher/telegram/gmail/webhook/
+> subflow/error sources execute normally. Not yet covered by a dedicated engine
+> integration test (repo has no AppState/DB test harness today) — validated by
+> compile + the existing 45 workflow unit tests + a frontend build.
 
 ### Milestone B — "Production data model"
 - B1. **Workflow versioning / history** (single-operator undo + restore)
