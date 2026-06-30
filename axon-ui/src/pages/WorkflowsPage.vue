@@ -78,6 +78,7 @@ const pendingReplace = ref(null) // node being replaced via right-click → Repl
 const nodePickerRef = ref(null)
 const nodeSearchInputRef = ref(null)
 const historyRef = ref(null)
+const wfSettingsRef = ref(null)
 const workflowMenuRef = ref(null)
 const isExecuting = ref(false)
 const contextMenuVisible = ref(false)
