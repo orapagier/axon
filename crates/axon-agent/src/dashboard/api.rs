@@ -2355,7 +2355,8 @@ fn build_workflow_bundle(conn: &rusqlite::Connection, id: &str) -> Option<Value>
     };
 
     let edges: Vec<Value> = match conn.prepare(
-        "SELECT source_id, target_id, source_handle, target_handle FROM workflow_edges WHERE workflow_id = ?1",
+        "SELECT source_id, target_id, source_handle, target_handle FROM workflow_edges WHERE workflow_id = ?1 \
+         ORDER BY source_id, target_id, IFNULL(source_handle, ''), IFNULL(target_handle, '')",
     ) {
         Ok(mut stmt) => stmt
             .query_map([id], |r| {
