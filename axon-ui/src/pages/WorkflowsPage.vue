@@ -1188,6 +1188,8 @@ function getWorkflowPayload() {
     id: wfId.value && wfId.value !== 'new' ? wfId.value : undefined,
     name: wfName.value,
     description: wfDesc.value,
+    // Error workflow (A3): handler to run on failure; null clears it.
+    error_workflow_id: wfErrorWorkflowId.value || null,
     trigger_type: triggerType,
     trigger_config: triggerConfig,
     nodes: nodes.value.map((n) => ({
