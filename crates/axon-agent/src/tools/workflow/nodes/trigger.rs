@@ -21,6 +21,16 @@ pub(crate) async fn execute(
         }
         return Ok(json!({"trigger": "subflow"}));
     }
+    // Error handler run (A3): the failure description from the workflow that
+    // failed was injected under this error workflow's id. Surfaced like any
+    // other trigger payload so the handler can branch on failed_node/error.
+    if trigger_source == "error" {
+        let mut data = ERROR_TRIGGER_DATA.lock().await;
+        if let Some(val) = data.remove(workflow_id) {
+            return Ok(val);
+        }
+        return Ok(json!({"trigger": "error"}));
+    }
     if config.get("type").and_then(|v| v.as_str()) == Some("gmail") {
         match execute_gmail_trigger(config, state, workflow_id).await {
             Ok(data) => Ok(data),
