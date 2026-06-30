@@ -2926,7 +2926,7 @@ onUnmounted(() => {
   color: rgba(255, 255, 255, 0.3);
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  margin-bottom: 12px;
+  margin-bottom: 0;
 }
 
 .history-item.success .h-meta { color: var(--green, #50fa7b); }
