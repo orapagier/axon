@@ -53,6 +53,18 @@ pub(crate) static SUBFLOW_ENTRY_NODE: once_cell::sync::Lazy<
     tokio::sync::Mutex<std::collections::HashMap<String, String>>,
 > = once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
 
+// Manual entry trigger: the id of the single Stimulus/trigger node the user
+// clicked "Run" (play button) on, so a manual run starts ONLY from that node's
+// chain instead of every trigger in the workflow. Keyed by RUN id (not workflow
+// id) so concurrent manual runs never consume each other's pin, and consumed
+// (removed) as the entry queue is built. Absent ⇒ start from every trigger.
+// A plain std Mutex: it's set from the sync `run_in_background_inner` before the
+// run task is spawned, and read (removed, never held across an await) in
+// `run_inner`.
+pub(crate) static MANUAL_ENTRY_NODE: once_cell::sync::Lazy<
+    std::sync::Mutex<std::collections::HashMap<String, String>>,
+> = once_cell::sync::Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
 tokio::task_local! {
     // Call stack of workflow ids currently executing as nested sub-workflows.
     // Used by the Sub-workflow node to bound recursion depth and reject cycles.
