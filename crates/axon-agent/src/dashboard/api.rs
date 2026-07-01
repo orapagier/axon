@@ -2964,6 +2964,8 @@ pub async fn upsert_credential(
     };
 
     let data_str = serde_json::to_string(&data).unwrap_or_else(|_| "{}".to_string());
+    // Encrypt the secret blob at rest; the read seams decrypt symmetrically.
+    let data_str = crate::crypto::encrypt_key(&data_str);
 
     if let Ok(conn) = state.db.get() {
         let _ = conn.execute(
