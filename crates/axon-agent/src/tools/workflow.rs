@@ -345,6 +345,7 @@ async fn execute_js_node(
     let node_id = node.id.clone();
     let node_name = node.name.clone();
     let wf_id = workflow_id.to_string();
+    let run_id = run_id.to_string();
     let logs = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let logs_for_thread = logs.clone();
 
