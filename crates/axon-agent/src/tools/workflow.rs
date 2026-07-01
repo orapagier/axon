@@ -1426,8 +1426,9 @@ fn interpolate_config(
     results: &std::collections::HashMap<String, NodeResult>,
     state: &AppState,
     ancestors: Option<&std::collections::HashSet<String>>,
+    run_id: &str,
 ) -> Value {
-    let mut interpolated = interpolate_value(config, results, ancestors);
+    let mut interpolated = interpolate_value(config, results, ancestors, run_id);
 
     // Inject credentials if specified
     if let Value::Object(ref mut map) = interpolated {
