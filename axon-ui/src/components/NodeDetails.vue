@@ -1771,11 +1771,11 @@ onUnmounted(() => {
                 <template v-if="isApproval">
                   <div class="webhook-url-input-group">
                     <input type="text" :value="approveUrl" readonly title="Approve → routes down the first (approve) output" />
-                    <button @click="copyText(approveUrl)" class="btn-copy-url" title="Copy Approve URL">✓ Approve</button>
+                    <button @click="copyText(approveUrl)" class="btn-copy-url btn-copy-url--labeled" title="Copy Approve URL">✓ Approve</button>
                   </div>
                   <div class="webhook-url-input-group" style="margin-top: 6px">
                     <input type="text" :value="rejectUrl" readonly title="Reject → routes down the second (reject) output" />
-                    <button @click="copyText(rejectUrl)" class="btn-copy-url" title="Copy Reject URL">✕ Reject</button>
+                    <button @click="copyText(rejectUrl)" class="btn-copy-url btn-copy-url--labeled" title="Copy Reject URL">✕ Reject</button>
                   </div>
                 </template>
                 <div v-else class="webhook-url-input-group">
@@ -2985,6 +2985,17 @@ onUnmounted(() => {
   cursor: pointer;
   transition: all 0.2s;
   flex-shrink: 0;
+}
+/* Labeled variant (Approve/Reject) — the base rule is a fixed 34px square meant
+   for the icon-only Copy button; text labels overflow it, so let these size to
+   their content. */
+.btn-copy-url--labeled {
+  width: auto;
+  padding: 0 12px;
+  gap: 4px;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
 }
 .btn-copy-url svg {
   display: block;
