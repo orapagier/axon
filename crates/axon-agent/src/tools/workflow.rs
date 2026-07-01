@@ -4028,7 +4028,7 @@ impl WorkflowEngine {
             if let Err(e) =
                 Self::run_inner(&wf, &s, &src, None, false, Some(rid.clone()), Some(resume)).await
             {
-                tracing::error!("Token-resumed workflow run {} failed: {}", rid, e);
+                tracing::error!("Resumed workflow run {} failed: {}", rid, e);
                 if let Ok(conn) = s.db.get() {
                     let _ = conn.execute(
                         "UPDATE workflow_runs SET status = 'failed', finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
