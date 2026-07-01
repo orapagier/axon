@@ -986,11 +986,11 @@ pub async fn health_check(router: &SharedRouter, settings: &RuntimeSettings) -> 
             "enabled": m.enabled,
             "latency_ms": latency_ms,
         });
-        // Success is a single `healthy` bucket. A failure is sub-classified from
-        // the error text — `rate_limited`, `invalid_key`, `not_found`, `timeout`,
-        // … — so a workflow can react differently to a throttled model than to a
-        // bad key. The verbatim provider error is always kept on the entry too, so
-        // no detail is lost to bucketing.
+        // A success lands in the single `healthy` bucket. A failure is
+        // sub-classified from the error text into one of the fixed
+        // FAILURE_CATEGORIES (rate_limited, payment_required, invalid_key, …) so a
+        // workflow can react to *why* a model is down, not just that it is. The
+        // verbatim provider error stays on the entry, so bucketing hides nothing.
         let category = match result {
             Ok(_) => "healthy",
             Err(e) => {
@@ -999,45 +999,85 @@ pub async fn health_check(router: &SharedRouter, settings: &RuntimeSettings) -> 
                 category
             }
         };
-        entry["category"] = serde_json::json!(category);
         (category, entry)
     });
 
     let results = futures::future::join_all(probes).await;
 
-    // Group by category, then sort each group alphabetically (case-insensitive) by
-    // name. BTreeMap keeps the category groups themselves in stable, sorted order.
-    // Alongside the fine breakdown, keep the coarse healthy/unhealthy tallies most
-    // workflows branch on (`if unhealthy > 0 …`).
+    // Keep the original output shape — top-level `checked`, `summary` and
+    // `by_status.{healthy,unhealthy}` — but split the single `unhealthy` list into
+    // fixed, always-present subcategory buckets (both under `by_status.unhealthy`
+    // and `summary.unhealthy`), so the schema a workflow branches on never shifts
+    // with the run: `by_status.unhealthy.rate_limited` is always a valid array,
+    // empty when nothing hit that reason. `healthy` stays a flat list. Entries keep
+    // their original fields — the bucket name is the category, so it isn't repeated
+    // on the entry.
     let checked = results.len();
-    let mut by_category: std::collections::BTreeMap<String, Vec<serde_json::Value>> =
-        Default::default();
-    let mut summary: std::collections::BTreeMap<String, u64> = Default::default();
-    let mut healthy: u64 = 0;
+    let mut healthy_list: Vec<serde_json::Value> = Vec::new();
+    // Seed every failure bucket up front so absent reasons still appear as an empty
+    // list / zero count. BTreeMap also keeps the buckets in a stable, sorted order.
+    let mut unhealthy_groups: std::collections::BTreeMap<&'static str, Vec<serde_json::Value>> =
+        FAILURE_CATEGORIES.iter().map(|c| (*c, Vec::new())).collect();
     for (category, entry) in results {
         if category == "healthy" {
-            healthy += 1;
+            healthy_list.push(entry);
+        } else {
+            // classify_health_error only ever returns a FAILURE_CATEGORIES member,
+            // so this always lands in a seeded bucket; or_default is just belt-and-braces.
+            unhealthy_groups.entry(category).or_default().push(entry);
         }
-        *summary.entry(category.to_string()).or_insert(0) += 1;
-        by_category.entry(category.to_string()).or_default().push(entry);
     }
-    for entries in by_category.values_mut() {
+
+    // Sort every list alphabetically (case-insensitive) by name.
+    fn sort_by_name(entries: &mut [serde_json::Value]) {
         entries.sort_by(|a, b| {
             let an = a["name"].as_str().unwrap_or("").to_lowercase();
             let bn = b["name"].as_str().unwrap_or("").to_lowercase();
             an.cmp(&bn)
         });
     }
-    let unhealthy = checked as u64 - healthy;
+    sort_by_name(&mut healthy_list);
+    for entries in unhealthy_groups.values_mut() {
+        sort_by_name(entries);
+    }
+
+    // Per-subcategory counts, mirroring the by_status nesting.
+    let unhealthy_summary: std::collections::BTreeMap<&'static str, usize> = unhealthy_groups
+        .iter()
+        .map(|(cat, entries)| (*cat, entries.len()))
+        .collect();
 
     serde_json::json!({
         "checked": checked,
-        "healthy": healthy,
-        "unhealthy": unhealthy,
-        "summary": summary,
-        "by_category": by_category,
+        "summary": {
+            "healthy": healthy_list.len(),
+            "unhealthy": unhealthy_summary,
+        },
+        "by_status": {
+            "healthy": healthy_list,
+            "unhealthy": unhealthy_groups,
+        },
     })
 }
+
+/// The fixed, exhaustive set of failure buckets a probe can land in. Kept as a
+/// constant so `by_status.unhealthy` / `summary.unhealthy` always carry the same
+/// keys (empty when unused) and a workflow branching on e.g.
+/// `by_status.unhealthy.rate_limited` never hits a missing key. Every non-`healthy`
+/// return of `classify_health_error` MUST be one of these.
+const FAILURE_CATEGORIES: &[&str] = &[
+    "rate_limited",
+    "payment_required",
+    "invalid_key",
+    "forbidden",
+    "not_found",
+    "bad_request",
+    "server_error",
+    "timeout",
+    "unreachable",
+    "misconfigured",
+    "error",
+];
 
 /// Map a probe's error message to a coarse failure category. The probe only has
 /// the provider's error *string* (each provider formats its own — see
