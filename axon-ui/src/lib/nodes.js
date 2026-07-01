@@ -1475,7 +1475,7 @@ export const NODE_TYPES = {
                 displayName: 'Health Check sends a real probe to every model',
                 name: 'homeostasis_health_hint',
                 type: 'notice',
-                default: 'Fires a tiny live completion at every model (all in parallel) and reports what actually works right now — catching bad API keys, wrong endpoints or unreachable providers that List can\'t see. Outputs { checked, summary: { healthy, unhealthy }, by_status: { healthy: [...], unhealthy: [{ …, error }] } }, each group sorted alphabetically by name. Costs a few tokens per model; API keys are never included.',
+                default: 'Fires a tiny live completion at every model (all in parallel) and reports what actually works right now — catching bad API keys, wrong endpoints or unreachable providers that List can\'t see. Failures are sub-categorized by reason (rate_limited, quota_exceeded, invalid_key, not_found, bad_request, server_error, timeout, unreachable, misconfigured, error). Outputs { checked, healthy, unhealthy, summary: { <category>: count, … }, by_category: { healthy: [...], rate_limited: [{ …, category, error }], … } }, each group sorted alphabetically by name. Costs a few tokens per model; API keys are never included.',
                 displayOptions: { show: { operation: ['health_check'] } },
             },
         ],
