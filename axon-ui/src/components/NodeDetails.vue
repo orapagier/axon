@@ -390,15 +390,30 @@ const isWaitWebhook = computed(
   () => props.node.data.node_type === 'wait' && props.node.data.config?.mode === 'webhook'
 )
 const isApproval = computed(() => props.node.data.node_type === 'approval')
-const resumeUrl = computed(
-  () => `${window.location.origin}/webhook/resume/${props.node.id}/${runIdToken}`
-)
-const approveUrl = computed(
-  () => `${window.location.origin}/webhook/approve/${props.node.id}/${runIdToken}`
-)
-const rejectUrl = computed(
-  () => `${window.location.origin}/webhook/reject/${props.node.id}/${runIdToken}`
-)
+
+// When this node has actually run and parked, the backend stamps fully
+// run-scoped links onto its output (`approve_url`/`approve_path`, etc.) with the
+// real run id filled in. Prefer those so the copy buttons yield a ready-to-click
+// URL. Fall back to the `$execution.runId` template only when there's no live run
+// yet — that template is meant to be pasted into an UPSTREAM node and resolves at
+// send time. `nodeResult` is declared later but only read lazily (in render), so
+// the forward reference is safe.
+function resolveLink(kind) {
+  const output = nodeResult.value?.output
+  const url = output?.[`${kind}_url`]
+  if (url && /^https?:\/\//i.test(url)) return url // public base URL configured
+  const path = output?.[`${kind}_path`]
+  if (path) return `${window.location.origin}${path}` // resolve on the current origin
+  return `${window.location.origin}/webhook/${kind}/${props.node.id}/${runIdToken}`
+}
+const resumeUrl = computed(() => resolveLink('resume'))
+const approveUrl = computed(() => resolveLink('approve'))
+const rejectUrl = computed(() => resolveLink('reject'))
+// True once this node's last run parked and left resolved links on its output.
+const hasLiveRunLink = computed(() => {
+  const output = nodeResult.value?.output
+  return !!(output?.approve_path || output?.reject_path || output?.resume_path)
+})
 
 async function copyText(t) {
   try {
@@ -1766,7 +1781,8 @@ onUnmounted(() => {
                   <span class="info-icon" style="opacity: 0.5; font-size: 10px; cursor: help;" title="Send this to a human so they can resume the run. Use it in a node BEFORE this one.">ⓘ</span>
                 </label>
                 <p class="resume-url-hint">
-                  Paste into a node <b>before</b> this one. <code>{{ runIdToken }}</code> resolves to the current run automatically.
+                  <template v-if="hasLiveRunLink">Scoped to this node's last run — ready to open or send as-is.</template>
+                  <template v-else>Paste into a node <b>before</b> this one. <code>{{ runIdToken }}</code> resolves to the current run automatically.</template>
                 </p>
                 <template v-if="isApproval">
                   <div class="webhook-url-input-group">
