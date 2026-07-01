@@ -3885,51 +3885,35 @@ impl WorkflowEngine {
         outcome: &str,
         payload: Value,
     ) -> Result<Value, String> {
-        // 1. Look up the token (mode tells approval vs plain webhook).
-        let row: Option<(String, String, String, String, Option<String>)> = {
+        let node_id = node_id.to_string();
+        let run_id = run_id.to_string();
+
+        // 1. Claim the run: it must still be 'waiting' AND parked on exactly this
+        //    node. Verifying node+run together means a link for one node/run can
+        //    never resume a different one; the atomic UPDATE makes the claim
+        //    single-winner so two racing clicks can't both wake it. A timed-out
+        //    run is no longer 'waiting' (the poller already advanced it), so an
+        //    expired link fails here naturally — no separate expiry check needed.
+        let (workflow_id, trigger_source, results_json): (String, String, String) = {
             let conn = state.db.get().map_err(|e| e.to_string())?;
             conn.query_row(
-                "SELECT run_id, workflow_id, node_id, mode, expires_at \
-                 FROM workflow_resume_tokens WHERE token = ?1",
-                [token],
+                "SELECT workflow_id, COALESCE(trigger_type, 'manual'), node_results \
+                 FROM workflow_runs \
+                 WHERE id = ?1 AND resume_node_id = ?2 AND status = 'waiting'",
+                rusqlite::params![run_id, node_id],
                 |r| {
                     Ok((
                         r.get::<_, String>(0)?,
                         r.get::<_, String>(1)?,
                         r.get::<_, String>(2)?,
-                        r.get::<_, String>(3)?,
-                        r.get::<_, Option<String>>(4)?,
                     ))
                 },
             )
-            .ok()
-        };
-        let Some((run_id, workflow_id, node_id, mode, expires_at)) = row else {
-            return Err("unknown or already-used resume token".to_string());
-        };
-
-        // 2. Reject an expired token (the poller usually times these out first).
-        if let Some(exp) = expires_at.as_deref() {
-            let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-            if exp <= now.as_str() {
-                if let Ok(conn) = state.db.get() {
-                    let _ = conn
-                        .execute("DELETE FROM workflow_resume_tokens WHERE token = ?1", [token]);
-                }
-                return Err("resume token expired".to_string());
-            }
-        }
-
-        // 3. Claim the run: only a still-'waiting' run can be resumed once.
-        let (trigger_source, results_json): (String, String) = {
-            let conn = state.db.get().map_err(|e| e.to_string())?;
-            conn.query_row(
-                "SELECT COALESCE(trigger_type, 'manual'), node_results \
-                 FROM workflow_runs WHERE id = ?1 AND status = 'waiting'",
-                [&run_id],
-                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
-            )
-            .map_err(|_| "run already resumed, finished, or cancelled".to_string())?
+            .map_err(|_| {
+                "no run is waiting at this step — it may have already been resumed, \
+                 timed out, finished, or the link is for a different node or run"
+                    .to_string()
+            })?
         };
         let claimed = {
             let conn = state.db.get().map_err(|e| e.to_string())?;
@@ -3943,15 +3927,7 @@ impl WorkflowEngine {
             return Err("run already resumed, finished, or cancelled".to_string());
         }
 
-        // 4. Consume the token (single-use); drop any siblings for the run too.
-        if let Ok(conn) = state.db.get() {
-            let _ = conn.execute(
-                "DELETE FROM workflow_resume_tokens WHERE run_id = ?1",
-                [&run_id],
-            );
-        }
-
-        // 5. Rebuild the chain and patch the resumed node with the payload +
+        // 2. Rebuild the chain and patch the resumed node with the payload +
         //    decision so downstream nodes see it and approval branches route.
         let mut results: Vec<NodeResult> = serde_json::from_str(&results_json).map_err(|e| {
             if let Ok(conn) = state.db.get() {
@@ -3963,6 +3939,18 @@ impl WorkflowEngine {
             format!("corrupt node_results on resume: {e}")
         })?;
         binary::rehydrate_results(&mut results);
+
+        // 3. Recover the suspend mode (webhook vs approval) from what the node
+        //    itself recorded at suspend, so approve/reject routing is authoritative
+        //    without a second query.
+        let mode = results
+            .iter()
+            .find(|r| r.node_id == node_id)
+            .and_then(|r| r.output.get("__axon_resume"))
+            .and_then(|m| m.get("mode"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("webhook")
+            .to_string();
 
         let approved = mode == "approval" && outcome != "rejected";
         let now_iso = chrono::Utc::now().to_rfc3339();
