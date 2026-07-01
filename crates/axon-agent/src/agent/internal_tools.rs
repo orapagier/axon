@@ -54,6 +54,8 @@ fn merge_stored_credentials(service: &str, args: serde_json::Value, state: &AppS
     });
 
     if let Some(data_str) = data_str {
+        // Encrypted at rest; decrypt_key passes legacy plaintext through.
+        let data_str = crate::crypto::decrypt_key(&data_str);
         if let Ok(serde_json::Value::Object(cred_map)) = serde_json::from_str(&data_str) {
             for (k, v) in cred_map {
                 map.entry(k).or_insert(v);
