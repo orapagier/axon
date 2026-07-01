@@ -59,9 +59,11 @@ pub(crate) async fn execute(config: &Value, state: &AppState) -> Result<Value, S
     // Health Check goes further than List: it sends a real (tiny) provider call
     // to every model and reports which ones actually work right now — surfacing
     // bad API keys, wrong endpoints or unreachable providers that List (a cached
-    // snapshot) can't see. The report groups models by outcome (healthy /
-    // unhealthy) and sorts each group alphabetically by name; api_key is never
-    // included. Async and DB-free, so it sits with `list` above the DB block.
+    // snapshot) can't see. The report groups models by category — `healthy` plus a
+    // specific failure reason (rate_limited, invalid_key, not_found, …) — with both
+    // per-category counts and coarse healthy/unhealthy totals, each group sorted
+    // alphabetically by name; api_key is never included. Async and DB-free, so it
+    // sits with `list` above the DB block.
     if operation == "health_check" {
         let mut report = crate::router::health_check(&state.router, &state.settings).await;
         if let Some(obj) = report.as_object_mut() {
