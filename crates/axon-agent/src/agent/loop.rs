@@ -664,6 +664,19 @@ pub(crate) async fn run_inner(
     // (tool_choice=Required) rather than re-pleading in the prompt. Consumed and
     // cleared at the top of the next iteration.
     let mut force_tool_use_next = false;
+    // Stall detection. A model stuck re-issuing the *same* tool call(s) (e.g. the
+    // same failing job with identical args) would otherwise churn every remaining
+    // iteration and exit via the max-iteration/timeout backstop as a hard failure.
+    // Instead we cap identical consecutive tool batches: once the same signature
+    // repeats `max_repeated_tool_calls` times we disable tools for one turn and
+    // ask the model for a best-effort final answer. 0 disables the guard.
+    let max_repeated_tool_calls = state
+        .settings
+        .get_int("agent.max_repeated_tool_calls", 3)
+        .max(0) as u32;
+    let mut last_tool_sig: Option<u64> = None;
+    let mut repeated_tool_calls: u32 = 0;
+    let mut force_final_answer = false;
     let final_text;
 
     'agent: loop {
@@ -762,7 +775,16 @@ pub(crate) async fn run_inner(
         // ── Tool routing ─────────────────────────────────────────────────────
         let all_tools = state.tools.all_enabled_for_agent().await;
 
-        let (filtered, _tier, tool_names) = if iters == 1 {
+        let (filtered, _tier, tool_names) = if force_final_answer {
+            // Stall guard tripped last iteration: disable tools so the model must
+            // compose a plain-text best-effort answer instead of retrying.
+            force_final_answer = false;
+            (
+                Vec::<ToolDefinition>::new(),
+                "final".to_string(),
+                Vec::<String>::new(),
+            )
+        } else if iters == 1 {
             let names: Vec<String> = filtered_initial.iter().map(|t| t.name.clone()).collect();
             if !names.is_empty() {
                 emit!(AgentEvent::Tools {
@@ -1551,6 +1573,45 @@ pub(crate) async fn run_inner(
             }
         }
 
+        // ── Stall detection: identical consecutive tool batches ──────────────
+        // Hash the (post-repair) requested calls. If the exact same batch repeats
+        // `max_repeated_tool_calls` times, we've stopped making progress — trip the
+        // guard so this turn's error guidance tells the model to give up retrying,
+        // and disable tools next turn to force a best-effort answer.
+        let stall_triggered = if max_repeated_tool_calls > 0 {
+            let mut parts: Vec<String> = calls
+                .iter()
+                .map(|c| format!("{}\u{1}{}", c.name, c.input))
+                .collect();
+            parts.sort();
+            let sig = stable_route_seed(&parts.join("\n")) as u64;
+            if Some(sig) == last_tool_sig {
+                repeated_tool_calls += 1;
+            } else {
+                last_tool_sig = Some(sig);
+                repeated_tool_calls = 1;
+            }
+            repeated_tool_calls >= max_repeated_tool_calls
+        } else {
+            false
+        };
+        if stall_triggered {
+            emit!(AgentEvent::Thinking {
+                run_id: run_id.clone(),
+                text: format!(
+                    "Same tool call repeated {}× with no progress — disabling tools and composing a best-effort answer",
+                    repeated_tool_calls
+                )
+            });
+            // One tool-free turn next, then finalize. A fresh model may summarize
+            // better than the one that kept retrying.
+            force_final_answer = true;
+            last_model = None;
+            // Reset so the forced summary turn (and anything after) starts clean.
+            repeated_tool_calls = 0;
+            last_tool_sig = None;
+        }
+
         // ── Execute internal vs external tools ───────────────────────────────
         let mut result_msgs = vec![];
 
@@ -1621,7 +1682,12 @@ pub(crate) async fn run_inner(
                     is_mutating: receipt_is_mutating(&name, &all_tools),
                 });
                 if has_error {
-                    let enriched = serde_json::json!({ "result": val, "guidance": format!("Tool '{}' returned an error. Review the error message, adjust your parameters, and try again.", name) });
+                    let guidance = if stall_triggered {
+                        "You have repeated this exact call several times without progress. Do NOT retry it. Tools are disabled for your next turn — write your best final answer to the user in plain text using what you already have, and clearly state what could not be completed and why.".to_string()
+                    } else {
+                        format!("Tool '{}' returned an error. Review the error message, adjust your parameters, and try again.", name)
+                    };
+                    let enriched = serde_json::json!({ "result": val, "guidance": guidance });
                     result_msgs.push(Message::tool_result(&id, enriched));
                 } else {
                     result_msgs.push(Message::tool_result(&id, val));
@@ -1755,10 +1821,15 @@ pub(crate) async fn run_inner(
                 }
 
                 if res.error.is_some() {
+                    let guidance = if stall_triggered {
+                        "You have repeated this exact call several times without progress. Do NOT retry it. Tools are disabled for your next turn — write your best final answer to the user in plain text using what you already have, and clearly state what could not be completed and why.".to_string()
+                    } else {
+                        format!("Tool '{}' failed. Check your parameters and try again with corrected input. Common issues: missing required fields, wrong field names, auth not set up.", res.tool_name)
+                    };
                     let enriched = serde_json::json!({
                         "error": res.error,
                         "output": res.output,
-                        "guidance": format!("Tool '{}' failed. Check your parameters and try again with corrected input. Common issues: missing required fields, wrong field names, auth not set up.", res.tool_name)
+                        "guidance": guidance
                     });
                     result_msgs.push(Message::tool_result(&res.tool_use_id, enriched));
                 } else {

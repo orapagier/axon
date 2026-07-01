@@ -5,6 +5,7 @@
 
 INSERT OR IGNORE INTO settings VALUES
     ('agent.max_iterations',        '20',    'int',    'Max agent loop iterations per task',            'agent',     datetime('now')),
+    ('agent.max_repeated_tool_calls','3',    'int',    'Stop retrying after this many identical consecutive tool calls; disables tools for one turn and returns a best-effort answer (0=off)', 'agent', datetime('now')),
     ('agent.max_parallel_tools',    '3',     'int',    'Max tools to run in parallel (keep low on small/shared-core hosts)', 'agent', datetime('now')),
     ('agent.tool_timeout_secs',     '30',    'int',    'Python tool subprocess timeout seconds',         'agent',     datetime('now')),
     ('agent.allow_tool_writing',    'true',  'bool',   'Allow agent to write temporary tools',           'agent',     datetime('now')),
