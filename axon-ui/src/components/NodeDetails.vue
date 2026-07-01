@@ -2927,6 +2927,29 @@ onUnmounted(() => {
   grid-column: 1 / -1;
   margin-bottom: 20px;
 }
+.resume-url-block {
+  background: rgba(129, 230, 217, 0.03);
+  border: 1px solid rgba(129, 230, 217, 0.1);
+  padding: 14px;
+  border-radius: 12px;
+  grid-column: 1 / -1;
+  margin-bottom: 20px;
+  display: block;
+}
+.resume-url-hint {
+  font-size: 11px;
+  color: var(--text-muted, rgba(148, 163, 184, 0.85));
+  margin: 6px 0 4px;
+  line-height: 1.4;
+}
+.resume-url-hint code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  background: rgba(99, 102, 241, 0.12);
+  color: #a5b4fc;
+  padding: 1px 5px;
+  border-radius: 4px;
+}
 .webhook-url-input-group {
   display: flex;
   gap: 8px;
