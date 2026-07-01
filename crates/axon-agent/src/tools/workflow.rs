@@ -1117,7 +1117,7 @@ fn resolve_value_scoped(
             return val;
         }
         // Fallback: full JS evaluation of whatever is inside {{ }}
-        if let Some(val) = evaluate_js_expression(expression, results) {
+        if let Some(val) = evaluate_js_expression(expression, results, run_id) {
             return val;
         }
     }
@@ -1161,7 +1161,7 @@ fn resolve_value_scoped(
     let result_cleanup = result.clone();
     for cap in RE_ANY.captures_iter(&result_cleanup) {
         let expression = cap[1].trim();
-        if let Some(val) = evaluate_js_expression(expression, results) {
+        if let Some(val) = evaluate_js_expression(expression, results, run_id) {
             let val_str = match &val {
                 Value::String(s) => s.clone(),
                 Value::Number(n) => {
