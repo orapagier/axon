@@ -232,6 +232,8 @@ async fn main() -> anyhow::Result<()> {
         axon::db::init(&conn).context("initialize database")?;
         // D1: upgrade any pre-KDF (v1) stored secrets to the v2 scheme in place.
         axon::crypto::reencrypt_legacy_secrets(&conn);
+        // D1: encrypt the credentials.data JSON blob at rest (was plaintext).
+        axon::crypto::encrypt_credentials_at_rest(&conn);
     }
     // Web Search Tool migration (after main connection is dropped)
     tracing::info!("Starting WebSearchTool migration...");
