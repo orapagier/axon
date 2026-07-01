@@ -1356,7 +1356,7 @@ export const NODE_TYPES = {
                 required: true,
                 placeholder: 'e.g. gpt-4o-mini',
                 displayOptions: { show: { operation: ['add', 'update', 'delete'] } },
-                hint: 'The unique name (primary key) of the model. For Add this creates it; for Update/Delete it selects which model to change. Supports {{ }} expressions.',
+                hint: 'The unique name (primary key) of the model. For Add, type a new name. For Update/Delete, pick an existing model from the searchable list (or type a name / {{ }} expression).',
             },
             {
                 displayName: 'Provider',

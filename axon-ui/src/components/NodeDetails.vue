@@ -34,6 +34,9 @@ const startWidth = ref(0)
 
 const credentials = ref([])
 const availableModels = ref([])
+// Every model by name (enabled AND disabled, no "(Auto-select)" entry) — the
+// Homeostasis node's Update/Delete picker needs to reach disabled models too.
+const availableModelNames = ref([])
 const availableTools = ref([])
 // Full workflow objects (id, name, nodes…) for the Execute Workflow node, minus
 // the current one. availableWorkflows / entry-trigger options derive from this.
@@ -64,6 +67,10 @@ onMounted(async () => {
     const mData = await get('/models')
     availableModels.value = (mData.models || []).filter(m => m.enabled).map(m => ({ name: m.name, value: m.name }))
     availableModels.value.unshift({ name: '(Auto-select)', value: '' })
+    availableModelNames.value = (mData.models || []).map(m => ({
+      name: m.enabled === false ? `${m.name} (disabled)` : m.name,
+      value: m.name,
+    }))
   } catch (e) {
     console.error('Failed to load models', e)
   }
@@ -934,6 +941,25 @@ const nodeDefinition = computed(() => {
     }
   }
   
+  // For the Homeostasis node, turn the Model Name field into a searchable
+  // picker of existing models when Updating/Deleting (you're selecting one),
+  // but leave it a free-text field for Add (you're naming a new one).
+  // allowCustomValue keeps literal/expression names possible either way.
+  if (type === 'homeostasis' && base.properties) {
+    const op = props.node.data.config?.operation
+    if (op === 'update' || op === 'delete') {
+      return {
+        ...base,
+        properties: base.properties.map(p =>
+          p.name === 'name'
+            ? { ...p, type: 'options', searchable: true, allowCustomValue: true, options: availableModelNames.value }
+            : p
+        ),
+      }
+    }
+    return base
+  }
+
   // For MCP nodes, merge dynamic properties from the selected tool's schema
   if (type.startsWith('mcp') && props.mcpDynamicProps) {
     const toolName = props.node.data.config?.tool_name
