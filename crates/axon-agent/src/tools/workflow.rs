@@ -3830,15 +3830,6 @@ impl WorkflowEngine {
                     }
                 }
             }
-            // The run is no longer waiting: drop any resume tokens so a late URL
-            // hit returns 410 rather than racing a finished run.
-            if let Ok(conn) = state.db.get() {
-                let _ = conn.execute(
-                    "DELETE FROM workflow_resume_tokens WHERE run_id = ?1",
-                    [&run_id],
-                );
-            }
-
             let completed: std::collections::HashSet<String> =
                 results.iter().map(|r| r.node_id.clone()).collect();
             let resume = ResumeState { completed, results };
