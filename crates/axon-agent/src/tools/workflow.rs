@@ -3993,8 +3993,9 @@ impl WorkflowEngine {
         let completed: std::collections::HashSet<String> =
             results.iter().map(|r| r.node_id.clone()).collect();
         // Serialized patched chain, used only to re-park if the queue is full:
-        // the token is already consumed, so a wait-forever run must fall back to
-        // the time poller (which reads node_results from the DB) to retry.
+        // the run was already claimed off 'waiting', so a wait-forever run must
+        // fall back to the time poller (which reads node_results from the DB) to
+        // retry once a slot frees up.
         let patched_json = serde_json::to_string(&results).unwrap_or_else(|_| "[]".to_string());
         let resume = ResumeState { completed, results };
 
