@@ -3016,6 +3016,8 @@ pub async fn test_credential(
         }
     };
 
+    // Blob is encrypted at rest; decrypt_key passes legacy plaintext through.
+    let data_str = crate::crypto::decrypt_key(&data_str);
     let data: Value = serde_json::from_str(&data_str).unwrap_or_else(|_| json!({}));
     // First non-empty string field among the given keys.
     let pick = |keys: &[&str]| -> Option<String> {
