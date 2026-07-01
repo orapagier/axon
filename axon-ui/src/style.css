@@ -4391,3 +4391,12 @@ select {
     box-shadow: none;
     cursor: not-allowed;
 }
+
+.btn-chat-send.is-stop {
+    background: linear-gradient(135deg, #ff8a80, #ff5a5f);
+    color: #1a0606;
+}
+
+.btn-chat-send.is-stop:not(:disabled):hover {
+    box-shadow: 0 12px 26px rgba(255, 90, 95, 0.34);
+}

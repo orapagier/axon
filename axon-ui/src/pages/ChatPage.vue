@@ -220,6 +220,25 @@ async function send() {
   }
 }
 
+// Abort the in-flight run: tell the backend to cancel it and unlock the input
+// immediately. Late token/done events are ignored because agentIdx is reset to
+// -1 (every message mutation in handleWsEvent is guarded by agentIdx >= 0).
+function stop() {
+  if (!disabled.value) return
+  wsSend({ type: 'cancel', session_id: SESSION_ID })
+  if (agentIdx >= 0) {
+    const m = messages.value[agentIdx]
+    m.thinking = false
+    m.status = ''
+    if (!m.text) m.text = 'Stopped.'
+    m.meta = m.meta ? `${m.meta} · stopped` : 'stopped'
+  }
+  currentRunId = null
+  agentIdx = -1
+  traceIdx = -1
+  disabled.value = false
+}
+
 function onKeydown(e) {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
@@ -228,6 +247,12 @@ function onKeydown(e) {
 }
 
 function onWindowKeydown(e) {
+  // Escape stops the current run while the chat page is visible.
+  if (e.key === 'Escape' && disabled.value && inputEl.value && inputEl.value.offsetParent !== null) {
+    e.preventDefault()
+    stop()
+    return
+  }
   const active = document.activeElement
   const typingElsewhere =
     active &&
@@ -345,11 +370,20 @@ watch(disabled, (newVal) => {
           placeholder="Message Axon..."
           rows="1"
         ></textarea>
-        <button class="btn-chat-send" @click="send" :disabled="disabled" title="Send (Enter)">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <button
+          class="btn-chat-send"
+          :class="{ 'is-stop': disabled }"
+          @click="disabled ? stop() : send()"
+          :disabled="!disabled && !input.trim()"
+          :title="disabled ? 'Stop (Esc)' : 'Send (Enter)'"
+        >
+          <svg v-if="!disabled" width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M22 2L11 13" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
             <path d="M22 2L15 22L11 13L2 9L22 2Z" fill="currentColor" opacity="0.4" />
             <path d="M22 2L15 22L11 13L2 9L22 2Z" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <rect x="6" y="6" width="12" height="12" rx="2.5" fill="currentColor" />
           </svg>
         </button>
       </div>
