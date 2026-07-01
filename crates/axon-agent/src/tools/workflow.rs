@@ -4843,7 +4843,7 @@ mod resolve_tests {
         // A node scoped to the Instagram branch sees no permalink -> empty,
         // and never silently borrows the Facebook node's value.
         let ig_anc: HashSet<String> = ["node_ig".to_string()].into_iter().collect();
-        let out_ig = resolve_value_scoped(text, &m, Some(&ig_anc));
+        let out_ig = resolve_value_scoped(text, &m, Some(&ig_anc), "");
         assert_eq!(out_ig, Value::String("view it at ".to_string()));
     }
 
