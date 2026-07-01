@@ -4837,7 +4837,7 @@ mod resolve_tests {
 
         // The Facebook-branch Telegram node's only upstream is the Facebook node.
         let fb_anc: HashSet<String> = ["node_fb".to_string()].into_iter().collect();
-        let out = resolve_value_scoped(text, &m, Some(&fb_anc));
+        let out = resolve_value_scoped(text, &m, Some(&fb_anc), "");
         assert_eq!(out, Value::String("view it at https://fb/p/2".to_string()));
 
         // A node scoped to the Instagram branch sees no permalink -> empty,
