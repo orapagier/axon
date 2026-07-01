@@ -3024,10 +3024,10 @@ impl WorkflowEngine {
                 }
 
                 // Compute the wake deadline. A timed Wait anchors it to the suspend
-                // instant. A webhook/approval Wait (C1) instead parks until a
-                // tokenized resume URL is hit: mint + store the token, surface the
-                // links on the node output, and use any timeout as the deadline
-                // (NULL deadline = wait forever, only a resume URL wakes it).
+                // instant. A webhook/approval Wait (C1) instead parks until an
+                // external caller hits its node+run-scoped resume URL; any timeout
+                // becomes the deadline (NULL = wait forever, only a resume URL
+                // wakes it).
                 let resume_at_db: Option<String> = if suspend_mode == "webhook"
                     || suspend_mode == "approval"
                 {
