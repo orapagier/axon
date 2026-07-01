@@ -4014,7 +4014,7 @@ impl WorkflowEngine {
                     // Queue full: persist the patched chain and re-park on a
                     // now-deadline so the time poller retries — the consumed token
                     // can't, and a wait-forever run would otherwise stick.
-                    tracing::warn!("Token resume of {} deferred: run queue full", rid);
+                    tracing::warn!("Resume of {} deferred: run queue full", rid);
                     if let Ok(conn) = s.db.get() {
                         let _ = conn.execute(
                             "UPDATE workflow_runs SET status = 'waiting', node_results = ?1, \
