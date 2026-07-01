@@ -232,6 +232,52 @@ pub fn reencrypt_legacy_secrets(conn: &rusqlite::Connection) -> usize {
     upgraded
 }
 
+/// One-shot boot upgrade for the `credentials` table, whose `data` column holds
+/// a JSON object of secret fields that was historically stored **in plaintext**.
+///
+/// Unlike [`reencrypt_legacy_secrets`], an untagged value here is a genuine
+/// plaintext blob (this column was never previously encrypted), so it is
+/// encrypted rather than skipped. Idempotent: rows already carrying the `v2:`
+/// tag are left alone, so re-running on every boot is a no-op after the first.
+/// The read path ([`decrypt_key`]) still accepts either form, so this migration
+/// is not required for correctness — it just removes plaintext at rest.
+pub fn encrypt_credentials_at_rest(conn: &rusqlite::Connection) -> usize {
+    let rows: Vec<(String, String)> = match conn.prepare(&format!(
+        "SELECT id, data FROM credentials \
+         WHERE data IS NOT NULL AND data != '' AND data NOT LIKE '{V2_PREFIX}%'"
+    )) {
+        Ok(mut stmt) => stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .and_then(|it| it.collect::<Result<Vec<_>, _>>())
+            .unwrap_or_default(),
+        // Table absent on a partially-migrated DB — nothing to do.
+        Err(_) => return 0,
+    };
+
+    let mut encrypted = 0usize;
+    for (id, data) in rows {
+        let ciphertext = encrypt_key(&data);
+        // encrypt_key only returns "" on the (effectively impossible) AEAD
+        // failure; never overwrite a real blob with an empty one.
+        if ciphertext.is_empty() {
+            tracing::warn!("skipping credential {id}: encryption produced an empty value");
+            continue;
+        }
+        match conn.execute(
+            "UPDATE credentials SET data = ?1 WHERE id = ?2",
+            rusqlite::params![ciphertext, id],
+        ) {
+            Ok(_) => encrypted += 1,
+            Err(e) => tracing::warn!("encrypt credential {id} at rest failed: {e}"),
+        }
+    }
+
+    if encrypted > 0 {
+        tracing::info!("Encrypted {encrypted} plaintext credential blob(s) at rest");
+    }
+    encrypted
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
