@@ -1079,71 +1079,97 @@ const FAILURE_CATEGORIES: &[&str] = &[
     "error",
 ];
 
-/// Map a probe's error message to a coarse failure category. The probe only has
-/// the provider's error *string* (each provider formats its own — see
-/// `anthropic.rs` / `openai_compat.rs`), so classification is substring matching
-/// on a lowercased copy, ordered most-specific first. The raw error is preserved
-/// on the entry regardless, so this only adds a grouping key, it never hides
-/// detail. Anything unrecognized falls through to `error`.
+/// Map a probe's error message to a fixed failure category (a `FAILURE_CATEGORIES`
+/// member). The probe only has the provider's error *string* — each provider
+/// formats its own (see `anthropic.rs` / `openai_compat.rs`), and both frame HTTP
+/// failures with the reason phrase ("401 Unauthorized", "402 Payment Required", …),
+/// so we match on those phrases rather than the bare status number: a stray "402"
+/// inside a 404's request-id can't misfile it. Matching is case-insensitive
+/// substring, ordered most-specific first. The raw error is preserved on the entry
+/// regardless, so this only adds a grouping key — it never hides detail. Anything
+/// unrecognized falls through to `error`.
 fn classify_health_error(err: &str) -> &'static str {
     let e = err.to_ascii_lowercase();
 
-    // 429 / throttling. Providers prefix these with "rate limit"; Gemini reports
-    // the same condition as an exceeded quota.
-    if e.contains("rate limit") || e.contains("429") || e.contains("too many requests") {
-        return "rate_limited";
-    }
-    if e.contains("quota") || e.contains("insufficient_quota") || e.contains("billing") {
-        return "quota_exceeded";
-    }
     // Local prechecks from health_check() above — a config problem, no round-trip
-    // was ever made.
+    // was ever made. These strings are ours and unambiguous, so match them first.
     if e.contains("no api key after resolution")
         || e.contains("unresolved api key")
         || e.contains("no model_id")
     {
         return "misconfigured";
     }
-    // Bad or unauthorized credentials (401/403).
-    if e.contains("401")
-        || e.contains("unauthorized")
+    // 429 / throttling. Both providers frame these as "rate limit: …"; Gemini
+    // surfaces the same as a RESOURCE_EXHAUSTED quota. Checked before the billing
+    // buckets because free-tier 429s often also nag about adding credits.
+    if e.contains("rate limit")
+        || e.contains("too many requests")
+        || e.contains("resource_exhausted")
+    {
+        return "rate_limited";
+    }
+    // 402 / out of credits or a key's spend cap reached — the key is valid, the
+    // account just can't pay for the call.
+    if e.contains("payment required")
+        || e.contains("insufficient credits")
+        || e.contains("requires more credits")
+        || e.contains("key limit exceeded")
+    {
+        return "payment_required";
+    }
+    // 401 / bad or missing credentials. "valid api key" also catches providers
+    // (Gemini) that report a bad key as a 400 INVALID_ARGUMENT "pass a valid API key".
+    if e.contains("unauthorized")
+        || e.contains("invalid token")
         || e.contains("invalid api key")
         || e.contains("invalid_api_key")
+        || e.contains("valid api key")
         || e.contains("authentication")
-        || e.contains("403")
-        || e.contains("forbidden")
-        || e.contains("permission")
     {
         return "invalid_key";
     }
-    // Wrong model_id or base_url path (404).
-    if e.contains("404") || e.contains("not found") || e.contains("does not exist") {
+    // 403 / authenticated but not permitted to use this model.
+    if e.contains("forbidden")
+        || e.contains("not allowed")
+        || e.contains("permission")
+        || e.contains("access denied")
+    {
+        return "forbidden";
+    }
+    // 404 / wrong model_id or base_url, or a model that's been retired.
+    if e.contains("not found")
+        || e.contains("no endpoints found")
+        || e.contains("does not exist")
+        || e.contains("no longer available")
+    {
         return "not_found";
     }
-    // Malformed request / unsupported parameter (400).
-    if e.contains("400") || e.contains("bad request") || e.contains("unsupported") {
+    // 400 / malformed request or unsupported parameter.
+    if e.contains("bad request") || e.contains("unsupported") || e.contains("invalid_argument") {
         return "bad_request";
     }
-    // Provider-side outage (5xx / overloaded).
-    if e.contains("500")
-        || e.contains("502")
-        || e.contains("503")
-        || e.contains("529")
+    // 5xx / provider-side outage. "529" is Anthropic's non-standard overload code,
+    // which has no reason phrase to match, so keep the number here.
+    if e.contains("internal server error")
+        || e.contains("service unavailable")
+        || e.contains("bad gateway")
+        || e.contains("gateway timeout")
         || e.contains("overloaded")
-        || e.contains("internal server error")
+        || e.contains("529")
     {
         return "server_error";
     }
     // Request made but no timely response.
-    if e.contains("timeout") || e.contains("timed out") || e.contains("deadline") {
+    if e.contains("timed out") || e.contains("timeout") || e.contains("deadline") {
         return "timeout";
     }
-    // Never reached the host (DNS / connect / TLS).
+    // Never reached the host (DNS / connect / TLS transport failure).
     if e.contains("dns")
-        || e.contains("connect")
-        || e.contains("connection")
-        || e.contains("unreachable")
         || e.contains("failed to lookup")
+        || e.contains("trying to connect")
+        || e.contains("connection refused")
+        || e.contains("connection reset")
+        || e.contains("unreachable")
     {
         return "unreachable";
     }
