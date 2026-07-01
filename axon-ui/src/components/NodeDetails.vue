@@ -377,6 +377,37 @@ async function copyGithubWebhookUrl() {
   }
 }
 
+// C1: run-scoped resume links for human-in-the-loop nodes (Wait in "webhook"
+// mode, and Approval). Unlike the trigger URL, the path carries BOTH the node id
+// and the run id — the run id (an unguessable UUID) scopes the wake to one run so
+// a leaked link can't touch any other run and dies once that run resumes. The run
+// id only exists at runtime, so the sidebar hands you a copy-paste template ending
+// in the `$execution.runId` expression: drop it into an UPSTREAM notification node
+// (e.g. Telegram) and it resolves to the live run when the message is sent. The
+// origin is built in the browser, so it's always a full URL.
+const runIdToken = '{{ $execution.runId }}'
+const isWaitWebhook = computed(
+  () => props.node.data.node_type === 'wait' && props.node.data.config?.mode === 'webhook'
+)
+const isApproval = computed(() => props.node.data.node_type === 'approval')
+const resumeUrl = computed(
+  () => `${window.location.origin}/webhook/resume/${props.node.id}/${runIdToken}`
+)
+const approveUrl = computed(
+  () => `${window.location.origin}/webhook/approve/${props.node.id}/${runIdToken}`
+)
+const rejectUrl = computed(
+  () => `${window.location.origin}/webhook/reject/${props.node.id}/${runIdToken}`
+)
+
+async function copyText(t) {
+  try {
+    await navigator.clipboard.writeText(t)
+  } catch (err) {
+    console.error('Failed to copy', err)
+  }
+}
+
 // Persist a settings toggle immediately. The settings checkboxes bind directly
 // to node.data via v-model, so the in-memory state updates instantly — but
 // without emitting save here the change never reaches the backend, which is why
