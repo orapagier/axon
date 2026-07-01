@@ -1397,6 +1397,7 @@ fn interpolate_value(
     val: &Value,
     results: &std::collections::HashMap<String, NodeResult>,
     ancestors: Option<&std::collections::HashSet<String>>,
+    run_id: &str,
 ) -> Value {
     match val {
         Value::String(s) => {
@@ -1404,16 +1405,16 @@ fn interpolate_value(
             // try_parse_json_value — that caused double-parsing where strings
             // like "123" became numbers, "true" became bools, and comma-
             // containing strings became arrays.
-            resolve_value_scoped(s, results, ancestors)
+            resolve_value_scoped(s, results, ancestors, run_id)
         }
         Value::Object(map) => Value::Object(
             map.iter()
-                .map(|(k, v)| (k.clone(), interpolate_value(v, results, ancestors)))
+                .map(|(k, v)| (k.clone(), interpolate_value(v, results, ancestors, run_id)))
                 .collect(),
         ),
         Value::Array(arr) => Value::Array(
             arr.iter()
-                .map(|v| interpolate_value(v, results, ancestors))
+                .map(|v| interpolate_value(v, results, ancestors, run_id))
                 .collect(),
         ),
         other => other.clone(),
