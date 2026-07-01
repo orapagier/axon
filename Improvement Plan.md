@@ -112,7 +112,7 @@ Ordered by leverage ÷ risk. Each milestone is independently shippable.
 > n8n migrator reaches for now exists in Axon.
 
 ### Milestone D — "Polish that closes the feel gap"
-- D1. **Credential hardening** — ✅ done (SHA-256 KDF in `crypto.rs`, `v2:`-tagged ciphertext, fail-closed boot guard `validate_master_key` unless `AXON_DEV=1`, dual-key backward-compatible `decrypt_key` with no plaintext-on-failure leak for v2, in-place `reencrypt_legacy_secrets` boot upgrade of models/ssh/mcp secrets, `POST /api/credentials/:id/test` + Services page Test button)
+- D1. **Credential hardening** — ✅ done (SHA-256 KDF in `crypto.rs`, `v2:`-tagged ciphertext, fail-closed boot guard `validate_master_key` unless `AXON_DEV=1`, dual-key backward-compatible `decrypt_key` with no plaintext-on-failure leak for v2, in-place `reencrypt_legacy_secrets` boot upgrade of models/ssh/mcp secrets, **`credentials.data` blob encrypted at rest** via `encrypt_credentials_at_rest` + symmetric decrypt across all read seams, `POST /api/credentials/:id/test` + Services page Test button)
 - D2. **Expression helper library** — ✅ done (native `$jmespath(obj, expr)` via the `jmespath` crate in both the Code node and the `{{ }}` evaluator, deny-by-default `$env` gated on the `AXON_EXPR_ENV` allowlist with `AXON_MASTER_KEY` hard-blocked, `$workflow` id, USER_GUIDE §12.1 helper reference + n8n→Axon cheat sheet)
 
 > **Milestone D complete.** Neither item needed a migration: D1 is code-only
