@@ -3022,7 +3022,12 @@ impl WorkflowEngine {
                 let resume_at_db: Option<String> = if suspend_mode == "webhook"
                     || suspend_mode == "approval"
                 {
-                    let token = uuid::Uuid::new_v4().simple().to_string();
+                    // No token minted: the node id addresses the parked node and
+                    // the (unguessable UUIDv4) run id scopes + secures the wake, so
+                    // a leaked link can't touch any other run and dies the instant
+                    // this one resumes. `resume_by_node` locates the run via
+                    // resume_node_id. A timeout still mirrors into resume_at so the
+                    // poller can fire the timeout branch; NULL = wait forever.
                     let ttl = match marker.get("expires_seconds").and_then(|v| v.as_f64()) {
                         Some(s) if s > 0.0 => s,
                         _ => state.settings.workflow_resume_token_default_ttl_secs() as f64,
@@ -3033,22 +3038,6 @@ impl WorkflowEngine {
                         .format("%Y-%m-%dT%H:%M:%SZ")
                         .to_string()
                     });
-                    {
-                        let conn = state.db.get()?;
-                        conn.execute(
-                            "INSERT INTO workflow_resume_tokens \
-                             (token, run_id, workflow_id, node_id, mode, expires_at) \
-                             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                            rusqlite::params![
-                                token,
-                                run_id,
-                                workflow_id,
-                                current_id,
-                                suspend_mode,
-                                expires_at
-                            ],
-                        )?;
-                    }
                     let base = state.settings.workflow_public_base_url();
                     let link = |p: &str| {
                         if base.is_empty() {
@@ -3057,14 +3046,17 @@ impl WorkflowEngine {
                             format!("{base}{p}")
                         }
                     };
-                    let resume_path = format!("/webhook/resume/{token}");
+                    // Both ids are known now, so the links surfaced on the node
+                    // output are fully run-scoped — what a dashboard operator
+                    // clicks. Automation that notifies from an UPSTREAM node builds
+                    // the same URL from the sidebar template + `{{ $execution.runId }}`.
+                    let resume_path = format!("/webhook/resume/{current_id}/{run_id}");
                     if let Some(obj) = nr.output.as_object_mut() {
-                        obj.insert("resume_token".into(), json!(token));
                         obj.insert("resume_path".into(), json!(resume_path));
                         obj.insert("resume_url".into(), json!(link(&resume_path)));
                         if suspend_mode == "approval" {
-                            let approve_path = format!("/webhook/approve/{token}");
-                            let reject_path = format!("/webhook/reject/{token}");
+                            let approve_path = format!("/webhook/approve/{current_id}/{run_id}");
+                            let reject_path = format!("/webhook/reject/{current_id}/{run_id}");
                             obj.insert("approve_path".into(), json!(approve_path));
                             obj.insert("approve_url".into(), json!(link(&approve_path)));
                             obj.insert("reject_path".into(), json!(reject_path));
