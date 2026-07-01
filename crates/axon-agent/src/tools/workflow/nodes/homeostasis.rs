@@ -24,6 +24,7 @@
 //! every model and grouping them by real outcome (healthy / unhealthy).
 
 use crate::state::AppState;
+use rusqlite::OptionalExtension;
 use serde_json::{json, Value};
 
 pub(crate) async fn execute(config: &Value, state: &AppState) -> Result<Value, String> {
@@ -88,13 +89,37 @@ pub(crate) async fn execute(config: &Value, state: &AppState) -> Result<Value, S
                     .to_string();
                 json!({ "ok": true, "resource": "model", "operation": "add", "name": name })
             }
+            // Upsert: patch the row when the name already exists, otherwise
+            // insert it. This lets a workflow loop register a batch of models
+            // idempotently — a re-run refreshes existing rows instead of
+            // failing on the `name` primary key, and a name that isn't in the
+            // DB yet gets added rather than silently updating zero rows.
             "update" => {
                 let name = trimmed_field(config, "name");
                 if name.is_empty() {
-                    return Err("Homeostasis Update requires a model Name".into());
+                    return Err("Homeostasis Upsert requires a model Name".into());
                 }
                 let mut patch = build_model_payload(config);
-                crate::dashboard::api::apply_update_model(&conn, &name, &patch)?;
+                let exists = conn
+                    .query_row(
+                        "SELECT 1 FROM models WHERE name=?1",
+                        rusqlite::params![name],
+                        |_| Ok(()),
+                    )
+                    .optional()
+                    .map_err(|e| format!("DB lookup: {e}"))?
+                    .is_some();
+                let action = if exists {
+                    crate::dashboard::api::apply_update_model(&conn, &name, &patch)?;
+                    "update"
+                } else {
+                    // New model: Add needs name + provider, which
+                    // build_model_payload already carries when set. A blank
+                    // provider errors here — the router can't route a
+                    // providerless model, so that's the right failure.
+                    crate::dashboard::api::apply_add_model(&conn, &patch)?;
+                    "add"
+                };
                 reload_models = Some(crate::config::load_models_from_db(&conn).unwrap_or_default());
                 // Echo which fields changed; redact any key so it never leaves the node.
                 if let Some(obj) = patch.as_object_mut() {
@@ -103,7 +128,7 @@ pub(crate) async fn execute(config: &Value, state: &AppState) -> Result<Value, S
                         obj.insert("api_key".into(), json!("***"));
                     }
                 }
-                json!({ "ok": true, "resource": "model", "operation": "update", "name": name, "changed": patch })
+                json!({ "ok": true, "resource": "model", "operation": "upsert", "action": action, "name": name, "changed": patch })
             }
             "delete" => {
                 let name = trimmed_field(config, "name");

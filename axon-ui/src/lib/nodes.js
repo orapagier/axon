@@ -1336,17 +1336,17 @@ export const NODE_TYPES = {
                 default: 'list',
                 options: [
                     { name: 'Add', value: 'add' },
-                    { name: 'Update', value: 'update' },
+                    { name: 'Upsert (Update or Add)', value: 'update' },
                     { name: 'Delete', value: 'delete' },
                     { name: 'List', value: 'list' },
                     { name: 'Health Check', value: 'health_check' },
                 ],
             },
             {
-                displayName: 'Update fills only what you set',
+                displayName: 'Upsert: update if the name exists, else add',
                 name: 'homeostasis_update_hint',
                 type: 'notice',
-                default: 'Only the fields you fill in are changed — leave a field blank to keep its current value. To set a key, type it here; leaving Key blank keeps the existing one.',
+                default: 'If a model with this Name exists it is updated (only the fields you fill in change — blank = keep current). If it does not exist it is added, which requires Name + Provider. To set a key type it here; leaving Key blank keeps the existing one.',
                 displayOptions: { show: { operation: ['update'] } },
             },
             {
@@ -1357,7 +1357,7 @@ export const NODE_TYPES = {
                 required: true,
                 placeholder: 'e.g. gpt-4o-mini',
                 displayOptions: { show: { operation: ['add', 'update', 'delete'] } },
-                hint: 'The unique name (primary key) of the model. For Add, type a new name. For Update/Delete, pick an existing model from the searchable list (or type a name / {{ }} expression).',
+                hint: 'The unique name (primary key) of the model. For Add, type a new name. For Upsert, an existing name is updated and a new one is added (needs Provider). For Delete, pick an existing model. Pick from the searchable list or type a name / {{ }} expression.',
             },
             {
                 displayName: 'Provider',
