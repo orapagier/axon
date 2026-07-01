@@ -1200,45 +1200,101 @@ pub async fn update_models(router: &SharedRouter, mut new_models: Vec<ModelRecor
 
 #[cfg(test)]
 mod tests {
-    use super::classify_health_error;
+    use super::{classify_health_error, FAILURE_CATEGORIES};
+
+    // Fixtures are verbatim (trimmed) provider errors seen in a real Health Check
+    // run, so the classifier is pinned to the wording it actually receives.
 
     #[test]
-    fn classifies_real_provider_errors() {
-        // Anthropic / openai_compat 429 wording.
+    fn classifies_rate_limits() {
+        // Both providers frame a 429 as "rate limit: …".
         assert_eq!(
-            classify_health_error("rate limit [retry-after:30]: too many requests"),
+            classify_health_error("rate limit: {\"status\":429,\"title\":\"Too Many Requests\"}"),
             "rate_limited"
         );
-        // Gemini reports throttling as an exceeded quota, not a 429.
+        // Gemini's quota-exhausted 429, still framed with the "rate limit" prefix.
         assert_eq!(
-            classify_health_error("provider error 429 at https://…: RESOURCE_EXHAUSTED: quota"),
+            classify_health_error(
+                "rate limit: [{ \"error\": { \"code\": 429, \"message\": \"You exceeded your current quota\", \"status\": \"RESOURCE_EXHAUSTED\" }}]"
+            ),
             "rate_limited"
         );
+        // Free-tier 429 that also nags about credits must stay rate_limited, not payment.
         assert_eq!(
-            classify_health_error("provider error 403 at https://…: insufficient_quota"),
-            "quota_exceeded"
+            classify_health_error(
+                "rate limit: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429}}"
+            ),
+            "rate_limited"
         );
-        // Bad key: both Anthropic ("anthropic 401 …") and openai_compat framing.
+    }
+
+    #[test]
+    fn classifies_billing_and_credentials() {
         assert_eq!(
-            classify_health_error("anthropic 401 Unauthorized: invalid x-api-key"),
+            classify_health_error(
+                "provider error 402 Payment Required at https://x/v1: {\"error\":{\"message\":\"Insufficient credits. This account never purchased credits.\",\"code\":402}}"
+            ),
+            "payment_required"
+        );
+        // A 403 that is really a spend cap, not an access problem.
+        assert_eq!(
+            classify_health_error(
+                "provider error 403 Forbidden at https://x/v1: {\"error\":{\"message\":\"Key limit exceeded (total limit).\",\"code\":403}}"
+            ),
+            "payment_required"
+        );
+        assert_eq!(
+            classify_health_error(
+                "provider error 401 Unauthorized at https://x/v1: {\"error\":{\"message\":\"Invalid token\"}}"
+            ),
             "invalid_key"
         );
+        // Gemini reports a bad key as a 400 INVALID_ARGUMENT, not a 401.
         assert_eq!(
-            classify_health_error("provider error 401 Unauthorized at https://…: invalid_api_key"),
+            classify_health_error(
+                "provider error 400 Bad Request at https://.../openai/chat/completions: [{ \"error\": { \"code\": 400, \"message\": \"Please pass a valid API key\", \"status\": \"INVALID_ARGUMENT\" }}]"
+            ),
             "invalid_key"
         );
-        // Wrong model_id / base_url path.
+        // A genuine access denial stays distinct from a bad key.
         assert_eq!(
-            classify_health_error("provider error 404 Not Found at https://…: model not found"),
+            classify_health_error(
+                "provider error 403 Forbidden at https://x/v1: {\"error\":{\"message\":\"You are not allowed to sample from this model\"}}"
+            ),
+            "forbidden"
+        );
+    }
+
+    #[test]
+    fn classifies_availability_and_requests() {
+        assert_eq!(
+            classify_health_error(
+                "provider error 404 Not Found at https://x/v1: {\"error\":{\"message\":\"No endpoints found for baidu/cobuddy:free.\",\"code\":404}}"
+            ),
             "not_found"
         );
         assert_eq!(
-            classify_health_error("provider error 400 Bad Request at https://…: unsupported param"),
-            "bad_request"
+            classify_health_error(
+                "provider error 404 Not Found at https://x/v1: {\"error\":{\"message\":\"Ling-2.6-1T is no longer available as a free model.\",\"code\":404}}"
+            ),
+            "not_found"
+        );
+        // A 503 whose body mentions model_not_found (underscore) is still an outage.
+        assert_eq!(
+            classify_health_error(
+                "provider error 503 Service Unavailable at https://x/v1: {\"error\":{\"code\":\"model_not_found\",\"message\":\"No available channel for model claude-opus-4-7\"}}"
+            ),
+            "server_error"
         );
         assert_eq!(
-            classify_health_error("anthropic 529 Overloaded: overloaded_error"),
+            classify_health_error("anthropic 529 Overloaded: {\"error\":\"overloaded_error\"}"),
             "server_error"
+        );
+        assert_eq!(
+            classify_health_error(
+                "provider error 400 Bad Request at https://x/v1: unsupported parameter"
+            ),
+            "bad_request"
         );
     }
 
@@ -1251,12 +1307,14 @@ mod tests {
             "misconfigured"
         );
         assert_eq!(
-            classify_health_error("unresolved API key placeholder ${OPENAI_KEY} (check .env)"),
+            classify_health_error(
+                "unresolved API key placeholder ${CEREBRAS_API_KEY_ORAPAGIER} (check .env / server env)"
+            ),
             "misconfigured"
         );
         assert_eq!(classify_health_error("model has no model_id"), "misconfigured");
         assert_eq!(
-            classify_health_error("HTTP to https://…: operation timed out"),
+            classify_health_error("HTTP to https://x/v1: operation timed out"),
             "timeout"
         );
         assert_eq!(
@@ -1266,5 +1324,31 @@ mod tests {
             "unreachable"
         );
         assert_eq!(classify_health_error("something totally unexpected"), "error");
+    }
+
+    #[test]
+    fn every_category_is_a_declared_bucket() {
+        // Guards the invariant health_check() relies on: classify_health_error only
+        // ever returns a FAILURE_CATEGORIES member, so every result lands in a seeded
+        // bucket. Sample the fixtures above plus the fallback.
+        for err in [
+            "rate limit: too many requests",
+            "provider error 402 Payment Required: insufficient credits",
+            "provider error 401 Unauthorized: invalid token",
+            "provider error 403 Forbidden: you are not allowed",
+            "provider error 404 Not Found: no endpoints found",
+            "provider error 400 Bad Request: unsupported",
+            "provider error 503 Service Unavailable",
+            "operation timed out",
+            "error trying to connect: dns error",
+            "unresolved API key placeholder ${X}",
+            "something totally unexpected",
+        ] {
+            let cat = classify_health_error(err);
+            assert!(
+                FAILURE_CATEGORIES.contains(&cat),
+                "category {cat:?} for {err:?} is not in FAILURE_CATEGORIES"
+            );
+        }
     }
 }
