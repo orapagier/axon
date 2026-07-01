@@ -864,6 +864,7 @@ async fn enrich_gmail_emails(state: &AppState, emails: Vec<Value>, download: boo
 fn evaluate_js_expression(
     expression: &str,
     results: &std::collections::HashMap<String, NodeResult>,
+    run_id: &str,
 ) -> Option<Value> {
     let mut context = boa_engine::Context::default();
     register_expression_natives(&mut context);
