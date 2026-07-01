@@ -123,8 +123,13 @@ Ordered by leverage ÷ risk. Each milestone is independently shippable.
 > transparently upgraded to `v2:` on boot; genuine plaintext-at-rest is returned
 > as-is. New behavior is fail-closed — a missing master key aborts startup, and a
 > `v2:` value that won't decrypt resolves to empty ("re-enter") rather than leaking
-> ciphertext. `$env` is stricter than n8n (opt-in per variable). Covered by 6 crypto
-> unit tests + 2 expression-helper tests; full lib suite (130 tests) green.
+> ciphertext. `$env` is stricter than n8n (opt-in per variable). The `credentials`
+> table (previously plaintext JSON) is now encrypted whole-blob at both write seams
+> (`upsert_credential`, the Facebook OAuth callback) and decrypted at all five read
+> seams (`interpolate_config`, agent credential merge, the FB webhook page match,
+> `test_credential`); existing plaintext rows are encrypted in place on first boot
+> and read transparently until then. Covered by 7 crypto
+> unit tests + 2 expression-helper tests; full lib suite (131 tests) green.
 
 ---
 
