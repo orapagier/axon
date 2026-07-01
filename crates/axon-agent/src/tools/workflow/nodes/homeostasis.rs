@@ -13,6 +13,10 @@
 //! `build_model_payload`, which keeps only fields the user actually set: for Add
 //! the omitted ones fall back to the helper's defaults, and for Update they mean
 //! "leave unchanged". Secrets are never echoed back (List omits `api_key`).
+//!
+//! List is special: it reports the LIVE router snapshot (the same health view as
+//! `/api/models`) rather than the `models` table, so each row also carries the
+//! model's runtime `status`, cooldown reset and error counts — not just config.
 
 use crate::state::AppState;
 use serde_json::{json, Value};
@@ -30,10 +34,25 @@ pub(crate) async fn execute(config: &Value, state: &AppState) -> Result<Value, S
         .and_then(|v| v.as_str())
         .unwrap_or("list");
 
+    // List reports the LIVE router view — per-model status, cooldown resets and
+    // error counts — not just static config, so a workflow can see which models
+    // are healthy, rate-limited or parked. Sourced from the router snapshot (the
+    // same data the dashboard's /api/models shows); api_key is never included.
+    // Handled before the DB block below because get_status is async and
+    // rusqlite's Connection must not be held across an await.
+    if operation == "list" {
+        let models = crate::router::get_status(&state.router).await;
+        let count = models.len();
+        return Ok(json!({
+            "ok": true, "resource": "model", "operation": "list",
+            "count": count, "models": models
+        }));
+    }
+
     // Do every DB touch synchronously and drop the connection before awaiting
     // the router reload: rusqlite's Connection is !Sync and must not be held
     // across an `.await` (the workflow future has to stay Send for tokio::spawn).
-    let mut reload_models: Option<Vec<crate::providers::types::ModelRecord>> = None;
+    let reload_models: Option<Vec<crate::providers::types::ModelRecord>>;
     let result = {
         let conn = state.db.get().map_err(|e| format!("DB pool: {e}"))?;
         match operation {
@@ -73,11 +92,6 @@ pub(crate) async fn execute(config: &Value, state: &AppState) -> Result<Value, S
                 let deleted = crate::dashboard::api::apply_delete_model(&conn, &name)?;
                 reload_models = Some(crate::config::load_models_from_db(&conn).unwrap_or_default());
                 json!({ "ok": true, "resource": "model", "operation": "delete", "name": name, "deleted": deleted })
-            }
-            "list" => {
-                let models = crate::dashboard::api::list_models_public(&conn)?;
-                let count = models.len();
-                json!({ "ok": true, "resource": "model", "operation": "list", "count": count, "models": models })
             }
             other => return Err(format!("Homeostasis: unknown operation '{other}'")),
         }

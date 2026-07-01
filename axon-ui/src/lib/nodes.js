@@ -1464,10 +1464,10 @@ export const NODE_TYPES = {
                 hint: 'Toggle the model on or off. New models added via this node start enabled.',
             },
             {
-                displayName: 'List returns non-secret fields only',
+                displayName: 'List returns each model’s live health',
                 name: 'homeostasis_list_hint',
                 type: 'notice',
-                default: 'Outputs { count, models: [{ name, provider, model_id, base_url, priority, max_tokens, role, enabled }] }. API keys are never included.',
+                default: 'Outputs { count, models: [{ name, provider, model_id, role, priority, enabled, status, rate_limit_reset_at, consecutive_errors, consecutive_rate_limits, total_calls, … }] } — the live router view (status = available / rate_limited / unavailable). API keys are never included.',
                 displayOptions: { show: { operation: ['list'] } },
             },
         ],

@@ -686,37 +686,6 @@ pub(crate) fn apply_delete_model(conn: &rusqlite::Connection, name: &str) -> Res
         .map_err(|e| e.to_string())
 }
 
-/// List models with non-secret columns only — never returns `api_key`. Used by
-/// the Homeostasis node's List operation.
-pub(crate) fn list_models_public(conn: &rusqlite::Connection) -> Result<Vec<Value>, String> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT name, provider, model_id, base_url, timeout_secs, priority, max_tokens, enabled, role \
-             FROM models ORDER BY priority, name",
-        )
-        .map_err(|e| e.to_string())?;
-    let rows = stmt
-        .query_map([], |r| {
-            Ok(json!({
-                "name": r.get::<_, String>(0)?,
-                "provider": r.get::<_, String>(1)?,
-                "model_id": r.get::<_, Option<String>>(2)?,
-                "base_url": r.get::<_, Option<String>>(3)?,
-                "timeout_secs": r.get::<_, Option<i64>>(4)?,
-                "priority": r.get::<_, Option<i64>>(5)?,
-                "max_tokens": r.get::<_, Option<i64>>(6)?,
-                "enabled": r.get::<_, i32>(7)? != 0,
-                "role": r.get::<_, Option<String>>(8)?,
-            }))
-        })
-        .map_err(|e| e.to_string())?;
-    let mut out = Vec::new();
-    for row in rows {
-        out.push(row.map_err(|e| e.to_string())?);
-    }
-    Ok(out)
-}
-
 pub async fn add_model(State(state): State<AppState>, Json(m): Json<Value>) -> Json<Value> {
     if let Ok(conn) = state.db.get() {
         if let Err(e) = apply_add_model(&conn, &m) {
