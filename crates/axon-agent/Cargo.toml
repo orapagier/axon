@@ -57,6 +57,7 @@ dirs = "5.0"
 metrics = "0.24"
 metrics-exporter-prometheus = { version = "0.16", default-features = false }
 boa_engine = "0.20.0"
+jmespath = "0.5"
 cron = "0.16.0"
 image_processor  = { path = "../axon-image" }
 image = "0.25"

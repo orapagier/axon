@@ -190,6 +190,13 @@ async fn main() -> anyhow::Result<()> {
     }
 
     tracing::info!("AXON v{} starting...", env!("CARGO_PKG_VERSION"));
+
+    // D1: fail closed if secrets would be protected only by the public dev key.
+    if let Err(e) = axon::crypto::validate_master_key() {
+        tracing::error!("{e}");
+        anyhow::bail!(e);
+    }
+
     // C3: install the Prometheus recorder before anything emits metrics.
     axon::observability::init();
     let cfg = AppConfig::from_env();
@@ -223,6 +230,8 @@ async fn main() -> anyhow::Result<()> {
         let conn = pool.get().context("get DB connection")?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
         axon::db::init(&conn).context("initialize database")?;
+        // D1: upgrade any pre-KDF (v1) stored secrets to the v2 scheme in place.
+        axon::crypto::reencrypt_legacy_secrets(&conn);
     }
     // Web Search Tool migration (after main connection is dropped)
     tracing::info!("Starting WebSearchTool migration...");

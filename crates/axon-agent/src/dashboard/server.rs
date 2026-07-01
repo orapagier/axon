@@ -217,6 +217,10 @@ pub fn build_router(state: AppState) -> Router {
             "/api/credentials/:id",
             axum::routing::delete(api::delete_credential),
         )
+        .route(
+            "/api/credentials/:id/test",
+            axum::routing::post(api::test_credential),
+        )
         .route("/ws", get(ws::ws_handler))
         // C3: observability. /metrics is the Prometheus scrape target; /api/health
         // is a compact JSON status. Both sit behind require_auth — Prometheus

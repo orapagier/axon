@@ -308,10 +308,22 @@ Facebook). Tokens persist in the DB across rebuilds.
   - **If `AXON_MASTER_KEY` is unset, auth is disabled entirely** (open dashboard). This is
     intended only for local dev — **always set a strong `AXON_MASTER_KEY` in production.**
 - **Secret encryption:** API keys, SSH credentials, and MCP keys are encrypted with
-  AES-256-GCM (key derived from `AXON_MASTER_KEY`) before being written to SQLite.
-  - ⚠️ If `AXON_MASTER_KEY` is unset, encryption falls back to an insecure all-zeros key (and
-    logs a warning). Changing the master key after secrets are stored makes existing secrets
-    undecryptable — set it once, up front.
+  AES-256-GCM before being written to SQLite. The key is derived from `AXON_MASTER_KEY`
+  with **SHA-256** (any key length is accepted; short/long keys are no longer silently
+  truncated or padded). New ciphertext is tagged with a `v2:` prefix.
+  - **Fail-closed startup:** if `AXON_MASTER_KEY` is unset, Axon **refuses to start** rather
+    than protecting secrets with a public development key. Set a strong key, or set
+    `AXON_DEV=1` to explicitly opt into the insecure default for local development only.
+  - **Seamless upgrade:** secrets written under the older truncate/pad scheme are still read
+    correctly and are re-encrypted to the `v2:` scheme in place on the next boot. A `v2:`
+    value that fails to decrypt (wrong/changed master key) resolves to *empty* — the
+    credential must be re-entered — instead of leaking the raw ciphertext.
+  - Changing `AXON_MASTER_KEY` after secrets are stored still invalidates them (they cannot be
+    decrypted under a different key); set it once, up front.
+- **Credential test:** the Services page has a **Test** button per stored credential
+  (`POST /api/credentials/:id/test`) that makes a cheap, service-specific call and reports
+  validity without ever returning the secret. Services without a known probe report
+  "present but not testable".
 - **File downloads** are restricted to the staging directory (`data/files`) via canonical-path
   validation, preventing path traversal.
 - **Webhook authenticity:** Facebook events are verified with HMAC-SHA256 against the app
@@ -357,6 +369,49 @@ Set the relevant token (env var or `messaging.*` setting) and restart:
   message (subject or body). Empty filters fire on every new email in the label; multi-word
   input uses Gmail AND semantics (every word must match). Both the live poller and the manual
   "Execute Step" test fetch apply the filters identically.
+
+### 12.1 Expression helpers
+
+Any node field can embed an expression in `{{ … }}`, and the **JS/Code node** runs full
+JavaScript. Both surfaces share the same helper globals so `{{ }}` fields and Code nodes behave
+identically:
+
+| Helper | What it is |
+|---|---|
+| `$json` / `$input` | The previous node's output object (n8n's `$input.first().json`). |
+| `$node["Name"].data` | A specific upstream node's output (also `.json` / `.output`). Resolves by node name or id; `.error`, `.name`, `.id`, `.type` are also available. |
+| `$items` | Array of `{ json, data, name, id, type }` for every preceding node. |
+| `$prevNode` | Metadata (`name`/`id`/`type` + output) of the immediately preceding node. |
+| `$now` | Current timestamp, ISO-8601 string (UTC). Use `new Date($now)` for date math. |
+| `$today` | Current date, `YYYY-MM-DD`. |
+| `$jmespath(obj, expr)` | Run a [JMESPath](https://jmespath.org) query over any object/array. Invalid queries return `null` (never a run failure). |
+| `$workflow` | `{ id }` of the running workflow (Code node also exposes `$execution.workflowId`, `$nodeId`, `$nodeName`). |
+| `$env` | Whitelisted environment variables — **empty by default**. Only names listed in `AXON_EXPR_ENV` (comma-separated) are exposed; `AXON_MASTER_KEY` is never exposed even if listed. |
+
+Examples:
+
+```js
+{{ $json.email.toUpperCase() }}
+{{ $node["HTTP Request"].data.items.length }}
+{{ $jmespath($node["API"].data, "results[?score > `0.8`].id") }}
+{{ $env.REGION }}          // requires AXON_EXPR_ENV=REGION
+```
+
+**n8n → Axon cheat sheet**
+
+| n8n | Axon |
+|---|---|
+| `{{ $json.field }}` | `{{ $json.field }}` (same) |
+| `{{ $node["X"].json.field }}` | `{{ $node["X"].data.field }}` (`.json` also works) |
+| `{{ $now }}` (Luxon DateTime) | `{{ $now }}` (ISO string; wrap in `new Date($now)`) |
+| `{{ $today }}` | `{{ $today }}` (same) |
+| `{{ $jmespath($json, "…") }}` | `{{ $jmespath($json, "…") }}` (same) |
+| `{{ $env.VAR }}` | `{{ $env.VAR }}` — allow it first via `AXON_EXPR_ENV=VAR` |
+| `{{ $items("X") }}` | `{{ $node["X"].data }}` (a node's items) or `$items` (all upstream) |
+
+> **Security note:** unlike n8n, `$env` is deny-by-default. Nothing from the process
+> environment is visible to expressions until you opt each variable in through
+> `AXON_EXPR_ENV`, and the master key is hard-blocked regardless.
 
 ---
 

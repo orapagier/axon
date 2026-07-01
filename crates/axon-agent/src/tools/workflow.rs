@@ -231,6 +231,75 @@ fn js_value_to_json(val: &JsValue, context: &mut Context) -> Value {
     }
 }
 
+// ── D2: expression helper library ─────────────────────────────────────────────
+
+/// Run a JMESPath query over a JSON value. Compile/search errors resolve to
+/// `null` (never a run failure) with a debug log — matching the expression
+/// library's forgiving contract.
+fn eval_jmespath(data: &Value, expr: &str) -> Value {
+    if expr.trim().is_empty() {
+        return Value::Null;
+    }
+    let compiled = match jmespath::compile(expr) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::debug!("$jmespath compile error for '{expr}': {e}");
+            return Value::Null;
+        }
+    };
+    let data_str = serde_json::to_string(data).unwrap_or_else(|_| "null".to_string());
+    let var = match jmespath::Variable::from_json(&data_str) {
+        Ok(v) => v,
+        Err(_) => return Value::Null,
+    };
+    match compiled.search(jmespath::Rcvar::new(var)) {
+        Ok(result) => serde_json::to_value(&*result).unwrap_or(Value::Null),
+        Err(e) => {
+            tracing::debug!("$jmespath search error for '{expr}': {e}");
+            Value::Null
+        }
+    }
+}
+
+/// Build the `$env` object exposed to expressions. Fail-closed: only names
+/// explicitly listed in the `AXON_EXPR_ENV` allowlist (comma-separated) are
+/// exposed, and `AXON_MASTER_KEY` is hard-blocked regardless. Returns a JS
+/// object literal (e.g. `{"REGION":"us"}`).
+fn expression_env_json() -> String {
+    let whitelist = std::env::var("AXON_EXPR_ENV").unwrap_or_default();
+    let mut map = serde_json::Map::new();
+    for name in whitelist.split(',') {
+        let name = name.trim();
+        if name.is_empty() || name.eq_ignore_ascii_case("AXON_MASTER_KEY") {
+            continue;
+        }
+        if let Ok(val) = std::env::var(name) {
+            map.insert(name.to_string(), Value::String(val));
+        }
+    }
+    serde_json::to_string(&Value::Object(map)).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// Register the native `$jmespath(obj, expr)` helper on a Boa context. Shared by
+/// the Code node and the inline `{{ }}` evaluator so both see the same helper.
+fn register_expression_natives(context: &mut Context) {
+    let _ = context.register_global_builtin_callable(
+        JsString::from("$jmespath"),
+        2,
+        NativeFunction::from_copy_closure(|_this, args, ctx| {
+            let obj = args.first().cloned().unwrap_or(JsValue::Null);
+            let expr = args
+                .get(1)
+                .and_then(|v| v.as_string())
+                .map(|s| s.to_std_string_escaped())
+                .unwrap_or_default();
+            let data_json = js_value_to_json(&obj, ctx);
+            let result_json = eval_jmespath(&data_json, &expr);
+            Ok(boa_engine::JsValue::from_json(&result_json, ctx).unwrap_or(JsValue::Null))
+        }),
+    );
+}
+
 /// Strip `{{ expression }}` wrappers from a JS script so that dragged-in
 /// expressions become plain JavaScript references.
 /// E.g. `const item = {{ $node["Gmail"].data }};`
@@ -302,6 +371,9 @@ async fn execute_js_node(
                 b"var console = { log: print, warn: print, error: print, info: print, debug: print };",
             ))
             .map_err(|e| e.to_string())?;
+
+        // ── D2: native expression helpers ($jmespath) ─────────────────────
+        register_expression_natives(&mut context);
 
         // ── $results (ordered array of all previous results) ──────────────
         let results_json =
@@ -393,9 +465,10 @@ var $items = {items};
 var $now = "{now_iso}";
 var $today = "{today}";
 var $execution = {{ "workflowId": "{wf_id}" }};
+var $workflow = {{ "id": "{wf_id}" }};
 var $nodeId = "{node_id}";
 var $nodeName = "{node_name}";
-var $env = {{}};
+var $env = {env};
 "#,
             input = input_json,
             prev_node = prev_node_json,
@@ -405,6 +478,7 @@ var $env = {{}};
             wf_id = wf_id,
             node_id = node_id,
             node_name = node_name,
+            env = expression_env_json(),
         );
         context
             .eval(Source::from_bytes(helpers.as_bytes()))
@@ -778,6 +852,7 @@ fn evaluate_js_expression(
     results: &std::collections::HashMap<String, NodeResult>,
 ) -> Option<Value> {
     let mut context = boa_engine::Context::default();
+    register_expression_natives(&mut context);
 
     let mut nodes_map = serde_json::Map::new();
     for (key, res) in results {
@@ -844,13 +919,15 @@ fn evaluate_js_expression(
          var $prevNode = {prev_node};\
          var $now = \"{now_iso}\";\
          var $today = \"{today}\";\
-         var $env = {{}};",
+         var $workflow = {{}};\
+         var $env = {env};",
         nodes = nodes_json,
         input = input_json,
         items = items_json,
         prev_node = prev_node_json,
         now_iso = now.to_rfc3339(),
         today = now.format("%Y-%m-%d"),
+        env = expression_env_json(),
     );
 
     if context
@@ -4857,6 +4934,29 @@ mod resolve_tests {
         let out2 = resolve_value("A {{ $node[\"Ghost\"].data.x }} B", &m);
         assert_eq!(out2, Value::String("A  B".to_string()));
         assert!(!out2.as_str().unwrap().contains("{{"));
+    }
+
+    // D2: the native $jmespath helper works as a pure function.
+    #[test]
+    fn jmespath_helper_queries_json() {
+        let data = json!({ "items": [{ "n": 1 }, { "n": 2 }, { "n": 3 }] });
+        assert_eq!(super::eval_jmespath(&data, "items[*].n"), json!([1, 2, 3]));
+        assert_eq!(super::eval_jmespath(&data, "items[1].n"), json!(2));
+        // Malformed expression → null, never a panic.
+        assert_eq!(super::eval_jmespath(&data, "items[["), Value::Null);
+        // Empty expression → null.
+        assert_eq!(super::eval_jmespath(&data, ""), Value::Null);
+    }
+
+    // D2: $jmespath is reachable from inline {{ }} expressions and returns a
+    // typed value (array), not a stringified blob.
+    #[test]
+    fn jmespath_helper_available_inline() {
+        let mut m = HashMap::new();
+        let n = node("API", json!({ "users": [{ "id": 7 }, { "id": 9 }] }));
+        m.insert(n.node_id.clone(), n);
+        let out = resolve_value("{{ $jmespath($node[\"API\"].data, \"users[*].id\") }}", &m);
+        assert_eq!(out, json!([7, 9]));
     }
 }
 

@@ -96,6 +96,7 @@ let messagingPollInterval
 const credentials = ref([])
 const credModal = ref(false)
 const credForm = ref({ name: '', service: 'telegram', fields: [{ key: 'access_token', value: '' }] })
+const testingCred = ref(null)
 
 const mcpModal = ref(false)
 const sshModal = ref(false)
@@ -296,6 +297,19 @@ async function deleteCredential(id) {
   loadCredentials()
 }
 
+async function testCredential(id) {
+  testingCred.value = id
+  try {
+    const r = await post(`/credentials/${id}/test`, {})
+    const msg = r.ok
+      ? (r.tested ? (r.message || 'Credential is valid') : (r.message || 'Credential present (not testable)'))
+      : (r.error || 'Credential test failed')
+    toast(msg, r.ok)
+  } finally {
+    testingCred.value = null
+  }
+}
+
 // Messaging
 async function loadMessaging() {
   const [s, st] = await Promise.all([get('/settings'), get('/messaging/status')])
@@ -391,6 +405,9 @@ onUnmounted(() => {
               <p class="auth-user-detail">Service: {{ c.service }}</p>
               
               <div class="auth-actions-modern">
+                 <button class="btn btn-auth-test" :disabled="testingCred === c.id" @click="testCredential(c.id)">
+                   {{ testingCred === c.id ? 'Testing…' : 'Test' }}
+                 </button>
                  <button class="btn btn-auth-disconnect" @click="deleteCredential(c.id)">Delete</button>
               </div>
             </div>
@@ -1094,6 +1111,33 @@ onUnmounted(() => {
 
 .auth-actions-modern {
   margin-top: 8px;
+  display: flex;
+  gap: 8px;
+}
+
+.btn-auth-test {
+  flex: 1;
+  padding: 10px;
+  background: rgba(56, 189, 248, 0.1);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  color: #38bdf8;
+  font-weight: 700;
+  border-radius: 12px;
+  transition: all 0.2s;
+}
+
+.btn-auth-test:hover:not(:disabled) {
+  background: #38bdf8;
+  color: #fff;
+}
+
+.btn-auth-test:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.auth-actions-modern .btn-auth-disconnect {
+  flex: 1;
 }
 
 .btn-auth-connect {

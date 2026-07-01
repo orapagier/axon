@@ -112,8 +112,19 @@ Ordered by leverage ÷ risk. Each milestone is independently shippable.
 > n8n migrator reaches for now exists in Axon.
 
 ### Milestone D — "Polish that closes the feel gap"
-- D1. **Credential hardening** (KDF, no plaintext fallback, credential test)
-- D2. **Expression helper library** ($now / $jmespath / item helpers)
+- D1. **Credential hardening** — ✅ done (SHA-256 KDF in `crypto.rs`, `v2:`-tagged ciphertext, fail-closed boot guard `validate_master_key` unless `AXON_DEV=1`, dual-key backward-compatible `decrypt_key` with no plaintext-on-failure leak for v2, in-place `reencrypt_legacy_secrets` boot upgrade of models/ssh/mcp secrets, `POST /api/credentials/:id/test` + Services page Test button)
+- D2. **Expression helper library** — ✅ done (native `$jmespath(obj, expr)` via the `jmespath` crate in both the Code node and the `{{ }}` evaluator, deny-by-default `$env` gated on the `AXON_EXPR_ENV` allowlist with `AXON_MASTER_KEY` hard-blocked, `$workflow` id, USER_GUIDE §12.1 helper reference + n8n→Axon cheat sheet)
+
+> **Milestone D complete.** Neither item needed a migration: D1 is code-only
+> (`crypto.rs` scheme change + in-place re-encrypt over existing secret columns —
+> `models.api_key`, `ssh_servers.password/private_key`, `mcp_servers.api_key`), and
+> D2 adds runtime expression globals only. Backward compatibility is preserved:
+> untagged legacy (v1) ciphertext still decrypts under the truncate/pad key and is
+> transparently upgraded to `v2:` on boot; genuine plaintext-at-rest is returned
+> as-is. New behavior is fail-closed — a missing master key aborts startup, and a
+> `v2:` value that won't decrypt resolves to empty ("re-enter") rather than leaking
+> ciphertext. `$env` is stricter than n8n (opt-in per variable). Covered by 6 crypto
+> unit tests + 2 expression-helper tests; full lib suite (130 tests) green.
 
 ---
 
@@ -584,7 +595,7 @@ collector required to read it.
 
 ## 5. Milestone D — Polish that closes the "feel" gap
 
-### D1. Credential hardening
+### D1. Credential hardening — ✅ implemented (see Milestone D banner)
 
 **Problem (`crypto.rs`).** Three real weaknesses:
 - Insecure **default key** when `AXON_MASTER_KEY` unset (`crypto.rs:9`) — silently runs in dev
@@ -620,7 +631,7 @@ counts, never log secret values.
 
 ---
 
-### D2. Expression helper library
+### D2. Expression helper library — ✅ implemented (see Milestone D banner)
 
 **Problem.** Expressions resolve via `resolve_value_scoped` + the Boa JS node
 (10s/64 KB caps), and the condition engine already mirrors n8n operators
