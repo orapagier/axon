@@ -2814,6 +2814,7 @@ impl WorkflowEngine {
                                     &temp_results,
                                     state,
                                     Some(&node_ancestors),
+                                    &run_id,
                                 );
                                 (item_config, temp_results)
                             };
