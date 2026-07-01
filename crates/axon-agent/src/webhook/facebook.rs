@@ -507,6 +507,8 @@ async fn dispatch_facebook_workflows(
                     |r| r.get::<_, String>(0),
                 )
                 .ok()
+                // Encrypted at rest; decrypt_key passes legacy plaintext through.
+                .map(|d| crate::crypto::decrypt_key(&d))
                 .and_then(|d| serde_json::from_str::<Value>(&d).ok())
                 .and_then(|d| {
                     d.get("page_id")
