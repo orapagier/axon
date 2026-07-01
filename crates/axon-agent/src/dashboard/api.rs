@@ -395,6 +395,8 @@ async fn facebook_connect_callback(state: &AppState, code: &str) -> axum::respon
                 "instagram_id": page.get("instagram_id").cloned().unwrap_or(Value::Null),
             });
             let data_str = serde_json::to_string(&data).unwrap_or_else(|_| "{}".to_string());
+            // Encrypt the page access token blob at rest (read seams decrypt).
+            let data_str = crate::crypto::encrypt_key(&data_str);
             let res = conn.execute(
                 "INSERT OR REPLACE INTO credentials (id, name, service, data, created_at)
                  VALUES (?1, ?2, 'facebook', ?3, datetime('now'))",
