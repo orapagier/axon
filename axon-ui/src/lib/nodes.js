@@ -1071,10 +1071,9 @@ export const NODE_TYPES = {
             {
                 displayName: 'Resume At',
                 name: 'until',
-                type: 'string',
+                type: 'dateTime',
                 default: '',
-                placeholder: '2026-06-23T15:30:00Z  or  {{ $node["X"].data.due }}',
-                hint: 'ISO 8601 date/time to wait until. A time already in the past resumes immediately. Cancellation is honoured within ~1s throughout.',
+                hint: 'Date/time to resume — pick from the calendar (your local time; stored as an absolute instant) or click ƒx for an expression like {{ $node["X"].data.due }}. A time already in the past resumes immediately.',
                 displayOptions: { show: { mode: ['until'] } },
             },
             {
