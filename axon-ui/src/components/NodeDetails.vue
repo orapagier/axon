@@ -232,19 +232,39 @@ function releasePreview() {
 }
 
 // ── DateTime picker helpers ───────────────────────────────────────────────────
-// Converts stored ISO 8601 (e.g. "2025-06-15T09:00:00") to the value
-// format expected by <input type="datetime-local"> ("2025-06-15T09:00")
+// These back the <input type="datetime-local"> used by any node property with
+// type: 'dateTime' (e.g. the Wait node's "Resume At"). The control works in the
+// viewer's LOCAL wall-clock; we persist an absolute, offset-aware ISO 8601
+// instant (e.g. "2026-06-23T15:30:45+02:00") so the backend's RFC3339 parser
+// reads the exact moment the user meant — not a naive time silently treated as
+// UTC. Seconds are preserved (the input carries step="1").
+
+// Stored ISO 8601 → the "YYYY-MM-DDTHH:mm:ss" a datetime-local expects, rendered
+// in the viewer's local time. Blank / non-date values degrade gracefully.
 function isoToLocal(val) {
   if (!val || typeof val !== 'string') return ''
-  // datetime-local needs exactly "YYYY-MM-DDTHH:mm"
-  return val.slice(0, 16)
+  const d = new Date(val)
+  if (isNaN(d.getTime())) return val.slice(0, 19)
+  const pad = n => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T`
+    + `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
-// Converts datetime-local value ("2025-06-15T09:00") back to ISO 8601
-// ("2025-06-15T09:00:00") which the calendar API expects
+// datetime-local value ("2026-06-23T15:30:45", local) → absolute ISO 8601 with
+// the browser's UTC offset, so the persisted instant is timezone-unambiguous.
 function localToIso(val) {
   if (!val) return ''
-  return val.length === 16 ? val + ':00' : val
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/.exec(val)
+  if (!m) return val
+  const d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], m[6] ? +m[6] : 0)
+  if (isNaN(d.getTime())) return val
+  const pad = n => String(n).padStart(2, '0')
+  const off = -d.getTimezoneOffset() // minutes east of UTC
+  const sign = off >= 0 ? '+' : '-'
+  const abs = Math.abs(off)
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T`
+    + `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+    + `${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`
 }
 
 function hasExpression(val) {
