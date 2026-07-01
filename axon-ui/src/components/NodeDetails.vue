@@ -3098,7 +3098,7 @@ small.form-desc {
 }
 
 /* Collection field items */
-.cf-items { display: flex; flex-direction: column; gap: 6px; }
+.cf-items { display: flex; flex-direction: column; gap: 2px; }
 .cf-row {
   display: grid; grid-template-columns: 120px 1fr; gap: 8px; align-items: center;
 }
@@ -3112,7 +3112,7 @@ small.form-desc {
 
 .cf-row-boolean {
   display: flex; align-items: center; gap: 10px;
-  padding: 6px 8px; border-radius: 6px; cursor: pointer;
+  padding: 3px 8px; border-radius: 6px; cursor: pointer;
   transition: background 0.15s;
 }
 .cf-row-boolean:hover { background: rgba(255, 255, 255, 0.03); }
@@ -3508,7 +3508,7 @@ small.form-desc {
 
 /* Regular collection string fields */
 .cf-row {
-  display: grid; grid-template-columns: 140px 1fr; align-items: center; gap: 12px; margin-bottom: 2px;
+  display: grid; grid-template-columns: 140px 1fr; align-items: center; gap: 12px; margin-bottom: 0;
 }
 .cf-row label { font-size: 11px; color: #a6a6b2; text-transform: uppercase; font-weight: 600; }
 .cf-row input {
@@ -3516,7 +3516,7 @@ small.form-desc {
 }
 .cf-row input:focus { border-color: #6366f1; }
 .cf-row-boolean {
-  display: flex; align-items: center; gap: 10px; margin-bottom: 4px;
+  display: flex; align-items: center; gap: 10px; margin-bottom: 0;
 }
 .cf-row-boolean input { accent-color: #6366f1; width: 14px; height: 14px; cursor: pointer; }
 .cf-row-boolean label { font-size: 13px; color: #f2f7ff; cursor: pointer; }

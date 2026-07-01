@@ -56,26 +56,44 @@ pub(crate) async fn execute_http_node(config: &Value) -> Result<Value, String> {
         .and_then(|v| v.as_str())
         .unwrap_or("none");
 
-    let auth = if authentication != "none" {
-        Some(HttpAuth {
-            auth_type: authentication.to_string(),
-            user: config
-                .get("user")
-                .and_then(|v| v.as_str())
-                .map(String::from),
-            password: config
-                .get("password")
-                .and_then(|v| v.as_str())
-                .map(String::from),
-            header_name: config
-                .get("authHeaderName")
-                .and_then(|v| v.as_str())
-                .map(String::from),
-            header_value: config
-                .get("authHeaderValue")
-                .and_then(|v| v.as_str())
-                .map(String::from),
-        })
+    // The UI stores the mode in `authentication` (none / predefinedCredentialType /
+    // genericCredentialType) and the concrete scheme in `genericAuthType`
+    // (httpBasicAuth / httpHeaderAuth / …). http.rs matches on "basicAuth"/"headerAuth",
+    // so translate here. Query Auth and OAuth2 have no request-layer support yet, and
+    // "predefinedCredentialType" carries no inline fields, so both leave auth unset.
+    let auth = if authentication == "genericCredentialType" {
+        let scheme = config
+            .get("genericAuthType")
+            .and_then(|v| v.as_str())
+            .unwrap_or("httpBasicAuth");
+        let auth_type = match scheme {
+            "httpBasicAuth" => "basicAuth",
+            "httpHeaderAuth" => "headerAuth",
+            _ => "",
+        };
+        if auth_type.is_empty() {
+            None
+        } else {
+            Some(HttpAuth {
+                auth_type: auth_type.to_string(),
+                user: config
+                    .get("user")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                password: config
+                    .get("password")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                header_name: config
+                    .get("authHeaderName")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                header_value: config
+                    .get("authHeaderValue")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+            })
+        }
     } else {
         None
     };
