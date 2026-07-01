@@ -4002,7 +4002,7 @@ impl WorkflowEngine {
         let src = trigger_source.clone();
         let rid = run_id.clone();
         tracing::info!(
-            "Resuming run {} via {} token (outcome={})",
+            "Resuming run {} ({} mode, outcome={})",
             run_id,
             mode,
             outcome
