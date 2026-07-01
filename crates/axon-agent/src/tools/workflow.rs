@@ -2921,7 +2921,7 @@ impl WorkflowEngine {
                             };
                             (loop_result, max_unit_attempts.max(1))
                         } else {
-                            let config = interpolate_config(&node.config, &node_results, state, Some(&node_ancestors));
+                            let config = interpolate_config(&node.config, &node_results, state, Some(&node_ancestors), &run_id);
                             execute_node_by_type(
                                 node,
                                 &config,
@@ -2935,7 +2935,7 @@ impl WorkflowEngine {
                             .await
                         }
                     } else {
-                        let config = interpolate_config(&node.config, &node_results, state, Some(&node_ancestors));
+                        let config = interpolate_config(&node.config, &node_results, state, Some(&node_ancestors), &run_id);
                         execute_node_by_type(
                             node,
                             &config,
@@ -2949,7 +2949,7 @@ impl WorkflowEngine {
                         .await
                     }
                 } else {
-                    let config = interpolate_config(&node.config, &node_results, state, Some(&node_ancestors));
+                    let config = interpolate_config(&node.config, &node_results, state, Some(&node_ancestors), &run_id);
                     execute_node_by_type(
                         node,
                         &config,
@@ -2963,7 +2963,7 @@ impl WorkflowEngine {
                     .await
                 }
             } else {
-                let config = interpolate_config(&node.config, &node_results, state, Some(&node_ancestors));
+                let config = interpolate_config(&node.config, &node_results, state, Some(&node_ancestors), &run_id);
                 execute_node_by_type(
                     node,
                     &config,
