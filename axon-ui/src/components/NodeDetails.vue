@@ -2195,6 +2195,7 @@ onUnmounted(() => {
                       <div class="datetime-field">
                         <input
                           type="datetime-local"
+                          step="1"
                           :value="isoToLocal(node.data.config[prop.name])"
                           @change="e => node.data.config[prop.name] = localToIso(e.target.value)"
                         />
