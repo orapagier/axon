@@ -61,7 +61,7 @@ pub(crate) async fn execute(config: &Value, state: &AppState) -> Result<Value, S
     // unhealthy) and sorts each group alphabetically by name; api_key is never
     // included. Async and DB-free, so it sits with `list` above the DB block.
     if operation == "health_check" {
-        let mut report = crate::router::health_check(&state.router).await;
+        let mut report = crate::router::health_check(&state.router, &state.settings).await;
         if let Some(obj) = report.as_object_mut() {
             obj.insert("ok".into(), json!(true));
             obj.insert("resource".into(), json!("model"));

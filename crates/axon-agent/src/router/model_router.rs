@@ -913,28 +913,68 @@ pub async fn get_status(router: &SharedRouter) -> Vec<serde_json::Value> {
 /// a health check. All probes run concurrently. The result groups models by
 /// outcome (`healthy` / `unhealthy`) and sorts each group alphabetically by name;
 /// `api_key` is never included.
-pub async fn health_check(router: &SharedRouter) -> serde_json::Value {
+///
+/// The probe is a faithful copy of a real call: the API key is resolved through
+/// `settings.resolve` (`${VAR}` → DB/env) exactly like the live router, and only
+/// the primary `model_id` is used — otherwise every model would get its raw
+/// `${VAR}` placeholder and 401, reporting healthy models as unhealthy.
+pub async fn health_check(router: &SharedRouter, settings: &RuntimeSettings) -> serde_json::Value {
     // Snapshot the model set, then release the lock before any network I/O.
     let models: Vec<ModelRecord> = {
         let g = router.lock().await;
         g.models.clone()
     };
 
-    // Probe each model on its own clone, all concurrently. A minimal, cheap call
+    // Prepare each probe synchronously: resolve the API key the same way the live
+    // router does and pick the primary model_id. Fail-fast prechecks mirror the
+    // router's own guardrails so an unresolved/empty key reports a clear reason
+    // instead of a doomed 401 round-trip.
+    let prepared: Vec<(ModelRecord, Result<(), String>)> = models
+        .into_iter()
+        .map(|mut m| {
+            let resolved_key = settings.resolve(&m.api_key);
+            m.model_id = m
+                .model_id
+                .split(',')
+                .map(|s| s.trim())
+                .find(|s| !s.is_empty())
+                .unwrap_or("")
+                .to_string();
+            let precheck = if resolved_key.trim().is_empty() {
+                Err("no API key after resolution (check AXON_MASTER_KEY / provider env vars)".to_string())
+            } else if resolved_key.starts_with("${") && resolved_key.ends_with('}') {
+                Err(format!(
+                    "unresolved API key placeholder {resolved_key} (check .env / server env)"
+                ))
+            } else if m.model_id.is_empty() {
+                Err("model has no model_id".to_string())
+            } else {
+                m.api_key = resolved_key;
+                Ok(())
+            };
+            (m, precheck)
+        })
+        .collect();
+
+    // Probe all models concurrently, each on its own clone. A minimal, cheap call
     // — one short user turn, no tools, capped at a few tokens: success means the
     // provider accepted our credentials and returned a valid response; any error
     // (401, wrong endpoint, timeout, unreachable) means unhealthy.
-    let probes = models.into_iter().map(|mut m| async move {
+    let probes = prepared.into_iter().map(|(mut m, precheck)| async move {
         let started = Instant::now();
-        let result = call_provider_with_options(
-            &mut m,
-            &[Message::user("ping")],
-            "",
-            &[],
-            16,
-            ProviderCallOptions::default(),
-        )
-        .await;
+        let result = match precheck {
+            Err(e) => Err(e),
+            Ok(()) => call_provider_with_options(
+                &mut m,
+                &[Message::user("ping")],
+                "",
+                &[],
+                16,
+                ProviderCallOptions::default(),
+            )
+            .await
+            .map_err(|e| e.to_string()),
+        };
         let latency_ms = started.elapsed().as_millis() as u64;
 
         let mut entry = serde_json::json!({
@@ -947,7 +987,7 @@ pub async fn health_check(router: &SharedRouter) -> serde_json::Value {
         let status = match result {
             Ok(_) => "healthy",
             Err(e) => {
-                entry["error"] = serde_json::json!(e.to_string());
+                entry["error"] = serde_json::json!(e);
                 "unhealthy"
             }
         };
