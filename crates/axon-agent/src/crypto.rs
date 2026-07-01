@@ -356,4 +356,40 @@ mod tests {
         // Second pass is a no-op.
         assert_eq!(reencrypt_legacy_secrets(&conn), 0);
     }
+
+    #[test]
+    fn credentials_at_rest_encrypts_plaintext_only() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE credentials (id TEXT PRIMARY KEY, data TEXT NOT NULL);",
+        )
+        .unwrap();
+
+        let plaintext_json = r#"{"access_token":"secret-token","page_id":"42"}"#;
+        let already_v2 = encrypt_key(r#"{"api_key":"pre-encrypted"}"#);
+        conn.execute(
+            "INSERT INTO credentials (id, data) VALUES ('p', ?1), ('v', ?2), ('e', '')",
+            rusqlite::params![plaintext_json, already_v2],
+        )
+        .unwrap();
+
+        let n = encrypt_credentials_at_rest(&conn);
+        assert_eq!(n, 1, "only the plaintext row is encrypted");
+
+        // Plaintext row is now v2-tagged and round-trips back to the same JSON.
+        let p: String = conn
+            .query_row("SELECT data FROM credentials WHERE id='p'", [], |r| r.get(0))
+            .unwrap();
+        assert!(p.starts_with(V2_PREFIX));
+        assert_eq!(decrypt_key(&p), plaintext_json);
+
+        // Already-encrypted row is untouched; empty row is skipped.
+        let v: String = conn
+            .query_row("SELECT data FROM credentials WHERE id='v'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, already_v2);
+
+        // Second pass is a no-op.
+        assert_eq!(encrypt_credentials_at_rest(&conn), 0);
+    }
 }
