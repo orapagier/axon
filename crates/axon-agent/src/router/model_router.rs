@@ -984,41 +984,128 @@ pub async fn health_check(router: &SharedRouter, settings: &RuntimeSettings) -> 
             "enabled": m.enabled,
             "latency_ms": latency_ms,
         });
-        let status = match result {
+        // Success is a single `healthy` bucket. A failure is sub-classified from
+        // the error text — `rate_limited`, `invalid_key`, `not_found`, `timeout`,
+        // … — so a workflow can react differently to a throttled model than to a
+        // bad key. The verbatim provider error is always kept on the entry too, so
+        // no detail is lost to bucketing.
+        let category = match result {
             Ok(_) => "healthy",
             Err(e) => {
+                let category = classify_health_error(&e);
                 entry["error"] = serde_json::json!(e);
-                "unhealthy"
+                category
             }
         };
-        (status, entry)
+        entry["category"] = serde_json::json!(category);
+        (category, entry)
     });
 
     let results = futures::future::join_all(probes).await;
 
-    // Group by outcome, then sort each group alphabetically (case-insensitive) by
-    // name. BTreeMap keeps the status groups themselves in stable, sorted order.
+    // Group by category, then sort each group alphabetically (case-insensitive) by
+    // name. BTreeMap keeps the category groups themselves in stable, sorted order.
+    // Alongside the fine breakdown, keep the coarse healthy/unhealthy tallies most
+    // workflows branch on (`if unhealthy > 0 …`).
     let checked = results.len();
-    let mut by_status: std::collections::BTreeMap<String, Vec<serde_json::Value>> =
+    let mut by_category: std::collections::BTreeMap<String, Vec<serde_json::Value>> =
         Default::default();
     let mut summary: std::collections::BTreeMap<String, u64> = Default::default();
-    for (status, entry) in results {
-        *summary.entry(status.to_string()).or_insert(0) += 1;
-        by_status.entry(status.to_string()).or_default().push(entry);
+    let mut healthy: u64 = 0;
+    for (category, entry) in results {
+        if category == "healthy" {
+            healthy += 1;
+        }
+        *summary.entry(category.to_string()).or_insert(0) += 1;
+        by_category.entry(category.to_string()).or_default().push(entry);
     }
-    for entries in by_status.values_mut() {
+    for entries in by_category.values_mut() {
         entries.sort_by(|a, b| {
             let an = a["name"].as_str().unwrap_or("").to_lowercase();
             let bn = b["name"].as_str().unwrap_or("").to_lowercase();
             an.cmp(&bn)
         });
     }
+    let unhealthy = checked as u64 - healthy;
 
     serde_json::json!({
         "checked": checked,
+        "healthy": healthy,
+        "unhealthy": unhealthy,
         "summary": summary,
-        "by_status": by_status,
+        "by_category": by_category,
     })
+}
+
+/// Map a probe's error message to a coarse failure category. The probe only has
+/// the provider's error *string* (each provider formats its own — see
+/// `anthropic.rs` / `openai_compat.rs`), so classification is substring matching
+/// on a lowercased copy, ordered most-specific first. The raw error is preserved
+/// on the entry regardless, so this only adds a grouping key, it never hides
+/// detail. Anything unrecognized falls through to `error`.
+fn classify_health_error(err: &str) -> &'static str {
+    let e = err.to_ascii_lowercase();
+
+    // 429 / throttling. Providers prefix these with "rate limit"; Gemini reports
+    // the same condition as an exceeded quota.
+    if e.contains("rate limit") || e.contains("429") || e.contains("too many requests") {
+        return "rate_limited";
+    }
+    if e.contains("quota") || e.contains("insufficient_quota") || e.contains("billing") {
+        return "quota_exceeded";
+    }
+    // Local prechecks from health_check() above — a config problem, no round-trip
+    // was ever made.
+    if e.contains("no api key after resolution")
+        || e.contains("unresolved api key")
+        || e.contains("no model_id")
+    {
+        return "misconfigured";
+    }
+    // Bad or unauthorized credentials (401/403).
+    if e.contains("401")
+        || e.contains("unauthorized")
+        || e.contains("invalid api key")
+        || e.contains("invalid_api_key")
+        || e.contains("authentication")
+        || e.contains("403")
+        || e.contains("forbidden")
+        || e.contains("permission")
+    {
+        return "invalid_key";
+    }
+    // Wrong model_id or base_url path (404).
+    if e.contains("404") || e.contains("not found") || e.contains("does not exist") {
+        return "not_found";
+    }
+    // Malformed request / unsupported parameter (400).
+    if e.contains("400") || e.contains("bad request") || e.contains("unsupported") {
+        return "bad_request";
+    }
+    // Provider-side outage (5xx / overloaded).
+    if e.contains("500")
+        || e.contains("502")
+        || e.contains("503")
+        || e.contains("529")
+        || e.contains("overloaded")
+        || e.contains("internal server error")
+    {
+        return "server_error";
+    }
+    // Request made but no timely response.
+    if e.contains("timeout") || e.contains("timed out") || e.contains("deadline") {
+        return "timeout";
+    }
+    // Never reached the host (DNS / connect / TLS).
+    if e.contains("dns")
+        || e.contains("connect")
+        || e.contains("connection")
+        || e.contains("unreachable")
+        || e.contains("failed to lookup")
+    {
+        return "unreachable";
+    }
+    "error"
 }
 
 pub async fn reset_model(router: &SharedRouter, name: &str) -> bool {
