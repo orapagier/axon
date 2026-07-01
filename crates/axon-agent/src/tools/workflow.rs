@@ -1027,7 +1027,7 @@ fn lookup_node<'a>(
 /// [`resolve_value_scoped`]).
 #[cfg(test)]
 fn resolve_value(s: &str, results: &std::collections::HashMap<String, NodeResult>) -> Value {
-    resolve_value_scoped(s, results, None)
+    resolve_value_scoped(s, results, None, "")
 }
 
 /// Same as [`resolve_value`] but scoped to the executing node's upstream
