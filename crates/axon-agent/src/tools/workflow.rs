@@ -935,6 +935,7 @@ fn evaluate_js_expression(
          var $now = \"{now_iso}\";\
          var $today = \"{today}\";\
          var $workflow = {{}};\
+         var $execution = {{ \"runId\": \"{run_id}\" }};\
          var $env = {env};",
         nodes = nodes_json,
         input = input_json,
@@ -942,6 +943,7 @@ fn evaluate_js_expression(
         prev_node = prev_node_json,
         now_iso = now.to_rfc3339(),
         today = now.format("%Y-%m-%d"),
+        run_id = run_id,
         env = expression_env_json(),
     );
 
