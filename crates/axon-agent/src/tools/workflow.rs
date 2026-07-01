@@ -2504,14 +2504,20 @@ impl WorkflowEngine {
             _ => None,
         };
 
-        // A sub-workflow call may pin a single entry trigger for a multi-trigger
-        // child; start from only that trigger node (its downstream chain runs,
-        // sibling triggers stay dormant). Consumed here so a later call without a
-        // choice falls back to every trigger.
-        let subflow_entry_node: Option<String> = if trigger_source == "subflow" {
-            SUBFLOW_ENTRY_NODE.lock().await.remove(workflow_id)
-        } else {
-            None
+        // A run may pin a single entry trigger to start from (its downstream chain
+        // runs, sibling triggers stay dormant). Two sources set this pin:
+        //   • a sub-workflow call choosing one entry of a multi-trigger child
+        //     (keyed by child workflow id), and
+        //   • a manual "Run" click on a specific Stimulus node's play button
+        //     (keyed by run id, set in `run_in_background_inner`).
+        // Consumed here so a later unpinned run falls back to every trigger.
+        let entry_node: Option<String> = match trigger_source {
+            "subflow" => SUBFLOW_ENTRY_NODE.lock().await.remove(workflow_id),
+            "manual" => MANUAL_ENTRY_NODE
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .remove(&run_id),
+            _ => None,
         };
 
         let mut queue: std::collections::VecDeque<_> = nodes
@@ -2550,7 +2556,7 @@ impl WorkflowEngine {
                         // normal/manual run must never start from one (it's a
                         // failure handler, not a regular entry point).
                         && (trigger_source == "error" || node_trigger_kind != "error")
-                        && subflow_entry_node
+                        && entry_node
                             .as_deref()
                             .map_or(true, |chosen| n.id == chosen)
                 } else {
@@ -3543,7 +3549,7 @@ impl WorkflowEngine {
         state: &AppState,
         target_node_id: Option<String>,
     ) -> anyhow::Result<String> {
-        Self::run_in_background_inner(workflow_id, state, "manual", target_node_id, false)
+        Self::run_in_background_inner(workflow_id, state, "manual", target_node_id, false, None)
     }
 
     /// Like `run_in_background` but tags the run with a specific trigger source
@@ -3555,7 +3561,20 @@ impl WorkflowEngine {
         trigger_source: &str,
         target_node_id: Option<String>,
     ) -> anyhow::Result<String> {
-        Self::run_in_background_inner(workflow_id, state, trigger_source, target_node_id, false)
+        Self::run_in_background_inner(workflow_id, state, trigger_source, target_node_id, false, None)
+    }
+
+    /// Manual "Run" (play button) on a single Stimulus/trigger node: start a full
+    /// downstream run but from ONLY that entry node, leaving sibling triggers (and
+    /// their branches) dormant. Distinct from `run_node_in_background`, which runs
+    /// a node's *ancestors* up to it; here `node_id` is an entry point with no
+    /// ancestors, so we pin it as the sole start node and let its whole chain run.
+    pub fn run_from_entry_node(
+        workflow_id: &str,
+        state: &AppState,
+        node_id: String,
+    ) -> anyhow::Result<String> {
+        Self::run_in_background_inner(workflow_id, state, "manual", None, false, Some(node_id))
     }
 
     /// Single-node variant of `run_in_background`: when `single_node` is true,
@@ -3569,7 +3588,7 @@ impl WorkflowEngine {
         node_id: String,
         single_node: bool,
     ) -> anyhow::Result<String> {
-        Self::run_in_background_inner(workflow_id, state, "manual", Some(node_id), single_node)
+        Self::run_in_background_inner(workflow_id, state, "manual", Some(node_id), single_node, None)
     }
 
     fn run_in_background_inner(
@@ -3578,8 +3597,20 @@ impl WorkflowEngine {
         trigger_source: &str,
         target_node_id: Option<String>,
         single_node: bool,
+        entry_node_id: Option<String>,
     ) -> anyhow::Result<String> {
         let run_id = uuid::Uuid::new_v4().to_string();
+
+        // Pin the sole entry node for this run (manual play button on a Stimulus).
+        // Keyed by run_id and consumed in `run_inner` as the start queue is built,
+        // so only this node's chain runs. Set BEFORE spawning so the run task
+        // always sees it.
+        if let Some(node_id) = entry_node_id {
+            MANUAL_ENTRY_NODE
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .insert(run_id.clone(), node_id);
+        }
 
         // Pre-create the run record as 'running' so the very first frontend poll
         // can find it immediately, even before the spawned task starts executing.
@@ -3609,6 +3640,12 @@ impl WorkflowEngine {
                     "Workflow run {} shed: run queue full (workflow.max_queue_depth)",
                     rid
                 );
+                // The run task never reaches `run_inner`, so drop any entry-node
+                // pin it staged (keyed by this run_id) to avoid a stale entry.
+                MANUAL_ENTRY_NODE
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .remove(&rid);
                 if let Ok(conn) = s.db.get() {
                     // Record *why* it failed so run history (and the Telegram
                     // report) show a reason instead of an empty failed run.

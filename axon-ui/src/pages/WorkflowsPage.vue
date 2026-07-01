@@ -978,7 +978,9 @@ function isWorkflowEntryNode(node) {
 function handleRunNode(nodeId) {
   const node = nodes.value.find(n => n.id === nodeId)
   if (node && isWorkflowEntryNode(node)) {
-    runActive()
+    // Play button on a Stimulus/trigger: run the full downstream chain but start
+    // from ONLY this node, so sibling triggers in the same workflow stay dormant.
+    runActive(nodeId)
   } else {
     executeNodeStep(nodeId)
   }
@@ -1140,7 +1142,9 @@ async function stopWorkflow() {
   }
 }
 
-async function runActive() {
+// `entryNodeId` (optional): when set, the run starts from ONLY that Stimulus/
+// trigger node (its play button) instead of every trigger in the workflow.
+async function runActive(entryNodeId = null) {
   if (!wfId.value || wfId.value === 'new') return toast('Save workflow first', false)
 
   isExecuting.value = true
@@ -1167,10 +1171,13 @@ async function runActive() {
   // waiting:false on the trigger itself — it has no predecessor to receive data from.
   // Its direct children get waiting:true so their incoming edges animate right away.
   if (canvasRef.value) {
-    const triggerNode = nodes.value.find(n => 
-      n.data?.node_type === 'trigger' || n.data?.node_type === 'circadian' || n.data?.node_type === 'stimulus' ||
-      n.data?.type === 'trigger' || n.data?.type === 'circadian' || n.data?.type === 'stimulus'
-    )
+    // When a specific Stimulus was clicked, animate from it; otherwise fall back
+    // to the first trigger-like node (or any node) for the whole-workflow run.
+    const triggerNode = (entryNodeId && nodes.value.find(n => n.id === entryNodeId)) ||
+      nodes.value.find(n =>
+        n.data?.node_type === 'trigger' || n.data?.node_type === 'circadian' || n.data?.node_type === 'stimulus' ||
+        n.data?.type === 'trigger' || n.data?.type === 'circadian' || n.data?.type === 'stimulus'
+      )
     const tid = triggerNode ? triggerNode.id : (nodes.value[0]?.id)
     if (tid) {
       canvasRef.value.updateNodeExecution(tid, {
@@ -1194,7 +1201,13 @@ async function runActive() {
   }
 
   try {
-    const r = await post(`/workflows/${wfId.value}/run`)
+    // Entry-node run pins the start to just this Stimulus; a plain run starts
+    // from every trigger. `?entry=true` distinguishes it from the ancestor-run
+    // node endpoint (Execute Step).
+    const runUrl = entryNodeId
+      ? `/workflows/${wfId.value}/run/${entryNodeId}?entry=true`
+      : `/workflows/${wfId.value}/run`
+    const r = await post(runUrl)
     if (r.ok) {
       console.log('Workflow execution started in background:', r.run_id)
       // Now that we have the run_id, start polling specifically for this run.
@@ -2391,7 +2404,7 @@ onUnmounted(() => {
             <button v-if="isExecuting" class="btn btn-sm workflow-action-btn btn-danger" @click="stopWorkflow">Stop</button>
             <button class="btn btn-sm workflow-action-btn btn-danger" @click="removeWorkflow">Delete</button>
             <button class="btn btn-sm workflow-action-btn btn-neutral" @click.stop="loadHistory">History</button>
-            <button class="btn btn-sm workflow-action-btn btn-primary" @click="runActive">Run</button>
+            <button class="btn btn-sm workflow-action-btn btn-primary" @click="runActive()">Run</button>
             <button class="btn btn-sm workflow-action-btn btn-success" @click="save">Save</button>
           </div>
         </header>

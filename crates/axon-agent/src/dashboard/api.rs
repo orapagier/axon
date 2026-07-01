@@ -2245,13 +2245,21 @@ pub async fn run_workflow_node(
     Path((id, node_id)): Path<(String, String)>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Json<Value> {
+    // ?entry=true → this node is a Stimulus/trigger entry point; run its whole
+    // downstream chain but start from ONLY this node, leaving sibling triggers
+    // dormant (the play button on a Stimulus in a multi-trigger workflow).
     // ?single=true → run ONLY this node, reusing cached upstream results from the
     // last run (the "Execute Step" button when upstream nodes already have data).
-    // Without it, the node plus all its ancestors are re-run (the play button).
+    // Without either, the node plus all its ancestors are re-run (the play button
+    // on a mid-chain node).
+    let entry = matches!(params.get("entry").map(String::as_str), Some("true" | "1"));
     let single = matches!(params.get("single").map(String::as_str), Some("true" | "1"));
-    match crate::tools::workflow::WorkflowEngine::run_node_in_background(
-        &id, &state, node_id, single,
-    ) {
+    let result = if entry {
+        crate::tools::workflow::WorkflowEngine::run_from_entry_node(&id, &state, node_id)
+    } else {
+        crate::tools::workflow::WorkflowEngine::run_node_in_background(&id, &state, node_id, single)
+    };
+    match result {
         Ok(run_id) => Json(json!({"ok": true, "run_id": run_id})),
         Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
     }
