@@ -911,8 +911,10 @@ pub async fn get_status(router: &SharedRouter) -> Vec<serde_json::Value> {
 /// Read-only with respect to the router: models are cloned out under the lock and
 /// each probe runs on its own clone, so live status/telemetry is never mutated by
 /// a health check. All probes run concurrently. The result groups models by
-/// outcome (`healthy` / `unhealthy`) and sorts each group alphabetically by name;
-/// `api_key` is never included.
+/// category (`healthy`, plus a specific failure reason like `rate_limited`,
+/// `invalid_key`, `not_found` — see `classify_health_error`), reports both the
+/// per-category counts and the coarse healthy/unhealthy tallies, and sorts each
+/// group alphabetically by name; `api_key` is never included.
 ///
 /// The probe is a faithful copy of a real call: the API key is resolved through
 /// `settings.resolve` (`${VAR}` → DB/env) exactly like the live router, and only
