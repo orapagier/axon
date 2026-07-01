@@ -132,14 +132,15 @@ fn parse_resume_body(body: &Bytes) -> Value {
 
 async fn do_resume(
     state: AppState,
-    token: String,
+    node_id: String,
+    run_id: String,
     outcome: &str,
     payload: Value,
 ) -> (StatusCode, Json<Value>) {
-    match WorkflowEngine::resume_by_token(&state, &token, outcome, payload).await {
+    match WorkflowEngine::resume_by_node(&state, &node_id, &run_id, outcome, payload).await {
         Ok(v) => (StatusCode::OK, Json(v)),
-        // Unknown / expired / already-used token, or a finished run: 410 Gone so a
-        // double-submit is idempotent rather than an error the caller retries.
+        // No run waiting at this node+run, or an already-resumed/finished run:
+        // 410 Gone so a double-submit is idempotent, not an error to retry.
         Err(e) => (
             StatusCode::GONE,
             Json(json!({ "ok": false, "error": e })),
@@ -147,33 +148,35 @@ async fn do_resume(
     }
 }
 
-/// `GET|POST /webhook/resume/:token` — wake a Wait-for-webhook (or generic
-/// approval) run, attaching the request body as the resumed node's payload.
+/// `GET|POST /webhook/resume/:node_id/:run_id` — wake a Wait-for-webhook (or
+/// generic approval) run parked on `node_id`, attaching the request body as the
+/// resumed node's payload. The (unguessable) run id scopes the wake to that one
+/// run; it only works while that run is still parked here.
 pub async fn handle_resume(
-    Path(token): Path<String>,
+    Path((node_id, run_id)): Path<(String, String)>,
     State(state): State<AppState>,
     body: Bytes,
 ) -> impl IntoResponse {
     let payload = parse_resume_body(&body);
-    do_resume(state, token, "resumed", payload).await
+    do_resume(state, node_id, run_id, "resumed", payload).await
 }
 
-/// `GET|POST /webhook/approve/:token` — resume an Approval run down output 0.
+/// `GET|POST /webhook/approve/:node_id/:run_id` — resume an Approval run down output 0.
 pub async fn handle_approve(
-    Path(token): Path<String>,
+    Path((node_id, run_id)): Path<(String, String)>,
     State(state): State<AppState>,
     body: Bytes,
 ) -> impl IntoResponse {
     let payload = parse_resume_body(&body);
-    do_resume(state, token, "approved", payload).await
+    do_resume(state, node_id, run_id, "approved", payload).await
 }
 
-/// `GET|POST /webhook/reject/:token` — resume an Approval run down output 1.
+/// `GET|POST /webhook/reject/:node_id/:run_id` — resume an Approval run down output 1.
 pub async fn handle_reject(
-    Path(token): Path<String>,
+    Path((node_id, run_id)): Path<(String, String)>,
     State(state): State<AppState>,
     body: Bytes,
 ) -> impl IntoResponse {
     let payload = parse_resume_body(&body);
-    do_resume(state, token, "rejected", payload).await
+    do_resume(state, node_id, run_id, "rejected", payload).await
 }
