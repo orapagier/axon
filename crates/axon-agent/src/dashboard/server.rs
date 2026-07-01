@@ -257,17 +257,17 @@ pub fn build_router(state: AppState) -> Router {
         // by necessity — the unguessable single-use token IS the credential. GET is
         // allowed so an approval link clicked from an email resumes the run.
         .route(
-            "/webhook/resume/:token",
+            "/webhook/resume/:node_id/:run_id",
             get(crate::webhook::external::handle_resume)
                 .post(crate::webhook::external::handle_resume),
         )
         .route(
-            "/webhook/approve/:token",
+            "/webhook/approve/:node_id/:run_id",
             get(crate::webhook::external::handle_approve)
                 .post(crate::webhook::external::handle_approve),
         )
         .route(
-            "/webhook/reject/:token",
+            "/webhook/reject/:node_id/:run_id",
             get(crate::webhook::external::handle_reject)
                 .post(crate::webhook::external::handle_reject),
         )
