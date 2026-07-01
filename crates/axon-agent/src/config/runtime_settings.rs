@@ -186,13 +186,13 @@ RESPONSE RULES:
     /// B3: max workflow runs executing concurrently. Read once at startup to size
     /// the run semaphore; changing it takes effect on restart.
     pub fn workflow_max_concurrent_runs(&self) -> i64 {
-        self.get_int("workflow.max_concurrent_runs", 16).max(1)
+        self.get_int("workflow.max_concurrent_runs", 10).max(1)
     }
     /// B3: max runs allowed to queue waiting for a permit. Beyond this, new
     /// trigger fires are shed (logged + marked failed) instead of piling up. `0`
     /// disables the cap (unbounded queue, still bounded *execution*).
     pub fn workflow_max_queue_depth(&self) -> i64 {
-        self.get_int("workflow.max_queue_depth", 500).max(0)
+        self.get_int("workflow.max_queue_depth", 0).max(0)
     }
     /// C1: public base URL used to build the resume/approve/reject links a
     /// Wait-for-webhook or Approval node surfaces. Blank → the node emits

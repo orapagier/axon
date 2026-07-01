@@ -86,7 +86,7 @@ Ordered by leverage ÷ risk. Each milestone is independently shippable.
 > **B3 shipped.** A startup-sized semaphore bounds concurrently *executing* runs;
 > both background-spawn entry points (`run_in_background_inner`, the durable-wait
 > resume waker) acquire a `RunSlot` permit before running. A bounded wait queue
-> (`max_queue_depth`, default 500) sheds new fires when full (marked failed) and
+> (`max_queue_depth`, default 0 = unbounded) sheds new fires when full (marked failed) and
 > defers resumes (kept 'waiting' for the next tick). Suspending a durable Wait
 > ends the task → permit released; resume re-acquires. Subflows run inline within
 > the parent's permit (no second acquire → no deadlock). Gauges (`active_runs`,
@@ -471,7 +471,7 @@ queue and a clear overflow policy — all in-process, no Redis.
 **Approach.**
 
 1. Add to `AppState`: `run_semaphore: Arc<tokio::sync::Semaphore>` sized from setting
-   `workflow.max_concurrent_runs` (default e.g. 16), plus an atomic `queue_depth` gauge.
+   `workflow.max_concurrent_runs` (default 10), plus an atomic `queue_depth` gauge.
 2. `run_in_background_with_source` acquires a permit before executing; if none is immediately
    available it either (a) queues (await the permit) up to a max queue length, or (b) for
    "fire from a trigger" rejects with a logged backpressure event when the queue is full
