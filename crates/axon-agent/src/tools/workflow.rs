@@ -3871,13 +3871,17 @@ impl WorkflowEngine {
     }
 
     /// C1: resume a run durably suspended at a Wait-for-webhook / Approval node,
-    /// driven by an external hit on its tokenized resume URL. `outcome` is one of
-    /// `"resumed"` | `"approved"` | `"rejected"`; `payload` is the request body
-    /// (attached to the resumed node so downstream nodes read it as `$json`). The
-    /// run continues in the background; this returns once the resume is committed.
-    pub async fn resume_by_token(
+    /// driven by an external hit on its
+    /// `/webhook/{resume,approve,reject}/<node_id>/<run_id>` URL. The node id
+    /// addresses the parked node; the run id (an unguessable UUIDv4) scopes the
+    /// wake to exactly one run. `outcome` is one of `"resumed"` | `"approved"` |
+    /// `"rejected"`; `payload` is the request body (attached to the resumed node
+    /// so downstream nodes read it as `$json`). The run continues in the
+    /// background; this returns once the resume is committed.
+    pub async fn resume_by_node(
         state: &AppState,
-        token: &str,
+        node_id: &str,
+        run_id: &str,
         outcome: &str,
         payload: Value,
     ) -> Result<Value, String> {
