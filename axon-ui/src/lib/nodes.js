@@ -408,7 +408,6 @@ export const NODE_TYPES = {
                 type: 'options',
                 options: [
                     { name: 'None', value: 'none' },
-                    { name: 'Predefined Credential Type', value: 'predefinedCredentialType' },
                     { name: 'Generic Credential Type', value: 'genericCredentialType' },
                 ],
                 default: 'none',
@@ -422,7 +421,6 @@ export const NODE_TYPES = {
                     { name: 'Basic Auth', value: 'httpBasicAuth' },
                     { name: 'Header Auth', value: 'httpHeaderAuth' },
                     { name: 'Query Auth', value: 'httpQueryAuth' },
-                    { name: 'OAuth2', value: 'oAuth2Api' },
                 ],
                 default: 'httpBasicAuth',
             },
@@ -454,6 +452,21 @@ export const NODE_TYPES = {
                 type: 'string',
                 default: 'Bearer ',
                 displayOptions: { show: { authentication: ['genericCredentialType'], genericAuthType: ['httpHeaderAuth'] } },
+            },
+            {
+                displayName: 'Name',
+                name: 'authQueryName',
+                type: 'string',
+                default: '',
+                placeholder: 'api_key',
+                displayOptions: { show: { authentication: ['genericCredentialType'], genericAuthType: ['httpQueryAuth'] } },
+            },
+            {
+                displayName: 'Value',
+                name: 'authQueryValue',
+                type: 'string',
+                default: '',
+                displayOptions: { show: { authentication: ['genericCredentialType'], genericAuthType: ['httpQueryAuth'] } },
             },
 
             {

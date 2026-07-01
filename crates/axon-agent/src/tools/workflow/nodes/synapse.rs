@@ -172,6 +172,19 @@ pub(crate) async fn execute_http_node(config: &Value) -> Result<Value, String> {
         }
     }
 
+    // Query Auth (Generic Credential Type → Query Auth): append the credential as a
+    // query-string parameter. Applied regardless of "Send Query Parameters".
+    if authentication == "genericCredentialType"
+        && config.get("genericAuthType").and_then(|v| v.as_str()) == Some("httpQueryAuth")
+    {
+        if let Some(name) = config.get("authQueryName").and_then(|v| v.as_str()) {
+            if !name.is_empty() {
+                let value = config.get("authQueryValue").cloned().unwrap_or(Value::Null);
+                query_obj.insert(name.to_string(), header_query_value(&value));
+            }
+        }
+    }
+
     let raw_content_type = config
         .get("contentType")
         .or_else(|| config.get("bodyContentType"))
