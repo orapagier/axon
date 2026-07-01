@@ -563,7 +563,10 @@ pub async fn reset_model(State(state): State<AppState>, Path(name): Path<String>
     Json(json!({"ok": true}))
 }
 
-pub async fn add_model(State(state): State<AppState>, Json(m): Json<Value>) -> Json<Value> {
+/// Insert a new model row from a JSON payload. Shared by the `add_model` HTTP
+/// handler and the Homeostasis workflow node so both encrypt/normalize
+/// identically. Requires `name` + `provider`; `api_key` is encrypted at rest.
+pub(crate) fn apply_add_model(conn: &rusqlite::Connection, m: &Value) -> Result<(), String> {
     let name = m.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let provider = crate::providers::normalize_provider_name(
         m.get("provider").and_then(|v| v.as_str()).unwrap_or(""),
@@ -584,14 +587,141 @@ pub async fn add_model(State(state): State<AppState>, Json(m): Json<Value>) -> J
     let role = m.get("role").and_then(|v| v.as_str()).unwrap_or("");
 
     if name.is_empty() || provider.is_empty() {
-        return Json(json!({"ok": false, "error": "Name and provider are required"}));
+        return Err("Name and provider are required".into());
     }
 
+    conn.execute(
+        "INSERT INTO models (name, provider, model_id, api_key, base_url, timeout_secs, priority, max_tokens, role, enabled) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1)",
+        rusqlite::params![name, provider, model_id, crate::crypto::encrypt_key(raw_api_key), base_url, timeout_secs, priority, max_tokens, role],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Apply a partial update: only keys present in `m` are written (the dashboard's
+/// "change only what you send" behavior). An `api_key` that is blank/whitespace
+/// is skipped so it can't wipe an existing key. Shared with the Homeostasis node.
+pub(crate) fn apply_update_model(
+    conn: &rusqlite::Connection,
+    name: &str,
+    m: &Value,
+) -> Result<(), String> {
+    if let Some(enabled) = m.get("enabled").and_then(|v| v.as_bool()) {
+        conn.execute(
+            "UPDATE models SET enabled=?1 WHERE name=?2",
+            rusqlite::params![if enabled { 1 } else { 0 }, name],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    if let Some(priority) = m.get("priority").and_then(|v| v.as_i64()) {
+        conn.execute(
+            "UPDATE models SET priority=?1 WHERE name=?2",
+            rusqlite::params![priority, name],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    if let Some(role) = m.get("role").and_then(|v| v.as_str()) {
+        conn.execute(
+            "UPDATE models SET role=?1 WHERE name=?2",
+            rusqlite::params![role, name],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    if let Some(raw_api_key) = m.get("api_key").and_then(|v| v.as_str()) {
+        if !raw_api_key.trim().is_empty() {
+            conn.execute(
+                "UPDATE models SET api_key=?1 WHERE name=?2",
+                rusqlite::params![crate::crypto::encrypt_key(raw_api_key), name],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+    if let Some(provider) = m.get("provider").and_then(|v| v.as_str()) {
+        let provider = crate::providers::normalize_provider_name(provider);
+        conn.execute(
+            "UPDATE models SET provider=?1 WHERE name=?2",
+            rusqlite::params![provider, name],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    if let Some(model_id) = m.get("model_id").and_then(|v| v.as_str()) {
+        conn.execute(
+            "UPDATE models SET model_id=?1 WHERE name=?2",
+            rusqlite::params![model_id, name],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    if let Some(base_url) = m.get("base_url").and_then(|v| v.as_str()) {
+        let base_url = crate::providers::normalize_base_url(Some(base_url.to_string()));
+        conn.execute(
+            "UPDATE models SET base_url=?1 WHERE name=?2",
+            rusqlite::params![base_url, name],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    if m.get("timeout_secs").is_some() {
+        let timeout_secs = m
+            .get("timeout_secs")
+            .and_then(|v| v.as_i64())
+            .filter(|v| *v > 0);
+        conn.execute(
+            "UPDATE models SET timeout_secs=?1 WHERE name=?2",
+            rusqlite::params![timeout_secs, name],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    if let Some(max_tokens) = m.get("max_tokens").and_then(|v| v.as_i64()) {
+        conn.execute(
+            "UPDATE models SET max_tokens=?1 WHERE name=?2",
+            rusqlite::params![max_tokens, name],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Delete a model by name, returning the number of rows removed. Shared helper.
+pub(crate) fn apply_delete_model(conn: &rusqlite::Connection, name: &str) -> Result<usize, String> {
+    conn.execute("DELETE FROM models WHERE name=?1", rusqlite::params![name])
+        .map_err(|e| e.to_string())
+}
+
+/// List models with non-secret columns only — never returns `api_key`. Used by
+/// the Homeostasis node's List operation.
+pub(crate) fn list_models_public(conn: &rusqlite::Connection) -> Result<Vec<Value>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT name, provider, model_id, base_url, timeout_secs, priority, max_tokens, enabled, role \
+             FROM models ORDER BY priority, name",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(json!({
+                "name": r.get::<_, String>(0)?,
+                "provider": r.get::<_, String>(1)?,
+                "model_id": r.get::<_, Option<String>>(2)?,
+                "base_url": r.get::<_, Option<String>>(3)?,
+                "timeout_secs": r.get::<_, Option<i64>>(4)?,
+                "priority": r.get::<_, Option<i64>>(5)?,
+                "max_tokens": r.get::<_, Option<i64>>(6)?,
+                "enabled": r.get::<_, i32>(7)? != 0,
+                "role": r.get::<_, Option<String>>(8)?,
+            }))
+        })
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(out)
+}
+
+pub async fn add_model(State(state): State<AppState>, Json(m): Json<Value>) -> Json<Value> {
     if let Ok(conn) = state.db.get() {
-        let _ = conn.execute(
-            "INSERT INTO models (name, provider, model_id, api_key, base_url, timeout_secs, priority, max_tokens, role, enabled) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1)",
-            rusqlite::params![name, provider, model_id, crate::crypto::encrypt_key(raw_api_key), base_url, timeout_secs, priority, max_tokens, role],
-        );
+        if let Err(e) = apply_add_model(&conn, &m) {
+            return Json(json!({"ok": false, "error": e}));
+        }
         let new_models = crate::config::load_models_from_db(&conn).unwrap_or_default();
         crate::router::update_models(&state.router, new_models).await;
         return Json(json!({"ok": true}));
@@ -605,69 +735,9 @@ pub async fn update_model(
     Json(m): Json<Value>,
 ) -> Json<Value> {
     if let Ok(conn) = state.db.get() {
-        if let Some(enabled) = m.get("enabled").and_then(|v| v.as_bool()) {
-            let _ = conn.execute(
-                "UPDATE models SET enabled=?1 WHERE name=?2",
-                rusqlite::params![if enabled { 1 } else { 0 }, name],
-            );
+        if let Err(e) = apply_update_model(&conn, &name, &m) {
+            return Json(json!({"ok": false, "error": e}));
         }
-        if let Some(priority) = m.get("priority").and_then(|v| v.as_i64()) {
-            let _ = conn.execute(
-                "UPDATE models SET priority=?1 WHERE name=?2",
-                rusqlite::params![priority, name],
-            );
-        }
-        if let Some(role) = m.get("role").and_then(|v| v.as_str()) {
-            let _ = conn.execute(
-                "UPDATE models SET role=?1 WHERE name=?2",
-                rusqlite::params![role, name],
-            );
-        }
-        if let Some(raw_api_key) = m.get("api_key").and_then(|v| v.as_str()) {
-            if !raw_api_key.trim().is_empty() {
-                let _ = conn.execute(
-                    "UPDATE models SET api_key=?1 WHERE name=?2",
-                    rusqlite::params![crate::crypto::encrypt_key(raw_api_key), name],
-                );
-            }
-        }
-        if let Some(provider) = m.get("provider").and_then(|v| v.as_str()) {
-            let provider = crate::providers::normalize_provider_name(provider);
-            let _ = conn.execute(
-                "UPDATE models SET provider=?1 WHERE name=?2",
-                rusqlite::params![provider, name],
-            );
-        }
-        if let Some(model_id) = m.get("model_id").and_then(|v| v.as_str()) {
-            let _ = conn.execute(
-                "UPDATE models SET model_id=?1 WHERE name=?2",
-                rusqlite::params![model_id, name],
-            );
-        }
-        if let Some(base_url) = m.get("base_url").and_then(|v| v.as_str()) {
-            let base_url = crate::providers::normalize_base_url(Some(base_url.to_string()));
-            let _ = conn.execute(
-                "UPDATE models SET base_url=?1 WHERE name=?2",
-                rusqlite::params![base_url, name],
-            );
-        }
-        if m.get("timeout_secs").is_some() {
-            let timeout_secs = m
-                .get("timeout_secs")
-                .and_then(|v| v.as_i64())
-                .filter(|v| *v > 0);
-            let _ = conn.execute(
-                "UPDATE models SET timeout_secs=?1 WHERE name=?2",
-                rusqlite::params![timeout_secs, name],
-            );
-        }
-        if let Some(max_tokens) = m.get("max_tokens").and_then(|v| v.as_i64()) {
-            let _ = conn.execute(
-                "UPDATE models SET max_tokens=?1 WHERE name=?2",
-                rusqlite::params![max_tokens, name],
-            );
-        }
-
         let new_models = crate::config::load_models_from_db(&conn).unwrap_or_default();
         crate::router::update_models(&state.router, new_models).await;
         return Json(json!({"ok": true}));
@@ -722,7 +792,7 @@ pub async fn update_models_bulk(
 
 pub async fn delete_model(State(state): State<AppState>, Path(name): Path<String>) -> Json<Value> {
     if let Ok(conn) = state.db.get() {
-        let _ = conn.execute("DELETE FROM models WHERE name=?1", rusqlite::params![name]);
+        let _ = apply_delete_model(&conn, &name);
         let new_models = crate::config::load_models_from_db(&conn).unwrap_or_default();
         crate::router::update_models(&state.router, new_models).await;
         return Json(json!({"ok": true}));

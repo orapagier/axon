@@ -19,6 +19,7 @@ pub(crate) mod engram;
 pub(crate) mod facebook;
 pub(crate) mod fovea;
 pub(crate) mod github;
+pub(crate) mod homeostasis;
 pub(crate) mod iterate;
 pub(crate) mod mcp;
 pub(crate) mod nociceptor;

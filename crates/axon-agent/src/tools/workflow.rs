@@ -1925,6 +1925,7 @@ async fn execute_node_dispatch(
             nodes::soma::execute(config, &input)
         }
         "engram" => nodes::engram::execute(config, state).await,
+        "homeostasis" => nodes::homeostasis::execute(config, state).await,
         "ifCondition" => nodes::condition::execute_if_condition_node(config),
         "switch" => nodes::condition::execute_switch_node(config),
         "loop" => nodes::iterate::execute(config),
