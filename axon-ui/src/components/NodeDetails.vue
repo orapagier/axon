@@ -1756,6 +1756,33 @@ onUnmounted(() => {
           
           <div class="col-content">
             <div v-if="activeTab === 'parameters'" class="params-form">
+              <!-- C1: run-scoped resume/approve/reject links for human-in-the-loop
+                   Wait (webhook mode) and Approval nodes. Paste into an UPSTREAM
+                   node (e.g. Telegram) so the human gets the link before the run
+                   parks — the runId placeholder fills in the live run at send time. -->
+              <div v-if="isWaitWebhook || isApproval" class="form-row resume-url-block">
+                <label class="field-label" style="color: var(--teal)">
+                  {{ isApproval ? 'Approval Links' : 'Resume URL' }}
+                  <span class="info-icon" style="opacity: 0.5; font-size: 10px; cursor: help;" title="Send this to a human so they can resume the run. Use it in a node BEFORE this one.">ⓘ</span>
+                </label>
+                <p class="resume-url-hint">
+                  Paste into a node <b>before</b> this one. <code>{{ runIdToken }}</code> resolves to the current run automatically.
+                </p>
+                <template v-if="isApproval">
+                  <div class="webhook-url-input-group">
+                    <input type="text" :value="approveUrl" readonly title="Approve → routes down the first (approve) output" />
+                    <button @click="copyText(approveUrl)" class="btn-copy-url" title="Copy Approve URL">✓ Approve</button>
+                  </div>
+                  <div class="webhook-url-input-group" style="margin-top: 6px">
+                    <input type="text" :value="rejectUrl" readonly title="Reject → routes down the second (reject) output" />
+                    <button @click="copyText(rejectUrl)" class="btn-copy-url" title="Copy Reject URL">✕ Reject</button>
+                  </div>
+                </template>
+                <div v-else class="webhook-url-input-group">
+                  <input type="text" :value="resumeUrl" readonly />
+                  <button @click="copyText(resumeUrl)" class="btn-copy-url" title="Copy Resume URL">Copy</button>
+                </div>
+              </div>
               <!-- Dynamic Props -->
               <template v-for="prop in nodeDefinition.properties" :key="prop.name">
                 <div v-if="shouldShowProperty(prop)" class="form-row" :class="'row-' + prop.type">
