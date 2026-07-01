@@ -1,7 +1,8 @@
 //! Homeostasis — self-manage dashboard resources from inside a workflow.
 //!
 //! Today the only resource is AI models: Add / Update / Delete / List rows in
-//! the `models` table. It reuses the exact DB helpers that back the
+//! the `models` table, plus a Health Check that live-probes every model. It
+//! reuses the exact DB helpers that back the
 //! `/api/models` dashboard endpoints (`dashboard::api::apply_*`) so encryption,
 //! provider normalization and validation never drift, then hot-reloads the live
 //! router the same way those HTTP handlers do. The `resource` field is a
@@ -17,6 +18,10 @@
 //! List is special: it reports the LIVE router snapshot (the same health view as
 //! `/api/models`) rather than the `models` table, so each row also carries the
 //! model's runtime `status`, cooldown reset and error counts — not just config.
+//! But List is still a passive snapshot: a model only turns `unavailable` after
+//! it has actually failed in real traffic, so a freshly-added bad key still reads
+//! as healthy. Health Check closes that gap by sending a live one-line probe to
+//! every model and grouping them by real outcome (healthy / unhealthy).
 
 use crate::state::AppState;
 use serde_json::{json, Value};
@@ -47,6 +52,22 @@ pub(crate) async fn execute(config: &Value, state: &AppState) -> Result<Value, S
             "ok": true, "resource": "model", "operation": "list",
             "count": count, "models": models
         }));
+    }
+
+    // Health Check goes further than List: it sends a real (tiny) provider call
+    // to every model and reports which ones actually work right now — surfacing
+    // bad API keys, wrong endpoints or unreachable providers that List (a cached
+    // snapshot) can't see. The report groups models by outcome (healthy /
+    // unhealthy) and sorts each group alphabetically by name; api_key is never
+    // included. Async and DB-free, so it sits with `list` above the DB block.
+    if operation == "health_check" {
+        let mut report = crate::router::health_check(&state.router).await;
+        if let Some(obj) = report.as_object_mut() {
+            obj.insert("ok".into(), json!(true));
+            obj.insert("resource".into(), json!("model"));
+            obj.insert("operation".into(), json!("health_check"));
+        }
+        return Ok(report);
     }
 
     // Do every DB touch synchronously and drop the connection before awaiting

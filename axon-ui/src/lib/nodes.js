@@ -1339,6 +1339,7 @@ export const NODE_TYPES = {
                     { name: 'Update', value: 'update' },
                     { name: 'Delete', value: 'delete' },
                     { name: 'List', value: 'list' },
+                    { name: 'Health Check', value: 'health_check' },
                 ],
             },
             {
@@ -1469,6 +1470,13 @@ export const NODE_TYPES = {
                 type: 'notice',
                 default: 'Outputs { count, models: [{ name, provider, model_id, role, priority, enabled, status, rate_limit_reset_at, consecutive_errors, consecutive_rate_limits, total_calls, … }] } — the live router view (status = available / rate_limited / unavailable). API keys are never included.',
                 displayOptions: { show: { operation: ['list'] } },
+            },
+            {
+                displayName: 'Health Check sends a real probe to every model',
+                name: 'homeostasis_health_hint',
+                type: 'notice',
+                default: 'Fires a tiny live completion at every model (all in parallel) and reports what actually works right now — catching bad API keys, wrong endpoints or unreachable providers that List can\'t see. Outputs { checked, summary: { healthy, unhealthy }, by_status: { healthy: [...], unhealthy: [{ …, error }] } }, each group sorted alphabetically by name. Costs a few tokens per model; API keys are never included.',
+                displayOptions: { show: { operation: ['health_check'] } },
             },
         ],
     },

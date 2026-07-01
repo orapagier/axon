@@ -902,6 +902,85 @@ pub async fn get_status(router: &SharedRouter) -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// Actively probe every configured model with a tiny real completion and report
+/// which ones actually work *right now*. Unlike `get_status` — which only echoes
+/// the cached runtime health — this sends a live one-line "ping" to each
+/// provider, so a bad API key, wrong base_url or unreachable endpoint surfaces
+/// immediately instead of only after the model is used in anger.
+///
+/// Read-only with respect to the router: models are cloned out under the lock and
+/// each probe runs on its own clone, so live status/telemetry is never mutated by
+/// a health check. All probes run concurrently. The result groups models by
+/// outcome (`healthy` / `unhealthy`) and sorts each group alphabetically by name;
+/// `api_key` is never included.
+pub async fn health_check(router: &SharedRouter) -> serde_json::Value {
+    // Snapshot the model set, then release the lock before any network I/O.
+    let models: Vec<ModelRecord> = {
+        let g = router.lock().await;
+        g.models.clone()
+    };
+
+    // Probe each model on its own clone, all concurrently. A minimal, cheap call
+    // — one short user turn, no tools, capped at a few tokens: success means the
+    // provider accepted our credentials and returned a valid response; any error
+    // (401, wrong endpoint, timeout, unreachable) means unhealthy.
+    let probes = models.into_iter().map(|mut m| async move {
+        let started = Instant::now();
+        let result = call_provider_with_options(
+            &mut m,
+            &[Message::user("ping")],
+            "",
+            &[],
+            16,
+            ProviderCallOptions::default(),
+        )
+        .await;
+        let latency_ms = started.elapsed().as_millis() as u64;
+
+        let mut entry = serde_json::json!({
+            "name": m.name,
+            "provider": m.provider,
+            "model_id": m.model_id,
+            "enabled": m.enabled,
+            "latency_ms": latency_ms,
+        });
+        let status = match result {
+            Ok(_) => "healthy",
+            Err(e) => {
+                entry["error"] = serde_json::json!(e.to_string());
+                "unhealthy"
+            }
+        };
+        (status, entry)
+    });
+
+    let results = futures::future::join_all(probes).await;
+
+    // Group by outcome, then sort each group alphabetically (case-insensitive) by
+    // name. BTreeMap keeps the status groups themselves in stable, sorted order.
+    let checked = results.len();
+    let mut by_status: std::collections::BTreeMap<String, Vec<serde_json::Value>> =
+        Default::default();
+    let mut summary: std::collections::BTreeMap<String, u64> = Default::default();
+    for (status, entry) in results {
+        *summary.entry(status.to_string()).or_insert(0) += 1;
+        by_status.entry(status.to_string()).or_default().push(entry);
+    }
+    for entries in by_status.values_mut() {
+        entries.sort_by(|a, b| {
+            let an = a["name"].as_str().unwrap_or("").to_lowercase();
+            let bn = b["name"].as_str().unwrap_or("").to_lowercase();
+            an.cmp(&bn)
+        });
+    }
+
+    serde_json::json!({
+        "checked": checked,
+        "summary": summary,
+        "by_status": by_status,
+    })
+}
+
 pub async fn reset_model(router: &SharedRouter, name: &str) -> bool {
     let mut g = router.lock().await;
     if let Some(m) = g.models.iter_mut().find(|m| m.name == name) {
