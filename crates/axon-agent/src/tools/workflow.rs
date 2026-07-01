@@ -1420,6 +1420,8 @@ fn interpolate_config(
                         [cred_id],
                         |r| r.get::<_, String>(0),
                     ) {
+                        // Encrypted at rest; decrypt_key passes legacy plaintext through.
+                        let data_str = crate::crypto::decrypt_key(&data_str);
                         if let Ok(Value::Object(cred_map)) = serde_json::from_str(&data_str) {
                             for (k, v) in cred_map {
                                 map.insert(k, v);
