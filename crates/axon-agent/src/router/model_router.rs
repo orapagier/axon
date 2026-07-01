@@ -1131,3 +1131,74 @@ pub async fn update_models(router: &SharedRouter, mut new_models: Vec<ModelRecor
     // every reload, defeating the round-robin distribution. Preserving
     // the existing counter keeps distribution smooth across reloads.
 }
+
+#[cfg(test)]
+mod tests {
+    use super::classify_health_error;
+
+    #[test]
+    fn classifies_real_provider_errors() {
+        // Anthropic / openai_compat 429 wording.
+        assert_eq!(
+            classify_health_error("rate limit [retry-after:30]: too many requests"),
+            "rate_limited"
+        );
+        // Gemini reports throttling as an exceeded quota, not a 429.
+        assert_eq!(
+            classify_health_error("provider error 429 at https://…: RESOURCE_EXHAUSTED: quota"),
+            "rate_limited"
+        );
+        assert_eq!(
+            classify_health_error("provider error 403 at https://…: insufficient_quota"),
+            "quota_exceeded"
+        );
+        // Bad key: both Anthropic ("anthropic 401 …") and openai_compat framing.
+        assert_eq!(
+            classify_health_error("anthropic 401 Unauthorized: invalid x-api-key"),
+            "invalid_key"
+        );
+        assert_eq!(
+            classify_health_error("provider error 401 Unauthorized at https://…: invalid_api_key"),
+            "invalid_key"
+        );
+        // Wrong model_id / base_url path.
+        assert_eq!(
+            classify_health_error("provider error 404 Not Found at https://…: model not found"),
+            "not_found"
+        );
+        assert_eq!(
+            classify_health_error("provider error 400 Bad Request at https://…: unsupported param"),
+            "bad_request"
+        );
+        assert_eq!(
+            classify_health_error("anthropic 529 Overloaded: overloaded_error"),
+            "server_error"
+        );
+    }
+
+    #[test]
+    fn classifies_local_prechecks_and_transport() {
+        assert_eq!(
+            classify_health_error(
+                "no API key after resolution (check AXON_MASTER_KEY / provider env vars)"
+            ),
+            "misconfigured"
+        );
+        assert_eq!(
+            classify_health_error("unresolved API key placeholder ${OPENAI_KEY} (check .env)"),
+            "misconfigured"
+        );
+        assert_eq!(classify_health_error("model has no model_id"), "misconfigured");
+        assert_eq!(
+            classify_health_error("HTTP to https://…: operation timed out"),
+            "timeout"
+        );
+        assert_eq!(
+            classify_health_error(
+                "Anthropic request: error trying to connect: dns error: failed to lookup address"
+            ),
+            "unreachable"
+        );
+        assert_eq!(classify_health_error("something totally unexpected"), "error");
+    }
+}
