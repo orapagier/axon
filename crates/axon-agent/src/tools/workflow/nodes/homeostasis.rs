@@ -21,7 +21,8 @@
 //! But List is still a passive snapshot: a model only turns `unavailable` after
 //! it has actually failed in real traffic, so a freshly-added bad key still reads
 //! as healthy. Health Check closes that gap by sending a live one-line probe to
-//! every model and grouping them by real outcome (healthy / unhealthy).
+//! every model and grouping them by real outcome — `healthy` plus a specific
+//! failure category per model (rate_limited, invalid_key, not_found, …).
 
 use crate::state::AppState;
 use rusqlite::OptionalExtension;
