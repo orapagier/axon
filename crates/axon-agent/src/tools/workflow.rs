@@ -1893,7 +1893,7 @@ async fn execute_node_dispatch(
                 .get("script")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            execute_js_node(raw_script, node, &vec, workflow_id).await
+            execute_js_node(raw_script, node, &vec, workflow_id, run_id).await
         }
         "cortex" => nodes::cortex::execute_cortex_node(config, state, workflow_id, &node.id).await,
         "classifier" => nodes::classifier::execute(config, state, workflow_id, &node.id).await,
