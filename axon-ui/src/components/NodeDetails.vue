@@ -2927,7 +2927,10 @@ onUnmounted(() => {
   grid-column: 1 / -1;
   margin-bottom: 20px;
 }
-.resume-url-block {
+/* Compound selector so this beats the later plain `.form-row { display: grid }`
+   rule (equal specificity, but defined afterwards) — otherwise the block became a
+   2-col grid and packed the approve + reject groups side by side on one row. */
+.form-row.resume-url-block {
   background: rgba(129, 230, 217, 0.03);
   border: 1px solid rgba(129, 230, 217, 0.1);
   padding: 14px;

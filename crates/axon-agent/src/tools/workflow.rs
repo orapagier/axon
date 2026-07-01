@@ -3971,6 +3971,9 @@ impl WorkflowEngine {
                     }
                     obj.insert("data".to_string(), payload.clone());
                     obj.insert("resumed".to_string(), json!(true));
+                    // Clear the stale suspend-time flag: the run is no longer
+                    // parked, so `$json.waiting` must read false downstream.
+                    obj.insert("waiting".to_string(), json!(false));
                     obj.insert("outcome".to_string(), json!(outcome));
                     obj.insert("resumed_at".to_string(), json!(now_iso));
                     if mode == "approval" {
