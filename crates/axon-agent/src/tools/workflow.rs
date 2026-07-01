@@ -328,6 +328,7 @@ async fn execute_js_node(
     node: &WorkflowNode,
     results: &[NodeResult],
     workflow_id: &str,
+    run_id: &str,
 ) -> Result<Value, String> {
     if raw_script.is_empty() {
         return Err("No script specified".to_string());
