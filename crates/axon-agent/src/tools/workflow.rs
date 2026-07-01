@@ -1036,6 +1036,7 @@ fn resolve_value_scoped(
     s: &str,
     results: &std::collections::HashMap<String, NodeResult>,
     ancestors: Option<&std::collections::HashSet<String>>,
+    run_id: &str,
 ) -> Value {
     use once_cell::sync::Lazy;
     // Compiled once: this function runs for every string in every node config.
