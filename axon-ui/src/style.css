@@ -3610,8 +3610,8 @@ textarea::placeholder {
 }
 
 .chat-input-floating {
-    padding: 8px 10px !important;
-    border-radius: 20px !important;
+    padding: 5px 8px !important;
+    border-radius: 16px !important;
     background: rgba(255, 255, 255, 0.9) !important;
     border: 1px solid rgba(0, 0, 0, 0.08) !important;
     box-shadow: var(--shadow-sm) !important;
@@ -3623,11 +3623,11 @@ textarea::placeholder {
 }
 
 .chat-textarea {
-    min-height: 46px !important;
-    height: 46px;
-    padding: 12px 14px !important;
-    font-size: 0.92rem;
-    line-height: 1.45;
+    min-height: 36px !important;
+    height: 36px;
+    padding: 8px 12px !important;
+    font-size: 0.9rem;
+    line-height: 1.4;
 }
 
 /* Chat send button — consolidated into the "POLISHED BUTTON SYSTEM" at end of file. */

@@ -96,7 +96,9 @@ const activePage = ref('chat')
 const KEEP_MOUNTED = new Set(['chat'])
 const visitedPages = ref(new Set(['chat']))
 const sidebarOpen = ref(false)
-const isSidebarCollapsed = ref(typeof window !== 'undefined' ? window.innerWidth < 1200 : false)
+// Chat is the default landing page and, like Workflows, wants the full canvas —
+// so start collapsed. navigate() keeps it in sync on every page change.
+const isSidebarCollapsed = ref(true)
 const isAuthenticated = ref(!!localStorage.getItem('AXON_MASTER_KEY'))
 
 const activeNav = computed(() => NAV.find((item) => item.id === activePage.value) || NAV[0])
@@ -104,7 +106,7 @@ const activeNav = computed(() => NAV.find((item) => item.id === activePage.value
 function navigate(id) {
   activePage.value = id
   visitedPages.value.add(id)
-  isSidebarCollapsed.value = id === 'workflows'
+  isSidebarCollapsed.value = id === 'workflows' || id === 'chat'
 
   if (window.innerWidth < 1024) {
     sidebarOpen.value = false
@@ -112,7 +114,8 @@ function navigate(id) {
     return
   }
 
-  // On desktop/tablet we auto-close (collapse) for Workflows and auto-expand elsewhere.
+  // On desktop/tablet we auto-close (collapse) for Workflows and Chat (both want
+  // the full canvas) and auto-expand elsewhere.
   sidebarOpen.value = false
 }
 

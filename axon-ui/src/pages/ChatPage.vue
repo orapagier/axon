@@ -285,7 +285,7 @@ async function scrollBottom() {
 function adjustInputHeight() {
   if (!inputEl.value) return
   inputEl.value.style.height = 'auto'
-  inputEl.value.style.height = `${Math.min(inputEl.value.scrollHeight, 220)}px`
+  inputEl.value.style.height = `${Math.min(inputEl.value.scrollHeight, 160)}px`
 }
 
 function useStarterPrompt(prompt) {
