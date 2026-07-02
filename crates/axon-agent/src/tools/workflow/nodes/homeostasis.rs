@@ -337,8 +337,13 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn accepts_allowed_categories_from_array() {
-        let cfg = json!({ "auto_delete": ["not_found", "invalid_key", "forbidden"] });
+    fn ticked_checkboxes_select_categories_in_allowlist_order() {
+        // Boxes ticked out of order still come back in DELETABLE_CATEGORIES order.
+        let cfg = json!({
+            "auto_delete_forbidden": true,
+            "auto_delete_not_found": true,
+            "auto_delete_invalid_key": true,
+        });
         assert_eq!(
             auto_delete_categories(&cfg),
             vec!["not_found", "invalid_key", "forbidden"]
@@ -346,21 +351,23 @@ mod tests {
     }
 
     #[test]
-    fn accepts_comma_separated_string() {
-        let cfg = json!({ "auto_delete": "not_found, bad_request" });
-        assert_eq!(auto_delete_categories(&cfg), vec!["not_found", "bad_request"]);
+    fn accepts_stringy_boolean() {
+        let cfg = json!({ "auto_delete_not_found": "true", "auto_delete_bad_request": "false" });
+        assert_eq!(auto_delete_categories(&cfg), vec!["not_found"]);
     }
 
     #[test]
-    fn drops_non_deletable_and_unknown_categories() {
-        // The safety guarantee: even a hand-edited config can't opt into deleting a
-        // recoverable failure or, worst of all, `misconfigured` (a missing env var).
+    fn no_checkbox_exists_for_non_deletable_categories() {
+        // The safety guarantee: there is no auto_delete_misconfigured /
+        // auto_delete_rate_limited box, so a hand-edited config that sets one is
+        // simply never consulted.
         let cfg = json!({
-            "auto_delete": ["misconfigured", "rate_limited", "payment_required",
-                            "server_error", "timeout", "unreachable", "healthy",
-                            "bogus", "not_found"]
+            "auto_delete_misconfigured": true,
+            "auto_delete_rate_limited": true,
+            "auto_delete_payment_required": true,
+            "auto_delete_healthy": true,
+            "auto_delete_not_found": true,
         });
-        // Only the one allow-listed member survives.
         assert_eq!(auto_delete_categories(&cfg), vec!["not_found"]);
         // And the allow-list itself never contains a recoverable/local category.
         for banned in ["misconfigured", "rate_limited", "payment_required",
@@ -370,10 +377,8 @@ mod tests {
     }
 
     #[test]
-    fn deduplicates_and_ignores_missing_or_empty() {
+    fn empty_when_no_boxes_ticked() {
         assert!(auto_delete_categories(&json!({})).is_empty());
-        assert!(auto_delete_categories(&json!({ "auto_delete": [] })).is_empty());
-        let cfg = json!({ "auto_delete": ["not_found", "not_found", "invalid_key"] });
-        assert_eq!(auto_delete_categories(&cfg), vec!["not_found", "invalid_key"]);
+        assert!(auto_delete_categories(&json!({ "auto_delete_not_found": false })).is_empty());
     }
 }
