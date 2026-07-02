@@ -1834,7 +1834,7 @@ onUnmounted(() => {
                     </button>
                   </div>
                   <template v-else-if="prop.type === 'boolean'">
-                    <label class="field-label">{{ prop.displayName }}</label>
+                    <label class="field-label" :title="prop.description || prop.displayName">{{ prop.displayName }}</label>
                     <ExprInput
                       v-if="isExprMode('p:'+prop.name, node.data.config[prop.name])"
                       v-model="node.data.config[prop.name]"
