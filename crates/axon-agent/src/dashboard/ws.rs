@@ -20,6 +20,36 @@ pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> 
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 
+/// Ensure a `conversations` row exists for this dashboard chat thread and keep
+/// its `updated_at` fresh. The title is seeded from the first user message and
+/// left untouched afterwards (unless still the default), so the sidebar shows a
+/// meaningful label without ever clobbering a name the user set later.
+fn upsert_conversation(state: &AppState, session_id: &str, task: &str) {
+    let title: String = task
+        .trim()
+        .lines()
+        .next()
+        .unwrap_or("")
+        .chars()
+        .take(60)
+        .collect();
+    let title = if title.trim().is_empty() {
+        "New chat".to_string()
+    } else {
+        title
+    };
+    if let Ok(conn) = state.db.get() {
+        let _ = conn.execute(
+            "INSERT INTO conversations (id, title) VALUES (?1, ?2)
+             ON CONFLICT(id) DO UPDATE SET
+               updated_at = datetime('now'),
+               title = CASE WHEN conversations.title IN ('New chat', '')
+                            THEN excluded.title ELSE conversations.title END",
+            rusqlite::params![session_id, title],
+        );
+    }
+}
+
 /// Best-effort: flip a still-running run row to `cancelled` so it doesn't linger
 /// as `running` forever after the task future was aborted.
 fn mark_run_cancelled(state: &AppState, run_id: &str, reason: &str) {
@@ -71,6 +101,9 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
             // Try to parse as WsTask, but don't panic if it fails
             if let Ok(task_data) = serde_json::from_str::<WsTask>(text) {
+                // Create/refresh this thread's sidebar row before the run so a
+                // brand-new conversation is persisted the moment it's used.
+                upsert_conversation(&state, &task_data.session_id, &task_data.task);
                 let mut context = RunContext::new(
                     &task_data.task,
                     "dashboard",

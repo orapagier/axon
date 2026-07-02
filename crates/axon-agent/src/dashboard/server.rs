@@ -78,6 +78,18 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::put(api::toggle_pattern).delete(api::delete_pattern),
         )
         .route("/api/patterns/test", axum::routing::post(api::test_routing))
+        .route(
+            "/api/conversations",
+            get(api::list_conversations).post(api::create_conversation),
+        )
+        .route(
+            "/api/conversations/:id",
+            axum::routing::put(api::rename_conversation).delete(api::delete_conversation),
+        )
+        .route(
+            "/api/conversations/:id/messages",
+            get(api::get_conversation_messages),
+        )
         .route("/api/memory/recent", get(api::get_memory_recent))
         .route(
             "/api/memory/search",
