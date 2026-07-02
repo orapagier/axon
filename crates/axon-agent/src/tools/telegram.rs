@@ -840,16 +840,31 @@ async fn send_message(client: &TelegramClient, config: &Value) -> Result<Value, 
     client.post("sendMessage", Value::Object(body)).await
 }
 
-/// Split a long message into chunks, preferring to break at newlines.
+/// Find the best index (byte offset, on a char boundary) to split `text` at
+/// or before `max` bytes: prefer the last newline, then the last
+/// sentence-ending period, falling back to a hard cut so callers always make
+/// progress even on text with no natural break.
+fn find_split_point(text: &str, max: usize) -> usize {
+    let limit = (0..=max.min(text.len()))
+        .rev()
+        .find(|&i| text.is_char_boundary(i))
+        .unwrap_or(0);
+    let window = &text[..limit];
+    window
+        .rfind('\n')
+        .map(|i| i + 1)
+        .or_else(|| window.rfind(". ").map(|i| i + 2))
+        .or_else(|| window.rfind('.').map(|i| i + 1))
+        .unwrap_or(limit)
+}
+
+/// Split a long message into chunks, preferring to break at newlines, then
+/// sentence-ending periods, so a chunk boundary rarely lands mid-sentence.
 fn chunk_text(text: &str, max: usize) -> Vec<String> {
     let mut chunks = Vec::new();
     let mut remaining = text;
     while remaining.len() > max {
-        // Try to break at the last newline within the limit
-        let split_at = remaining[..max]
-            .rfind('\n')
-            .map(|i| i + 1) // include the newline in the current chunk
-            .unwrap_or(max); // fall back to hard cut
+        let split_at = find_split_point(remaining, max);
         chunks.push(remaining[..split_at].to_string());
         remaining = &remaining[split_at..];
     }
@@ -857,6 +872,58 @@ fn chunk_text(text: &str, max: usize) -> Vec<String> {
         chunks.push(remaining.to_string());
     }
     chunks
+}
+
+/// Telegram's hard limit for a photo/video/audio/document/animation caption
+/// — much smaller than the 4096-char message limit above.
+const TELEGRAM_MAX_CAPTION: usize = 1024;
+
+/// Split a caption that's too long for Telegram's per-media limit into the
+/// part to send as the caption and the remainder to send as a follow-up text
+/// message.
+fn split_caption(caption: &str, max: usize) -> (String, Option<String>) {
+    if caption.len() <= max {
+        return (caption.to_string(), None);
+    }
+    let split_at = find_split_point(caption, max);
+    let head = caption[..split_at].to_string();
+    let tail = caption[split_at..].trim_start().to_string();
+    (head, if tail.is_empty() { None } else { Some(tail) })
+}
+
+/// If `body["caption"]` exceeds Telegram's per-media limit, truncate it in
+/// place and return the remainder to send as a follow-up message. Runs after
+/// `apply_additional_fields` so the length check sees the final, HTML-escaped
+/// caption rather than splitting it before escaping changes its length.
+fn take_caption_overflow(body: &mut serde_json::Map<String, Value>) -> Option<String> {
+    let caption = body.get("caption")?.as_str()?.to_string();
+    if caption.len() <= TELEGRAM_MAX_CAPTION {
+        return None;
+    }
+    let (head, tail) = split_caption(&caption, TELEGRAM_MAX_CAPTION);
+    body.insert("caption".into(), json!(head));
+    tail
+}
+
+/// Send caption overflow as a follow-up text message, chunked further if it
+/// still exceeds Telegram's message length limit.
+async fn send_caption_overflow(
+    client: &TelegramClient,
+    chat_id: &str,
+    overflow: &str,
+    config: &Value,
+) -> Result<(), String> {
+    let pm = resolve_parse_mode(config);
+    for chunk in chunk_text(overflow, TELEGRAM_MAX_TEXT) {
+        let mut body = serde_json::Map::new();
+        body.insert("chat_id".into(), json!(chat_id));
+        body.insert("text".into(), json!(chunk));
+        if !pm.eq_ignore_ascii_case("none") {
+            body.insert("parse_mode".into(), json!(pm));
+        }
+        client.post("sendMessage", Value::Object(body)).await?;
+    }
+    Ok(())
 }
 
 async fn send_photo(client: &TelegramClient, config: &Value) -> Result<Value, String> {
@@ -867,15 +934,22 @@ async fn send_photo(client: &TelegramClient, config: &Value) -> Result<Value, St
         let part = file_part(file.bytes, file.file_name, &file.mime_type)?;
 
         let mut form = multipart::Form::new()
-            .text("chat_id", chat_id)
+            .text("chat_id", chat_id.clone())
             .part("photo", part);
 
+        let mut overflow = None;
         if let Some(caption) = str_val(config, "caption") {
-            form = form.text("caption", caption);
+            let (head, tail) = split_caption(&caption, TELEGRAM_MAX_CAPTION);
+            form = form.text("caption", head);
+            overflow = tail;
         }
         apply_additional_fields_to_form(&mut form, config);
 
-        return client.post_multipart("sendPhoto", form).await;
+        let result = client.post_multipart("sendPhoto", form).await?;
+        if let Some(overflow) = overflow {
+            send_caption_overflow(client, &chat_id, &overflow, config).await?;
+        }
+        return Ok(result);
     }
 
     let photo = require_str(config, "photo")?; // file_id or URL
@@ -886,8 +960,13 @@ async fn send_photo(client: &TelegramClient, config: &Value) -> Result<Value, St
         body.insert("caption".into(), json!(caption));
     }
     apply_additional_fields(&mut body, config);
+    let overflow = take_caption_overflow(&mut body);
 
-    client.post("sendPhoto", Value::Object(body)).await
+    let result = client.post("sendPhoto", Value::Object(body)).await?;
+    if let Some(overflow) = overflow {
+        send_caption_overflow(client, &chat_id, &overflow, config).await?;
+    }
+    Ok(result)
 }
 
 async fn send_video(client: &TelegramClient, config: &Value) -> Result<Value, String> {
@@ -898,23 +977,27 @@ async fn send_video(client: &TelegramClient, config: &Value) -> Result<Value, St
         let part = file_part(file.bytes, file.file_name, &file.mime_type)?;
 
         let mut form = multipart::Form::new()
-            .text("chat_id", chat_id)
+            .text("chat_id", chat_id.clone())
             .part("video", part);
 
-        for key in &[
-            "caption",
-            "duration",
-            "width",
-            "height",
-            "supports_streaming",
-        ] {
+        for key in &["duration", "width", "height", "supports_streaming"] {
             if let Some(v) = config.get(*key) {
                 form = form.text(*key, v.to_string());
             }
         }
+        let mut overflow = None;
+        if let Some(caption) = str_val(config, "caption") {
+            let (head, tail) = split_caption(&caption, TELEGRAM_MAX_CAPTION);
+            form = form.text("caption", head);
+            overflow = tail;
+        }
         apply_additional_fields_to_form(&mut form, config);
 
-        return client.post_multipart("sendVideo", form).await;
+        let result = client.post_multipart("sendVideo", form).await?;
+        if let Some(overflow) = overflow {
+            send_caption_overflow(client, &chat_id, &overflow, config).await?;
+        }
+        return Ok(result);
     }
 
     let video = require_str(config, "video")?;
@@ -933,8 +1016,13 @@ async fn send_video(client: &TelegramClient, config: &Value) -> Result<Value, St
         }
     }
     apply_additional_fields(&mut body, config);
+    let overflow = take_caption_overflow(&mut body);
 
-    client.post("sendVideo", Value::Object(body)).await
+    let result = client.post("sendVideo", Value::Object(body)).await?;
+    if let Some(overflow) = overflow {
+        send_caption_overflow(client, &chat_id, &overflow, config).await?;
+    }
+    Ok(result)
 }
 
 async fn send_audio(client: &TelegramClient, config: &Value) -> Result<Value, String> {
@@ -945,15 +1033,25 @@ async fn send_audio(client: &TelegramClient, config: &Value) -> Result<Value, St
         let part = file_part(file.bytes, file.file_name, &file.mime_type)?;
 
         let mut form = multipart::Form::new()
-            .text("chat_id", chat_id)
+            .text("chat_id", chat_id.clone())
             .part("audio", part);
-        for key in &["caption", "duration", "performer", "title"] {
+        for key in &["duration", "performer", "title"] {
             if let Some(v) = config.get(*key) {
                 form = form.text(*key, v.to_string());
             }
         }
+        let mut overflow = None;
+        if let Some(caption) = str_val(config, "caption") {
+            let (head, tail) = split_caption(&caption, TELEGRAM_MAX_CAPTION);
+            form = form.text("caption", head);
+            overflow = tail;
+        }
         apply_additional_fields_to_form(&mut form, config);
-        return client.post_multipart("sendAudio", form).await;
+        let result = client.post_multipart("sendAudio", form).await?;
+        if let Some(overflow) = overflow {
+            send_caption_overflow(client, &chat_id, &overflow, config).await?;
+        }
+        return Ok(result);
     }
 
     let audio = require_str(config, "audio")?;
@@ -966,7 +1064,12 @@ async fn send_audio(client: &TelegramClient, config: &Value) -> Result<Value, St
         }
     }
     apply_additional_fields(&mut body, config);
-    client.post("sendAudio", Value::Object(body)).await
+    let overflow = take_caption_overflow(&mut body);
+    let result = client.post("sendAudio", Value::Object(body)).await?;
+    if let Some(overflow) = overflow {
+        send_caption_overflow(client, &chat_id, &overflow, config).await?;
+    }
+    Ok(result)
 }
 
 /// Upload `part` as a sendDocument multipart, attaching caption + additional
@@ -979,13 +1082,20 @@ async fn send_document_part(
     config: &Value,
 ) -> Result<Value, String> {
     let mut form = multipart::Form::new()
-        .text("chat_id", chat_id)
+        .text("chat_id", chat_id.clone())
         .part("document", part);
+    let mut overflow = None;
     if let Some(caption) = str_val(config, "caption") {
-        form = form.text("caption", caption);
+        let (head, tail) = split_caption(&caption, TELEGRAM_MAX_CAPTION);
+        form = form.text("caption", head);
+        overflow = tail;
     }
     apply_additional_fields_to_form(&mut form, config);
-    client.post_multipart("sendDocument", form).await
+    let result = client.post_multipart("sendDocument", form).await?;
+    if let Some(overflow) = overflow {
+        send_caption_overflow(client, &chat_id, &overflow, config).await?;
+    }
+    Ok(result)
 }
 
 async fn send_document(client: &TelegramClient, config: &Value) -> Result<Value, String> {
@@ -1032,7 +1142,12 @@ async fn send_document(client: &TelegramClient, config: &Value) -> Result<Value,
         body.insert("caption".into(), json!(caption));
     }
     apply_additional_fields(&mut body, config);
-    client.post("sendDocument", Value::Object(body)).await
+    let overflow = take_caption_overflow(&mut body);
+    let result = client.post("sendDocument", Value::Object(body)).await?;
+    if let Some(overflow) = overflow {
+        send_caption_overflow(client, &chat_id, &overflow, config).await?;
+    }
+    Ok(result)
 }
 
 async fn send_animation(client: &TelegramClient, config: &Value) -> Result<Value, String> {
@@ -1043,15 +1158,25 @@ async fn send_animation(client: &TelegramClient, config: &Value) -> Result<Value
         let part = file_part(file.bytes, file.file_name, &file.mime_type)?;
 
         let mut form = multipart::Form::new()
-            .text("chat_id", chat_id)
+            .text("chat_id", chat_id.clone())
             .part("animation", part);
-        for key in &["caption", "duration", "width", "height"] {
+        for key in &["duration", "width", "height"] {
             if let Some(v) = config.get(*key) {
                 form = form.text(*key, v.to_string());
             }
         }
+        let mut overflow = None;
+        if let Some(caption) = str_val(config, "caption") {
+            let (head, tail) = split_caption(&caption, TELEGRAM_MAX_CAPTION);
+            form = form.text("caption", head);
+            overflow = tail;
+        }
         apply_additional_fields_to_form(&mut form, config);
-        return client.post_multipart("sendAnimation", form).await;
+        let result = client.post_multipart("sendAnimation", form).await?;
+        if let Some(overflow) = overflow {
+            send_caption_overflow(client, &chat_id, &overflow, config).await?;
+        }
+        return Ok(result);
     }
 
     let animation = require_str(config, "animation")?;
@@ -1064,7 +1189,12 @@ async fn send_animation(client: &TelegramClient, config: &Value) -> Result<Value
         }
     }
     apply_additional_fields(&mut body, config);
-    client.post("sendAnimation", Value::Object(body)).await
+    let overflow = take_caption_overflow(&mut body);
+    let result = client.post("sendAnimation", Value::Object(body)).await?;
+    if let Some(overflow) = overflow {
+        send_caption_overflow(client, &chat_id, &overflow, config).await?;
+    }
+    Ok(result)
 }
 
 async fn send_sticker(client: &TelegramClient, config: &Value) -> Result<Value, String> {
@@ -1316,8 +1446,15 @@ async fn edit_message_caption(client: &TelegramClient, config: &Value) -> Result
         body.insert("caption".into(), json!(caption));
     }
     apply_additional_fields(&mut body, config);
+    let overflow = take_caption_overflow(&mut body);
 
-    client.post("editMessageCaption", Value::Object(body)).await
+    let result = client
+        .post("editMessageCaption", Value::Object(body))
+        .await?;
+    if let Some(overflow) = overflow {
+        send_caption_overflow(client, &chat_id, &overflow, config).await?;
+    }
+    Ok(result)
 }
 
 async fn edit_message_media(client: &TelegramClient, config: &Value) -> Result<Value, String> {
@@ -2157,6 +2294,78 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_chunk_text_under_limit_returns_single_chunk() {
+        let chunks = chunk_text("short message", 4096);
+        assert_eq!(chunks, vec!["short message".to_string()]);
+    }
+
+    #[test]
+    fn test_chunk_text_breaks_at_newline_when_available() {
+        let text = format!("{}\n{}", "a".repeat(10), "b".repeat(10));
+        let chunks = chunk_text(&text, 15);
+        assert_eq!(chunks[0], format!("{}\n", "a".repeat(10)));
+        assert_eq!(chunks[1], "b".repeat(10));
+    }
+
+    #[test]
+    fn test_chunk_text_falls_back_to_period_without_newline() {
+        // No newline in range; should break after the sentence-ending period.
+        let chunks = chunk_text(&format!("First sentence. {}", "b".repeat(20)), 20);
+        assert!(
+            chunks[0].ends_with(". "),
+            "expected sentence break, got {:?}",
+            chunks[0]
+        );
+    }
+
+    #[test]
+    fn test_chunk_text_hard_cuts_when_no_boundary_exists() {
+        let text = "a".repeat(50);
+        let chunks = chunk_text(&text, 20);
+        assert_eq!(chunks[0].len(), 20);
+        assert_eq!(chunks.iter().map(|c| c.len()).sum::<usize>(), 50);
+    }
+
+    #[test]
+    fn test_split_caption_under_limit_has_no_overflow() {
+        let (head, overflow) = split_caption("short caption", TELEGRAM_MAX_CAPTION);
+        assert_eq!(head, "short caption");
+        assert!(overflow.is_none());
+    }
+
+    #[test]
+    fn test_split_caption_over_limit_produces_overflow() {
+        let caption = format!("{} {}", "word".repeat(300), "tail content");
+        assert!(caption.len() > TELEGRAM_MAX_CAPTION);
+        let (head, overflow) = split_caption(&caption, TELEGRAM_MAX_CAPTION);
+        assert!(head.len() <= TELEGRAM_MAX_CAPTION);
+        let overflow = overflow.expect("overflow expected for caption exceeding the limit");
+        assert!(!overflow.is_empty());
+        // The head + overflow should reconstruct the original content (module
+        // whitespace trimmed at the split point).
+        assert!(caption.trim_end().ends_with(overflow.trim_end()));
+    }
+
+    #[test]
+    fn test_take_caption_overflow_truncates_body_in_place() {
+        let long_caption = "x".repeat(TELEGRAM_MAX_CAPTION + 50);
+        let mut body = serde_json::Map::new();
+        body.insert("caption".into(), json!(long_caption));
+        let overflow = take_caption_overflow(&mut body);
+        assert!(overflow.is_some());
+        let new_len = body.get("caption").unwrap().as_str().unwrap().len();
+        assert!(new_len <= TELEGRAM_MAX_CAPTION);
+    }
+
+    #[test]
+    fn test_take_caption_overflow_none_when_short() {
+        let mut body = serde_json::Map::new();
+        body.insert("caption".into(), json!("short"));
+        assert!(take_caption_overflow(&mut body).is_none());
+        assert_eq!(body.get("caption").unwrap().as_str().unwrap(), "short");
+    }
 
     #[test]
     fn test_extract_file_descriptor_plain_string_path() {
