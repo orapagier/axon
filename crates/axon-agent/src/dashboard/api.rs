@@ -686,6 +686,19 @@ pub(crate) fn apply_delete_model(conn: &rusqlite::Connection, name: &str) -> Res
         .map_err(|e| e.to_string())
 }
 
+/// Disable a model by name, but only when it's currently enabled — returns the
+/// number of rows changed (0 when the model is missing or already disabled). The
+/// `AND enabled=1` guard is what lets Homeostasis' Health Check auto-disable count
+/// only models it actually parked this run, so a repeated run doesn't keep
+/// "re-disabling" the same rows.
+pub(crate) fn apply_disable_model(conn: &rusqlite::Connection, name: &str) -> Result<usize, String> {
+    conn.execute(
+        "UPDATE models SET enabled=0 WHERE name=?1 AND enabled=1",
+        rusqlite::params![name],
+    )
+    .map_err(|e| e.to_string())
+}
+
 pub async fn add_model(State(state): State<AppState>, Json(m): Json<Value>) -> Json<Value> {
     if let Ok(conn) = state.db.get() {
         if let Err(e) = apply_add_model(&conn, &m) {

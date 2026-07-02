@@ -64,52 +64,50 @@ pub(crate) async fn execute(config: &Value, state: &AppState) -> Result<Value, S
     // `unhealthy` into fixed failure-reason buckets (rate_limited, payment_required,
     // invalid_key, not_found, …), each list sorted alphabetically by name; api_key is
     // never included. The probe itself is async and DB-free (it sits with `list`
-    // above the DB block), and only opens a connection afterwards if `auto_delete`
-    // asks it to prune terminal-failure models — see below.
+    // above the DB block), and only opens a connection afterwards if `auto_delete` /
+    // `auto_disable` asks it to prune or park failing models — see below.
     if operation == "health_check" {
         let mut report = crate::router::health_check(&state.router, &state.settings).await;
 
-        // Optional inline cleanup. If the node opts into auto-deleting one or more
-        // TERMINAL failure categories, prune those models right here so the workflow
-        // needs no downstream Delete node. `auto_delete_categories` only ever admits
-        // irrecoverable reasons (DELETABLE_CATEGORIES) — recoverable ones
-        // (rate_limited, payment_required, server_error, timeout, unreachable) and,
-        // critically, `misconfigured` (an unresolved ${VAR}, i.e. a server-env
-        // problem, not a bad model) are never eligible, so a transient outage or a
-        // missing env var can't wipe a good row. The health probe already ran
-        // DB-free above, so the connection is opened only now and dropped before the
-        // router reload await, honoring the !Sync-across-await rule.
+        // Optional inline cleanup. The node can opt into two independent, disjoint
+        // actions, each driven by the report's own unhealthy buckets:
+        //   • auto-DELETE terminal-failure models (DELETABLE_CATEGORIES): gone
+        //     (not_found), rejected credentials/permissions (invalid_key/forbidden),
+        //     or an unacceptable request (bad_request) — irrecoverable, so pruning
+        //     them right here needs no downstream Delete node.
+        //   • auto-DISABLE recoverable-failure models (DISABLEABLE_CATEGORIES): out
+        //     of credits (payment_required), provider outage (server_error), timeout
+        //     or unreachable — transient reasons that typically clear within a day or
+        //     two, so we PARK the row (enabled=false) instead of destroying it, ready
+        //     to be flipped back on later. `rate_limited` is deliberately excluded (it
+        //     recovers in minutes/an hour via the router's own cooldown), as is
+        //     `misconfigured` (an unresolved ${VAR} — a server-env problem, not a bad
+        //     model). The two category sets never overlap, so no model is both deleted
+        //     and disabled in one run. The health probe already ran DB-free above, so
+        //     the connection is opened only now and dropped before the router-reload
+        //     await, honoring the !Sync-across-await rule.
         let auto_delete = auto_delete_categories(config);
-        if !auto_delete.is_empty() {
-            // Names to remove come from the report's own unhealthy buckets.
-            let mut targets: Vec<(String, String)> = Vec::new(); // (category, name)
-            if let Some(unhealthy) = report
-                .get("by_status")
-                .and_then(|v| v.get("unhealthy"))
-                .and_then(|v| v.as_object())
-            {
-                for cat in &auto_delete {
-                    if let Some(entries) = unhealthy.get(cat).and_then(|v| v.as_array()) {
-                        for e in entries {
-                            if let Some(name) = e.get("name").and_then(|v| v.as_str()) {
-                                targets.push((cat.clone(), name.to_string()));
-                            }
-                        }
-                    }
-                }
-            }
+        let auto_disable = auto_disable_categories(config);
+        if !auto_delete.is_empty() || !auto_disable.is_empty() {
+            // Names to act on come from the report's own unhealthy buckets.
+            let delete_targets = collect_targets(&report, &auto_delete);
+            let disable_targets = collect_targets(&report, &auto_disable);
 
-            // Seed the selected categories so the `deleted` shape tracks the ticked
-            // boxes (a category is present even if it removed nothing this run).
+            // Seed the selected categories so each summary tracks the ticked boxes
+            // (a category is present even if it changed nothing this run).
             let mut deleted_by_cat: serde_json::Map<String, Value> =
                 auto_delete.iter().map(|c| (c.clone(), json!([]))).collect();
+            let mut disabled_by_cat: serde_json::Map<String, Value> =
+                auto_disable.iter().map(|c| (c.clone(), json!([]))).collect();
             let mut delete_errors: Vec<Value> = Vec::new();
+            let mut disable_errors: Vec<Value> = Vec::new();
             let mut deleted_count: u64 = 0;
+            let mut disabled_count: u64 = 0;
 
-            if !targets.is_empty() {
+            if !delete_targets.is_empty() || !disable_targets.is_empty() {
                 let reload_models = {
                     let conn = state.db.get().map_err(|e| format!("DB pool: {e}"))?;
-                    for (cat, name) in &targets {
+                    for (cat, name) in &delete_targets {
                         match crate::dashboard::api::apply_delete_model(&conn, name) {
                             Ok(0) => {} // already gone — nothing to record
                             Ok(_) => {
@@ -124,22 +122,46 @@ pub(crate) async fn execute(config: &Value, state: &AppState) -> Result<Value, S
                                 .push(json!({ "name": name, "category": cat, "error": e })),
                         }
                     }
+                    for (cat, name) in &disable_targets {
+                        match crate::dashboard::api::apply_disable_model(&conn, name) {
+                            Ok(0) => {} // missing or already disabled — nothing to record
+                            Ok(_) => {
+                                disabled_count += 1;
+                                if let Some(Value::Array(arr)) = disabled_by_cat.get_mut(cat) {
+                                    arr.push(json!(name));
+                                }
+                            }
+                            Err(e) => disable_errors
+                                .push(json!({ "name": name, "category": cat, "error": e })),
+                        }
+                    }
                     crate::config::load_models_from_db(&conn).unwrap_or_default()
                     // `conn` is dropped here, before the await below.
                 };
                 // Hot-reload the router so later nodes and live traffic see the
-                // pruned model set immediately.
+                // pruned/parked model set immediately.
                 crate::router::update_models(&state.router, reload_models).await;
             }
 
-            let mut deleted = serde_json::Map::new();
-            deleted.insert("count".into(), json!(deleted_count));
-            deleted.insert("by_category".into(), Value::Object(deleted_by_cat));
-            if !delete_errors.is_empty() {
-                deleted.insert("errors".into(), Value::Array(delete_errors));
-            }
             if let Some(obj) = report.as_object_mut() {
-                obj.insert("deleted".into(), Value::Object(deleted));
+                if !auto_delete.is_empty() {
+                    let mut deleted = serde_json::Map::new();
+                    deleted.insert("count".into(), json!(deleted_count));
+                    deleted.insert("by_category".into(), Value::Object(deleted_by_cat));
+                    if !delete_errors.is_empty() {
+                        deleted.insert("errors".into(), Value::Array(delete_errors));
+                    }
+                    obj.insert("deleted".into(), Value::Object(deleted));
+                }
+                if !auto_disable.is_empty() {
+                    let mut disabled = serde_json::Map::new();
+                    disabled.insert("count".into(), json!(disabled_count));
+                    disabled.insert("by_category".into(), Value::Object(disabled_by_cat));
+                    if !disable_errors.is_empty() {
+                        disabled.insert("errors".into(), Value::Array(disable_errors));
+                    }
+                    obj.insert("disabled".into(), Value::Object(disabled));
+                }
             }
         }
 
@@ -254,6 +276,52 @@ fn auto_delete_categories(config: &Value) -> Vec<String> {
         .collect()
 }
 
+/// Failure categories eligible for Health Check auto-DISABLE — the RECOVERABLE
+/// ones that typically clear within a day or two, so parking the model
+/// (enabled=false) beats deleting it: out of credits (`payment_required`), a
+/// provider outage (`server_error`), a `timeout` or an `unreachable` provider.
+/// `rate_limited` is intentionally absent (it recovers in minutes/an hour via the
+/// router's own cooldown — no need to disable), as is `misconfigured` (a server-env
+/// problem, not a bad model). Disjoint from `DELETABLE_CATEGORIES`, so a model is
+/// never both deleted and disabled in one run. Must stay a subset of the router's
+/// `FAILURE_CATEGORIES`.
+const DISABLEABLE_CATEGORIES: &[&str] =
+    &["payment_required", "server_error", "timeout", "unreachable"];
+
+/// Collect the categories to park from the node's per-reason checkboxes
+/// (`auto_disable_<category>` booleans). Driven by `DISABLEABLE_CATEGORIES`, so a
+/// hand-edited config can't opt into disabling a terminal or excluded category.
+fn auto_disable_categories(config: &Value) -> Vec<String> {
+    DISABLEABLE_CATEGORIES
+        .iter()
+        .filter(|cat| config_bool(config, &format!("auto_disable_{cat}")))
+        .map(|cat| (*cat).to_string())
+        .collect()
+}
+
+/// Pull `(category, model name)` pairs out of a health report's
+/// `by_status.unhealthy.<category>` buckets for the given categories. Shared by
+/// auto-delete and auto-disable so both read the exact set the probe just produced.
+fn collect_targets(report: &Value, cats: &[String]) -> Vec<(String, String)> {
+    let mut targets = Vec::new();
+    if let Some(unhealthy) = report
+        .get("by_status")
+        .and_then(|v| v.get("unhealthy"))
+        .and_then(|v| v.as_object())
+    {
+        for cat in cats {
+            if let Some(entries) = unhealthy.get(cat).and_then(|v| v.as_array()) {
+                for e in entries {
+                    if let Some(name) = e.get("name").and_then(|v| v.as_str()) {
+                        targets.push((cat.clone(), name.to_string()));
+                    }
+                }
+            }
+        }
+    }
+    targets
+}
+
 /// Read a boolean node-config field, tolerating both a real JSON bool and the
 /// stringy "true"/"false" some form widgets emit. Absent/blank ⇒ false.
 fn config_bool(config: &Value, key: &str) -> bool {
@@ -333,7 +401,10 @@ fn trimmed_field(config: &Value, key: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{auto_delete_categories, DELETABLE_CATEGORIES};
+    use super::{
+        auto_delete_categories, auto_disable_categories, collect_targets, DELETABLE_CATEGORIES,
+        DISABLEABLE_CATEGORIES,
+    };
     use serde_json::json;
 
     #[test]
@@ -380,5 +451,76 @@ mod tests {
     fn empty_when_no_boxes_ticked() {
         assert!(auto_delete_categories(&json!({})).is_empty());
         assert!(auto_delete_categories(&json!({ "auto_delete_not_found": false })).is_empty());
+        assert!(auto_disable_categories(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn disable_boxes_select_categories_in_allowlist_order() {
+        // Ticked out of order, returned in DISABLEABLE_CATEGORIES order; stringy
+        // booleans are honored just like the delete path.
+        let cfg = json!({
+            "auto_disable_unreachable": true,
+            "auto_disable_payment_required": "true",
+            "auto_disable_server_error": true,
+            "auto_disable_timeout": "false",
+        });
+        assert_eq!(
+            auto_disable_categories(&cfg),
+            vec!["payment_required", "server_error", "unreachable"]
+        );
+    }
+
+    #[test]
+    fn no_disable_box_exists_for_rate_limited_or_terminal_reasons() {
+        // rate_limited is excluded (fast auto-recovery) and terminal reasons belong
+        // to Delete, not Disable — a hand-edited config can't opt into either.
+        let cfg = json!({
+            "auto_disable_rate_limited": true,
+            "auto_disable_misconfigured": true,
+            "auto_disable_not_found": true,
+        });
+        assert!(auto_disable_categories(&cfg).is_empty());
+        for banned in ["rate_limited", "misconfigured", "error", "healthy"] {
+            assert!(!DISABLEABLE_CATEGORIES.contains(&banned), "{banned} must not be disableable");
+        }
+    }
+
+    #[test]
+    fn delete_and_disable_sets_are_disjoint() {
+        // The core safety invariant: no model can be both deleted and disabled in
+        // one run, because the two category allow-lists never overlap.
+        for cat in DELETABLE_CATEGORIES {
+            assert!(
+                !DISABLEABLE_CATEGORIES.contains(cat),
+                "{cat} is both deletable and disableable"
+            );
+        }
+    }
+
+    #[test]
+    fn collect_targets_reads_only_requested_buckets() {
+        // Mirrors the health report shape: names are pulled from the requested
+        // unhealthy buckets only, ignoring healthy and non-selected categories.
+        let report = json!({
+            "by_status": {
+                "healthy": [{ "name": "good" }],
+                "unhealthy": {
+                    "timeout": [{ "name": "slow-1" }, { "name": "slow-2" }],
+                    "payment_required": [{ "name": "broke" }],
+                    "not_found": [{ "name": "gone" }],
+                }
+            }
+        });
+        let cats = vec!["payment_required".to_string(), "timeout".to_string()];
+        assert_eq!(
+            collect_targets(&report, &cats),
+            vec![
+                ("payment_required".to_string(), "broke".to_string()),
+                ("timeout".to_string(), "slow-1".to_string()),
+                ("timeout".to_string(), "slow-2".to_string()),
+            ]
+        );
+        // Not-selected categories (not_found) and healthy names are never collected.
+        assert!(collect_targets(&report, &[]).is_empty());
     }
 }

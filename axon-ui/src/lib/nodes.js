@@ -1518,6 +1518,41 @@ export const NODE_TYPES = {
                     },
                 ],
             },
+            {
+                // Recoverable failure reasons — the ones that usually clear within a
+                // day or two, so the model is parked (enabled=false) rather than
+                // deleted. Rate-limited is excluded on purpose (it recovers in
+                // minutes/an hour via the router cooldown). Each option binds to its
+                // own `auto_disable_<reason>` config key, read by the backend's
+                // auto_disable_categories().
+                displayName: 'Disable Models',
+                name: 'auto_disable_group',
+                type: 'checkboxCard',
+                description: 'Tick a reason to temporarily disable (not delete) any model that fails this health check with it — for transient failures that usually recover within a day or two. Re-enable the model from the Models page once it is healthy again. Leave all off to only report.',
+                displayOptions: { show: { operation: ['health_check'] } },
+                options: [
+                    {
+                        displayName: 'Payment Required (402)',
+                        name: 'auto_disable_payment_required',
+                        description: 'Disable models that fail with 402 — out of credits, recovers when the account is topped up.',
+                    },
+                    {
+                        displayName: 'Server Error (5xx)',
+                        name: 'auto_disable_server_error',
+                        description: 'Disable models hit by a provider-side outage — usually recovers within hours.',
+                    },
+                    {
+                        displayName: 'Timeout',
+                        name: 'auto_disable_timeout',
+                        description: 'Disable models that time out — a transient network / provider hiccup.',
+                    },
+                    {
+                        displayName: 'Unreachable',
+                        name: 'auto_disable_unreachable',
+                        description: 'Disable models that can’t be reached — provider or network down.',
+                    },
+                ],
+            },
         ],
     },
     cortex: {
