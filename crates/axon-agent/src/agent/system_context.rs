@@ -45,11 +45,26 @@ pub(crate) async fn build_run_context(
                 .short
                 .to_messages_limited(&ctx.session_id, window)
                 .unwrap_or_default(),
-            None => state
-                .memory
-                .short
-                .to_messages(&ctx.session_id)
-                .unwrap_or_default(),
+            None => {
+                // Dashboard chats retain a long transcript (bounded by
+                // short_term_max_msgs) but only feed the model the newest few
+                // turns, so per-message context stays cheap even in a long
+                // thread. Other platforms keep the full session window.
+                let ctx_window = state.settings.get_int("memory.dashboard_context_window", 5);
+                if ctx.platform == "dashboard" && ctx_window > 0 {
+                    state
+                        .memory
+                        .short
+                        .to_messages_limited(&ctx.session_id, ctx_window as usize)
+                        .unwrap_or_default()
+                } else {
+                    state
+                        .memory
+                        .short
+                        .to_messages(&ctx.session_id)
+                        .unwrap_or_default()
+                }
+            }
         }
     } else {
         Vec::new()
@@ -62,6 +77,16 @@ pub(crate) async fn build_run_context(
                 *text = strip_router_alert_footer(text);
             }
         }
+    }
+    // A bounded window can begin mid-thread on an assistant turn; providers
+    // (e.g. Anthropic) require the first message to be a user turn, so drop any
+    // leading assistant messages before the current task is appended.
+    while messages
+        .first()
+        .map(|m| m.role == "assistant")
+        .unwrap_or(false)
+    {
+        messages.remove(0);
     }
     if messages.last().map(|m| m.role != "user").unwrap_or(true) {
         messages.push(Message::user(task));

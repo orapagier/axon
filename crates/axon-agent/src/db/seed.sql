@@ -15,6 +15,7 @@ INSERT OR IGNORE INTO settings VALUES
     ('router.error_threshold',      '2',     'int',    'Consecutive non-rate-limit errors before parking a model until midnight', 'router', datetime('now')),
     ('router.model_call_timeout_secs','30',  'int',    'Flat per-attempt model timeout in seconds (overridable per model); on timeout the router fails over immediately', 'router', datetime('now')),
     ('memory.short_term_max_msgs',  '50',    'int',    'Max messages kept per session',                 'memory',    datetime('now')),
+    ('memory.dashboard_context_window','5',  'int',    'Newest messages fed to the model as context per dashboard chat (0=send full thread; transcript is still retained up to short_term_max_msgs)', 'memory', datetime('now')),
     ('memory.long_term_top_k',      '5',     'int',    'Memories injected per agent call',              'memory',    datetime('now')),
     ('scheduler.max_jobs',          '100',   'int',    'Maximum active scheduled jobs',                 'scheduler', datetime('now')),
     ('scheduler.follow_up_retries', '3',     'int',    'Follow-up attempts before abandoning task',     'scheduler', datetime('now')),

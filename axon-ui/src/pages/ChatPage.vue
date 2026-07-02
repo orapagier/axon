@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { connectWs, wsSend, wsStatus } from '../lib/ws.js'
-import { get, del } from '../lib/api.js'
+import { get, put, del } from '../lib/api.js'
 import { toast } from '../lib/toast.js'
 import { renderMarkdown } from '../lib/markdown.js'
 
@@ -27,6 +27,11 @@ let traceIdx = -1 // index of the trace block preceding it
 const conversations = ref([])
 const currentSessionId = ref(null)
 const LS_KEY = 'axon.chat.session'
+
+// Inline rename state: the conversation id currently being edited + its draft.
+const renamingId = ref(null)
+const renameText = ref('')
+const renameEl = ref(null)
 
 // crypto.randomUUID needs a secure context (https/localhost); fall back to a
 // v4 generator so plain-http dashboards still get unique ids.
@@ -93,6 +98,36 @@ async function removeConversation(id) {
   }
   if (id === currentSessionId.value) newChat()
   loadConversations()
+}
+
+function startRename(c) {
+  renamingId.value = c.id
+  renameText.value = c.title || ''
+  nextTick(() => {
+    // refs inside v-for collect into an array; fall back to a bare ref.
+    const el = Array.isArray(renameEl.value) ? renameEl.value[0] : renameEl.value
+    el?.focus()
+    el?.select()
+  })
+}
+
+function cancelRename() {
+  renamingId.value = null
+  renameText.value = ''
+}
+
+async function commitRename(c) {
+  if (renamingId.value !== c.id) return // already committed/cancelled
+  const title = renameText.value.trim()
+  renamingId.value = null
+  if (!title || title === c.title) return
+  c.title = title // optimistic
+  try {
+    await put(`/conversations/${c.id}`, { title })
+  } catch {
+    toast('Failed to rename conversation', false)
+    loadConversations()
+  }
 }
 
 function prettyStatus(text) {
@@ -430,7 +465,25 @@ watch(disabled, (newVal) => {
           :class="{ active: c.id === currentSessionId }"
           @click="openConversation(c.id)"
         >
-          <span class="conv-title">{{ c.title || 'New chat' }}</span>
+          <input
+            v-if="renamingId === c.id"
+            ref="renameEl"
+            class="conv-rename"
+            v-model="renameText"
+            maxlength="60"
+            @click.stop
+            @dblclick.stop
+            @mousedown.stop
+            @keydown.enter.prevent="commitRename(c)"
+            @keydown.esc.prevent="cancelRename"
+            @blur="commitRename(c)"
+          />
+          <span
+            v-else
+            class="conv-title"
+            @dblclick.stop="startRename(c)"
+            title="Double-click to rename"
+          >{{ c.title || 'New chat' }}</span>
           <button
             class="conv-del"
             type="button"
@@ -611,6 +664,19 @@ watch(disabled, (newVal) => {
   overflow: hidden;
   text-overflow: ellipsis;
   font-size: 0.88rem;
+}
+
+.conv-rename {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.88rem;
+  font-family: inherit;
+  color: inherit;
+  background: rgba(15, 23, 42, 0.35);
+  border: 1px solid rgba(94, 234, 212, 0.5);
+  border-radius: 6px;
+  padding: 3px 6px;
+  outline: none;
 }
 
 .conv-del {
