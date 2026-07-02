@@ -9,6 +9,10 @@ import { renameNodeInExpressions, applyAccessPatterns } from '../lib/expressionU
 import { get, post, del } from '../lib/api.js'
 import { toast } from '../lib/toast.js'
 
+// /api/download sits behind require_auth; plain <a href> navigation sends
+// no Authorization header, so the key rides along as a query param.
+const masterKey = localStorage.getItem('AXON_MASTER_KEY') || ''
+
 const props = defineProps({
   node: { type: Object, required: true },
   nodes: { type: Array, default: () => [] }, // All nodes for cross-reference updates
@@ -2556,7 +2560,7 @@ onUnmounted(() => {
                         {{ nodeResult.file.mime_type }} • {{ (nodeResult.file.size / 1024).toFixed(1) }} KB
                       </div>
                     </div>
-                    <a :href="'/api/download?path=' + encodeURIComponent(nodeResult.file.local_path)" class="btn-download-action" download>
+                    <a :href="'/api/download?path=' + encodeURIComponent(nodeResult.file.local_path) + '&api_key=' + encodeURIComponent(masterKey)" class="btn-download-action" download>
                       <svg viewBox="0 0 24 24" width="16" height="16" style="margin-right: 6px;"><path fill="currentColor" d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
                       Download
                     </a>

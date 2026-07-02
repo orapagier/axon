@@ -10,6 +10,19 @@ function escapeHtml(s) {
   ))
 }
 
+// Agent-generated download links carry no credentials, but every /api
+// route sits behind require_auth, so a plain <a href> navigation would
+// 401. Append the master key the same way FilesPage does. The href has
+// already been through escapeHtml, so the key is escaped to match.
+function withApiKey(href) {
+  if (!href.startsWith('/api/download?')) return href
+  const key = typeof localStorage !== 'undefined'
+    ? localStorage.getItem('AXON_MASTER_KEY')
+    : null
+  if (!key) return href
+  return `${href}&amp;api_key=${escapeHtml(encodeURIComponent(key))}`
+}
+
 function renderInline(text) {
   let out = escapeHtml(text)
 
@@ -25,7 +38,7 @@ function renderInline(text) {
   // link jump off-origin.
   out = out.replace(
     /\[([^\]\n]+)\]\((https?:\/\/[^)\s]+|\/(?!\/)[^)\s]*)\)/g,
-    '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>'
+    (_m, label, href) => `<a href="${withApiKey(href)}" target="_blank" rel="noopener noreferrer">${label}</a>`
   )
 
   // # Headings -> bold lines (pre-wrap keeps them on their own line)
