@@ -387,28 +387,19 @@ onUnmounted(() => {
           </button>
         </div>
         
-        <div class="auth-grid">
-          <div v-for="c in credentials" :key="c.id" class="auth-card-modern">
-            <div class="auth-card-backdrop" :style="{ background: `radial-gradient(circle at top right, ${CATEGORY_META.credentials.color}22, transparent)` }"></div>
-            
-            <div class="auth-icon-wrapper" v-html="CATEGORY_META.credentials.icon"></div>
-            
-            <div class="auth-content">
-              <div class="auth-header-modern">
-                <span class="auth-platform-name">{{ c.name }}</span>
-                <div class="auth-status-indicator">
-                  <span class="status-dot active"></span>
-                  <span class="status-text">SECURE</span>
-                </div>
+        <div class="service-list">
+          <div v-for="c in credentials" :key="c.id" class="service-item">
+            <div class="service-name-row">
+              <div class="service-name-group">
+                <span class="service-icon-sm" v-html="CATEGORY_META.credentials.icon"></span>
+                <span class="service-name">{{ c.name }}</span>
+                <span class="tag-pill">{{ c.service }}</span>
               </div>
-              
-              <p class="auth-user-detail">Service: {{ c.service }}</p>
-              
-              <div class="auth-actions-modern">
-                 <button class="btn btn-auth-test" :disabled="testingCred === c.id" @click="testCredential(c.id)">
-                   {{ testingCred === c.id ? 'Testing…' : 'Test' }}
-                 </button>
-                 <button class="btn btn-auth-disconnect" @click="deleteCredential(c.id)">Delete</button>
+              <div class="service-actions">
+                <button class="btn btn-sm btn-ghost" :disabled="testingCred === c.id" @click="testCredential(c.id)">
+                  {{ testingCred === c.id ? 'Testing…' : 'Test' }}
+                </button>
+                <button class="btn btn-sm btn-danger" @click="deleteCredential(c.id)">Delete</button>
               </div>
             </div>
           </div>
@@ -434,28 +425,20 @@ onUnmounted(() => {
           </button>
         </div>
         
-        <div class="auth-grid">
-          <div v-for="name in mcpServers" :key="name" class="auth-card-modern connected">
-            <div class="auth-card-backdrop" :style="{ background: `radial-gradient(circle at top right, ${CATEGORY_META.mcp.color}22, transparent)` }"></div>
-            
-            <div class="auth-icon-wrapper" v-html="CATEGORY_META.mcp.icon"></div>
-            
-            <div class="auth-content">
-              <div class="auth-header-modern">
-                <span class="auth-platform-name">{{ name }}</span>
-                <div class="auth-status-indicator">
-                  <span class="status-dot active"></span>
-                  <span class="status-text">CONNECTED</span>
-                </div>
+        <div class="service-list">
+          <div v-for="name in mcpServers" :key="name" class="service-item">
+            <div class="service-name-row">
+              <div class="service-name-group">
+                <span class="service-icon-sm" v-html="CATEGORY_META.mcp.icon"></span>
+                <span class="service-name">{{ name }}</span>
+                <Pill type="ok" text="Connected" />
               </div>
-              
-              <p class="auth-user-detail">
-                {{ mcpTools.filter((t) => t.source?.server_name === name).length }} dynamic tools available
-              </p>
-              
-              <div class="auth-actions-modern">
-                <button class="btn btn-auth-disconnect" @click="disconnectMcp(name)">Disconnect</button>
+              <div class="service-actions">
+                <button class="btn btn-sm btn-danger" @click="disconnectMcp(name)">Disconnect</button>
               </div>
+            </div>
+            <div class="service-meta-line">
+              {{ mcpTools.filter((t) => t.source?.server_name === name).length }} dynamic tools available
             </div>
           </div>
           <div v-if="mcpServers.length === 0" class="empty-state">No MCP servers connected.</div>
@@ -480,32 +463,19 @@ onUnmounted(() => {
           </button>
         </div>
         
-        <div class="auth-grid">
-          <div v-for="s in sshServers" :key="s.name" class="auth-card-modern">
-            <div class="auth-card-backdrop" :style="{ background: `radial-gradient(circle at top right, ${CATEGORY_META.ssh.color}11, transparent)` }"></div>
-            
-            <div class="auth-icon-wrapper" v-html="CATEGORY_META.ssh.icon"></div>
-            
-            <div class="auth-content">
-              <div class="auth-header-modern">
-                <span class="auth-platform-name">{{ s.name }}</span>
-                <div class="auth-status-indicator">
-                  <span class="status-dot active"></span>
-                  <span class="status-text">CONFIGURED</span>
-                </div>
+        <div class="service-list">
+          <div v-for="s in sshServers" :key="s.name" class="service-item">
+            <div class="service-name-row">
+              <div class="service-name-group">
+                <span class="service-icon-sm" v-html="CATEGORY_META.ssh.icon"></span>
+                <span class="service-name">{{ s.name }}</span>
+                <Pill type="ok" text="Configured" />
               </div>
-              
-              <div class="auth-info-modern">
-                <p class="auth-user-detail">
-                  Host: {{ s.username }}@{{ s.ip }}:{{ s.port }}<br/>
-                  Method: {{ s.auth_type }}
-                </p>
-              </div>
-              
-              <div class="auth-actions-modern">
-                <button class="btn btn-auth-disconnect" @click="deleteSsh(s.name)">Remove Server</button>
+              <div class="service-actions">
+                <button class="btn btn-sm btn-danger" @click="deleteSsh(s.name)">Remove</button>
               </div>
             </div>
+            <div class="service-meta-line">{{ s.username }}@{{ s.ip }}:{{ s.port }} · {{ s.auth_type }}</div>
           </div>
           <div v-if="sshServers.length === 0" class="empty-state">No SSH servers configured.</div>
         </div>
@@ -530,30 +500,20 @@ onUnmounted(() => {
           <button class="btn btn-ghost" style="border-radius:12px;" @click.stop="resetWsQuotas">Reset Quotas</button>
         </div>
         
-        <div class="auth-grid">
-          <div v-for="a in wsAccounts" :key="a.id" class="auth-card-modern" :class="{ connected: a.enabled }">
-            <div class="auth-card-backdrop" :style="{ background: `radial-gradient(circle at top right, ${CATEGORY_META.ws.color}22, transparent)` }"></div>
-            
-            <div class="auth-icon-wrapper" v-html="CATEGORY_META.ws.icon"></div>
-            
-            <div class="auth-content">
-              <div class="auth-header-modern">
-                <span class="auth-platform-name">{{ a.name }}</span>
-                <div class="auth-status-indicator">
-                  <span class="status-dot" :class="{ active: a.enabled }"></span>
-                  <span class="status-text">{{ a.enabled ? 'ENABLED' : 'EXHAUSTED' }}</span>
-                </div>
+        <div class="service-list">
+          <div v-for="a in wsAccounts" :key="a.id" class="service-item">
+            <div class="service-name-row">
+              <div class="service-name-group">
+                <span class="service-icon-sm" v-html="CATEGORY_META.ws.icon"></span>
+                <span class="service-name">{{ a.name }}</span>
+                <Pill :type="a.enabled ? 'ok' : 'err'" :text="a.enabled ? 'Enabled' : 'Exhausted'" />
               </div>
-              
-              <p class="auth-user-detail">
-                Priority: {{ a.priority }} <span class="divider">•</span> {{ a.queries_this_month }} queries this cycle
-              </p>
-              
-              <div class="auth-actions-modern gap-8" style="display:flex;">
-                <button class="btn btn-auth-connect" style="flex:1" @click="showEditWs(a)">Edit</button>
-                <button class="btn btn-auth-disconnect" style="flex:1" @click="deleteWs(a.id)">Delete</button>
+              <div class="service-actions">
+                <button class="btn btn-sm btn-ghost" @click="showEditWs(a)">Edit</button>
+                <button class="btn btn-sm btn-danger" @click="deleteWs(a.id)">Delete</button>
               </div>
             </div>
+            <div class="service-meta-line">Priority {{ a.priority }} · {{ a.queries_this_month }} queries this cycle</div>
           </div>
           <div v-if="wsAccounts.length === 0" class="empty-state">No Tavily accounts configured.</div>
         </div>
@@ -571,42 +531,36 @@ onUnmounted(() => {
       </div>
       
       <div class="card-content">
-        <div class="auth-grid">
-          <div v-for="p in PLATFORMS" :key="p.id" class="auth-card-modern" :class="{ connected: isMessagingConnected(p) }">
-            <div class="auth-card-backdrop" :style="{ background: `radial-gradient(circle at top right, ${isMessagingConnected(p) ? '#2ed573' : '#ff4757'}11, transparent)` }"></div>
-            
-            <div class="auth-icon-wrapper" v-html="p.icon"></div>
-            
-            <div class="auth-content">
-              <div class="auth-header-modern">
-                <span class="auth-platform-name">{{ p.name }}</span>
-                <div class="auth-status-indicator">
-                  <span class="status-dot" :class="{ active: isMessagingConnected(p) }"></span>
-                  <span class="status-text">{{ isMessagingConnected(p) ? 'ACTIVE' : (isMessagingConfigured(p) ? 'READY' : 'OFFLINE') }}</span>
-                </div>
-              </div>
-              
-              <p class="auth-user-detail">{{ p.desc }}</p>
-              
-              <div class="modern-input-group mt-12">
-                <input 
-                  type="password" 
-                  v-model="messagingTokens[p.id]" 
-                  class="premium-input-auth" 
-                  placeholder="Paste Bot Token..."
+        <div class="service-list">
+          <div v-for="p in PLATFORMS" :key="p.id" class="service-item">
+            <div class="service-name-row">
+              <div class="service-name-group">
+                <span class="service-icon-sm" v-html="p.icon"></span>
+                <span class="service-name">{{ p.name }}</span>
+                <Pill
+                  :type="isMessagingConnected(p) ? 'ok' : (isMessagingConfigured(p) ? 'info' : 'muted')"
+                  :text="isMessagingConnected(p) ? 'Active' : (isMessagingConfigured(p) ? 'Ready' : 'Offline')"
                 />
-                <button class="btn-input-action" @click="saveMessagingToken(p)">Save</button>
               </div>
-              
-              <div class="auth-actions-modern mt-12">
-                <button 
-                  class="btn btn-auth-connect" 
-                  @click="reconnectMessaging(p)" 
+              <div class="service-actions">
+                <button
+                  class="btn btn-sm btn-ghost"
+                  @click="reconnectMessaging(p)"
                   :disabled="!isMessagingConfigured(p)"
                 >
-                  {{ isMessagingConnected(p) ? 'Restart Service' : 'Connect Platform' }}
+                  {{ isMessagingConnected(p) ? 'Restart' : 'Connect' }}
                 </button>
               </div>
+            </div>
+            <div class="service-meta-line">{{ p.desc }}</div>
+            <div class="inline-token-row">
+              <input
+                type="password"
+                v-model="messagingTokens[p.id]"
+                class="token-input-compact"
+                placeholder="Paste bot token…"
+              />
+              <button class="btn btn-sm btn-ghost" @click="saveMessagingToken(p)">Save</button>
             </div>
           </div>
         </div>
@@ -624,40 +578,30 @@ onUnmounted(() => {
       </div>
       
       <div class="card-content">
-        <div class="auth-grid">
-          <div v-for="(meta, id) in AUTH_METADATA" :key="id" class="auth-card-modern" :class="{ connected: authStatus[id]?.authenticated }">
-            <div class="auth-card-backdrop" :style="{ background: `radial-gradient(circle at top right, ${meta.color}22, transparent)` }"></div>
-            
-            <div class="auth-icon-wrapper" v-html="meta.icon"></div>
-            
-            <div class="auth-content">
-              <div class="auth-header-modern">
-                <span class="auth-platform-name">{{ meta.name }}</span>
-                <div class="auth-status-indicator">
-                  <span class="status-dot" :class="{ active: authStatus[id]?.authenticated }"></span>
-                  <span class="status-text">{{ authStatus[id]?.authenticated ? 'CONNECTED' : 'NOT CONNECTED' }}</span>
-                </div>
+        <div class="service-list">
+          <div v-for="(meta, id) in AUTH_METADATA" :key="id" class="service-item">
+            <div class="service-name-row">
+              <div class="service-name-group">
+                <span class="service-icon-sm" v-html="meta.icon"></span>
+                <span class="service-name">{{ meta.name }}</span>
+                <Pill :type="authStatus[id]?.authenticated ? 'ok' : 'muted'" :text="authStatus[id]?.authenticated ? 'Connected' : 'Not connected'" />
               </div>
-              
-              <div class="auth-info-modern">
-                <p class="auth-user-detail">
-                  <template v-if="authStatus[id]?.authenticated">
-                    {{ authStatus[id]?.user || authStatus[id]?.email || 'Session Active' }}
-                  </template>
-                  <template v-else>
-                    Secure {{ meta.name }} Integration
-                  </template>
-                </p>
-              </div>
-              
-              <div class="auth-actions-modern">
-                <button v-if="!authStatus[id]?.authenticated" class="btn btn-auth-connect" @click="connectAuth(id)">
-                  Connect Service
+              <div class="service-actions">
+                <button v-if="!authStatus[id]?.authenticated" class="btn btn-sm btn-ghost" @click="connectAuth(id)">
+                  Connect
                 </button>
-                <button v-else class="btn btn-auth-disconnect" @click="disconnectAuth(id)">
+                <button v-else class="btn btn-sm btn-danger" @click="disconnectAuth(id)">
                   Disconnect
                 </button>
               </div>
+            </div>
+            <div class="service-meta-line">
+              <template v-if="authStatus[id]?.authenticated">
+                {{ authStatus[id]?.user || authStatus[id]?.email || 'Session active' }}
+              </template>
+              <template v-else>
+                Secure {{ meta.name }} integration
+              </template>
             </div>
           </div>
         </div>
@@ -855,7 +799,7 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 20px 30px;
+  padding: 16px 24px;
   background: rgba(0, 0, 0, 0.1);
   cursor: pointer;
   transition: background 0.2s;
@@ -910,25 +854,28 @@ onUnmounted(() => {
 
 /* Service Lists */
 .action-bar-modern {
-  padding: 20px 30px;
+  padding: 14px 24px;
   background: rgba(0, 0, 0, 0.01);
   display: flex;
   justify-content: flex-end;
   border-bottom: 1px solid rgba(0, 0, 0, 0.03);
 }
 
+.gap-12 { gap: 12px; }
+
 .btn-premium-action {
   background: rgba(0, 0, 0, 0.05);
   border: 1px solid rgba(0, 0, 0, 0.1);
   color: var(--text);
   font-weight: 700;
-  padding: 10px 20px;
-  border-radius: 12px;
+  padding: 8px 16px;
+  border-radius: 10px;
   display: flex;
   align-items: center;
   gap: 10px;
   transition: all 0.2s;
   cursor: pointer;
+  font-size: 13px;
 }
 
 .btn-premium-action:hover {
@@ -938,50 +885,10 @@ onUnmounted(() => {
 }
 
 .plus-icon {
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 400;
   line-height: 1;
 }
-
-.modern-input-group {
-  display: flex;
-  gap: 10px;
-  background: rgba(0, 0, 0, 0.2);
-  padding: 6px;
-  border-radius: 14px;
-  border: 1px solid rgba(0, 0, 0, 0.03);
-}
-
-.premium-input-auth {
-  flex: 1;
-  background: transparent;
-  border: none;
-  color: var(--text);
-  padding: 8px 12px;
-  font-size: 13px;
-  font-family: 'Fira Code', monospace;
-  outline: none;
-}
-
-.btn-input-action {
-  background: rgba(0, 0, 0, 0.1);
-  border: none;
-  color: var(--text);
-  padding: 6px 14px;
-  border-radius: 10px;
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.btn-input-action:hover {
-  background: #fff;
-  color: #000;
-}
-
-.mt-12 { margin-top: 12px; }
-.gap-8 { gap: 8px; }
 
 .empty-state {
   padding: 30px;
@@ -992,238 +899,110 @@ onUnmounted(() => {
   width: 100%;
 }
 
-.auth-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 20px;
-  padding: 30px;
-}
-
-.auth-card-modern {
-  position: relative;
-  background: rgba(0, 0, 0, 0.03);
-  border: 1px solid rgba(0, 0, 0, 0.05);
-  border-radius: 20px;
-  padding: 24px;
+.service-list {
   display: flex;
   flex-direction: column;
-  gap: 20px;
-  overflow: hidden;
-  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-  z-index: 1;
 }
 
-.auth-card-modern:hover {
-  transform: translateY(-5px);
-  background: rgba(0, 0, 0, 0.05);
-  border-color: rgba(0, 0, 0, 0.1);
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+.service-item {
+  padding: 16px 24px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  transition: background 0.2s;
 }
 
-.auth-card-backdrop {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 100%;
-  z-index: 0;
-  pointer-events: none;
-  opacity: 0.5;
+.service-item:last-child {
+  border-bottom: none;
 }
 
-.auth-icon-wrapper {
-  position: relative;
-  z-index: 1;
-  width: 48px;
-  height: 48px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.2);
-  border-radius: 12px;
-  padding: 10px;
-}
-
-.auth-icon-wrapper svg {
-  width: 100%;
-  height: 100%;
-}
-
-.auth-content {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.auth-header-modern {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-}
-
-.auth-platform-name {
-  font-size: 18px;
-  font-weight: 800;
-  color: var(--text);
-  letter-spacing: -0.01em;
-}
-
-.auth-status-indicator {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: rgba(0, 0, 0, 0.3);
-  padding: 4px 10px;
-  border-radius: 20px;
-}
-
-.status-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #ff4757;
-  box-shadow: 0 0 10px rgba(255, 71, 87, 0.5);
-}
-
-.status-dot.active {
-  background: #2ed573;
-  box-shadow: 0 0 10px rgba(46, 213, 115, 0.5);
-}
-
-.status-text {
-  font-size: 9px;
-  font-weight: 800;
-  color: var(--text);
-  letter-spacing: 0.05em;
-}
-
-.auth-info-modern {
-  min-height: 40px;
-}
-
-.auth-user-detail {
-  font-size: 13px;
-  color: var(--muted);
-  line-height: 1.4;
-}
-
-.auth-actions-modern {
-  margin-top: 8px;
-  display: flex;
-  gap: 8px;
-}
-
-.btn-auth-test {
-  flex: 1;
-  padding: 10px;
-  background: rgba(56, 189, 248, 0.1);
-  border: 1px solid rgba(56, 189, 248, 0.25);
-  color: #38bdf8;
-  font-weight: 700;
-  border-radius: 12px;
-  transition: all 0.2s;
-}
-
-.btn-auth-test:hover:not(:disabled) {
-  background: #38bdf8;
-  color: #fff;
-}
-
-.btn-auth-test:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-
-.auth-actions-modern .btn-auth-disconnect {
-  flex: 1;
-}
-
-.btn-auth-connect {
-  width: 100%;
-  padding: 10px;
-  background: rgba(0, 0, 0, 0.05);
-  border: 1px solid rgba(0, 0, 0, 0.1);
-  color: var(--text);
-  font-weight: 700;
-  border-radius: 12px;
-  transition: all 0.2s;
-}
-
-.btn-auth-connect:hover {
-  background: #fff;
-  color: #000;
-}
-
-.btn-auth-disconnect {
-  width: 100%;
-  padding: 10px;
-  background: rgba(244, 63, 94, 0.1);
-  border: 1px solid rgba(244, 63, 94, 0.2);
-  color: #fb7185;
-  font-weight: 700;
-  border-radius: 12px;
-  transition: all 0.2s;
-}
-
-.btn-auth-disconnect:hover {
-  background: #fb7185;
-  color: #fff;
-}
-
-.messaging-item .service-info {
-  flex: 1;
-}
-
-.service-name-group {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+.service-item:hover {
+  background: rgba(0, 0, 0, 0.02);
 }
 
 .service-name-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  width: 100%;
+  gap: 16px;
+  flex-wrap: wrap;
 }
 
-.token-input-row {
+.service-name-group {
   display: flex;
+  align-items: center;
   gap: 10px;
-  margin-top: 16px;
-  width: 100%;
+  min-width: 0;
 }
 
-.token-input-row .btn-save {
-  padding: 0 20px;
-  height: 38px;
-  min-width: 80px;
+.service-icon-sm {
+  width: 22px;
+  height: 22px;
   flex-shrink: 0;
-}
-
-.token-input {
-  font-family: 'Fira Code', monospace;
-  font-size: 12px;
-  flex: 1;
-}
-
-.btn-reconnect-inline {
-  min-width: 100px;
-}
-
-.service-icon {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 6px;
+  padding: 4px;
 }
 
-.service-icon svg {
+.service-icon-sm svg {
   width: 100%;
   height: 100%;
+}
+
+.service-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.tag-pill {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+  background: rgba(0, 0, 0, 0.2);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.service-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.service-meta-line {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.inline-token-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  max-width: 420px;
+}
+
+.token-input-compact {
+  flex: 1;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 6px 10px;
+  font-size: 12px;
+  font-family: 'Fira Code', monospace;
+  outline: none;
+  margin-bottom: 0;
+}
+
+.token-input-compact:focus {
+  border-color: var(--teal);
 }
 
 /* Custom Checkbox */
