@@ -14,9 +14,7 @@
 //! `classifier` use.
 
 use crate::state::AppState;
-use crate::tools::workflow::{
-    NodeResult, WorkflowEngine, SUBFLOW_ENTRY_NODE, SUBFLOW_STACK, SUBFLOW_TRIGGER_DATA,
-};
+use crate::tools::workflow::{trigger_data, NodeResult, WorkflowEngine, SUBFLOW_STACK};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
@@ -121,21 +119,27 @@ pub(crate) fn execute<'a>(
                 .map(|r| r.output.clone())
                 .unwrap_or_else(|| json!({}))
         });
-        SUBFLOW_TRIGGER_DATA
-            .lock()
-            .await
-            .insert(child_id.clone(), input);
+        // Stage the child's input keyed by a pre-generated child RUN id, so a
+        // concurrent subflow call into the same child can't swap payloads, and
+        // the child's cleanup guard discards it if the child dies before its
+        // trigger node runs (no leak on early failure).
+        let child_run_id = uuid::Uuid::new_v4().to_string();
+        trigger_data::stage(&child_run_id, input);
         // Pin the entry trigger (if chosen) so only its chain starts in the child.
         if let Some(node_id) = entry_node {
-            SUBFLOW_ENTRY_NODE
-                .lock()
-                .await
-                .insert(child_id.clone(), node_id);
+            trigger_data::stage_entry_node(&child_run_id, node_id);
         }
 
         // Run the child inline (same task) so the task-local stack scopes its whole
         // execution and any nested sub-workflows see the updated call chain.
-        let fut = WorkflowEngine::run_with_trigger(&child_id, state, "subflow", None, false, None);
+        let fut = WorkflowEngine::run_with_trigger(
+            &child_id,
+            state,
+            "subflow",
+            None,
+            false,
+            Some(child_run_id),
+        );
         let result = SUBFLOW_STACK
             .scope(stack, fut)
             .await

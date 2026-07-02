@@ -189,15 +189,21 @@ impl TelegramGateway {
         }
         tracing::info!("Telegram polling started");
         let mut offset: i64 = 0;
+        let mut consecutive_errors: u32 = 0;
         loop {
             match Arc::clone(&self)
                 .poll_once(offset, Arc::clone(&state))
                 .await
             {
-                Ok(n) => offset = n,
+                Ok(n) => {
+                    offset = n;
+                    consecutive_errors = 0;
+                }
                 Err(e) => {
-                    tracing::warn!("Telegram poll: {}", e);
-                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    consecutive_errors = consecutive_errors.saturating_add(1);
+                    let wait = poll_backoff_secs(consecutive_errors);
+                    tracing::warn!("Telegram poll: {} (retry in {}s)", e, wait);
+                    tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
                 }
             }
         }
@@ -754,6 +760,7 @@ impl TelegramGateway {
         chat_id: String,
         workflow_id: String,
         workflow_name: String,
+        trigger_payload: Option<serde_json::Value>,
     ) {
         let start_text = format!("Running workflow: {}", workflow_name);
         let status_mid = self
@@ -761,10 +768,15 @@ impl TelegramGateway {
             .await
             .unwrap_or_default();
 
-        let run_id = match crate::tools::workflow::WorkflowEngine::run_in_background(
+        // Kept on the "manual" source (chat-invoked run: all triggers eligible,
+        // pins apply), but any Telegram event context rides along staged for
+        // this run so a telegram-type stimulus node can read it.
+        let run_id = match crate::tools::workflow::WorkflowEngine::run_in_background_with_payload(
             &workflow_id,
             &state,
+            "manual",
             None,
+            trigger_payload,
         ) {
             Ok(id) => id,
             Err(e) => {
@@ -863,7 +875,7 @@ impl TelegramGateway {
             let state2 = Arc::clone(&state);
             let cid = chat_id.clone();
             tokio::spawn(async move {
-                this.run_workflow_and_report(state2, cid, workflow_id, workflow_name)
+                this.run_workflow_and_report(state2, cid, workflow_id, workflow_name, None)
                     .await;
             });
             return true;
@@ -957,7 +969,7 @@ impl TelegramGateway {
                         let state2 = Arc::clone(&state);
                         let cid = chat_id.clone();
                         tokio::spawn(async move {
-                            this.run_workflow_and_report(state2, cid, workflow_id, workflow_name)
+                            this.run_workflow_and_report(state2, cid, workflow_id, workflow_name, None)
                                 .await;
                         });
                         true
@@ -1157,7 +1169,7 @@ impl TelegramGateway {
                     let state2 = Arc::clone(&state);
                     let cid = chat_id.clone();
                     tokio::spawn(async move {
-                        this.run_workflow_and_report(state2, cid, wf_id, wf_name)
+                        this.run_workflow_and_report(state2, cid, wf_id, wf_name, None)
                             .await;
                     });
                 } else {
@@ -1206,19 +1218,15 @@ impl TelegramGateway {
             tokio::spawn(async move {
                 match Self::resolve_workflow_id_by_name_or_id(&state_clone, &wf_name) {
                     Ok(Some((wf_id, _))) => {
-                        // Store trigger data so the stimulus node has the full callback context.
-                        crate::tools::workflow::WorkflowEngine::set_telegram_trigger_data(
-                            wf_id.clone(),
-                            trigger_data,
-                        )
-                        .await;
-
+                        // The full callback context rides the spawn call so the
+                        // stimulus node of THIS run receives it.
                         if let Err(e) =
-                            crate::tools::workflow::WorkflowEngine::run_in_background_with_source(
+                            crate::tools::workflow::WorkflowEngine::run_in_background_with_payload(
                                 &wf_id,
                                 &state_clone,
                                 "telegram",
                                 None,
+                                Some(trigger_data),
                             )
                         {
                             tracing::error!(
@@ -1516,17 +1524,13 @@ impl TelegramGateway {
                                 );
                                 let state_clone = Arc::clone(&state);
                                 tokio::spawn(async move {
-                                    crate::tools::workflow::WorkflowEngine::set_telegram_trigger_data(
-                                        wf_id.clone(),
-                                        trigger_data,
-                                    )
-                                    .await;
                                     if let Err(e) =
-                                        crate::tools::workflow::WorkflowEngine::run_in_background_with_source(
+                                        crate::tools::workflow::WorkflowEngine::run_in_background_with_payload(
                                             &wf_id,
                                             &state_clone,
                                             "telegram",
                                             None,
+                                            Some(trigger_data),
                                         )
                                     {
                                         tracing::error!(
@@ -1637,14 +1641,14 @@ impl TelegramGateway {
                 });
 
                 tokio::spawn(async move {
-                    crate::tools::workflow::WorkflowEngine::set_telegram_trigger_data(
-                        wf_id_clone.clone(),
-                        trigger_data,
-                    )
-                    .await;
-
                     self_clone
-                        .run_workflow_and_report(state_clone, chat_id_clone, wf_id_clone, wf_name)
+                        .run_workflow_and_report(
+                            state_clone,
+                            chat_id_clone,
+                            wf_id_clone,
+                            wf_name,
+                            Some(trigger_data),
+                        )
                         .await;
                 });
                 return;
@@ -1875,12 +1879,32 @@ impl MessageGateway for TelegramGateway {
     }
 }
 
+/// Backoff for consecutive long-poll failures: 5s doubling to a 5-minute cap
+/// (5, 10, 20, 40, 80, 160, 300, 300, …). A sustained outage or 429 rate limit
+/// is no longer hammered every 5 seconds; one success resets the counter.
+fn poll_backoff_secs(consecutive_errors: u32) -> u64 {
+    let shift = consecutive_errors.saturating_sub(1).min(6);
+    (5u64 << shift).min(300)
+}
+
 #[cfg(test)]
 mod tests {
     use super::chat_ids_match;
     use super::infer_callback_route_from_configs;
+    use super::poll_backoff_secs;
     use super::TelegramGateway;
     use serde_json::json;
+
+    #[test]
+    fn poll_backoff_doubles_and_caps() {
+        assert_eq!(poll_backoff_secs(1), 5);
+        assert_eq!(poll_backoff_secs(2), 10);
+        assert_eq!(poll_backoff_secs(3), 20);
+        assert_eq!(poll_backoff_secs(6), 160);
+        assert_eq!(poll_backoff_secs(7), 300);
+        assert_eq!(poll_backoff_secs(100), 300);
+        assert_eq!(poll_backoff_secs(u32::MAX), 300);
+    }
 
     #[test]
     fn chat_ids_match_single_string() {

@@ -158,12 +158,12 @@ impl SchedulerEngine {
         let job_name = job.name.clone();
         let settings = Arc::clone(&self.settings);
 
-        // Convert the Manila-time cron expression to UTC so we can use the standard
-        // new_async scheduler, which avoids known timezone-handling issues in some
-        // tokio-cron-scheduler builds.
-        let utc_cron_str = manila_cron_to_utc(&cron_str);
+        // Convert the operator-local cron expression to UTC so we can use the
+        // standard new_async scheduler, which avoids known timezone-handling
+        // issues in some tokio-cron-scheduler builds.
+        let utc_cron_str = local_cron_to_utc(&cron_str, settings.agent_utc_offset_hours());
         tracing::info!(
-            "Scheduling job {} ('{}') | Manila: {} | UTC: {}",
+            "Scheduling job {} ('{}') | local: {} | UTC: {}",
             job_id,
             job_name,
             cron_str,
@@ -484,15 +484,17 @@ async fn execute_job_task(
         .to_string())
 }
 
-/// Convert a 6-field cron expression written in Asia/Manila time (UTC+8) to UTC.
+/// Convert a 6-field cron expression written in operator-local time (a fixed
+/// UTC offset in whole hours, see `agent.utc_offset_hours`) to UTC.
 ///
 /// Format: `sec min hour dom month dow`
 ///
-/// If the hour field is a plain integer we subtract 8 and handle the midnight
-/// wrap-around (and update dom/dow accordingly).  Wildcard / step / range
-/// expressions in the hour field are left unchanged because they span the full
-/// day anyway.
-pub fn manila_cron_to_utc(cron: &str) -> String {
+/// If the hour field is a plain integer we subtract the offset and handle the
+/// midnight wrap-around in either direction (dom/dow adjusted by ±1; a month
+/// boundary is not attempted, matching the prior behavior). Wildcard / step /
+/// range expressions in the hour field are left unchanged because they span
+/// the full day anyway.
+pub fn local_cron_to_utc(cron: &str, offset_hours: i32) -> String {
     let parts: Vec<&str> = cron.split_whitespace().collect();
     if parts.len() != 6 {
         return cron.to_string(); // can't parse — return as-is
@@ -503,18 +505,36 @@ pub fn manila_cron_to_utc(cron: &str) -> String {
 
     // Only convert a plain numeric hour value; leave wildcards / ranges / steps alone.
     if let Ok(h) = hour_str.parse::<i32>() {
-        let utc_hour = h - 8; // Manila is UTC+8
+        let utc_hour = h - offset_hours;
         if utc_hour < 0 {
-            // Crosses midnight backwards → adjust day-of-week / day-of-month
-            let wrapped = utc_hour + 24; // e.g. hour 7 Manila → 23 UTC (previous day)
-
-            // Shift dow by -1 (MON→SUN, SUN→SAT, etc.)
+            // Crosses midnight backwards → previous UTC day.
+            let wrapped = utc_hour + 24; // e.g. hour 7 at UTC+8 → 23 UTC
             let utc_dow = shift_dow(dow, -1);
             let utc_dom = if dom == "*" {
                 "*".to_string()
             } else if let Ok(d) = dom.parse::<i32>() {
                 if d > 1 {
                     (d - 1).to_string()
+                } else {
+                    dom.to_string()
+                }
+            } else {
+                dom.to_string()
+            };
+
+            return format!(
+                "{} {} {} {} {} {}",
+                sec, min, wrapped, utc_dom, month, utc_dow
+            );
+        } else if utc_hour >= 24 {
+            // Negative offset crossing midnight forwards → next UTC day.
+            let wrapped = utc_hour - 24;
+            let utc_dow = shift_dow(dow, 1);
+            let utc_dom = if dom == "*" {
+                "*".to_string()
+            } else if let Ok(d) = dom.parse::<i32>() {
+                if d < 28 {
+                    (d + 1).to_string()
                 } else {
                     dom.to_string()
                 }

@@ -279,6 +279,11 @@ async fn workflow_tools_cover_search_overview_conversion_and_activity_updates() 
     )
     .await?;
 
+    // Relative close date: a fixed date rots once real time passes it and the
+    // closing_soon_count assertion below silently starts failing.
+    let expected_close = (chrono::Utc::now() + chrono::Duration::days(30))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
     let converted = leads::convert_to_deal(
         &pool,
         &args(json!({
@@ -287,7 +292,7 @@ async fn workflow_tools_cover_search_overview_conversion_and_activity_updates() 
             "currency": "USD",
             "stage": "Qualified",
             "probability": 60,
-            "expected_close": "2026-05-20T12:00:00Z"
+            "expected_close": expected_close
         })),
     )
     .await?;

@@ -83,14 +83,19 @@ pub async fn handle_external_webhook(
         }
     }
 
-    // Store the payload in the engine's external trigger data map, then fire.
-    WorkflowEngine::set_external_trigger_data(workflow_id.clone(), payload).await;
-
     // Fire with the real "webhook" source (not "manual"): this isolates the run to
     // the workflow's webhook trigger node(s) and — critically — keeps the engine on
     // the production path so A4 pinned data is NOT applied (pins are an editor-only
-    // convenience; a live webhook must execute the real nodes).
-    match WorkflowEngine::run_in_background_with_source(&workflow_id, &state, "webhook", None) {
+    // convenience; a live webhook must execute the real nodes). The payload rides
+    // the call, staged keyed by the new run id so concurrent deliveries to the
+    // same workflow each see their own body.
+    match WorkflowEngine::run_in_background_with_payload(
+        &workflow_id,
+        &state,
+        "webhook",
+        None,
+        Some(payload),
+    ) {
         Ok(run_id) => (
             StatusCode::OK,
             Json(json!({

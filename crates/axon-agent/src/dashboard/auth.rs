@@ -37,7 +37,11 @@ pub async fn require_auth(req: Request, next: Next) -> Result<Response, StatusCo
         "".to_string()
     };
 
-    if provided == master_key {
+    // Constant-time comparison: a plain `==` short-circuits on the first
+    // differing byte, letting response-time measurements leak key prefixes.
+    // (ct_eq still reveals length inequality, which is not secret here.)
+    use subtle::ConstantTimeEq;
+    if provided.as_bytes().ct_eq(master_key.as_bytes()).into() {
         Ok(next.run(req).await)
     } else {
         tracing::warn!("Unauthorized access attempt to dashboard (invalid master key)");

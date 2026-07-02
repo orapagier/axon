@@ -194,6 +194,18 @@ RESPONSE RULES:
     pub fn workflow_max_queue_depth(&self) -> i64 {
         self.get_int("workflow.max_queue_depth", 0).max(0)
     }
+    /// Operator timezone as whole hours offset from UTC (default +8,
+    /// Asia/Manila), clamped to the valid -12..=+14 range.
+    pub fn agent_utc_offset_hours(&self) -> i32 {
+        self.get_int("agent.utc_offset_hours", 8).clamp(-12, 14) as i32
+    }
+    /// Operator-local timezone as a fixed UTC offset (default +8, Asia/Manila).
+    /// Drives schedule parsing, local→UTC cron conversion, and the agent's
+    /// [SYSTEM CLOCK] context.
+    pub fn agent_utc_offset(&self) -> chrono::FixedOffset {
+        chrono::FixedOffset::east_opt(self.agent_utc_offset_hours() * 3600)
+            .expect("offset clamped to a valid range")
+    }
     /// C1: public base URL used to build the resume/approve/reject links a
     /// Wait-for-webhook or Approval node surfaces. Blank → the node emits
     /// relative paths (`/webhook/resume/<token>`) for the operator to prefix.

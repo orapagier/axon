@@ -154,7 +154,7 @@ pub(crate) async fn build_run_context(
     let time_ctx = if needs_time_context {
         let now = ctx.user_time.clone().unwrap_or_else(|| {
             chrono::Utc::now()
-                .with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap())
+                .with_timezone(&state.settings.agent_utc_offset())
                 .format("%A, %B %e, %Y, %H:%M:%S")
                 .to_string()
         });

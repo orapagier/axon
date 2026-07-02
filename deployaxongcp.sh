@@ -3,12 +3,16 @@ set -e
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# ── Configuration ────────────────────────────────────────────────────────────
-GCP_INSTANCE="axon"
-GCP_ZONE="us-east1-c"
-REMOTE_USER="ramlej"
-REMOTE_DIR="/home/ramlej"
-REMOTE_DIR="${REMOTE_DIR//$'\r'/}"
+# ── Configuration (hosts live in untracked .deploy.env) ─────────────────────
+[ -f "$ROOT_DIR/.deploy.env" ] && . "$ROOT_DIR/.deploy.env"
+: "${AXON_GCP_INSTANCE:?Set AXON_GCP_INSTANCE in .deploy.env — see .deploy.env.example}"
+: "${AXON_GCP_ZONE:?Set AXON_GCP_ZONE in .deploy.env — see .deploy.env.example}"
+: "${AXON_GCP_USER:?Set AXON_GCP_USER in .deploy.env — see .deploy.env.example}"
+: "${AXON_REMOTE_DIR:?Set AXON_REMOTE_DIR in .deploy.env — see .deploy.env.example}"
+GCP_INSTANCE="$AXON_GCP_INSTANCE"
+GCP_ZONE="$AXON_GCP_ZONE"
+REMOTE_USER="$AXON_GCP_USER"
+REMOTE_DIR="${AXON_REMOTE_DIR//$'\r'/}"
 DEPLOY_FILE="axon_deploy.tar.gz"
 DEPLOY_FILE="${DEPLOY_FILE//$'\r'/}"
 DIST_DIR="$ROOT_DIR/dist"

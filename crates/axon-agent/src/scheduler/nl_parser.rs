@@ -27,11 +27,12 @@ pub async fn parse_schedule(
     if let Some(s) = quick_parse(human) {
         return Ok(s.to_string());
     }
-    let now_manila =
-        chrono::Utc::now().with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap());
+    let offset = settings.agent_utc_offset();
+    let now_local = chrono::Utc::now().with_timezone(&offset);
     let prompt = format!(
-        "[CURRENT TIME: {} (Asia/Manila)]\nConvert to a 6-field cron (sec min hour dom month dow). Reply ONLY with the cron string, nothing else.\nExamples:\n'every minute'->'0 * * * * *', 'every 5 minutes'->'0 */5 * * * *',\n'every hour'->'0 0 * * * *', 'daily at 9am'->'0 0 9 * * *',\n'every Monday at 9am'->'0 0 9 * * MON'\n\nSchedule: {}",
-        now_manila.format("%A, %Y-%m-%d %H:%M:%S"),
+        "[CURRENT TIME: {} (UTC{})]\nConvert to a 6-field cron (sec min hour dom month dow). Reply ONLY with the cron string, nothing else.\nExamples:\n'every minute'->'0 * * * * *', 'every 5 minutes'->'0 */5 * * * *',\n'every hour'->'0 0 * * * *', 'daily at 9am'->'0 0 9 * * *',\n'every Monday at 9am'->'0 0 9 * * MON'\n\nSchedule: {}",
+        now_local.format("%A, %Y-%m-%d %H:%M:%S"),
+        offset,
         human
     );
     let (resp, _, _tier) = call_llm(

@@ -93,7 +93,11 @@ pub async fn access_token(state: &AppState) -> Result<String> {
     let (client_id, client_secret, tenant, refresh) = {
         let s = state.storage.read().await;
         let c = s.microsoft_creds()?;
-        let t = s.tokens.microsoft.as_ref().unwrap();
+        // Re-check under this lock: the fast-path's guard was released, and a
+        // concurrent revoke/reload can have cleared the token in between.
+        let t = s.tokens.microsoft.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("Microsoft token removed while refreshing. Re-authenticate Microsoft.")
+        })?;
         let r = t
             .refresh_token
             .clone()

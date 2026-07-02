@@ -526,10 +526,13 @@ async fn dispatch_facebook_workflows(
         dbg_log(&format!(
             "FB dispatch: firing workflow {workflow_id} for page {page_id} ({event_type})"
         ));
-        WorkflowEngine::set_external_trigger_data(workflow_id.clone(), event.clone()).await;
-        if let Err(e) =
-            WorkflowEngine::run_in_background_with_source(&workflow_id, state, "facebook", None)
-        {
+        if let Err(e) = WorkflowEngine::run_in_background_with_payload(
+            &workflow_id,
+            state,
+            "facebook",
+            None,
+            Some(event.clone()),
+        ) {
             tracing::error!("FB dispatch: failed to start workflow {workflow_id}: {e}");
         }
     }

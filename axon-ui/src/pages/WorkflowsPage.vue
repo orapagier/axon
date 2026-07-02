@@ -2256,6 +2256,9 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  // Without this, a run left mid-flight keeps the 1.5s status poll firing
+  // against the API for as long as the run lasts after leaving the page.
+  stopPolling()
   window.removeEventListener('mousedown', handleClickOutside)
   window.removeEventListener('keydown', handleKeydown)
   window.removeEventListener('paste', handlePaste)

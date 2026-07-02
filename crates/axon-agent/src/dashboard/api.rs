@@ -5,6 +5,21 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
+
+/// Unwraps a DB/statement `Result` inside a `Json<Value>`-returning handler.
+/// A failure (schema drift, poisoned pool, disk error) becomes a logged
+/// `{"error": …}` response instead of a panic that kills the request task.
+macro_rules! try_json {
+    ($expr:expr) => {
+        match $expr {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!("Dashboard API DB error: {e}");
+                return Json(json!({ "error": format!("internal error: {e}") }));
+            }
+        }
+    };
+}
 pub async fn get_google_sheets(State(state): State<AppState>) -> Json<Value> {
     if let Ok(res) = state
         .tools
@@ -512,41 +527,37 @@ pub async fn get_runs(
 
 pub async fn get_run_detail(State(state): State<AppState>, Path(id): Path<String>) -> Json<Value> {
     if let Ok(conn) = state.db.get() {
-        let mut s_iter = conn.prepare("SELECT id, iteration, model_name, tokens, tier, duration_ms, created_at FROM run_iterations WHERE run_id=?1 ORDER BY iteration ASC").unwrap();
-        let iterations: Vec<Value> = s_iter
-            .query_map([&id], |r| {
-                Ok(json!({
-                    "id": r.get::<_, String>(0)?,
-                    "iteration": r.get::<_, u32>(1)?,
-                    "model_name": r.get::<_, String>(2)?,
-                    "tokens": r.get::<_, u32>(3)?,
-                    "tier": r.get::<_, String>(4)?,
-                    "duration_ms": r.get::<_, u64>(5)?,
-                    "created_at": r.get::<_, String>(6)?,
-                }))
-            })
-            .unwrap()
-            .filter_map(|r| r.ok())
-            .collect();
+        let mut s_iter = try_json!(conn.prepare("SELECT id, iteration, model_name, tokens, tier, duration_ms, created_at FROM run_iterations WHERE run_id=?1 ORDER BY iteration ASC"));
+        let iterations: Vec<Value> = try_json!(s_iter.query_map([&id], |r| {
+            Ok(json!({
+                "id": r.get::<_, String>(0)?,
+                "iteration": r.get::<_, u32>(1)?,
+                "model_name": r.get::<_, String>(2)?,
+                "tokens": r.get::<_, u32>(3)?,
+                "tier": r.get::<_, String>(4)?,
+                "duration_ms": r.get::<_, u64>(5)?,
+                "created_at": r.get::<_, String>(6)?,
+            }))
+        }))
+        .filter_map(|r| r.ok())
+        .collect();
 
-        let mut s_tools = conn.prepare("SELECT id, run_id, tool_name, args, result, error, duration_ms, parallel, created_at FROM tool_calls WHERE run_id=?1 ORDER BY created_at ASC").unwrap();
-        let calls: Vec<Value> = s_tools
-            .query_map([&id], |r| {
-                Ok(json!({
-                    "id": r.get::<_, String>(0)?,
-                    "run_id": r.get::<_, String>(1)?,
-                    "tool_name": r.get::<_, String>(2)?,
-                    "args": r.get::<_, Option<String>>(3)?,
-                    "result": r.get::<_, Option<String>>(4)?,
-                    "error": r.get::<_, Option<String>>(5)?,
-                    "duration_ms": r.get::<_, Option<u64>>(6)?,
-                    "parallel": r.get::<_, bool>(7)?,
-                    "created_at": r.get::<_, String>(8)?,
-                }))
-            })
-            .unwrap()
-            .filter_map(|r| r.ok())
-            .collect();
+        let mut s_tools = try_json!(conn.prepare("SELECT id, run_id, tool_name, args, result, error, duration_ms, parallel, created_at FROM tool_calls WHERE run_id=?1 ORDER BY created_at ASC"));
+        let calls: Vec<Value> = try_json!(s_tools.query_map([&id], |r| {
+            Ok(json!({
+                "id": r.get::<_, String>(0)?,
+                "run_id": r.get::<_, String>(1)?,
+                "tool_name": r.get::<_, String>(2)?,
+                "args": r.get::<_, Option<String>>(3)?,
+                "result": r.get::<_, Option<String>>(4)?,
+                "error": r.get::<_, Option<String>>(5)?,
+                "duration_ms": r.get::<_, Option<u64>>(6)?,
+                "parallel": r.get::<_, bool>(7)?,
+                "created_at": r.get::<_, String>(8)?,
+            }))
+        }))
+        .filter_map(|r| r.ok())
+        .collect();
 
         return Json(json!({"iterations": iterations, "tool_calls": calls}));
     }
@@ -1144,7 +1155,7 @@ pub async fn connect_mcp(State(state): State<AppState>, Json(payload): Json<Valu
             for t in tools.clone() {
                 state.tools.register(t).await;
             }
-            let conn = state.db.get().unwrap();
+            let conn = try_json!(state.db.get());
             let id = Uuid::new_v4().to_string();
             let enc_key = raw_api_key.as_deref().map(crate::crypto::encrypt_key);
             let _ = conn.execute(
@@ -1171,7 +1182,7 @@ pub async fn disconnect_mcp(
         }
     }
     state.mcp.disconnect(&name).await;
-    let conn = state.db.get().unwrap();
+    let conn = try_json!(state.db.get());
     let _ = conn.execute(
         "UPDATE mcp_servers SET status = 'disconnected' WHERE name = ?1",
         rusqlite::params![name],
@@ -1402,30 +1413,27 @@ pub async fn upload_file(
 
 pub async fn get_watchers(State(state): State<AppState>) -> Json<Value> {
     if let Ok(conn) = state.db.get() {
-        let mut s = conn
-            .prepare("SELECT id, service, tool_name, tool_args, label, enabled, poll_mins, last_check, last_seen_ids, created_at, trigger_condition FROM watchers ORDER BY created_at")
-            .unwrap();
-        let watchers: Vec<Value> = s
-            .query_map([], |r| {
-                Ok(json!({
-                    "id": r.get::<_, String>(0)?,
-                    "service": r.get::<_, String>(1)?,
-                    "tool_name": r.get::<_, String>(2)?,
-                    "tool_args": r.get::<_, String>(3)?,
-                    "label": r.get::<_, String>(4)?,
-                    "enabled": r.get::<_, i32>(5)? != 0,
-                    "poll_mins": r.get::<_, f64>(6)?,
-                    "last_check": r.get::<_, Option<String>>(7)?,
-                    "last_seen_count": serde_json::from_str::<Vec<String>>(
-                        &r.get::<_, String>(8).unwrap_or_else(|_| "[]".to_string())
-                    ).map(|v| v.len()).unwrap_or(0),
-                    "created_at": r.get::<_, String>(9)?,
-                    "trigger_condition": r.get::<_, String>(10).unwrap_or_else(|_| "on_change".to_string()),
-                }))
-            })
-            .unwrap()
-            .filter_map(|r| r.ok())
-            .collect();
+        let mut s = try_json!(conn
+            .prepare("SELECT id, service, tool_name, tool_args, label, enabled, poll_mins, last_check, last_seen_ids, created_at, trigger_condition FROM watchers ORDER BY created_at"));
+        let watchers: Vec<Value> = try_json!(s.query_map([], |r| {
+            Ok(json!({
+                "id": r.get::<_, String>(0)?,
+                "service": r.get::<_, String>(1)?,
+                "tool_name": r.get::<_, String>(2)?,
+                "tool_args": r.get::<_, String>(3)?,
+                "label": r.get::<_, String>(4)?,
+                "enabled": r.get::<_, i32>(5)? != 0,
+                "poll_mins": r.get::<_, f64>(6)?,
+                "last_check": r.get::<_, Option<String>>(7)?,
+                "last_seen_count": serde_json::from_str::<Vec<String>>(
+                    &r.get::<_, String>(8).unwrap_or_else(|_| "[]".to_string())
+                ).map(|v| v.len()).unwrap_or(0),
+                "created_at": r.get::<_, String>(9)?,
+                "trigger_condition": r.get::<_, String>(10).unwrap_or_else(|_| "on_change".to_string()),
+            }))
+        }))
+        .filter_map(|r| r.ok())
+        .collect();
         return Json(json!({ "watchers": watchers }));
     }
     Json(json!({ "watchers": [] }))
@@ -1610,25 +1618,22 @@ pub async fn run_watcher(State(state): State<AppState>, Path(id): Path<String>) 
 
 pub async fn get_watcher_log(State(state): State<AppState>) -> Json<Value> {
     if let Ok(conn) = state.db.get() {
-        let mut s = conn
-            .prepare("SELECT wl.id, wl.watcher_id, w.service, w.label, wl.new_count, wl.created_at FROM watcher_log wl LEFT JOIN watchers w ON w.id = wl.watcher_id ORDER BY wl.created_at DESC LIMIT 100")
-            .unwrap();
-        let logs: Vec<Value> = s
-            .query_map([], |r| {
-                let srv: Option<String> = r.get(2)?;
-                let lbl: Option<String> = r.get(3)?;
-                Ok(json!({
-                    "id": r.get::<_, i64>(0)?,
-                    "watcher_id": r.get::<_, String>(1)?,
-                    "service": srv.clone(),
-                    "label": lbl.unwrap_or(srv.unwrap_or_else(|| "Unknown".to_string())),
-                    "new_count": r.get::<_, i32>(4)?,
-                    "created_at": r.get::<_, String>(5)?,
-                }))
-            })
-            .unwrap()
-            .filter_map(|r| r.ok())
-            .collect();
+        let mut s = try_json!(conn
+            .prepare("SELECT wl.id, wl.watcher_id, w.service, w.label, wl.new_count, wl.created_at FROM watcher_log wl LEFT JOIN watchers w ON w.id = wl.watcher_id ORDER BY wl.created_at DESC LIMIT 100"));
+        let logs: Vec<Value> = try_json!(s.query_map([], |r| {
+            let srv: Option<String> = r.get(2)?;
+            let lbl: Option<String> = r.get(3)?;
+            Ok(json!({
+                "id": r.get::<_, i64>(0)?,
+                "watcher_id": r.get::<_, String>(1)?,
+                "service": srv.clone(),
+                "label": lbl.unwrap_or(srv.unwrap_or_else(|| "Unknown".to_string())),
+                "new_count": r.get::<_, i32>(4)?,
+                "created_at": r.get::<_, String>(5)?,
+            }))
+        }))
+        .filter_map(|r| r.ok())
+        .collect();
         return Json(json!({ "log": logs }));
     }
     Json(json!({ "log": [] }))
@@ -1639,22 +1644,20 @@ pub async fn get_watcher_log(State(state): State<AppState>) -> Json<Value> {
 pub async fn get_ssh_servers(State(state): State<AppState>) -> Json<Value> {
     if let Ok(conn) = state.db.get() {
         // Exclude passwords/private keys in the GET response for security
-        let mut s = conn.prepare("SELECT id, name, ip, port, username, auth_type, created_at FROM ssh_servers ORDER BY name").unwrap();
-        let servers: Vec<Value> = s
-            .query_map([], |r| {
-                Ok(json!({
-                    "id": r.get::<_, i64>(0)?,
-                    "name": r.get::<_, String>(1)?,
-                    "ip": r.get::<_, String>(2)?,
-                    "port": r.get::<_, i64>(3)?,
-                    "username": r.get::<_, String>(4)?,
-                    "auth_type": r.get::<_, String>(5)?,
-                    "created_at": r.get::<_, String>(6)?,
-                }))
-            })
-            .unwrap()
-            .filter_map(|r| r.ok())
-            .collect();
+        let mut s = try_json!(conn.prepare("SELECT id, name, ip, port, username, auth_type, created_at FROM ssh_servers ORDER BY name"));
+        let servers: Vec<Value> = try_json!(s.query_map([], |r| {
+            Ok(json!({
+                "id": r.get::<_, i64>(0)?,
+                "name": r.get::<_, String>(1)?,
+                "ip": r.get::<_, String>(2)?,
+                "port": r.get::<_, i64>(3)?,
+                "username": r.get::<_, String>(4)?,
+                "auth_type": r.get::<_, String>(5)?,
+                "created_at": r.get::<_, String>(6)?,
+            }))
+        }))
+        .filter_map(|r| r.ok())
+        .collect();
         return Json(json!({"servers": servers}));
     }
     Json(json!({"servers": []}))
@@ -1730,23 +1733,20 @@ pub async fn delete_ssh_server(
 
 pub async fn get_websearch_accounts(State(state): State<AppState>) -> Json<Value> {
     if let Ok(conn) = state.db.get() {
-        let mut s = conn
-            .prepare("SELECT id, name, api_key, queries_this_month, enabled, priority FROM web_search_accounts ORDER BY priority, name")
-            .unwrap();
-        let accounts: Vec<Value> = s
-            .query_map([], |r| {
-                Ok(json!({
-                    "id": r.get::<_, String>(0)?,
-                    "name": r.get::<_, String>(1)?,
-                    "api_key_preview": format!("{}... seed={}", &r.get::<_, String>(2)?.chars().take(8).collect::<String>(), r.get::<_, String>(0)?),
-                    "queries_this_month": r.get::<_, i64>(3)?,
-                    "enabled": r.get::<_, i64>(4)? != 0,
-                    "priority": r.get::<_, i64>(5)?,
-                }))
-            })
-            .unwrap()
-            .filter_map(|r| r.ok())
-            .collect();
+        let mut s = try_json!(conn
+            .prepare("SELECT id, name, api_key, queries_this_month, enabled, priority FROM web_search_accounts ORDER BY priority, name"));
+        let accounts: Vec<Value> = try_json!(s.query_map([], |r| {
+            Ok(json!({
+                "id": r.get::<_, String>(0)?,
+                "name": r.get::<_, String>(1)?,
+                "api_key_preview": format!("{}... seed={}", &r.get::<_, String>(2)?.chars().take(8).collect::<String>(), r.get::<_, String>(0)?),
+                "queries_this_month": r.get::<_, i64>(3)?,
+                "enabled": r.get::<_, i64>(4)? != 0,
+                "priority": r.get::<_, i64>(5)?,
+            }))
+        }))
+        .filter_map(|r| r.ok())
+        .collect();
         return Json(json!({ "accounts": accounts }));
     }
     Json(json!({ "accounts": [] }))
@@ -1855,7 +1855,7 @@ pub async fn get_synapses(State(state): State<AppState>) -> Json<Value> {
         Ok(s) => s,
         Err(e) => return Json(json!({"error": e.to_string()})),
     };
-    let rows: Vec<Value> = stmt.query_map([], |r| {
+    let rows: Vec<Value> = try_json!(stmt.query_map([], |r| {
         Ok(json!({
             "id": r.get::<_, String>(0)?,
             "name": r.get::<_, String>(1)?,
@@ -1868,7 +1868,9 @@ pub async fn get_synapses(State(state): State<AppState>) -> Json<Value> {
             "proxy": r.get::<_, Option<String>>(8)?,
             "next_request_id": r.get::<_, Option<String>>(9)?,
         }))
-    }).unwrap().filter_map(|r| r.ok()).collect();
+    }))
+    .filter_map(|r| r.ok())
+    .collect();
     Json(json!({ "requests": rows }))
 }
 
@@ -1876,7 +1878,7 @@ pub async fn upsert_synapse(
     State(state): State<AppState>,
     Json(payload): Json<Value>,
 ) -> Json<Value> {
-    let conn = state.db.get().unwrap();
+    let conn = try_json!(state.db.get());
     let id = payload
         .get("id")
         .and_then(|v| v.as_str())
@@ -1917,7 +1919,7 @@ pub async fn upsert_synapse(
 }
 
 pub async fn delete_synapse(State(state): State<AppState>, Path(id): Path<String>) -> Json<Value> {
-    let conn = state.db.get().unwrap();
+    let conn = try_json!(state.db.get());
     match conn.execute("DELETE FROM http_requests WHERE id = ?1", [id]) {
         Ok(_) => Json(json!({"ok": true})),
         Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
@@ -1928,7 +1930,7 @@ pub async fn run_saved_synapse(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Json<Value> {
-    let conn = state.db.get().unwrap();
+    let conn = try_json!(state.db.get());
     let req = conn.query_row(
         "SELECT method, url, headers, body, \"limit\", proxy, next_request_id FROM http_requests WHERE id = ?1",
         [id],
@@ -2140,8 +2142,10 @@ pub async fn get_workflows(State(state): State<AppState>) -> Json<Value> {
                         .filter(|s| !s.trim().is_empty())
                         .and_then(|s| serde_json::from_str::<Value>(&s).ok()),
                 }))
-            }).unwrap().filter_map(|r| r.ok()).collect();
-            wf.as_object_mut().unwrap().insert("nodes".to_string(), json!(nodes));
+            }).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+            if let Some(obj) = wf.as_object_mut() {
+                obj.insert("nodes".to_string(), json!(nodes));
+            }
         }
 
         // Load edges for this workflow
@@ -2157,8 +2161,10 @@ pub async fn get_workflows(State(state): State<AppState>) -> Json<Value> {
                     "source_handle": r.get::<_, Option<String>>(4)?,
                     "target_handle": r.get::<_, Option<String>>(5)?,
                 }))
-            }).unwrap().filter_map(|r| r.ok()).collect();
-            wf.as_object_mut().unwrap().insert("edges".to_string(), json!(edges));
+            }).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+            if let Some(obj) = wf.as_object_mut() {
+                obj.insert("edges".to_string(), json!(edges));
+            }
         }
 
         wf
@@ -2986,10 +2992,10 @@ pub async fn get_workflow_runs(
     Path(id): Path<String>,
 ) -> Json<Value> {
     if let Ok(conn) = state.db.get() {
-        let mut stmt = conn.prepare(
+        let mut stmt = try_json!(conn.prepare(
             "SELECT id, workflow_id, status, trigger_type, started_at, finished_at, node_results FROM workflow_runs WHERE workflow_id = ?1 ORDER BY started_at DESC LIMIT 10"
-        ).unwrap();
-        let runs: Vec<Value> = stmt.query_map(rusqlite::params![id], |r| {
+        ));
+        let runs: Vec<Value> = try_json!(stmt.query_map(rusqlite::params![id], |r| {
             Ok(json!({
                 "id": r.get::<_, String>(0)?,
                 "workflow_id": r.get::<_, String>(1)?,
@@ -2999,7 +3005,9 @@ pub async fn get_workflow_runs(
                 "finished_at": r.get::<_, Option<String>>(5)?,
                 "node_results": rehydrated_node_results(&r.get::<_, String>(6)?),
             }))
-        }).unwrap().filter_map(|r| r.ok()).collect();
+        }))
+        .filter_map(|r| r.ok())
+        .collect();
         Json(json!({"runs": runs}))
     } else {
         Json(json!({"runs": []}))
@@ -3069,21 +3077,17 @@ pub async fn stop_workflow(
 
 pub async fn get_credentials(State(state): State<AppState>) -> Json<Value> {
     if let Ok(conn) = state.db.get() {
-        let mut s = conn
-            .prepare("SELECT id, name, service FROM credentials ORDER BY created_at")
-            .unwrap();
-        let creds: Vec<Value> = s
-            .query_map([], |r| {
-                Ok(json!({
-                    "id": r.get::<_, String>(0)?,
-                    "name": r.get::<_, String>(1)?,
-                    "service": r.get::<_, String>(2)?,
-                    "has_data": true
-                }))
-            })
-            .unwrap()
-            .filter_map(|r| r.ok())
-            .collect();
+        let mut s = try_json!(conn.prepare("SELECT id, name, service FROM credentials ORDER BY created_at"));
+        let creds: Vec<Value> = try_json!(s.query_map([], |r| {
+            Ok(json!({
+                "id": r.get::<_, String>(0)?,
+                "name": r.get::<_, String>(1)?,
+                "service": r.get::<_, String>(2)?,
+                "has_data": true
+            }))
+        }))
+        .filter_map(|r| r.ok())
+        .collect();
         return Json(json!({ "credentials": creds }));
     }
     Json(json!({ "credentials": [] }))
@@ -3443,22 +3447,18 @@ pub async fn telegram_webhook(
                         return;
                     };
 
-                    crate::tools::workflow::WorkflowEngine::set_telegram_trigger_data(
-                        wf_id.clone(),
-                        trigger_payload,
-                    )
-                    .await;
-
                     // Fire as a real "telegram" trigger (matches the long-poll path
                     // in messaging/telegram.rs): scopes the run to the telegram
                     // trigger node and stays on the production path so A4 pinned data
-                    // is not applied to this live button callback.
+                    // is not applied to this live button callback. The callback
+                    // context rides the call, staged for this run.
                     if let Err(e) =
-                        crate::tools::workflow::WorkflowEngine::run_in_background_with_source(
+                        crate::tools::workflow::WorkflowEngine::run_in_background_with_payload(
                             &wf_id,
                             &state_clone,
                             "telegram",
                             None,
+                            Some(trigger_payload),
                         )
                     {
                         tracing::error!(
@@ -3611,18 +3611,17 @@ pub async fn whatsapp_webhook_messages(
     for (wf_id, config) in workflows {
         let res = crate::tools::whatsapp::handle_whatsapp_webhook(payload.clone(), &config).await;
         if let crate::tools::whatsapp::TriggerResult::Accepted(data) = res {
-            // Store the data for the stimulus node
-            crate::tools::workflow::WorkflowEngine::set_whatsapp_trigger_data(
-                wf_id.clone(),
-                json!({ "trigger": "whatsapp", "events": data }),
-            )
-            .await;
-
             // Fire as a real "whatsapp" trigger (these workflows were selected
             // precisely because they have a whatsapp trigger): scopes the run to it
             // and stays on the production path so A4 pinned data is not applied.
-            if let Err(e) = crate::tools::workflow::WorkflowEngine::run_in_background_with_source(
-                &wf_id, &state, "whatsapp", None,
+            // The event data rides the call, staged for the stimulus node of
+            // this specific run.
+            if let Err(e) = crate::tools::workflow::WorkflowEngine::run_in_background_with_payload(
+                &wf_id,
+                &state,
+                "whatsapp",
+                None,
+                Some(json!({ "trigger": "whatsapp", "events": data })),
             ) {
                 tracing::error!("Failed to trigger background whatsapp workflow: {}", e);
             }

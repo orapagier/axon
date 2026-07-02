@@ -12,6 +12,7 @@ INSERT OR IGNORE INTO settings VALUES
     ('agent.temp_tool_max_retries', '2',     'int',    'Retries for agent-written tools',               'agent',     datetime('now')),
     ('agent.stream_model_tokens',   'false', 'bool',   'Reserved switch for provider token streaming; disabled by default', 'agent', datetime('now')),
     ('agent.quality_check',         'true',  'bool',   'Run quality check on responses that used tools (requires quality_checker model role)', 'agent', datetime('now')),
+    ('agent.utc_offset_hours',      '8',     'int',    'Operator timezone as a fixed UTC offset in hours (-12..14); used for schedule parsing and the agent''s time context', 'agent', datetime('now')),
     ('router.error_threshold',      '2',     'int',    'Consecutive non-rate-limit errors before parking a model until midnight', 'router', datetime('now')),
     ('router.model_call_timeout_secs','30',  'int',    'Flat per-attempt model timeout in seconds (overridable per model); on timeout the router fails over immediately', 'router', datetime('now')),
     ('memory.short_term_max_msgs',  '50',    'int',    'Max messages kept per session',                 'memory',    datetime('now')),

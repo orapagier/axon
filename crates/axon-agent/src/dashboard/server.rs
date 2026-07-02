@@ -1,7 +1,6 @@
 use super::{api, media, ws};
 use crate::state::AppState;
 use axum::{routing::get, Router};
-use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
 
 async fn health_check() -> &'static str {
@@ -299,7 +298,10 @@ pub fn build_router(state: AppState) -> Router {
         .fallback_service(
             ServeDir::new("static").not_found_service(ServeFile::new("static/index.html")),
         )
-        .layer(CorsLayer::permissive())
+        // No CORS layer: the dashboard UI is served same-origin from this
+        // binary (and the Vite dev server proxies /api and /ws), webhooks are
+        // server-to-server. A permissive policy only invited cross-origin
+        // requests from arbitrary sites.
         .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024))
         .with_state(state)
 }

@@ -12,58 +12,9 @@ use std::time::Duration;
 pub(crate) mod nodes;
 // B2: large/binary payload offloading for persisted node_results.
 pub(crate) mod binary;
-
-// Gmail trigger data: holds new email data between the background poll check
-// and the actual workflow execution so the stimulus node can inject it.
-pub(crate) static GMAIL_TRIGGER_DATA: once_cell::sync::Lazy<
-    tokio::sync::Mutex<std::collections::HashMap<String, Value>>,
-> = once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
-
-pub(crate) static WHATSAPP_TRIGGER_DATA: once_cell::sync::Lazy<
-    tokio::sync::Mutex<std::collections::HashMap<String, Value>>,
-> = once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
-
-pub(crate) static TELEGRAM_TRIGGER_DATA: once_cell::sync::Lazy<
-    tokio::sync::Mutex<std::collections::HashMap<String, Value>>,
-> = once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
-
-pub(crate) static EXTERNAL_TRIGGER_DATA: once_cell::sync::Lazy<
-    tokio::sync::Mutex<std::collections::HashMap<String, Value>>,
-> = once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
-
-// Sub-workflow input: the parent's payload handed to a child workflow's trigger
-// node when it runs under trigger_source "subflow". Keyed by child workflow_id
-// and consumed (removed) by the trigger node on first read.
-pub(crate) static SUBFLOW_TRIGGER_DATA: once_cell::sync::Lazy<
-    tokio::sync::Mutex<std::collections::HashMap<String, Value>>,
-> = once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
-
-// Error-trigger payload (A3): the structured failure description handed to an
-// error workflow's trigger node when it runs under trigger_source "error".
-// Keyed by the error workflow's id and consumed (removed) by the trigger node.
-pub(crate) static ERROR_TRIGGER_DATA: once_cell::sync::Lazy<
-    tokio::sync::Mutex<std::collections::HashMap<String, Value>>,
-> = once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
-
-// Sub-workflow entry trigger: the id of the single trigger node a parent chose to
-// start a child from when that child has multiple triggers. Keyed by child
-// workflow_id and consumed (removed) as the entry queue is built, so only that
-// trigger's chain runs. Absent ⇒ start from every trigger (the default).
-pub(crate) static SUBFLOW_ENTRY_NODE: once_cell::sync::Lazy<
-    tokio::sync::Mutex<std::collections::HashMap<String, String>>,
-> = once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
-
-// Manual entry trigger: the id of the single Stimulus/trigger node the user
-// clicked "Run" (play button) on, so a manual run starts ONLY from that node's
-// chain instead of every trigger in the workflow. Keyed by RUN id (not workflow
-// id) so concurrent manual runs never consume each other's pin, and consumed
-// (removed) as the entry queue is built. Absent ⇒ start from every trigger.
-// A plain std Mutex: it's set from the sync `run_in_background_inner` before the
-// run task is spawned, and read (removed, never held across an await) in
-// `run_inner`.
-pub(crate) static MANUAL_ENTRY_NODE: once_cell::sync::Lazy<
-    std::sync::Mutex<std::collections::HashMap<String, String>>,
-> = once_cell::sync::Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+// Run-scoped trigger payload + entry-node staging, keyed by RUN id so
+// concurrent fires of the same workflow never swap or lose payloads.
+pub(crate) mod trigger_data;
 
 tokio::task_local! {
     // Call stack of workflow ids currently executing as nested sub-workflows.
@@ -709,18 +660,16 @@ pub(crate) async fn execute_gmail_trigger(
     config: &Value,
     state: &AppState,
     workflow_id: &str,
+    run_id: &str,
 ) -> Result<Value, String> {
-    // Check for pre-fetched data from the background Gmail poller.
-    // This contains ONLY new emails (not previously seen), set by check_and_trigger_gmail().
-    {
-        let data = GMAIL_TRIGGER_DATA.lock().await;
-        if let Some(trigger_data) = data.get(workflow_id) {
-            tracing::info!(
-                "Gmail trigger: using pre-fetched new email data for workflow {}",
-                workflow_id
-            );
-            return Ok(trigger_data.clone());
-        }
+    // Check for pre-fetched data from the background Gmail poller, staged for
+    // THIS run (only new, not-previously-seen emails, set by check_and_trigger_gmail()).
+    if let Some(trigger_data) = trigger_data::take(run_id) {
+        tracing::info!(
+            "Gmail trigger: using pre-fetched new email data for workflow {}",
+            workflow_id
+        );
+        return Ok(trigger_data);
     }
 
     // Fallback: manual "Execute Step" click — do a live fetch of all unread emails
@@ -1867,7 +1816,7 @@ async fn execute_node_dispatch(
 ) -> Result<Value, String> {
     match node.node_type.as_str() {
         "trigger" | "circadian" | "stimulus" => {
-            nodes::trigger::execute(config, state, trigger_source, workflow_id).await
+            nodes::trigger::execute(config, state, trigger_source, workflow_id, run_id).await
         }
         "synapse" => nodes::synapse::execute_http_node(config).await,
         "myelin" => crate::tools::myelin::execute_myelin_node(state, config).await,
@@ -2070,6 +2019,22 @@ impl Drop for CancellationCleanup {
     }
 }
 
+/// Persist a run-state UPDATE whose failure must not abort the run but must
+/// not vanish either: disk-full/locked errors here previously disappeared into
+/// `let _ =`, leaving the UI showing stale results with no operator-visible
+/// trace. Logs a warning carrying the run id instead.
+fn persist_run_update<P: rusqlite::Params>(
+    conn: &rusqlite::Connection,
+    sql: &str,
+    params: P,
+    run_id: &str,
+    what: &str,
+) {
+    if let Err(e) = conn.execute(sql, params) {
+        tracing::warn!("Run {run_id}: failed to persist {what}: {e}");
+    }
+}
+
 /// Merge a single-node run's fresh results onto the previous run's full chain,
 /// replacing matching nodes in place and preserving order. Lets an "Execute
 /// Step" save keep every upstream node's data instead of just the one it ran.
@@ -2269,6 +2234,12 @@ impl WorkflowEngine {
             keys: vec![run_id.clone(), workflow_id.to_string()],
         };
 
+        // Discard any staged trigger payload / entry pin this run never consumed
+        // (early load failure, error before the trigger node, cancelled child) so
+        // the staging maps can't leak entries. Keys are unique run ids, so this
+        // can never touch another run's data.
+        let _staged_cleanup = trigger_data::StagedCleanup::new(&run_id);
+
         let (workflow_name, nodes, edges) = {
             let conn = state.db.get()?;
             let name: String = conn.query_row(
@@ -2341,9 +2312,12 @@ impl WorkflowEngine {
                 // Flip status back to 'running' and clear the wake fields, so a
                 // concurrent poller tick can't claim this run twice.
                 if let Ok(conn) = state.db.get() {
-                    let _ = conn.execute(
+                    persist_run_update(
+                        &conn,
                         "UPDATE workflow_runs SET status = 'running', resume_at = NULL, resume_node_id = NULL WHERE id = ?1",
                         [run_id.clone()],
+                        &run_id,
+                        "resume status flip",
                     );
                 }
                 rs.completed
@@ -2515,20 +2489,12 @@ impl WorkflowEngine {
         };
 
         // A run may pin a single entry trigger to start from (its downstream chain
-        // runs, sibling triggers stay dormant). Two sources set this pin:
-        //   • a sub-workflow call choosing one entry of a multi-trigger child
-        //     (keyed by child workflow id), and
-        //   • a manual "Run" click on a specific Stimulus node's play button
-        //     (keyed by run id, set in `run_in_background_inner`).
+        // runs, sibling triggers stay dormant). Two sources set this pin, both
+        // staged keyed by THIS run id: a sub-workflow call choosing one entry of
+        // a multi-trigger child, and a manual "Run" click on a specific Stimulus
+        // node's play button (set in `run_in_background_inner`).
         // Consumed here so a later unpinned run falls back to every trigger.
-        let entry_node: Option<String> = match trigger_source {
-            "subflow" => SUBFLOW_ENTRY_NODE.lock().await.remove(workflow_id),
-            "manual" => MANUAL_ENTRY_NODE
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .remove(&run_id),
-            _ => None,
-        };
+        let entry_node: Option<String> = trigger_data::take_entry_node(&run_id);
 
         let mut queue: std::collections::VecDeque<_> = nodes
             .iter()
@@ -2633,9 +2599,12 @@ impl WorkflowEngine {
                     // Incremental DB update so the frontend poll sees it immediately
                     let res_json = binary::results_to_db_json(&ordered_results, bin_threshold);
                     if let Ok(conn) = state.db.get() {
-                        let _ = conn.execute(
+                        persist_run_update(
+                            &conn,
                             "UPDATE workflow_runs SET node_results = ? WHERE id = ?",
                             rusqlite::params![res_json, run_id.clone()],
+                            &run_id,
+                            "incremental node_results",
                         );
                     }
                 }
@@ -3312,9 +3281,12 @@ impl WorkflowEngine {
                 binary::results_to_db_json(&ordered_results, bin_threshold)
             };
             if let Ok(conn) = state.db.get() {
-                let _ = conn.execute(
+                persist_run_update(
+                    &conn,
                     "UPDATE workflow_runs SET node_results = ? WHERE id = ?",
                     rusqlite::params![res_json, run_id.clone()],
+                    &run_id,
+                    "final node_results",
                 );
             }
         }
@@ -3411,8 +3383,8 @@ impl WorkflowEngine {
                 && workflow_status == "error"
             {
                 // Resolve the handler id (workflow-level, then global default).
-                // Each DB read is scoped so no pooled connection is held across an
-                // await on the ERROR_TRIGGER_DATA mutex.
+                // Each DB read is scoped so no pooled connection is held across
+                // an await.
                 let configured: Option<String> = {
                     let level = state
                         .db
@@ -3482,15 +3454,14 @@ impl WorkflowEngine {
                             "trigger_type": trigger_source,
                             "ts": chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
                         });
-                        ERROR_TRIGGER_DATA
-                            .lock()
-                            .await
-                            .insert(error_wf_id.clone(), payload);
-                        match Self::run_in_background_with_source(
+                        // The payload rides the spawn call and is staged keyed by
+                        // the child's run id, so a failed spawn stages nothing.
+                        match Self::run_in_background_with_payload(
                             &error_wf_id,
                             state,
                             "error",
                             None,
+                            Some(payload),
                         ) {
                             Ok(child) => tracing::info!(
                                 "Workflow '{}' failed — spawned error workflow {} (run {})",
@@ -3499,8 +3470,6 @@ impl WorkflowEngine {
                                 child
                             ),
                             Err(e) => {
-                                // Don't leave a stale payload if the spawn failed.
-                                ERROR_TRIGGER_DATA.lock().await.remove(&error_wf_id);
                                 tracing::warn!(
                                     "Failed to spawn error workflow {}: {}",
                                     error_wf_id,
@@ -3537,22 +3506,20 @@ impl WorkflowEngine {
     ///   // Single-node run (play button / Execute Step)
     ///   let run_id = Workflow::run_in_background(&wf_id, &state, Some(node_id)).await?;
     ///   return Json(json!({ "ok": true, "run_id": run_id }));
-    pub async fn set_whatsapp_trigger_data(workflow_id: String, v: Value) {
-        WHATSAPP_TRIGGER_DATA.lock().await.insert(workflow_id, v);
-    }
-    pub async fn set_telegram_trigger_data(workflow_id: String, v: Value) {
-        TELEGRAM_TRIGGER_DATA.lock().await.insert(workflow_id, v);
-    }
-    pub async fn set_external_trigger_data(workflow_id: String, v: Value) {
-        EXTERNAL_TRIGGER_DATA.lock().await.insert(workflow_id, v);
-    }
-
     pub fn run_in_background(
         workflow_id: &str,
         state: &AppState,
         target_node_id: Option<String>,
     ) -> anyhow::Result<String> {
-        Self::run_in_background_inner(workflow_id, state, "manual", target_node_id, false, None)
+        Self::run_in_background_inner(
+            workflow_id,
+            state,
+            "manual",
+            target_node_id,
+            false,
+            None,
+            None,
+        )
     }
 
     /// Like `run_in_background` but tags the run with a specific trigger source
@@ -3564,7 +3531,38 @@ impl WorkflowEngine {
         trigger_source: &str,
         target_node_id: Option<String>,
     ) -> anyhow::Result<String> {
-        Self::run_in_background_inner(workflow_id, state, trigger_source, target_node_id, false, None)
+        Self::run_in_background_inner(
+            workflow_id,
+            state,
+            trigger_source,
+            target_node_id,
+            false,
+            None,
+            None,
+        )
+    }
+
+    /// Like `run_in_background_with_source` but also carries the trigger's
+    /// payload (webhook body, Telegram event, error description, …). The
+    /// payload is staged keyed by the new RUN id before the task spawns and
+    /// consumed by the run's trigger node — so concurrent fires of the same
+    /// workflow each see exactly their own event.
+    pub fn run_in_background_with_payload(
+        workflow_id: &str,
+        state: &AppState,
+        trigger_source: &str,
+        target_node_id: Option<String>,
+        trigger_payload: Option<Value>,
+    ) -> anyhow::Result<String> {
+        Self::run_in_background_inner(
+            workflow_id,
+            state,
+            trigger_source,
+            target_node_id,
+            false,
+            None,
+            trigger_payload,
+        )
     }
 
     /// Manual "Run" (play button) on a single Stimulus/trigger node: start a full
@@ -3577,7 +3575,15 @@ impl WorkflowEngine {
         state: &AppState,
         node_id: String,
     ) -> anyhow::Result<String> {
-        Self::run_in_background_inner(workflow_id, state, "manual", None, false, Some(node_id))
+        Self::run_in_background_inner(
+            workflow_id,
+            state,
+            "manual",
+            None,
+            false,
+            Some(node_id),
+            None,
+        )
     }
 
     /// Single-node variant of `run_in_background`: when `single_node` is true,
@@ -3591,7 +3597,15 @@ impl WorkflowEngine {
         node_id: String,
         single_node: bool,
     ) -> anyhow::Result<String> {
-        Self::run_in_background_inner(workflow_id, state, "manual", Some(node_id), single_node, None)
+        Self::run_in_background_inner(
+            workflow_id,
+            state,
+            "manual",
+            Some(node_id),
+            single_node,
+            None,
+            None,
+        )
     }
 
     fn run_in_background_inner(
@@ -3601,19 +3615,9 @@ impl WorkflowEngine {
         target_node_id: Option<String>,
         single_node: bool,
         entry_node_id: Option<String>,
+        trigger_payload: Option<Value>,
     ) -> anyhow::Result<String> {
         let run_id = uuid::Uuid::new_v4().to_string();
-
-        // Pin the sole entry node for this run (manual play button on a Stimulus).
-        // Keyed by run_id and consumed in `run_inner` as the start queue is built,
-        // so only this node's chain runs. Set BEFORE spawning so the run task
-        // always sees it.
-        if let Some(node_id) = entry_node_id {
-            MANUAL_ENTRY_NODE
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .insert(run_id.clone(), node_id);
-        }
 
         // Pre-create the run record as 'running' so the very first frontend poll
         // can find it immediately, even before the spawned task starts executing.
@@ -3627,6 +3631,17 @@ impl WorkflowEngine {
                  ON CONFLICT(id) DO NOTHING",
                 [run_id.clone(), workflow_id.to_string()],
             )?;
+        }
+
+        // Stage the run's entry-node pin (manual play button on a Stimulus) and
+        // trigger payload, both keyed by run_id and consumed inside the run.
+        // Staged AFTER the row insert (so an insert failure can't leak them) and
+        // BEFORE spawning (so the run task always sees them).
+        if let Some(node_id) = entry_node_id {
+            trigger_data::stage_entry_node(&run_id, node_id);
+        }
+        if let Some(payload) = trigger_payload {
+            trigger_data::stage(&run_id, payload);
         }
 
         let s = state.clone();
@@ -3643,12 +3658,9 @@ impl WorkflowEngine {
                     "Workflow run {} shed: run queue full (workflow.max_queue_depth)",
                     rid
                 );
-                // The run task never reaches `run_inner`, so drop any entry-node
-                // pin it staged (keyed by this run_id) to avoid a stale entry.
-                MANUAL_ENTRY_NODE
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .remove(&rid);
+                // The run task never reaches `run_inner`, so drop whatever it
+                // staged (entry pin / trigger payload, keyed by this run_id).
+                trigger_data::discard(&rid);
                 if let Ok(conn) = s.db.get() {
                     // Record *why* it failed so run history (and the Telegram
                     // report) show a reason instead of an empty failed run.
@@ -3663,9 +3675,12 @@ impl WorkflowEngine {
                         "error": "Run shed: concurrency queue full — raise workflow.max_concurrent_runs / workflow.max_queue_depth",
                     }])
                     .to_string();
-                    let _ = conn.execute(
+                    persist_run_update(
+                        &conn,
                         "UPDATE workflow_runs SET status = 'failed', finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), node_results = ?2 WHERE id = ?1",
                         rusqlite::params![&rid, reason],
+                        &rid,
+                        "shed status",
                     );
                 }
                 return;
@@ -3679,9 +3694,12 @@ impl WorkflowEngine {
             {
                 tracing::error!("Background workflow run failed: {}", e);
                 if let Ok(conn) = s.db.get() {
-                    let _ = conn.execute(
+                    persist_run_update(
+                        &conn,
                         "UPDATE workflow_runs SET status = 'failed', finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
                         [&rid],
+                        &rid,
+                        "failed status",
                     );
                 }
                 let details = format!("workflow_id={}\nrun_id={}\nerror={}", wf_id, rid, e);
@@ -3790,9 +3808,12 @@ impl WorkflowEngine {
                 Err(e) => {
                     tracing::error!("Resume {}: corrupt node_results ({}); failing run", run_id, e);
                     if let Ok(conn) = state.db.get() {
-                        let _ = conn.execute(
+                        persist_run_update(
+                            &conn,
                             "UPDATE workflow_runs SET status = 'failed', finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
                             [&run_id],
+                            &run_id,
+                            "failed status",
                         );
                     }
                     continue;
@@ -3849,9 +3870,12 @@ impl WorkflowEngine {
                     None => {
                         tracing::warn!("Resume of {} deferred: run queue full", rid);
                         if let Ok(conn) = s.db.get() {
-                            let _ = conn.execute(
+                            persist_run_update(
+                                &conn,
                                 "UPDATE workflow_runs SET status = 'waiting' WHERE id = ?1",
                                 [&rid],
+                                &rid,
+                                "deferred-resume status",
                             );
                         }
                         return;
@@ -3862,9 +3886,12 @@ impl WorkflowEngine {
                 {
                     tracing::error!("Resumed workflow run {} failed: {}", rid, e);
                     if let Ok(conn) = s.db.get() {
-                        let _ = conn.execute(
+                        persist_run_update(
+                            &conn,
                             "UPDATE workflow_runs SET status = 'failed', finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
                             [&rid],
+                            &rid,
+                            "failed status",
                         );
                     }
                 }
@@ -3933,9 +3960,12 @@ impl WorkflowEngine {
         //    decision so downstream nodes see it and approval branches route.
         let mut results: Vec<NodeResult> = serde_json::from_str(&results_json).map_err(|e| {
             if let Ok(conn) = state.db.get() {
-                let _ = conn.execute(
+                persist_run_update(
+                    &conn,
                     "UPDATE workflow_runs SET status = 'failed', finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
                     [&run_id],
+                    &run_id,
+                    "failed status",
                 );
             }
             format!("corrupt node_results on resume: {e}")
@@ -4013,10 +4043,13 @@ impl WorkflowEngine {
                     // can't, and a wait-forever run would otherwise stick.
                     tracing::warn!("Resume of {} deferred: run queue full", rid);
                     if let Ok(conn) = s.db.get() {
-                        let _ = conn.execute(
+                        persist_run_update(
+                            &conn,
                             "UPDATE workflow_runs SET status = 'waiting', node_results = ?1, \
                              resume_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?2",
                             rusqlite::params![patched_json, rid],
+                            &rid,
+                            "deferred-resume state",
                         );
                     }
                     return;
@@ -4027,9 +4060,12 @@ impl WorkflowEngine {
             {
                 tracing::error!("Resumed workflow run {} failed: {}", rid, e);
                 if let Ok(conn) = s.db.get() {
-                    let _ = conn.execute(
+                    persist_run_update(
+                        &conn,
                         "UPDATE workflow_runs SET status = 'failed', finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
                         [&rid],
+                        &rid,
+                        "failed status",
                     );
                 }
             }
@@ -4122,7 +4158,7 @@ impl WorkflowEngine {
                 if wf.trigger_type == "gmail" {
                     // Gmail trigger: poll-first watcher pattern
                     // Only trigger if there are genuinely NEW emails since last check
-                    if !should_trigger(&wf) {
+                    if !should_trigger(&wf, state.settings.agent_utc_offset_hours()) {
                         continue;
                     }
                     if Self::is_workflow_run_active(state.as_ref(), &wf.id) {
@@ -4152,7 +4188,7 @@ impl WorkflowEngine {
                         }
                     });
                 } else {
-                    let triggered = should_trigger(&wf);
+                    let triggered = should_trigger(&wf, state.settings.agent_utc_offset_hours());
                     if triggered {
                         if Self::is_workflow_run_active(state.as_ref(), &wf.id) {
                             tracing::info!(
@@ -4350,25 +4386,25 @@ async fn check_and_trigger_gmail(
     let enriched = enrich_gmail_emails(state, new_owned, download).await;
     let enriched_count = enriched.len();
 
-    // Store the new email data in a global map so execute_gmail_trigger can pick it up
-    {
-        let data = json!({
+    // Stage the new email data keyed by a pre-generated run id so THIS run's
+    // execute_gmail_trigger picks it up (a concurrent run of the same workflow
+    // can't consume it). run_inner's cleanup guard discards it if unconsumed.
+    let run_id = uuid::Uuid::new_v4().to_string();
+    trigger_data::stage(
+        &run_id,
+        json!({
             "trigger": "gmail",
             "label": label,
             "new_email_count": enriched_count,
             "emails": enriched,
-        });
-        GMAIL_TRIGGER_DATA
-            .lock()
-            .await
-            .insert(workflow_id.to_string(), data);
-    }
+        }),
+    );
 
     // Trigger the workflow. B3: hold a concurrency slot across the inline run so
     // gmail-triggered runs honor the same cap as other triggers. The seen-ids were
     // already committed above, so a queue-full *shed* would silently drop these
     // emails — in that rare case fall back to running unbounded rather than losing
-    // them. The cleanup / mark-as-read below still run afterward.
+    // them. The mark-as-read below still runs afterward.
     let _slot = acquire_run_slot(state).await;
     if _slot.is_none() {
         tracing::warn!(
@@ -4377,12 +4413,9 @@ async fn check_and_trigger_gmail(
             enriched_count
         );
     }
-    WorkflowEngine::run_with_trigger(workflow_id, state, "gmail", None, false, None)
+    WorkflowEngine::run_with_trigger(workflow_id, state, "gmail", None, false, Some(run_id))
         .await
         .map_err(|e| e.to_string())?;
-
-    // Clean up the trigger data after run
-    GMAIL_TRIGGER_DATA.lock().await.remove(workflow_id);
 
     // Mark as read if configured
     let mark_read = trigger_config
@@ -4411,7 +4444,7 @@ async fn check_and_trigger_gmail(
     Ok(true)
 }
 
-fn should_trigger(wf: &Workflow) -> bool {
+fn should_trigger(wf: &Workflow, utc_offset_hours: i32) -> bool {
     use std::str::FromStr;
 
     let now = chrono::Utc::now();
@@ -4491,7 +4524,7 @@ fn should_trigger(wf: &Workflow) -> bool {
                     _ => eval_cron = custom.to_string(),
                 }
                 tracing::debug!(
-                    "Workflow '{}': mode={} → manila cron='{}'",
+                    "Workflow '{}': mode={} → local cron='{}'",
                     wf.name,
                     mode,
                     eval_cron
@@ -4501,10 +4534,11 @@ fn should_trigger(wf: &Workflow) -> bool {
             }
 
             if !eval_cron.is_empty() {
-                // Convert manila cron to UTC
-                let utc_cron = crate::scheduler::engine::manila_cron_to_utc(&eval_cron);
+                // Convert operator-local cron to UTC
+                let utc_cron =
+                    crate::scheduler::engine::local_cron_to_utc(&eval_cron, utc_offset_hours);
                 tracing::debug!(
-                    "Workflow '{}': manila='{}' → utc='{}'",
+                    "Workflow '{}': local='{}' → utc='{}'",
                     wf.name,
                     eval_cron,
                     utc_cron

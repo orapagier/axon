@@ -3,11 +3,12 @@ set -e
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# ── Configuration ────────────────────────────────────────────────────────────
-TARGET_SERVER="ramlej@35.207.39.147"
-TARGET_SERVER="${TARGET_SERVER//$'\r'/}"
-REMOTE_DIR="/home/ramlej"
-REMOTE_DIR="${REMOTE_DIR//$'\r'/}"
+# ── Configuration (hosts live in untracked .deploy.env) ─────────────────────
+[ -f "$ROOT_DIR/.deploy.env" ] && . "$ROOT_DIR/.deploy.env"
+: "${AXON_TARGET_SERVER:?Set AXON_TARGET_SERVER (user@host) in .deploy.env — see .deploy.env.example}"
+: "${AXON_REMOTE_DIR:?Set AXON_REMOTE_DIR in .deploy.env — see .deploy.env.example}"
+TARGET_SERVER="${AXON_TARGET_SERVER//$'\r'/}"
+REMOTE_DIR="${AXON_REMOTE_DIR//$'\r'/}"
 DEPLOY_FILE="axon_deploy.tar.gz"
 DEPLOY_FILE="${DEPLOY_FILE//$'\r'/}"
 DIST_DIR="$ROOT_DIR/dist"

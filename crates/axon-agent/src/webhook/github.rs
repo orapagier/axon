@@ -166,9 +166,13 @@ pub async fn handle_github_webhook(
         "delivery": delivery,
         "payload": payload,
     });
-    WorkflowEngine::set_external_trigger_data(workflow_id.clone(), enriched).await;
-
-    match WorkflowEngine::run_in_background_with_source(&workflow_id, &state, "github", None) {
+    match WorkflowEngine::run_in_background_with_payload(
+        &workflow_id,
+        &state,
+        "github",
+        None,
+        Some(enriched),
+    ) {
         Ok(run_id) => {
             Json(json!({ "ok": true, "workflow_id": workflow_id, "run_id": run_id }))
                 .into_response()

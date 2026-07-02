@@ -627,12 +627,13 @@ pub(crate) async fn run_inner(
         .clone()
         .unwrap_or_else(|| state.settings.system_prompt());
     if needs_time_context {
-        let now_manila =
-            chrono::Utc::now().with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap());
+        let offset = state.settings.agent_utc_offset();
+        let now_local = chrono::Utc::now().with_timezone(&offset);
         base_system = format!(
-            "{}\n\n[SYSTEM CLOCK: {}]\n* This is the exact current date & time (Asia/Manila, UTC+8).\n* Use this internally to accurately calculate relative dates (e.g., today, tomorrow, next week, scheduling).\n* Do NOT mention the current time/date to the user unless they asked for it or the task genuinely requires it.",
+            "{}\n\n[SYSTEM CLOCK: {}]\n* This is the exact current date & time (operator-local, UTC{}).\n* Use this internally to accurately calculate relative dates (e.g., today, tomorrow, next week, scheduling).\n* Do NOT mention the current time/date to the user unless they asked for it or the task genuinely requires it.",
             base_system,
-            now_manila.format("%A, %Y-%m-%d %H:%M:%S")
+            now_local.format("%A, %Y-%m-%d %H:%M:%S"),
+            offset
         );
     }
 

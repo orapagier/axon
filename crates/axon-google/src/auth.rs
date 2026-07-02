@@ -123,7 +123,11 @@ pub async fn access_token(state: &AppState) -> Result<String> {
     let (client_id, client_secret, refresh) = {
         let storage = state.storage.read().await;
         let creds = storage.google_creds()?;
-        let tok = storage.tokens.google.as_ref().unwrap();
+        // Re-check under this lock: the fast-path's guard was released, and a
+        // concurrent revoke/reload can have cleared the token in between.
+        let tok = storage.tokens.google.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("Google token removed while refreshing. Re-authenticate Google.")
+        })?;
         let refresh = tok
             .refresh_token
             .clone()
