@@ -241,27 +241,27 @@ pub(crate) async fn execute(config: &Value, state: &AppState) -> Result<Value, S
 /// `FAILURE_CATEGORIES`.
 const DELETABLE_CATEGORIES: &[&str] = &["not_found", "invalid_key", "forbidden", "bad_request"];
 
-/// Parse the node's `auto_delete` selection into the categories to prune, keeping
-/// only `DELETABLE_CATEGORIES` members (deduplicated, order preserved). Accepts the
-/// multiOptions array shape or a comma-separated string, and silently drops any
-/// category not on the allow-list — so even a hand-edited config can't opt into
-/// deleting `misconfigured` or a recoverable failure.
+/// Collect the categories to prune from the node's per-reason checkboxes
+/// (`auto_delete_<category>` booleans). Driven by `DELETABLE_CATEGORIES`, so only
+/// terminal reasons are ever consulted — there is no `auto_delete_misconfigured` /
+/// `auto_delete_rate_limited` box, so even a hand-edited config can't opt into
+/// deleting a recoverable or local-config failure. Order follows the allow-list.
 fn auto_delete_categories(config: &Value) -> Vec<String> {
-    let raw: Vec<String> = match config.get("auto_delete") {
-        Some(Value::Array(arr)) => arr
-            .iter()
-            .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
-            .collect(),
-        Some(Value::String(s)) => s.split(',').map(|s| s.trim().to_string()).collect(),
-        _ => Vec::new(),
-    };
-    let mut out: Vec<String> = Vec::new();
-    for c in raw {
-        if DELETABLE_CATEGORIES.contains(&c.as_str()) && !out.contains(&c) {
-            out.push(c);
-        }
+    DELETABLE_CATEGORIES
+        .iter()
+        .filter(|cat| config_bool(config, &format!("auto_delete_{cat}")))
+        .map(|cat| (*cat).to_string())
+        .collect()
+}
+
+/// Read a boolean node-config field, tolerating both a real JSON bool and the
+/// stringy "true"/"false" some form widgets emit. Absent/blank ⇒ false.
+fn config_bool(config: &Value, key: &str) -> bool {
+    match config.get(key) {
+        Some(Value::Bool(b)) => *b,
+        Some(Value::String(s)) => s.trim().eq_ignore_ascii_case("true"),
+        _ => false,
     }
-    out
 }
 
 /// Build a typed, sparse model payload from the node config. Only fields the user
