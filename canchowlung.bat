@@ -1,5 +1,0 @@
-@echo off
-
-ssh -v canchowlung@34.61.3.40 -t "sudo su"
-
-pause
