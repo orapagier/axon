@@ -19,9 +19,12 @@ function renderInline(text) {
   // **bold**
   out = out.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
 
-  // [label](https://url)
+  // [label](https://url) or [label](/relative/path) — a single leading slash
+  // is allowed (same-origin links like /api/download), but not `//host/...`,
+  // which browsers treat as protocol-relative and would let a hallucinated
+  // link jump off-origin.
   out = out.replace(
-    /\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g,
+    /\[([^\]\n]+)\]\((https?:\/\/[^)\s]+|\/(?!\/)[^)\s]*)\)/g,
     '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>'
   )
 
