@@ -23,7 +23,8 @@ pub async fn list_contacts(state: &AppState, max_results: u32) -> Result<Value> 
         ])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -42,7 +43,8 @@ pub async fn get_contact(state: &AppState, name: &str) -> Result<Value> {
         )])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -85,7 +87,8 @@ pub async fn create_contact(
         .json(&person)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -154,7 +157,8 @@ pub async fn update_contact(
         .json(&person)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -180,7 +184,8 @@ pub async fn search_contacts(state: &AppState, query: &str, max_results: u32) ->
         ])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -195,6 +200,7 @@ pub async fn delete_contact(state: &AppState, name: &str) -> Result<Value> {
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?;
+        .ensure_ok()
+        .await?;
     Ok(json!({ "success": true, "resourceName": name }))
 }

@@ -17,7 +17,8 @@ pub async fn create_document(state: &AppState, title: &str) -> Result<Value> {
         .json(&json!({ "title": title }))
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -33,7 +34,8 @@ pub async fn get_document(state: &AppState, document_id: &str) -> Result<Value> 
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -249,7 +251,8 @@ pub async fn batch_update(
         .json(&json!({ "requests": requests }))
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)

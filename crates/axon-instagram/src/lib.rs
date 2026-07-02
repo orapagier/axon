@@ -595,7 +595,8 @@ impl InstagramService {
             )])
             .send()
             .await?
-            .ensure_ok().await?
+            .ensure_ok()
+            .await?
             .json()
             .await?;
         Ok(resp)
@@ -618,7 +619,8 @@ impl InstagramService {
             ])
             .send()
             .await?
-            .ensure_ok().await?
+            .ensure_ok()
+            .await?
             .json()
             .await?;
         Ok(resp)
@@ -716,7 +718,8 @@ impl InstagramService {
             ])
             .send()
             .await?
-            .ensure_ok().await?
+            .ensure_ok()
+            .await?
             .json()
             .await?;
         Ok(resp)
@@ -732,7 +735,8 @@ impl InstagramService {
             .form(&[("message", message)])
             .send()
             .await?
-            .ensure_ok().await?
+            .ensure_ok()
+            .await?
             .json()
             .await?;
         Ok(resp)
@@ -777,7 +781,8 @@ impl InstagramService {
             ])
             .send()
             .await?
-            .ensure_ok().await?
+            .ensure_ok()
+            .await?
             .json()
             .await?;
         Ok(resp)
@@ -796,7 +801,8 @@ impl InstagramService {
             ])
             .send()
             .await?
-            .ensure_ok().await?
+            .ensure_ok()
+            .await?
             .json()
             .await?;
         Ok(resp)
@@ -816,7 +822,8 @@ impl InstagramService {
             }))
             .send()
             .await?
-            .ensure_ok().await?
+            .ensure_ok()
+            .await?
             .json()
             .await?;
         Ok(resp)

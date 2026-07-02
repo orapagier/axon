@@ -60,18 +60,18 @@ impl BusinessService {
             Tool { name: "text_extract_urls".into(),  description: "Extract all URLs found in a block of text.".into(),                                            input_schema: schema!({"text":{"type":"string"}}, ["text"]) },
             Tool { name: "text_slugify".into(),       description: "Convert text to a URL-safe slug (e.g. 'Hello World!' → 'hello-world').".into(),                input_schema: schema!({"text":{"type":"string"}}, ["text"]) },
             Tool { name: "text_template".into(),      description: "Fill a template string with key-value substitutions. Template vars use {{key}} syntax.".into(),input_schema: schema!({"template":{"type":"string"},"vars":{"type":"object","description":"Key-value pairs to substitute"}}, ["template","vars"]) },
-            
+
             // ── Web ───────────────────────────────────────────────────────
-            Tool { 
-                name: "web_request".into(), 
-                description: "Make an HTTP/HTTPS request to an external API or website. Similar to n8n HTTP Request node.".into(), 
+            Tool {
+                name: "web_request".into(),
+                description: "Make an HTTP/HTTPS request to an external API or website. Similar to n8n HTTP Request node.".into(),
                 input_schema: schema!({
                     "url": {"type":"string", "description":"The full URL to request"},
                     "method": {"type":"string", "enum":["GET","POST","PUT","DELETE","PATCH","HEAD"], "default":"GET"},
                     "headers": {"type":"object", "description":"Custom HTTP headers"},
                     "query": {"type":"object", "description":"Query parameters to append to the URL"},
                     "body": {"type":"any", "description":"JSON body for POST/PUT requests"}
-                }, ["url"]) 
+                }, ["url"])
             },
         ]
     }

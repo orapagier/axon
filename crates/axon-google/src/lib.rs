@@ -290,14 +290,18 @@ impl GoogleService {
                         )
                         .await
                     }
-                    None => gmail::send(&self.0, s("to")?, s("subject")?, s("body")?, cc, bcc).await,
+                    None => {
+                        gmail::send(&self.0, s("to")?, s("subject")?, s("body")?, cc, bcc).await
+                    }
                 }
             }
             "gmail_reply" => {
                 let attach = a
                     .get("attachment_path")
                     .and_then(|v| v.as_str())
-                    .filter(|p| !p.is_empty() && a.get("send_attachment").map(truthy).unwrap_or(false));
+                    .filter(|p| {
+                        !p.is_empty() && a.get("send_attachment").map(truthy).unwrap_or(false)
+                    });
                 gmail::reply(
                     &self.0,
                     a.get("thread_id").and_then(|v| v.as_str()).unwrap_or(""),
@@ -1142,7 +1146,9 @@ fn parse_batch_write_data(data_v: Option<&Value>) -> Vec<(String, Vec<Vec<Value>
         .filter_map(|entry| {
             // An entry may itself be a JSON-encoded object string.
             let entry = match &entry {
-                Value::String(s) => serde_json::from_str::<Value>(s).unwrap_or_else(|_| entry.clone()),
+                Value::String(s) => {
+                    serde_json::from_str::<Value>(s).unwrap_or_else(|_| entry.clone())
+                }
                 _ => entry,
             };
             let obj = entry.as_object()?;

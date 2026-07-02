@@ -90,7 +90,8 @@ pub async fn search(state: &AppState, query: &str, max_results: u32) -> Result<V
         ])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -137,7 +138,8 @@ pub async fn upload_binary(
         .body(body)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -273,7 +275,8 @@ pub async fn share(
         .json(&body)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
 
@@ -285,7 +288,8 @@ pub async fn share(
             .query(&[("fields", "webViewLink")])
             .send()
             .await?
-            .ensure_ok().await?
+            .ensure_ok()
+            .await?
             .json()
             .await?;
 
@@ -303,7 +307,8 @@ pub async fn delete(state: &AppState, file_id: &str) -> Result<Value> {
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?;
+        .ensure_ok()
+        .await?;
     Ok(json!({ "success": true, "deletedFileId": file_id }))
 }
 
@@ -318,7 +323,8 @@ pub async fn download_binary(state: &AppState, file_id: &str) -> Result<Value> {
         .query(&[("fields", "name,mimeType")])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     let name = meta["name"]
@@ -357,7 +363,8 @@ pub async fn download_binary(state: &AppState, file_id: &str) -> Result<Value> {
             .query(&[("mimeType", export_mime)])
             .send()
             .await?
-            .ensure_ok().await?
+            .ensure_ok()
+            .await?
             .bytes()
             .await?;
         let export_name = format!("{name}.{extension}");
@@ -370,7 +377,8 @@ pub async fn download_binary(state: &AppState, file_id: &str) -> Result<Value> {
             .query(&[("alt", "media")])
             .send()
             .await?
-            .ensure_ok().await?
+            .ensure_ok()
+            .await?
             .bytes()
             .await?;
         (b, name.clone())
@@ -396,7 +404,8 @@ pub async fn export(state: &AppState, file_id: &str, mime_type: &str) -> Result<
         .query(&[("fields", "name")])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     let name = meta["name"].as_str().unwrap_or("exported_file").to_owned();
@@ -408,7 +417,8 @@ pub async fn export(state: &AppState, file_id: &str, mime_type: &str) -> Result<
         .query(&[("mimeType", mime_type)])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .bytes()
         .await?;
 
@@ -448,7 +458,8 @@ pub async fn move_file(state: &AppState, file_id: &str, new_folder_id: &str) -> 
         .query(&[("fields", "parents")])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
 
@@ -474,7 +485,8 @@ pub async fn move_file(state: &AppState, file_id: &str, new_folder_id: &str) -> 
         ])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
 
@@ -494,7 +506,8 @@ pub async fn get_file(state: &AppState, file_id: &str) -> Result<Value> {
         )])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -518,7 +531,8 @@ pub async fn create_folder(state: &AppState, name: &str, parent_id: Option<&str>
         .json(&meta)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -550,7 +564,8 @@ pub async fn rename_file(
         .json(&patch)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -579,7 +594,8 @@ pub async fn copy_file(
         .json(&body)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -596,7 +612,8 @@ pub async fn trash_file(state: &AppState, file_id: &str) -> Result<Value> {
         .json(&json!({ "trashed": true }))
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -615,7 +632,8 @@ pub async fn list_permissions(state: &AppState, file_id: &str) -> Result<Value> 
         )])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -636,6 +654,7 @@ pub async fn remove_permission(
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?;
+        .ensure_ok()
+        .await?;
     Ok(json!({ "success": true, "removedPermissionId": permission_id }))
 }

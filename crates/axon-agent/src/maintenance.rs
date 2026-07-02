@@ -183,7 +183,9 @@ pub fn run_retention(
     // VACUUM briefly takes an exclusive lock and rewrites the whole DB.
     let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
 
-    let page_size: i64 = conn.query_row("PRAGMA page_size", [], |r| r.get(0)).unwrap_or(0);
+    let page_size: i64 = conn
+        .query_row("PRAGMA page_size", [], |r| r.get(0))
+        .unwrap_or(0);
     let freelist: i64 = conn
         .query_row("PRAGMA freelist_count", [], |r| r.get(0))
         .unwrap_or(0);
@@ -246,11 +248,8 @@ mod tests {
         let (pool, path) = temp_db();
         {
             let conn = pool.get().unwrap();
-            conn.execute(
-                "INSERT INTO workflows (id, name) VALUES ('wf1','test')",
-                [],
-            )
-            .unwrap();
+            conn.execute("INSERT INTO workflows (id, name) VALUES ('wf1','test')", [])
+                .unwrap();
             // 60 runs for one workflow — only the last 50 should survive.
             for i in 0..60 {
                 conn.execute(

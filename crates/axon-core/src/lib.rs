@@ -179,12 +179,7 @@ impl AppState {
 
     /// Convenience: DELETE with Bearer token.
     pub async fn delete(&self, token: &str, url: &str) -> Result<serde_json::Value> {
-        let resp = self
-            .client
-            .delete(url)
-            .bearer_auth(token)
-            .send()
-            .await?;
+        let resp = self.client.delete(url).bearer_auth(token).send().await?;
         ensure_ok(resp).await?;
         Ok(serde_json::json!({ "success": true }))
     }

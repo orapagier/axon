@@ -14,7 +14,8 @@ pub async fn list_joined(state: &AppState) -> Result<Value> {
         .query(&[("$select", "id,displayName,description,isArchived")])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -29,7 +30,8 @@ pub async fn list_channels(state: &AppState, team_id: &str) -> Result<Value> {
         .query(&[("$select", "id,displayName,description,membershipType")])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -51,7 +53,8 @@ pub async fn send_message(
         .json(&json!({"body":{"contentType":"text","content":content}}))
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -73,7 +76,8 @@ pub async fn list_chats(state: &AppState, max_count: u32) -> Result<Value> {
         ])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -88,7 +92,8 @@ pub async fn send_chat_message(state: &AppState, chat_id: &str, content: &str) -
         .json(&json!({"body":{"contentType":"text","content":content}}))
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)

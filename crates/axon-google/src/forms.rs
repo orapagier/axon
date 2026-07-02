@@ -27,7 +27,8 @@ pub async fn create_form(
         }))
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -42,7 +43,8 @@ pub async fn get_form(state: &AppState, form_id: &str) -> Result<Value> {
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -328,7 +330,8 @@ pub async fn list_responses(state: &AppState, form_id: &str, page_size: u32) -> 
         .query(&[("pageSize", page_size.to_string())])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -343,7 +346,8 @@ pub async fn get_response(state: &AppState, form_id: &str, response_id: &str) ->
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -361,7 +365,8 @@ pub async fn batch_update(state: &AppState, form_id: &str, requests: Vec<Value>)
         .json(&json!({ "requests": requests }))
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)

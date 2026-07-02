@@ -112,11 +112,7 @@ pub fn record_node_retry(node_type: &str) {
 /// `GET /metrics` — Prometheus text exposition (gated by the dashboard bearer).
 pub async fn metrics_endpoint(State(state): State<AppState>) -> Response {
     match render(&state) {
-        Some(body) => (
-            [(header::CONTENT_TYPE, "text/plain; version=0.0.4")],
-            body,
-        )
-            .into_response(),
+        Some(body) => ([(header::CONTENT_TYPE, "text/plain; version=0.0.4")], body).into_response(),
         None => (
             StatusCode::SERVICE_UNAVAILABLE,
             "metrics recorder not installed",
@@ -146,11 +142,11 @@ mod tests {
         record_run_complete("success", 1.5);
         record_node_exec("synapse", 0.2);
         record_node_retry("synapse");
-        let out = HANDLE
-            .get()
-            .expect("recorder should be installed")
-            .render();
-        assert!(out.contains("axon_workflow_runs_total"), "missing runs counter:\n{out}");
+        let out = HANDLE.get().expect("recorder should be installed").render();
+        assert!(
+            out.contains("axon_workflow_runs_total"),
+            "missing runs counter:\n{out}"
+        );
         assert!(
             out.contains("axon_node_exec_duration_seconds"),
             "missing node histogram:\n{out}"
@@ -160,6 +156,9 @@ mod tests {
             "missing retries counter:\n{out}"
         );
         // The success label is rendered on the counter.
-        assert!(out.contains("status=\"success\""), "missing status label:\n{out}");
+        assert!(
+            out.contains("status=\"success\""),
+            "missing status label:\n{out}"
+        );
     }
 }

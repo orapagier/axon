@@ -23,7 +23,11 @@ use std::sync::Arc;
 /// because there the user picked the credential deliberately). If no credential
 /// is found this is a no-op and the downstream tool surfaces its own clear
 /// "missing token" error.
-fn merge_stored_credentials(service: &str, args: serde_json::Value, state: &AppState) -> serde_json::Value {
+fn merge_stored_credentials(
+    service: &str,
+    args: serde_json::Value,
+    state: &AppState,
+) -> serde_json::Value {
     let mut map = match args {
         serde_json::Value::Object(m) => m,
         other => return other,

@@ -122,7 +122,6 @@ pub struct WorkflowRunResult {
 
 // ── Node executors ────────────────────────────────────────────────────────────
 
-
 // ── JS Execution Infrastructure ───────────────────────────────────────────────
 
 thread_local! {
@@ -307,7 +306,9 @@ async fn execute_js_node(
         // Hard interpreter limits: tokio::time::timeout only abandons the
         // blocking task — it cannot stop boa. Without these, an infinite
         // loop in a user script leaks a blocking thread forever.
-        context.runtime_limits_mut().set_loop_iteration_limit(5_000_000);
+        context
+            .runtime_limits_mut()
+            .set_loop_iteration_limit(5_000_000);
         context.runtime_limits_mut().set_recursion_limit(512);
 
         // ── console.log / print ───────────────────────────────────────────
@@ -473,8 +474,6 @@ var $env = {env};
         Err(_) => Err("JS timeout (10s limit exceeded)".to_string()),
     }
 }
-
-
 
 // Helper to try parsing a string as JSON if it looks like an array or object
 pub(crate) fn try_parse_json_value(val: Value) -> Value {
@@ -718,7 +717,10 @@ pub(crate) async fn execute_gmail_trigger(
             // every file locally and attaches the paths. Same shape as the poller.
             let download = config
                 .get("gmail_download_attachments")
-                .and_then(|v| v.as_bool().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+                .and_then(|v| {
+                    v.as_bool()
+                        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+                })
                 .unwrap_or(false);
             let emails = enrich_gmail_emails(state, emails, download).await;
 
@@ -730,7 +732,10 @@ pub(crate) async fn execute_gmail_trigger(
             // so the same emails still appear on a re-run.
             let mark_read = config
                 .get("gmail_mark_read")
-                .and_then(|v| v.as_bool().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+                .and_then(|v| {
+                    v.as_bool()
+                        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+                })
                 .unwrap_or(false);
             if mark_read {
                 let ids: Vec<String> = emails
@@ -743,7 +748,11 @@ pub(crate) async fn execute_gmail_trigger(
                     })
                     .collect();
                 if !ids.is_empty() {
-                    if let Err(e) = state.tools.run("gmail_mark_read", json!({ "ids": ids })).await {
+                    if let Err(e) = state
+                        .tools
+                        .run("gmail_mark_read", json!({ "ids": ids }))
+                        .await
+                    {
                         tracing::warn!("Gmail trigger (manual): mark-as-read failed: {}", e);
                     }
                 }
@@ -790,7 +799,10 @@ async fn enrich_gmail_emails(state: &AppState, emails: Vec<Value>, download: boo
         if download {
             match state
                 .tools
-                .run("gmail_download_all_attachments", json!({ "message_id": id }))
+                .run(
+                    "gmail_download_all_attachments",
+                    json!({ "message_id": id }),
+                )
                 .await
             {
                 Ok(res) => {
@@ -918,10 +930,7 @@ fn evaluate_js_expression(
 /// All transitive upstream node ids of `node_id`, walking `edges` backwards.
 /// Lets same-named `$node["Name"]` references be disambiguated toward the
 /// reference's actual upstream, matching the editor preview's scoping.
-fn ancestor_node_ids(
-    node_id: &str,
-    edges: &[WorkflowEdge],
-) -> std::collections::HashSet<String> {
+fn ancestor_node_ids(node_id: &str, edges: &[WorkflowEdge]) -> std::collections::HashSet<String> {
     let mut ancestors = std::collections::HashSet::new();
     let mut stack = vec![node_id.to_string()];
     while let Some(cur) = stack.pop() {
@@ -1017,12 +1026,10 @@ fn resolve_value_scoped(
     // mid-string. The bracketed form (node["Name"].field) is distinctive enough
     // to be safe in prose; the dot form requires a leading $ so it never
     // clobbers ordinary text like "file.name.ext".
-    static RE_BARE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r#"\$?node\[['"](.+?)['"]\]\.([a-zA-Z0-9_\-\.\[\]]+)"#).unwrap()
-    });
-    static RE_BARE_DOT: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r#"\$node\.([a-zA-Z0-9_\-]+)\.([a-zA-Z0-9_\-\.\[\]]+)"#).unwrap()
-    });
+    static RE_BARE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r#"\$?node\[['"](.+?)['"]\]\.([a-zA-Z0-9_\-\.\[\]]+)"#).unwrap());
+    static RE_BARE_DOT: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r#"\$node\.([a-zA-Z0-9_\-]+)\.([a-zA-Z0-9_\-\.\[\]]+)"#).unwrap());
     let re = &*RE;
     let re_dot = &*RE_DOT;
 
@@ -1191,7 +1198,8 @@ fn extract_field(res: &NodeResult, field: &str) -> String {
         "error" => res.error.clone().unwrap_or_default(),
         _ if field.starts_with("data.")
             || field.starts_with("output.")
-            || field.starts_with("json.") => {
+            || field.starts_with("json.") =>
+        {
             let path = &field[field.find('.').unwrap() + 1..];
             res.output
                 .pointer(&format!(
@@ -1293,7 +1301,8 @@ fn get_raw_field(res: &NodeResult, field: &str) -> Value {
         "error" => json!(res.error),
         _ if field.starts_with("data.")
             || field.starts_with("output.")
-            || field.starts_with("json.") => {
+            || field.starts_with("json.") =>
+        {
             let path = &field[field.find('.').unwrap() + 1..];
             res.output
                 .pointer(&format!(
@@ -1552,7 +1561,10 @@ pub(crate) fn val_to_datetime(v: &Value) -> Option<chrono::DateTime<chrono::Fixe
             let f = n.as_f64()?;
             // Heuristic: large magnitudes are epoch millis, otherwise seconds.
             let (secs, nsecs) = if f.abs() >= 1e11 {
-                ((f / 1000.0).trunc() as i64, ((f as i64 % 1000) * 1_000_000) as u32)
+                (
+                    (f / 1000.0).trunc() as i64,
+                    ((f as i64 % 1000) * 1_000_000) as u32,
+                )
             } else {
                 (f as i64, 0)
             };
@@ -1588,7 +1600,10 @@ pub(crate) fn val_to_datetime(v: &Value) -> Option<chrono::DateTime<chrono::Fixe
                 }
             }
             if let Ok(secs) = t.parse::<i64>() {
-                return Utc.timestamp_opt(secs, 0).single().map(|dt| dt.fixed_offset());
+                return Utc
+                    .timestamp_opt(secs, 0)
+                    .single()
+                    .map(|dt| dt.fixed_offset());
             }
             None
         }
@@ -1609,7 +1624,10 @@ fn compile_regex(pattern: &str, case_insensitive: bool) -> Option<Regex> {
             if close > 0 {
                 let flags = pat[close + 1..].to_string();
                 let body = pat[1..close].to_string();
-                if flags.chars().all(|c| matches!(c, 'i' | 'm' | 's' | 'g' | 'u' | 'y')) {
+                if flags
+                    .chars()
+                    .all(|c| matches!(c, 'i' | 'm' | 's' | 'g' | 'u' | 'y'))
+                {
                     ci = ci || flags.contains('i');
                     multiline = flags.contains('m');
                     dotall = flags.contains('s');
@@ -1712,10 +1730,16 @@ pub(crate) fn evaluate_condition_typed(
             let arr = left.as_array();
             match op {
                 "contains" => arr
-                    .map(|a| a.iter().any(|el| values_loosely_equal(el, right, case_sensitive)))
+                    .map(|a| {
+                        a.iter()
+                            .any(|el| values_loosely_equal(el, right, case_sensitive))
+                    })
                     .unwrap_or(false),
                 "notContains" => !arr
-                    .map(|a| a.iter().any(|el| values_loosely_equal(el, right, case_sensitive)))
+                    .map(|a| {
+                        a.iter()
+                            .any(|el| values_loosely_equal(el, right, case_sensitive))
+                    })
                     .unwrap_or(false),
                 "lengthEquals" | "lengthNotEquals" | "lengthGt" | "lengthLt" | "lengthGte"
                 | "lengthLte" => {
@@ -1775,8 +1799,6 @@ pub(crate) fn evaluate_condition_typed(
         }
     }
 }
-
-
 
 fn find_iteration_source_node_id(
     current_node_id: &str,
@@ -1967,8 +1989,8 @@ async fn execute_node_by_type(
                     wait_ms
                 );
                 // Cancellation-aware sleep in <=1s slices (mirrors wait.rs).
-                let deadline = tokio::time::Instant::now()
-                    + tokio::time::Duration::from_millis(wait_ms);
+                let deadline =
+                    tokio::time::Instant::now() + tokio::time::Duration::from_millis(wait_ms);
                 loop {
                     let now = tokio::time::Instant::now();
                     if now >= deadline {
@@ -2146,7 +2168,8 @@ struct RunSlot {
 }
 impl Drop for RunSlot {
     fn drop(&mut self) {
-        self.active.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        self.active
+            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -2518,14 +2541,13 @@ impl WorkflowEngine {
                     // stores no `config.type` but means a cron trigger. Falling back
                     // to the node_type keeps those firing on a scheduled run instead
                     // of silently matching nothing.
-                    let node_trigger_kind = n
-                        .config
-                        .get("type")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or(match n.node_type.as_str() {
-                            "circadian" => "cron",
-                            _ => "manual",
-                        });
+                    let node_trigger_kind =
+                        n.config.get("type").and_then(|v| v.as_str()).unwrap_or(
+                            match n.node_type.as_str() {
+                                "circadian" => "cron",
+                                _ => "manual",
+                            },
+                        );
                     deg && matches!(n.node_type.as_str(), "trigger" | "circadian" | "stimulus")
                         && entry_trigger_type.map_or(true, |want| node_trigger_kind == want)
                         // Error triggers (A3) are eligible ONLY on an error run; a
@@ -2640,8 +2662,10 @@ impl WorkflowEngine {
             // downstream consumers in sync with current external state. Cached errors
             // are never reused — they re-run for a fresh attempt (matches the
             // frontend's `!r.error` "Has Data" gate).
-            let is_oneshot_trigger =
-                matches!(node.node_type.as_str(), "trigger" | "stimulus" | "circadian");
+            let is_oneshot_trigger = matches!(
+                node.node_type.as_str(),
+                "trigger" | "stimulus" | "circadian"
+            );
             let reuse_cached_upstream = target_node_id.is_some()
                 && target_node_id.as_deref() != Some(current_id.as_str())
                 && is_oneshot_trigger
@@ -2698,113 +2722,155 @@ impl WorkflowEngine {
             // sends, file registration) don't repeat. Freshly-reached nodes run
             // normally. The block is closed right before edge routing.
             if !resumed_completed.contains(&current_id) && !reuse_cached_upstream && !use_pin {
-            let n_start = std::time::Instant::now();
-            // Upstream node ids of the node about to run — used so a
-            // `$node["Name"]` reference whose name collides with another node
-            // (e.g. legacy workflows predating unique-naming) resolves toward
-            // this node's actual upstream instead of a random HashMap match.
-            let node_ancestors = ancestor_node_ids(&current_id, &edges);
-            let iteration_source_id =
-                find_iteration_source_node_id(&current_id, &edges, &node_results);
-            // "Execute Once" (n8n's "Run Once for All Items"): when set, the node
-            // does NOT fan out over a loop collection — it runs a single time with
-            // the full `items` array visible via {{ $node["Loop"].items }}. This is
-            // the clean aggregation/"collect after loop" boundary the old engine
-            // lacked, letting a JS/HTTP/Axon node reduce a loop's results.
-            let execute_once = node
-                .config
-                .get("execute_once")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            let can_iterate = !execute_once
-                && !matches!(
-                    node.node_type.as_str(),
-                    "loop" | "ifCondition" | "switch" | "trigger" | "circadian" | "stimulus"
-                        | "subflow" | "workflow"
-                );
+                let n_start = std::time::Instant::now();
+                // Upstream node ids of the node about to run — used so a
+                // `$node["Name"]` reference whose name collides with another node
+                // (e.g. legacy workflows predating unique-naming) resolves toward
+                // this node's actual upstream instead of a random HashMap match.
+                let node_ancestors = ancestor_node_ids(&current_id, &edges);
+                let iteration_source_id =
+                    find_iteration_source_node_id(&current_id, &edges, &node_results);
+                // "Execute Once" (n8n's "Run Once for All Items"): when set, the node
+                // does NOT fan out over a loop collection — it runs a single time with
+                // the full `items` array visible via {{ $node["Loop"].items }}. This is
+                // the clean aggregation/"collect after loop" boundary the old engine
+                // lacked, letting a JS/HTTP/Axon node reduce a loop's results.
+                let execute_once = node
+                    .config
+                    .get("execute_once")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let can_iterate = !execute_once
+                    && !matches!(
+                        node.node_type.as_str(),
+                        "loop"
+                            | "ifCondition"
+                            | "switch"
+                            | "trigger"
+                            | "circadian"
+                            | "stimulus"
+                            | "subflow"
+                            | "workflow"
+                    );
 
-            let (result, attempts): (Result<Value, String>, u32) = if can_iterate {
-                if let Some(source_node_id) = iteration_source_id {
-                    if let Some(source_result) = node_results.get(&source_node_id) {
-                        if let Some(items) =
-                            source_result.output.get("items").and_then(|v| v.as_array())
-                        {
-                            // Concurrency/batch knobs the Loop node embedded in its
-                            // marker (defaults: sequential, one item per iteration).
-                            let loop_meta = source_result.output.get("_axon_loop");
-                            let parallelism = loop_meta
-                                .and_then(|m| m.get("parallelism"))
-                                .and_then(|v| v.as_u64())
-                                .map(|n| n as usize)
-                                .unwrap_or(1)
-                                .max(1);
-                            let batch_size = loop_meta
-                                .and_then(|m| m.get("batch_size"))
-                                .and_then(|v| v.as_u64())
-                                .map(|n| n as usize)
-                                .unwrap_or(1)
-                                .max(1);
+                let (result, attempts): (Result<Value, String>, u32) = if can_iterate {
+                    if let Some(source_node_id) = iteration_source_id {
+                        if let Some(source_result) = node_results.get(&source_node_id) {
+                            if let Some(items) =
+                                source_result.output.get("items").and_then(|v| v.as_array())
+                            {
+                                // Concurrency/batch knobs the Loop node embedded in its
+                                // marker (defaults: sequential, one item per iteration).
+                                let loop_meta = source_result.output.get("_axon_loop");
+                                let parallelism = loop_meta
+                                    .and_then(|m| m.get("parallelism"))
+                                    .and_then(|v| v.as_u64())
+                                    .map(|n| n as usize)
+                                    .unwrap_or(1)
+                                    .max(1);
+                                let batch_size = loop_meta
+                                    .and_then(|m| m.get("batch_size"))
+                                    .and_then(|v| v.as_u64())
+                                    .map(|n| n as usize)
+                                    .unwrap_or(1)
+                                    .max(1);
 
-                            // Work units: one per item, or one per batch slice when
-                            // batch_size > 1 (n8n SplitInBatches style — each unit's
-                            // `current` is then the array of items in that batch).
-                            let units: Vec<(usize, Value)> = if batch_size > 1 {
-                                items
-                                    .chunks(batch_size)
-                                    .enumerate()
-                                    .map(|(i, c)| (i, Value::Array(c.to_vec())))
-                                    .collect()
-                            } else {
-                                items
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(i, it)| (i, it.clone()))
-                                    .collect()
-                            };
-                            let unit_count = units.len();
-                            let run_id_ref = run_id.as_str();
+                                // Work units: one per item, or one per batch slice when
+                                // batch_size > 1 (n8n SplitInBatches style — each unit's
+                                // `current` is then the array of items in that batch).
+                                let units: Vec<(usize, Value)> = if batch_size > 1 {
+                                    items
+                                        .chunks(batch_size)
+                                        .enumerate()
+                                        .map(|(i, c)| (i, Value::Array(c.to_vec())))
+                                        .collect()
+                                } else {
+                                    items
+                                        .iter()
+                                        .enumerate()
+                                        .map(|(i, it)| (i, it.clone()))
+                                        .collect()
+                                };
+                                let unit_count = units.len();
+                                let run_id_ref = run_id.as_str();
 
-                            // Inject loop context onto the iteration source's result
-                            // so the body can read {{ $node["Loop"].current/index/... }}.
-                            let build_unit = |idx: usize, current: &Value| {
-                                let mut temp_results = node_results.clone();
-                                if let Some(source_mut) = temp_results.get_mut(&source_node_id) {
-                                    if let Some(out_obj) = source_mut.output.as_object_mut() {
-                                        out_obj.insert("current".to_string(), current.clone());
-                                        out_obj.insert("index".to_string(), json!(idx));
-                                        out_obj.insert("is_first".to_string(), json!(idx == 0));
-                                        out_obj.insert(
-                                            "is_last".to_string(),
-                                            json!(idx + 1 == unit_count),
-                                        );
-                                        out_obj.insert("total".to_string(), json!(unit_count));
+                                // Inject loop context onto the iteration source's result
+                                // so the body can read {{ $node["Loop"].current/index/... }}.
+                                let build_unit = |idx: usize, current: &Value| {
+                                    let mut temp_results = node_results.clone();
+                                    if let Some(source_mut) = temp_results.get_mut(&source_node_id)
+                                    {
+                                        if let Some(out_obj) = source_mut.output.as_object_mut() {
+                                            out_obj.insert("current".to_string(), current.clone());
+                                            out_obj.insert("index".to_string(), json!(idx));
+                                            out_obj.insert("is_first".to_string(), json!(idx == 0));
+                                            out_obj.insert(
+                                                "is_last".to_string(),
+                                                json!(idx + 1 == unit_count),
+                                            );
+                                            out_obj.insert("total".to_string(), json!(unit_count));
+                                        }
                                     }
-                                }
-                                let item_config = interpolate_config(
-                                    &node.config,
-                                    &temp_results,
-                                    state,
-                                    Some(&node_ancestors),
-                                    &run_id,
-                                );
-                                (item_config, temp_results)
-                            };
+                                    let item_config = interpolate_config(
+                                        &node.config,
+                                        &temp_results,
+                                        state,
+                                        Some(&node_ancestors),
+                                        &run_id,
+                                    );
+                                    (item_config, temp_results)
+                                };
 
-                            let mut iteration_outputs = Vec::new();
-                            let mut iteration_errors = Vec::new();
-                            // A1: worst-case retry count across units becomes the
-                            // body node's reported attempts; per-unit counts also
-                            // ride along in each errors[] entry.
-                            let mut max_unit_attempts: u32 = 0;
+                                let mut iteration_outputs = Vec::new();
+                                let mut iteration_errors = Vec::new();
+                                // A1: worst-case retry count across units becomes the
+                                // body node's reported attempts; per-unit counts also
+                                // ride along in each errors[] entry.
+                                let mut max_unit_attempts: u32 = 0;
 
-                            if parallelism > 1 {
-                                // Concurrent fan-out — a real edge over n8n's
-                                // single-threaded executor. buffered() preserves
-                                // input order, so outputs stay item-aligned.
-                                use futures::StreamExt;
-                                let futs = units.into_iter().map(|(idx, current)| {
-                                    let (item_config, temp_results) = build_unit(idx, &current);
-                                    async move {
+                                if parallelism > 1 {
+                                    // Concurrent fan-out — a real edge over n8n's
+                                    // single-threaded executor. buffered() preserves
+                                    // input order, so outputs stay item-aligned.
+                                    use futures::StreamExt;
+                                    let futs = units.into_iter().map(|(idx, current)| {
+                                        let (item_config, temp_results) = build_unit(idx, &current);
+                                        async move {
+                                            let (r, a) = execute_node_by_type(
+                                                node,
+                                                &item_config,
+                                                state,
+                                                trigger_source,
+                                                workflow_id,
+                                                run_id_ref,
+                                                &temp_results,
+                                                // A Wait inside a Loop body can't durably
+                                                // suspend — it sleeps in-process per item.
+                                                false,
+                                            )
+                                            .await;
+                                            (idx, current, r, a)
+                                        }
+                                    });
+                                    let collected: Vec<(usize, Value, Result<Value, String>, u32)> =
+                                        futures::stream::iter(futs)
+                                            .buffered(parallelism)
+                                            .collect()
+                                            .await;
+                                    for (idx, item, r, a) in collected {
+                                        max_unit_attempts = max_unit_attempts.max(a);
+                                        match r {
+                                        Ok(v) => iteration_outputs.push(v),
+                                        Err(e) => iteration_errors.push(json!({
+                                            "index": idx, "item": item, "error": e, "attempts": a
+                                        })),
+                                    }
+                                    }
+                                } else {
+                                    // Sequential: honours stop-on-first-error (n8n parity)
+                                    // unless continue_on_fail is set.
+                                    for (idx, current) in units {
+                                        let (item_config, temp_results) = build_unit(idx, &current);
                                         let (r, a) = execute_node_by_type(
                                             node,
                                             &item_config,
@@ -2813,87 +2879,77 @@ impl WorkflowEngine {
                                             workflow_id,
                                             run_id_ref,
                                             &temp_results,
-                                            // A Wait inside a Loop body can't durably
-                                            // suspend — it sleeps in-process per item.
+                                            // Iterated Wait: in-process sleep per item.
                                             false,
                                         )
                                         .await;
-                                        (idx, current, r, a)
-                                    }
-                                });
-                                let collected: Vec<(usize, Value, Result<Value, String>, u32)> =
-                                    futures::stream::iter(futs)
-                                        .buffered(parallelism)
-                                        .collect()
-                                        .await;
-                                for (idx, item, r, a) in collected {
-                                    max_unit_attempts = max_unit_attempts.max(a);
-                                    match r {
-                                        Ok(v) => iteration_outputs.push(v),
-                                        Err(e) => iteration_errors.push(json!({
-                                            "index": idx, "item": item, "error": e, "attempts": a
-                                        })),
-                                    }
-                                }
-                            } else {
-                                // Sequential: honours stop-on-first-error (n8n parity)
-                                // unless continue_on_fail is set.
-                                for (idx, current) in units {
-                                    let (item_config, temp_results) = build_unit(idx, &current);
-                                    let (r, a) = execute_node_by_type(
-                                        node,
-                                        &item_config,
-                                        state,
-                                        trigger_source,
-                                        workflow_id,
-                                        run_id_ref,
-                                        &temp_results,
-                                        // Iterated Wait: in-process sleep per item.
-                                        false,
-                                    )
-                                    .await;
-                                    max_unit_attempts = max_unit_attempts.max(a);
-                                    match r {
-                                        Ok(v) => iteration_outputs.push(v),
-                                        Err(e) => {
-                                            iteration_errors.push(json!({
+                                        max_unit_attempts = max_unit_attempts.max(a);
+                                        match r {
+                                            Ok(v) => iteration_outputs.push(v),
+                                            Err(e) => {
+                                                iteration_errors.push(json!({
                                                 "index": idx, "item": current, "error": e, "attempts": a
                                             }));
-                                            if !node.continue_on_fail {
-                                                break;
+                                                if !node.continue_on_fail {
+                                                    break;
+                                                }
                                             }
                                         }
                                     }
                                 }
-                            }
 
-                            let loop_result = if !iteration_errors.is_empty()
-                                && !node.continue_on_fail
-                            {
-                                Err(format!(
-                                    "Iteration failed in node '{}' ({} errors)",
-                                    node.name,
-                                    iteration_errors.len()
-                                ))
+                                let loop_result =
+                                    if !iteration_errors.is_empty() && !node.continue_on_fail {
+                                        Err(format!(
+                                            "Iteration failed in node '{}' ({} errors)",
+                                            node.name,
+                                            iteration_errors.len()
+                                        ))
+                                    } else {
+                                        Ok(json!({
+                                            "_axon_loop": {
+                                                "enabled": true,
+                                                "count": unit_count,
+                                                "source_node_id": source_node_id,
+                                                "parallelism": parallelism,
+                                                "batch_size": batch_size
+                                            },
+                                            "items": iteration_outputs,
+                                            "count": unit_count,
+                                            "total": unit_count,
+                                            "error_count": iteration_errors.len(),
+                                            "errors": iteration_errors
+                                        }))
+                                    };
+                                (loop_result, max_unit_attempts.max(1))
                             } else {
-                                Ok(json!({
-                                    "_axon_loop": {
-                                        "enabled": true,
-                                        "count": unit_count,
-                                        "source_node_id": source_node_id,
-                                        "parallelism": parallelism,
-                                        "batch_size": batch_size
-                                    },
-                                    "items": iteration_outputs,
-                                    "count": unit_count,
-                                    "total": unit_count,
-                                    "error_count": iteration_errors.len(),
-                                    "errors": iteration_errors
-                                }))
-                            };
-                            (loop_result, max_unit_attempts.max(1))
+                                let config = interpolate_config(
+                                    &node.config,
+                                    &node_results,
+                                    state,
+                                    Some(&node_ancestors),
+                                    &run_id,
+                                );
+                                execute_node_by_type(
+                                    node,
+                                    &config,
+                                    state,
+                                    trigger_source,
+                                    workflow_id,
+                                    &run_id,
+                                    &node_results,
+                                    target_node_id.is_none(),
+                                )
+                                .await
+                            }
                         } else {
-                            let config = interpolate_config(&node.config, &node_results, state, Some(&node_ancestors), &run_id);
+                            let config = interpolate_config(
+                                &node.config,
+                                &node_results,
+                                state,
+                                Some(&node_ancestors),
+                                &run_id,
+                            );
                             execute_node_by_type(
                                 node,
                                 &config,
@@ -2907,7 +2963,13 @@ impl WorkflowEngine {
                             .await
                         }
                     } else {
-                        let config = interpolate_config(&node.config, &node_results, state, Some(&node_ancestors), &run_id);
+                        let config = interpolate_config(
+                            &node.config,
+                            &node_results,
+                            state,
+                            Some(&node_ancestors),
+                            &run_id,
+                        );
                         execute_node_by_type(
                             node,
                             &config,
@@ -2921,7 +2983,13 @@ impl WorkflowEngine {
                         .await
                     }
                 } else {
-                    let config = interpolate_config(&node.config, &node_results, state, Some(&node_ancestors), &run_id);
+                    let config = interpolate_config(
+                        &node.config,
+                        &node_results,
+                        state,
+                        Some(&node_ancestors),
+                        &run_id,
+                    );
                     execute_node_by_type(
                         node,
                         &config,
@@ -2933,199 +3001,189 @@ impl WorkflowEngine {
                         target_node_id.is_none(),
                     )
                     .await
-                }
-            } else {
-                let config = interpolate_config(&node.config, &node_results, state, Some(&node_ancestors), &run_id);
-                execute_node_by_type(
-                    node,
-                    &config,
-                    state,
-                    trigger_source,
-                    workflow_id,
-                    &run_id,
-                    &node_results,
-                    target_node_id.is_none(),
-                )
-                .await
-            };
-            let duration = n_start.elapsed().as_millis() as u64;
-            crate::observability::record_node_exec(&node.node_type, duration as f64 / 1000.0);
-            let (status, output, error) = match result {
-                Ok(v) => ("success".to_string(), v, None),
-                Err(e) => ("error".to_string(), json!({}), Some(e)),
-            };
-
-            tracing::info!(
-                "Node '{}' ({}, type={}) completed in {}ms — status={}",
-                node.name,
-                current_id,
-                node.node_type,
-                duration,
-                status
-            );
-
-            let mut nr = NodeResult {
-                node_id: current_id.clone(),
-                node_name: node.name.clone(),
-                node_type: node.node_type.clone(),
-                position: node.position,
-                status: status.clone(),
-                output,
-                duration_ms: duration,
-                error,
-                attempts,
-            };
-
-            // Durable Wait suspension: a long Wait returns a sentinel instead of
-            // blocking an in-process sleep. Persist the chain so far plus WHEN and
-            // WHERE to resume, mark the run 'waiting', and hand the task back. A
-            // background poller re-enters the workflow once resume_at passes, so
-            // the pause survives an agent restart.
-            if let Some(marker) = nr.output.get(nodes::wait::SUSPEND_MARKER).cloned() {
-                let suspend_mode = marker
-                    .get("mode")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("interval")
-                    .to_string();
-
-                // Drop the internal sentinel from the visible result but keep the
-                // node marked 'waiting' so the editor shows the node paused.
-                if let Some(obj) = nr.output.as_object_mut() {
-                    obj.remove(nodes::wait::SUSPEND_MARKER);
-                }
-
-                // Compute the wake deadline. A timed Wait anchors it to the suspend
-                // instant. A webhook/approval Wait (C1) instead parks until an
-                // external caller hits its node+run-scoped resume URL; any timeout
-                // becomes the deadline (NULL = wait forever, only a resume URL
-                // wakes it).
-                let resume_at_db: Option<String> = if suspend_mode == "webhook"
-                    || suspend_mode == "approval"
-                {
-                    // No token minted: the node id addresses the parked node and
-                    // the (unguessable UUIDv4) run id scopes + secures the wake, so
-                    // a leaked link can't touch any other run and dies the instant
-                    // this one resumes. `resume_by_node` locates the run via
-                    // resume_node_id. A timeout still mirrors into resume_at so the
-                    // poller can fire the timeout branch; NULL = wait forever.
-                    let ttl = match marker.get("expires_seconds").and_then(|v| v.as_f64()) {
-                        Some(s) if s > 0.0 => s,
-                        _ => state.settings.workflow_resume_token_default_ttl_secs() as f64,
-                    };
-                    let expires_at: Option<String> = (ttl > 0.0).then(|| {
-                        (chrono::Utc::now()
-                            + chrono::Duration::milliseconds((ttl * 1000.0) as i64))
-                        .format("%Y-%m-%dT%H:%M:%SZ")
-                        .to_string()
-                    });
-                    let base = state.settings.workflow_public_base_url();
-                    let link = |p: &str| {
-                        if base.is_empty() {
-                            p.to_string()
-                        } else {
-                            format!("{base}{p}")
-                        }
-                    };
-                    // Both ids are known now, so the links surfaced on the node
-                    // output are fully run-scoped — what a dashboard operator
-                    // clicks. Automation that notifies from an UPSTREAM node builds
-                    // the same URL from the sidebar template + `{{ $execution.runId }}`.
-                    let resume_path = format!("/webhook/resume/{current_id}/{run_id}");
-                    if let Some(obj) = nr.output.as_object_mut() {
-                        obj.insert("resume_path".into(), json!(resume_path));
-                        obj.insert("resume_url".into(), json!(link(&resume_path)));
-                        if suspend_mode == "approval" {
-                            let approve_path = format!("/webhook/approve/{current_id}/{run_id}");
-                            let reject_path = format!("/webhook/reject/{current_id}/{run_id}");
-                            obj.insert("approve_path".into(), json!(approve_path));
-                            obj.insert("approve_url".into(), json!(link(&approve_path)));
-                            obj.insert("reject_path".into(), json!(reject_path));
-                            obj.insert("reject_url".into(), json!(link(&reject_path)));
-                        }
-                        // Read by the time poller to pick the timeout branch if the
-                        // deadline fires before anyone resumes (see resume path).
-                        obj.insert("__axon_resume".into(), json!({ "mode": suspend_mode }));
-                    }
-                    expires_at
-                } else {
-                    let seconds = marker.get("seconds").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                    Some(
-                        (chrono::Utc::now()
-                            + chrono::Duration::milliseconds((seconds * 1000.0) as i64))
-                        .format("%Y-%m-%dT%H:%M:%SZ")
-                        .to_string(),
-                    )
+                };
+                let duration = n_start.elapsed().as_millis() as u64;
+                crate::observability::record_node_exec(&node.node_type, duration as f64 / 1000.0);
+                let (status, output, error) = match result {
+                    Ok(v) => ("success".to_string(), v, None),
+                    Err(e) => ("error".to_string(), json!({}), Some(e)),
                 };
 
-                nr.status = "waiting".to_string();
+                tracing::info!(
+                    "Node '{}' ({}, type={}) completed in {}ms — status={}",
+                    node.name,
+                    current_id,
+                    node.node_type,
+                    duration,
+                    status
+                );
+
+                let mut nr = NodeResult {
+                    node_id: current_id.clone(),
+                    node_name: node.name.clone(),
+                    node_type: node.node_type.clone(),
+                    position: node.position,
+                    status: status.clone(),
+                    output,
+                    duration_ms: duration,
+                    error,
+                    attempts,
+                };
+
+                // Durable Wait suspension: a long Wait returns a sentinel instead of
+                // blocking an in-process sleep. Persist the chain so far plus WHEN and
+                // WHERE to resume, mark the run 'waiting', and hand the task back. A
+                // background poller re-enters the workflow once resume_at passes, so
+                // the pause survives an agent restart.
+                if let Some(marker) = nr.output.get(nodes::wait::SUSPEND_MARKER).cloned() {
+                    let suspend_mode = marker
+                        .get("mode")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("interval")
+                        .to_string();
+
+                    // Drop the internal sentinel from the visible result but keep the
+                    // node marked 'waiting' so the editor shows the node paused.
+                    if let Some(obj) = nr.output.as_object_mut() {
+                        obj.remove(nodes::wait::SUSPEND_MARKER);
+                    }
+
+                    // Compute the wake deadline. A timed Wait anchors it to the suspend
+                    // instant. A webhook/approval Wait (C1) instead parks until an
+                    // external caller hits its node+run-scoped resume URL; any timeout
+                    // becomes the deadline (NULL = wait forever, only a resume URL
+                    // wakes it).
+                    let resume_at_db: Option<String> = if suspend_mode == "webhook"
+                        || suspend_mode == "approval"
+                    {
+                        // No token minted: the node id addresses the parked node and
+                        // the (unguessable UUIDv4) run id scopes + secures the wake, so
+                        // a leaked link can't touch any other run and dies the instant
+                        // this one resumes. `resume_by_node` locates the run via
+                        // resume_node_id. A timeout still mirrors into resume_at so the
+                        // poller can fire the timeout branch; NULL = wait forever.
+                        let ttl = match marker.get("expires_seconds").and_then(|v| v.as_f64()) {
+                            Some(s) if s > 0.0 => s,
+                            _ => state.settings.workflow_resume_token_default_ttl_secs() as f64,
+                        };
+                        let expires_at: Option<String> = (ttl > 0.0).then(|| {
+                            (chrono::Utc::now()
+                                + chrono::Duration::milliseconds((ttl * 1000.0) as i64))
+                            .format("%Y-%m-%dT%H:%M:%SZ")
+                            .to_string()
+                        });
+                        let base = state.settings.workflow_public_base_url();
+                        let link = |p: &str| {
+                            if base.is_empty() {
+                                p.to_string()
+                            } else {
+                                format!("{base}{p}")
+                            }
+                        };
+                        // Both ids are known now, so the links surfaced on the node
+                        // output are fully run-scoped — what a dashboard operator
+                        // clicks. Automation that notifies from an UPSTREAM node builds
+                        // the same URL from the sidebar template + `{{ $execution.runId }}`.
+                        let resume_path = format!("/webhook/resume/{current_id}/{run_id}");
+                        if let Some(obj) = nr.output.as_object_mut() {
+                            obj.insert("resume_path".into(), json!(resume_path));
+                            obj.insert("resume_url".into(), json!(link(&resume_path)));
+                            if suspend_mode == "approval" {
+                                let approve_path =
+                                    format!("/webhook/approve/{current_id}/{run_id}");
+                                let reject_path = format!("/webhook/reject/{current_id}/{run_id}");
+                                obj.insert("approve_path".into(), json!(approve_path));
+                                obj.insert("approve_url".into(), json!(link(&approve_path)));
+                                obj.insert("reject_path".into(), json!(reject_path));
+                                obj.insert("reject_url".into(), json!(link(&reject_path)));
+                            }
+                            // Read by the time poller to pick the timeout branch if the
+                            // deadline fires before anyone resumes (see resume path).
+                            obj.insert("__axon_resume".into(), json!({ "mode": suspend_mode }));
+                        }
+                        expires_at
+                    } else {
+                        let seconds = marker
+                            .get("seconds")
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(0.0);
+                        Some(
+                            (chrono::Utc::now()
+                                + chrono::Duration::milliseconds((seconds * 1000.0) as i64))
+                            .format("%Y-%m-%dT%H:%M:%SZ")
+                            .to_string(),
+                        )
+                    };
+
+                    nr.status = "waiting".to_string();
+                    node_results.insert(current_id.clone(), nr.clone());
+                    ordered_results.push(nr.clone());
+
+                    let chain_json = binary::results_to_db_json(&ordered_results, bin_threshold);
+                    {
+                        let conn = state.db.get()?;
+                        conn.execute(
+                            "UPDATE workflow_runs SET status = 'waiting', resume_at = ?1, \
+                         resume_node_id = ?2, trigger_type = ?3, node_results = ?4 WHERE id = ?5",
+                            rusqlite::params![
+                                resume_at_db,
+                                current_id,
+                                trigger_source,
+                                chain_json,
+                                run_id
+                            ],
+                        )?;
+                    }
+                    tracing::info!(
+                        "Workflow run {} suspended at node '{}' ({} mode){} (durable)",
+                        run_id,
+                        node.name,
+                        suspend_mode,
+                        match &resume_at_db {
+                            Some(t) => format!(" until {t}"),
+                            None => String::new(),
+                        }
+                    );
+                    return Ok(WorkflowRunResult {
+                        run_id,
+                        workflow_id: workflow_id.to_string(),
+                        status: "waiting".to_string(),
+                        node_results: ordered_results,
+                        final_output: nr.output,
+                        total_duration_ms: start.elapsed().as_millis() as u64,
+                    });
+                }
+
                 node_results.insert(current_id.clone(), nr.clone());
                 ordered_results.push(nr.clone());
 
-                let chain_json = binary::results_to_db_json(&ordered_results, bin_threshold);
-                {
-                    let conn = state.db.get()?;
-                    conn.execute(
-                        "UPDATE workflow_runs SET status = 'waiting', resume_at = ?1, \
-                         resume_node_id = ?2, trigger_type = ?3, node_results = ?4 WHERE id = ?5",
-                        rusqlite::params![
-                            resume_at_db,
-                            current_id,
-                            trigger_source,
-                            chain_json,
-                            run_id
-                        ],
-                    )?;
+                // Register workflow-sent Telegram messages so replies can be routed
+                // back to this workflow's telegram trigger.
+                if nr.status == "success" && nr.node_type == "telegram" {
+                    record_telegram_reply_route(state, workflow_id, &nr.output);
                 }
-                tracing::info!(
-                    "Workflow run {} suspended at node '{}' ({} mode){} (durable)",
-                    run_id,
-                    node.name,
-                    suspend_mode,
-                    match &resume_at_db {
-                        Some(t) => format!(" until {t}"),
-                        None => String::new(),
-                    }
-                );
-                return Ok(WorkflowRunResult {
-                    run_id,
-                    workflow_id: workflow_id.to_string(),
-                    status: "waiting".to_string(),
-                    node_results: ordered_results,
-                    final_output: nr.output,
-                    total_duration_ms: start.elapsed().as_millis() as u64,
-                });
-            }
 
-            node_results.insert(current_id.clone(), nr.clone());
-            ordered_results.push(nr.clone());
+                // Halting logic: if stop on error and node failed, break the whole workflow.
+                if status == "error" && !node.continue_on_fail {
+                    tracing::warn!(
+                        "Workflow execution halted due to error in node '{}' ({})",
+                        node.name,
+                        current_id
+                    );
+                    workflow_status = "error".to_string();
+                    break;
+                }
 
-            // Register workflow-sent Telegram messages so replies can be routed
-            // back to this workflow's telegram trigger.
-            if nr.status == "success" && nr.node_type == "telegram" {
-                record_telegram_reply_route(state, workflow_id, &nr.output);
-            }
-
-            // Halting logic: if stop on error and node failed, break the whole workflow.
-            if status == "error" && !node.continue_on_fail {
-                tracing::warn!(
-                    "Workflow execution halted due to error in node '{}' ({})",
-                    node.name,
-                    current_id
-                );
-                workflow_status = "error".to_string();
-                break;
-            }
-
-            // Scan for files in the node result to auto-register in DB/UI
-            let reg_start = std::time::Instant::now();
-            state
-                .files
-                .register_from_json(&nr.output, Some(node.name.clone()))
-                .await;
-            let reg_ms = reg_start.elapsed().as_millis();
-            if reg_ms > 100 {
-                tracing::warn!("File registration for '{}' took {}ms", node.name, reg_ms);
-            }
+                // Scan for files in the node result to auto-register in DB/UI
+                let reg_start = std::time::Instant::now();
+                state
+                    .files
+                    .register_from_json(&nr.output, Some(node.name.clone()))
+                    .await;
+                let reg_ms = reg_start.elapsed().as_millis();
+                if reg_ms > 100 {
+                    tracing::warn!("File registration for '{}' took {}ms", node.name, reg_ms);
+                }
             } // end: execute fresh node (skipped for replayed-on-resume nodes)
 
             let mut skip_stack: Vec<String> = Vec::new();
@@ -3378,9 +3436,7 @@ impl WorkflowEngine {
             //     spam the production error handler. Real event triggers now carry
             //     their own source (telegram/webhook/gmail/…), not "manual".
             // The global notification above still fires for any errored node.
-            if trigger_source != "error"
-                && trigger_source != "manual"
-                && workflow_status == "error"
+            if trigger_source != "error" && trigger_source != "manual" && workflow_status == "error"
             {
                 // Resolve the handler id (workflow-level, then global default).
                 // Each DB read is scoped so no pooled connection is held across
@@ -3688,9 +3744,15 @@ impl WorkflowEngine {
 
             // Pass the pre-created run_id so run_with_trigger reuses it rather
             // than inserting a duplicate record.
-            if let Err(e) =
-                Self::run_with_trigger(&wf_id, &s, &src, target_node_id, single_node, Some(rid.clone()))
-                    .await
+            if let Err(e) = Self::run_with_trigger(
+                &wf_id,
+                &s,
+                &src,
+                target_node_id,
+                single_node,
+                Some(rid.clone()),
+            )
+            .await
             {
                 tracing::error!("Background workflow run failed: {}", e);
                 if let Ok(conn) = s.db.get() {
@@ -3806,7 +3868,11 @@ impl WorkflowEngine {
             let mut results: Vec<NodeResult> = match serde_json::from_str(&results_json) {
                 Ok(v) => v,
                 Err(e) => {
-                    tracing::error!("Resume {}: corrupt node_results ({}); failing run", run_id, e);
+                    tracing::error!(
+                        "Resume {}: corrupt node_results ({}); failing run",
+                        run_id,
+                        e
+                    );
                     if let Ok(conn) = state.db.get() {
                         persist_run_update(
                             &conn,
@@ -3882,7 +3948,8 @@ impl WorkflowEngine {
                     }
                 };
                 if let Err(e) =
-                    Self::run_inner(&wf, &s, &src, None, false, Some(rid.clone()), Some(resume)).await
+                    Self::run_inner(&wf, &s, &src, None, false, Some(rid.clone()), Some(resume))
+                        .await
                 {
                     tracing::error!("Resumed workflow run {} failed: {}", rid, e);
                     if let Ok(conn) = s.db.get() {
@@ -4009,7 +4076,10 @@ impl WorkflowEngine {
                     obj.insert("resumed_at".to_string(), json!(now_iso));
                     if mode == "approval" {
                         obj.insert("approved".to_string(), json!(approved));
-                        obj.insert("outputIndex".to_string(), json!(if approved { 0 } else { 1 }));
+                        obj.insert(
+                            "outputIndex".to_string(),
+                            json!(if approved { 0 } else { 1 }),
+                        );
                     }
                 }
             }
@@ -4214,11 +4284,7 @@ impl WorkflowEngine {
                             &wf.trigger_type,
                             None,
                         ) {
-                            tracing::warn!(
-                                "Scheduled run of '{}' failed to spawn: {}",
-                                wf.name,
-                                e
-                            );
+                            tracing::warn!("Scheduled run of '{}' failed to spawn: {}", wf.name, e);
                         }
                     }
                 }
@@ -4380,7 +4446,10 @@ async fn check_and_trigger_gmail(
     // is left intact.
     let download = trigger_config
         .get("gmail_download_attachments")
-        .and_then(|v| v.as_bool().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+        .and_then(|v| {
+            v.as_bool()
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        })
         .unwrap_or(false);
     let new_owned: Vec<Value> = new_emails.iter().map(|e| (*e).clone()).collect();
     let enriched = enrich_gmail_emails(state, new_owned, download).await;
@@ -4435,8 +4504,16 @@ async fn check_and_trigger_gmail(
             })
             .collect();
         if !ids.is_empty() {
-            if let Err(e) = state.tools.run("gmail_mark_read", json!({ "ids": ids })).await {
-                tracing::warn!("Gmail trigger '{}': mark-as-read failed: {}", workflow_name, e);
+            if let Err(e) = state
+                .tools
+                .run("gmail_mark_read", json!({ "ids": ids }))
+                .await
+            {
+                tracing::warn!(
+                    "Gmail trigger '{}': mark-as-read failed: {}",
+                    workflow_name,
+                    e
+                );
             }
         }
     }
@@ -4669,15 +4746,69 @@ mod condition_tests {
         assert!(ev("string", "equals", &json!("hi"), &json!("hi"), true));
         assert!(!ev("string", "equals", &json!("Hi"), &json!("hi"), true));
         assert!(ev("string", "equals", &json!("Hi"), &json!("hi"), false)); // case-insensitive
-        assert!(ev("string", "contains", &json!("hello world"), &json!("lo wo"), true));
-        assert!(ev("string", "notContains", &json!("abc"), &json!("z"), true));
-        assert!(ev("string", "startsWith", &json!("abcdef"), &json!("abc"), true));
-        assert!(ev("string", "notStartsWith", &json!("abcdef"), &json!("xyz"), true));
-        assert!(ev("string", "endsWith", &json!("abcdef"), &json!("def"), true));
-        assert!(ev("string", "notEndsWith", &json!("abcdef"), &json!("abc"), true));
-        assert!(ev("string", "regex", &json!("user@x.com"), &json!(r"^\S+@\S+\.\S+$"), true));
-        assert!(ev("string", "regex", &json!("HELLO"), &json!("hello"), false)); // ci regex
-        assert!(ev("string", "notRegex", &json!("abc"), &json!(r"^\d+$"), true));
+        assert!(ev(
+            "string",
+            "contains",
+            &json!("hello world"),
+            &json!("lo wo"),
+            true
+        ));
+        assert!(ev(
+            "string",
+            "notContains",
+            &json!("abc"),
+            &json!("z"),
+            true
+        ));
+        assert!(ev(
+            "string",
+            "startsWith",
+            &json!("abcdef"),
+            &json!("abc"),
+            true
+        ));
+        assert!(ev(
+            "string",
+            "notStartsWith",
+            &json!("abcdef"),
+            &json!("xyz"),
+            true
+        ));
+        assert!(ev(
+            "string",
+            "endsWith",
+            &json!("abcdef"),
+            &json!("def"),
+            true
+        ));
+        assert!(ev(
+            "string",
+            "notEndsWith",
+            &json!("abcdef"),
+            &json!("abc"),
+            true
+        ));
+        assert!(ev(
+            "string",
+            "regex",
+            &json!("user@x.com"),
+            &json!(r"^\S+@\S+\.\S+$"),
+            true
+        ));
+        assert!(ev(
+            "string",
+            "regex",
+            &json!("HELLO"),
+            &json!("hello"),
+            false
+        )); // ci regex
+        assert!(ev(
+            "string",
+            "notRegex",
+            &json!("abc"),
+            &json!(r"^\d+$"),
+            true
+        ));
         // legacy aliases still work
         assert!(ev("string", "isEmpty", &json!(""), &json!(null), true));
         assert!(ev("string", "isNotEmpty", &json!("x"), &json!(null), true));
@@ -4702,7 +4833,13 @@ mod condition_tests {
         assert!(ev("boolean", "false", &json!(false), &json!(null), true));
         assert!(ev("boolean", "true", &json!("yes"), &json!(null), true)); // coerce
         assert!(ev("boolean", "equals", &json!(true), &json!("true"), true));
-        assert!(ev("boolean", "notEquals", &json!(true), &json!(false), true));
+        assert!(ev(
+            "boolean",
+            "notEquals",
+            &json!(true),
+            &json!(false),
+            true
+        ));
         // legacy
         assert!(ev("boolean", "isTrue", &json!(1), &json!(null), true));
         assert!(ev("boolean", "isFalse", &json!(0), &json!(null), true));
@@ -4714,11 +4851,23 @@ mod condition_tests {
         let b = json!("2024-06-01T00:00:00Z");
         assert!(ev("dateTime", "before", &a, &b, true));
         assert!(ev("dateTime", "after", &b, &a, true));
-        assert!(ev("dateTime", "equals", &json!("2024-01-01"), &json!("2024-01-01T00:00:00Z"), true));
+        assert!(ev(
+            "dateTime",
+            "equals",
+            &json!("2024-01-01"),
+            &json!("2024-01-01T00:00:00Z"),
+            true
+        ));
         assert!(ev("dateTime", "afterOrEquals", &a, &a, true));
         assert!(ev("dateTime", "beforeOrEquals", &a, &b, true));
         // cross-offset equality compares the instant
-        assert!(ev("dateTime", "equals", &json!("2024-01-01T00:00:00+00:00"), &json!("2024-01-01T01:00:00+01:00"), true));
+        assert!(ev(
+            "dateTime",
+            "equals",
+            &json!("2024-01-01T00:00:00+00:00"),
+            &json!("2024-01-01T01:00:00+01:00"),
+            true
+        ));
     }
 
     #[test]
@@ -4739,7 +4888,13 @@ mod condition_tests {
         assert!(ev("string", "notExists", &json!(null), &json!(null), true));
         assert!(ev("array", "empty", &json!([]), &json!(null), true));
         assert!(ev("object", "empty", &json!({}), &json!(null), true));
-        assert!(ev("object", "notEmpty", &json!({"a": 1}), &json!(null), true));
+        assert!(ev(
+            "object",
+            "notEmpty",
+            &json!({"a": 1}),
+            &json!(null),
+            true
+        ));
         assert!(ev("number", "empty", &json!(null), &json!(null), true));
     }
 }
@@ -5067,13 +5222,8 @@ mod upstream_cache_tests {
         let mut prior_ordered = Vec::new();
         let mut seeded = false;
         for run in runs_newest_first {
-            let complete = fold_prior_run_into_cache(
-                &mut node_results,
-                &mut prior_ordered,
-                run,
-                !seeded,
-                ids,
-            );
+            let complete =
+                fold_prior_run_into_cache(&mut node_results, &mut prior_ordered, run, !seeded, ids);
             seeded = true;
             if complete {
                 break;
@@ -5136,7 +5286,7 @@ mod upstream_cache_tests {
             vec![
                 vec![nr("other", "success", json!({}))], // newest, missing trigger
                 vec![
-                    nr("trigger", "error", json!({})),        // errored -> not backfilled
+                    nr("trigger", "error", json!({})), // errored -> not backfilled
                     nr("deleted", "success", json!({ "x": 1 })), // not in graph -> skipped
                 ],
             ],

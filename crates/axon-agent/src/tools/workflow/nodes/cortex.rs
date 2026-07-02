@@ -45,7 +45,10 @@ pub(crate) fn execute_cortex_node<'a>(
         // Defaults to 10 pairs; clamped to >= 1.
         let memory_pairs = config
             .get("memory_window")
-            .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())))
+            .and_then(|v| {
+                v.as_u64()
+                    .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+            })
             .map(|n| n.max(1) as usize)
             .unwrap_or(10);
 

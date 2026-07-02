@@ -131,10 +131,7 @@ fn parse_list(config: &Value, key: &str, default: &str) -> Vec<String> {
         .filter(|s| !s.is_empty())
         .collect();
     if list.is_empty() {
-        default
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .collect()
+        default.split(',').map(|s| s.trim().to_string()).collect()
     } else {
         list
     }

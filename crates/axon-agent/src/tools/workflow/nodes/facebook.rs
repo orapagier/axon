@@ -386,11 +386,7 @@ async fn delete_post(
 }
 
 /// List recent posts on the Page feed.
-async fn get_posts(
-    client: &reqwest::Client,
-    token: &str,
-    config: &Value,
-) -> Result<Value, String> {
+async fn get_posts(client: &reqwest::Client, token: &str, config: &Value) -> Result<Value, String> {
     let page_id = require(config, "page_id")?;
     let limit = limit_or(config, 25);
     let fields = fields_or(config, POST_FIELDS);
@@ -405,11 +401,7 @@ async fn get_posts(
 }
 
 /// Fetch a single post by id.
-async fn get_post(
-    client: &reqwest::Client,
-    token: &str,
-    config: &Value,
-) -> Result<Value, String> {
+async fn get_post(client: &reqwest::Client, token: &str, config: &Value) -> Result<Value, String> {
     let post_id = require(config, "post_id")?;
     let fields = fields_or(config, POST_FIELDS);
     let resp = client
@@ -516,11 +508,7 @@ async fn get_reactions(
 }
 
 /// List the likes on an object.
-async fn get_likes(
-    client: &reqwest::Client,
-    token: &str,
-    config: &Value,
-) -> Result<Value, String> {
+async fn get_likes(client: &reqwest::Client, token: &str, config: &Value) -> Result<Value, String> {
     let object_id = require(config, "object_id")?;
     let limit = limit_or(config, 25);
     let resp = client
@@ -916,8 +904,14 @@ async fn get_chat_details(
         .map(str::to_string)
         .filter(|s| !s.trim().is_empty())
         .or_else(|| {
-            let f = profile.get("first_name").and_then(|v| v.as_str()).unwrap_or("");
-            let l = profile.get("last_name").and_then(|v| v.as_str()).unwrap_or("");
+            let f = profile
+                .get("first_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let l = profile
+                .get("last_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let full = format!("{f} {l}").trim().to_string();
             (!full.is_empty()).then_some(full)
         })

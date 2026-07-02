@@ -28,7 +28,8 @@ pub async fn list_spreadsheets(state: &AppState, max_results: u32) -> Result<Val
         ])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -60,7 +61,8 @@ pub async fn create_spreadsheet(
         }))
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -77,7 +79,8 @@ pub async fn get_spreadsheet(state: &AppState, spreadsheet_id: &str) -> Result<V
         .query(&[("includeGridData", "false")])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -96,7 +99,8 @@ pub async fn read_range(state: &AppState, spreadsheet_id: &str, range: &str) -> 
         .query(&[("valueRenderOption", "FORMATTED_VALUE")])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -120,7 +124,8 @@ pub async fn batch_read(
         .query(&params)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -144,7 +149,8 @@ pub async fn write_range(
         .json(&json!({ "range": range, "values": values }))
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -183,7 +189,8 @@ pub async fn batch_write(
         }))
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -209,7 +216,8 @@ pub async fn append_rows(
         .json(&json!({ "values": values }))
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -226,7 +234,8 @@ pub async fn clear_range(state: &AppState, spreadsheet_id: &str, range: &str) ->
         .json(&json!({}))
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -335,7 +344,8 @@ pub async fn export_sheet(
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .bytes()
         .await?;
 
@@ -444,7 +454,8 @@ pub async fn copy_sheet_to(
         }))
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -913,7 +924,8 @@ pub async fn batch_update(
         .json(&json!({ "requests": requests }))
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)

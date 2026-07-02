@@ -146,10 +146,7 @@ async fn do_resume(
         Ok(v) => (StatusCode::OK, Json(v)),
         // No run waiting at this node+run, or an already-resumed/finished run:
         // 410 Gone so a double-submit is idempotent, not an error to retry.
-        Err(e) => (
-            StatusCode::GONE,
-            Json(json!({ "ok": false, "error": e })),
-        ),
+        Err(e) => (StatusCode::GONE, Json(json!({ "ok": false, "error": e }))),
     }
 }
 

@@ -90,9 +90,15 @@ pub async fn list(state: &AppState, max_results: u32, query: Option<&str>) -> Re
         // Gmail's messages.list hides SPAM/TRASH unless explicitly opted in, so a
         // query like `in:spam` / `in:trash` returns nothing without this flag.
         let ql = q.to_lowercase();
-        if ["in:spam", "in:trash", "in:anywhere", "label:spam", "label:trash"]
-            .iter()
-            .any(|needle| ql.contains(needle))
+        if [
+            "in:spam",
+            "in:trash",
+            "in:anywhere",
+            "label:spam",
+            "label:trash",
+        ]
+        .iter()
+        .any(|needle| ql.contains(needle))
         {
             params.push(("includeSpamTrash", "true".to_string()));
         }
@@ -105,7 +111,8 @@ pub async fn list(state: &AppState, max_results: u32, query: Option<&str>) -> Re
         .query(&params)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
 
@@ -186,7 +193,8 @@ pub async fn get(state: &AppState, id: &str) -> Result<Value> {
         .query(&[("format", "full")])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
 
@@ -299,7 +307,8 @@ pub async fn send(
         .json(&json!({ "raw": raw }))
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -331,7 +340,8 @@ pub async fn send_with_attachment(
         .json(&json!({ "raw": raw }))
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -357,7 +367,11 @@ pub async fn reply(
     // Message-ID, threadId and Subject.
     let provided = message_id.trim();
     let (rfc_id, resolved_thread, subject_src) = if provided.contains('@') {
-        (provided.to_string(), thread_id.to_string(), subject.to_string())
+        (
+            provided.to_string(),
+            thread_id.to_string(),
+            subject.to_string(),
+        )
     } else if provided.is_empty() {
         (String::new(), thread_id.to_string(), subject.to_string())
     } else {
@@ -410,7 +424,8 @@ pub async fn reply(
         .json(&json!({ "raw": raw, "threadId": send_thread }))
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -428,7 +443,8 @@ pub async fn trash(state: &AppState, id: &str) -> Result<Value> {
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -443,7 +459,8 @@ pub async fn mark_read(state: &AppState, ids: Vec<String>) -> Result<Value> {
         .json(&json!({ "ids": ids, "removeLabelIds": ["UNREAD"] }))
         .send()
         .await?
-        .ensure_ok().await?;
+        .ensure_ok()
+        .await?;
     Ok(json!({ "success": true, "count": ids.len() }))
 }
 
@@ -456,7 +473,8 @@ pub async fn add_label(state: &AppState, id: &str, label_id: &str) -> Result<Val
         .json(&json!({ "addLabelIds": [label_id] }))
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -471,7 +489,8 @@ pub async fn remove_label(state: &AppState, id: &str, label_id: &str) -> Result<
         .json(&json!({ "removeLabelIds": [label_id] }))
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -485,7 +504,8 @@ pub async fn list_labels(state: &AppState) -> Result<Value> {
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -500,7 +520,8 @@ pub async fn mark_unread(state: &AppState, ids: Vec<String>) -> Result<Value> {
         .json(&json!({ "ids": ids, "addLabelIds": ["UNREAD"] }))
         .send()
         .await?
-        .ensure_ok().await?;
+        .ensure_ok()
+        .await?;
     Ok(json!({ "success": true, "count": ids.len() }))
 }
 
@@ -512,7 +533,8 @@ pub async fn untrash(state: &AppState, id: &str) -> Result<Value> {
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -527,7 +549,8 @@ pub async fn delete(state: &AppState, id: &str) -> Result<Value> {
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?;
+        .ensure_ok()
+        .await?;
     Ok(json!({ "success": true, "deletedId": id }))
 }
 
@@ -586,7 +609,8 @@ pub async fn create_draft(
         .json(&json!({ "message": { "raw": raw } }))
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -601,7 +625,8 @@ pub async fn list_drafts(state: &AppState, max_results: u32) -> Result<Value> {
         .query(&[("maxResults", max_results.to_string())])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -616,7 +641,8 @@ pub async fn get_draft(state: &AppState, draft_id: &str) -> Result<Value> {
         .query(&[("format", "full")])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -649,7 +675,8 @@ pub async fn update_draft(
         .json(&json!({ "message": { "raw": raw } }))
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -664,7 +691,8 @@ pub async fn send_draft(state: &AppState, draft_id: &str) -> Result<Value> {
         .json(&json!({ "id": draft_id }))
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -678,7 +706,8 @@ pub async fn delete_draft(state: &AppState, draft_id: &str) -> Result<Value> {
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?;
+        .ensure_ok()
+        .await?;
     Ok(json!({ "success": true, "deletedDraftId": draft_id }))
 }
 
@@ -756,8 +785,23 @@ fn looks_like_html(s: &str) -> bool {
 fn html_to_text(html: &str) -> String {
     // Block tags that read as a new paragraph (a blank line) vs. a single line break.
     const PARA: &[&str] = &[
-        "p", "blockquote", "table", "ul", "ol", "hr", "pre", "section", "article", "header",
-        "footer", "h1", "h2", "h3", "h4", "h5", "h6",
+        "p",
+        "blockquote",
+        "table",
+        "ul",
+        "ol",
+        "hr",
+        "pre",
+        "section",
+        "article",
+        "header",
+        "footer",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
     ];
     const LINE: &[&str] = &["br", "div", "tr", "li"];
 
@@ -807,7 +851,10 @@ fn html_to_text(html: &str) -> String {
         while j < chars.len() && chars[j].is_ascii_alphanumeric() {
             j += 1;
         }
-        let tag: String = chars[name_start..j].iter().collect::<String>().to_lowercase();
+        let tag: String = chars[name_start..j]
+            .iter()
+            .collect::<String>()
+            .to_lowercase();
 
         // Drop the entire contents of <script> and <style> elements: skip from
         // here past the matching closing tag (case-insensitive, char-indexed).
@@ -1137,7 +1184,10 @@ fn extract_links(text: &str) -> Vec<String> {
             let end = rest
                 .find(|c: char| {
                     c.is_whitespace()
-                        || matches!(c, '<' | '>' | '"' | '\'' | '|' | '[' | ']' | '{' | '}' | ')')
+                        || matches!(
+                            c,
+                            '<' | '>' | '"' | '\'' | '|' | '[' | ']' | '{' | '}' | ')'
+                        )
                 })
                 .unwrap_or(rest.len());
             let mut url = rest[..end].to_string();
@@ -1159,7 +1209,11 @@ fn extract_links(text: &str) -> Vec<String> {
 fn extract_emails(text: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for tok in text.split(|c: char| {
-        c.is_whitespace() || matches!(c, ',' | ';' | '<' | '>' | '(' | ')' | '[' | ']' | '"' | '\'')
+        c.is_whitespace()
+            || matches!(
+                c,
+                ',' | ';' | '<' | '>' | '(' | ')' | '[' | ']' | '"' | '\''
+            )
     }) {
         let tok = tok.trim_matches(|c: char| matches!(c, '.' | ':' | '|'));
         if is_email(tok) && !out.iter().any(|e| e.eq_ignore_ascii_case(tok)) {
@@ -1488,8 +1542,7 @@ mod tests {
 
     #[test]
     fn drops_script_and_style() {
-        let html =
-            "<style>.x{color:red}</style><p>Keep</p><script>alert('x')</script><p>This</p>";
+        let html = "<style>.x{color:red}</style><p>Keep</p><script>alert('x')</script><p>This</p>";
         assert_eq!(html_to_text(html), "Keep\n\nThis");
     }
 
@@ -1524,10 +1577,7 @@ mod tests {
     #[test]
     fn subject_header_entities_are_decoded() {
         let subject = "Tom &amp; Jerry &#39;news&#39;".to_string();
-        assert_eq!(
-            decoded_header(Some(&subject)),
-            json!("Tom & Jerry 'news'")
-        );
+        assert_eq!(decoded_header(Some(&subject)), json!("Tom & Jerry 'news'"));
         assert_eq!(decoded_header(None), Value::Null);
     }
 
@@ -1579,7 +1629,9 @@ mod tests {
     #[test]
     fn extracts_phone_numbers() {
         let phones = extract_phones("Call: +1 (555) 123-4567 or 020 7946 0958");
-        assert!(phones.iter().any(|p| p.contains("555") && p.contains("4567")));
+        assert!(phones
+            .iter()
+            .any(|p| p.contains("555") && p.contains("4567")));
         assert!(phones.iter().any(|p| p.contains("7946")));
     }
 
@@ -1628,7 +1680,10 @@ mod tests {
         assert_eq!(attachment_kind("image/png", "logo.png"), "image");
         assert_eq!(attachment_kind("application/pdf", "report.pdf"), "document");
         assert_eq!(
-            attachment_kind("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "q.xlsx"),
+            attachment_kind(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "q.xlsx"
+            ),
             "document"
         );
         assert_eq!(attachment_kind("", "sheet.xlsx"), "document");

@@ -459,9 +459,7 @@ async fn dispatch_facebook_workflows(
             }
         };
 
-        let rows = stmt.query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-        });
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)));
         let rows = match rows {
             Ok(r) => r,
             Err(e) => {

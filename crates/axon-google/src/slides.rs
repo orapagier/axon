@@ -18,7 +18,8 @@ pub async fn create_presentation(state: &AppState, title: &str) -> Result<Value>
         .json(&json!({ "title": title }))
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -33,7 +34,8 @@ pub async fn get_presentation(state: &AppState, presentation_id: &str) -> Result
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -48,7 +50,8 @@ pub async fn get_slide(state: &AppState, presentation_id: &str, slide_id: &str) 
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -325,7 +328,8 @@ pub async fn batch_update(
         .json(&json!({ "requests": requests }))
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)

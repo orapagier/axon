@@ -33,7 +33,8 @@ pub async fn list(
         .query(&params)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -49,7 +50,8 @@ pub async fn get(state: &AppState, message_id: &str) -> Result<Value> {
         .query(&[("$select", sel)])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -84,7 +86,8 @@ pub async fn send(
         .json(&json!({"message": msg}))
         .send()
         .await?
-        .ensure_ok().await?;
+        .ensure_ok()
+        .await?;
     Ok(json!({ "success": true }))
 }
 
@@ -126,7 +129,8 @@ pub async fn send_with_attachment(
         .json(&json!({"message": msg}))
         .send()
         .await?
-        .ensure_ok().await?;
+        .ensure_ok()
+        .await?;
     Ok(json!({ "success": true }))
 }
 
@@ -145,7 +149,8 @@ pub async fn reply(
         .json(&json!({"message": {}, "comment": body}))
         .send()
         .await?
-        .ensure_ok().await?;
+        .ensure_ok()
+        .await?;
     Ok(json!({ "success": true }))
 }
 
@@ -162,7 +167,8 @@ pub async fn search(state: &AppState, query: &str, max_items: u32) -> Result<Val
         ])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -176,7 +182,8 @@ pub async fn delete(state: &AppState, message_id: &str) -> Result<Value> {
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?;
+        .ensure_ok()
+        .await?;
     Ok(json!({ "success": true }))
 }
 
@@ -189,7 +196,8 @@ pub async fn mark_read(state: &AppState, message_id: &str, is_read: bool) -> Res
         .json(&json!({"isRead": is_read}))
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -207,7 +215,8 @@ pub async fn list_folders(state: &AppState) -> Result<Value> {
         )])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -228,7 +237,8 @@ pub async fn download_attachment(
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
 

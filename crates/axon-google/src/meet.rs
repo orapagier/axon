@@ -28,7 +28,8 @@ pub async fn list_conference_records(
         .query(&params)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -47,7 +48,8 @@ pub async fn get_conference_record(
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -69,7 +71,8 @@ pub async fn list_participants(
         .query(&[("pageSize", max_results.to_string())])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -85,7 +88,8 @@ pub async fn get_participant(state: &AppState, participant_name: &str) -> Result
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -106,7 +110,8 @@ pub async fn list_participant_sessions(
         .query(&[("pageSize", max_results.to_string())])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -130,7 +135,8 @@ pub async fn list_recordings(
         .query(&[("pageSize", max_results.to_string())])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -146,7 +152,8 @@ pub async fn get_recording(state: &AppState, recording_name: &str) -> Result<Val
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -170,7 +177,8 @@ pub async fn list_transcripts(
         .query(&[("pageSize", max_results.to_string())])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -186,7 +194,8 @@ pub async fn get_transcript(state: &AppState, transcript_name: &str) -> Result<V
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -207,7 +216,8 @@ pub async fn list_transcript_entries(
         .query(&[("pageSize", max_results.to_string())])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)

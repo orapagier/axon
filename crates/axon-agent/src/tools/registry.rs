@@ -23,8 +23,12 @@ use tokio::sync::RwLock;
 ///
 /// Either way the full set is still served to the UI via [`all`], so their
 /// workflow-node counterparts (dispatched in `workflow.rs`) are unaffected.
-const NON_AGENT_INTERNAL_TOOLS: &[&str] =
-    &["telegram_trigger", "whatsapp_trigger", "telegram", "whatsapp"];
+const NON_AGENT_INTERNAL_TOOLS: &[&str] = &[
+    "telegram_trigger",
+    "whatsapp_trigger",
+    "telegram",
+    "whatsapp",
+];
 
 /// Social-platform *write* tools that perform outward-facing, public,
 /// hard-to-reverse actions (publish/edit/delete posts, reply/moderate comments,

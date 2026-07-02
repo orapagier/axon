@@ -1,4 +1,6 @@
-use crate::providers::types::{normalize_base_url, normalize_provider_name, normalize_role, ModelRecord};
+use crate::providers::types::{
+    normalize_base_url, normalize_provider_name, normalize_role, ModelRecord,
+};
 use anyhow::Context;
 use serde::Deserialize;
 

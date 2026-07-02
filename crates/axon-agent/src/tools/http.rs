@@ -56,7 +56,7 @@ pub struct HttpRequestParams {
     pub max_redirects: Option<usize>,   // default 10
     // Retry on failure (network errors, 5xx, 429)
     pub retry_on_fail: Option<bool>,
-    pub max_tries: Option<u32>,        // total attempts incl. the first
+    pub max_tries: Option<u32>,         // total attempts incl. the first
     pub retry_interval_ms: Option<u64>, // wait between attempts
 }
 
@@ -94,14 +94,14 @@ fn links_to_markdown(text: &str, base: Option<&reqwest::Url>) -> String {
             let label = re_inner.replace_all(inner, " ");
             let label = label.split_whitespace().collect::<Vec<_>>().join(" ");
             // Resolve to an absolute URL where it makes sense.
-            let url =
-                if href.is_empty() || href.starts_with('#') || href.starts_with("javascript:") {
-                    None
-                } else {
-                    base.and_then(|b| b.join(href).ok())
-                        .map(|u| u.to_string())
-                        .or_else(|| Some(href.to_string()))
-                };
+            let url = if href.is_empty() || href.starts_with('#') || href.starts_with("javascript:")
+            {
+                None
+            } else {
+                base.and_then(|b| b.join(href).ok())
+                    .map(|u| u.to_string())
+                    .or_else(|| Some(href.to_string()))
+            };
             match (url, label.is_empty()) {
                 (Some(u), false) => format!(" [{}]({}) ", label, u),
                 (Some(u), true) => format!(" {} ", u),
@@ -504,8 +504,7 @@ impl HttpRequestTool {
                 let attempt_rb = rb.try_clone().expect("body is cloneable");
                 match attempt_rb.send().await {
                     Ok(r) => {
-                        let retryable =
-                            r.status().is_server_error() || r.status().as_u16() == 429;
+                        let retryable = r.status().is_server_error() || r.status().as_u16() == 429;
                         if retryable && attempt < max_tries {
                             tracing::debug!(
                                 "HTTP retry {}/{} after status {}",
@@ -522,7 +521,11 @@ impl HttpRequestTool {
                     Err(e) => {
                         last_err = Some(e);
                         if attempt < max_tries {
-                            tracing::debug!("HTTP retry {}/{} after transport error", attempt, max_tries);
+                            tracing::debug!(
+                                "HTTP retry {}/{} after transport error",
+                                attempt,
+                                max_tries
+                            );
                             tokio::time::sleep(retry_interval).await;
                             continue;
                         }
@@ -891,7 +894,10 @@ mod tests {
         // Fragment-only and javascript hrefs keep just the label text, no URL.
         assert!(out.contains(" jump "), "fragment label dropped: {out}");
         assert!(out.contains(" js "), "javascript label dropped: {out}");
-        assert!(!out.contains("javascript:"), "javascript href leaked: {out}");
+        assert!(
+            !out.contains("javascript:"),
+            "javascript href leaked: {out}"
+        );
         assert!(!out.contains("](#top)"), "fragment url leaked: {out}");
     }
 

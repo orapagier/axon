@@ -45,7 +45,11 @@ impl InProcessMcp {
         let crm = Arc::new(CrmService::new(state.clone()).await?);
 
         let tools_cache = build_tool_defs(server_name);
-        tracing::info!("In-process MCP '{}': {} tools", server_name, tools_cache.len());
+        tracing::info!(
+            "In-process MCP '{}': {} tools",
+            server_name,
+            tools_cache.len()
+        );
 
         Ok(Self {
             state,

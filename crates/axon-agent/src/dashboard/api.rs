@@ -307,7 +307,8 @@ pub async fn oauth_callback(
     // "Connect a Page as a credential" flow (the Facebook node's Connect button).
     // Marked by state=fbcred; saves one credential per managed Page instead of
     // overwriting the global Page token.
-    let connect_creds = service == "facebook" && params.get("state").map(String::as_str) == Some("fbcred");
+    let connect_creds =
+        service == "facebook" && params.get("state").map(String::as_str) == Some("fbcred");
 
     match (code, error) {
         (Some(code), _) if connect_creds => {
@@ -426,10 +427,16 @@ async fn facebook_connect_callback(state: &AppState, code: &str) -> axum::respon
                         .get("webhooks_subscribed")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
-                    let mark = if subscribed { "✅ webhooks active" } else { "⚠️ webhooks not subscribed" };
+                    let mark = if subscribed {
+                        "✅ webhooks active"
+                    } else {
+                        "⚠️ webhooks not subscribed"
+                    };
                     saved.push(format!("{page_name} — {mark}"));
                 }
-                Err(e) => tracing::error!("FB connect: failed to save credential for {page_name}: {e}"),
+                Err(e) => {
+                    tracing::error!("FB connect: failed to save credential for {page_name}: {e}")
+                }
             }
         }
     } else {
@@ -702,7 +709,10 @@ pub(crate) fn apply_delete_model(conn: &rusqlite::Connection, name: &str) -> Res
 /// `AND enabled=1` guard is what lets Homeostasis' Health Check auto-disable count
 /// only models it actually parked this run, so a repeated run doesn't keep
 /// "re-disabling" the same rows.
-pub(crate) fn apply_disable_model(conn: &rusqlite::Connection, name: &str) -> Result<usize, String> {
+pub(crate) fn apply_disable_model(
+    conn: &rusqlite::Connection,
+    name: &str,
+) -> Result<usize, String> {
     conn.execute(
         "UPDATE models SET enabled=0 WHERE name=?1 AND enabled=1",
         rusqlite::params![name],
@@ -2295,12 +2305,18 @@ pub async fn upsert_workflow(
                 // strings (UI widgets emit both); clamp to sane bounds.
                 let node_retries = node
                     .get("retries")
-                    .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())))
+                    .and_then(|v| {
+                        v.as_i64()
+                            .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+                    })
                     .unwrap_or(0)
                     .clamp(0, 100);
                 let node_retry_wait = node
                     .get("retry_wait_ms")
-                    .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())))
+                    .and_then(|v| {
+                        v.as_i64()
+                            .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+                    })
                     .unwrap_or(0)
                     .max(0);
                 let node_retry_backoff = node
@@ -2684,10 +2700,20 @@ fn restore_bundle_into_workflow(
     bundle: &Value,
 ) -> Result<(), String> {
     let wf = bundle.get("workflow").cloned().unwrap_or_else(|| json!({}));
-    let name = wf.get("name").and_then(|v| v.as_str()).unwrap_or("Untitled");
+    let name = wf
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Untitled");
     let description = wf.get("description").and_then(|v| v.as_str()).unwrap_or("");
-    let trigger_type = wf.get("trigger_type").and_then(|v| v.as_str()).unwrap_or("manual");
-    let trigger_config = wf.get("trigger_config").cloned().unwrap_or_else(|| json!({})).to_string();
+    let trigger_type = wf
+        .get("trigger_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("manual");
+    let trigger_config = wf
+        .get("trigger_config")
+        .cloned()
+        .unwrap_or_else(|| json!({}))
+        .to_string();
     let error_workflow_id: Option<String> = wf
         .get("error_workflow_id")
         .and_then(|v| v.as_str())
@@ -2701,23 +2727,52 @@ fn restore_bundle_into_workflow(
     )
     .map_err(|e| e.to_string())?;
 
-    conn.execute("DELETE FROM workflow_nodes WHERE workflow_id = ?1", [workflow_id])
-        .map_err(|e| e.to_string())?;
+    conn.execute(
+        "DELETE FROM workflow_nodes WHERE workflow_id = ?1",
+        [workflow_id],
+    )
+    .map_err(|e| e.to_string())?;
     if let Some(nodes) = bundle.get("nodes").and_then(|v| v.as_array()) {
         for (i, node) in nodes.iter().enumerate() {
             let node_id = node.get("local_id").and_then(|v| v.as_str()).unwrap_or("");
             if node_id.is_empty() {
                 continue;
             }
-            let node_type = node.get("node_type").and_then(|v| v.as_str()).unwrap_or("http");
+            let node_type = node
+                .get("node_type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("http");
             let node_name = node.get("name").and_then(|v| v.as_str()).unwrap_or("Step");
-            let config = node.get("config").map(|v| v.to_string()).unwrap_or_else(|| "{}".to_string());
-            let node_enabled = node.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
-            let position_x = node.get("position_x").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let position_y = node.get("position_y").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let node_continue = node.get("continue_on_fail").and_then(|v| v.as_bool()).unwrap_or(false);
-            let node_retries = node.get("retries").and_then(|v| v.as_i64()).unwrap_or(0).clamp(0, 100);
-            let node_retry_wait = node.get("retry_wait_ms").and_then(|v| v.as_i64()).unwrap_or(0).max(0);
+            let config = node
+                .get("config")
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "{}".to_string());
+            let node_enabled = node
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            let position_x = node
+                .get("position_x")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let position_y = node
+                .get("position_y")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let node_continue = node
+                .get("continue_on_fail")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let node_retries = node
+                .get("retries")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0)
+                .clamp(0, 100);
+            let node_retry_wait = node
+                .get("retry_wait_ms")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0)
+                .max(0);
             let node_retry_backoff = node
                 .get("retry_backoff")
                 .and_then(|v| v.as_str())
@@ -2735,12 +2790,21 @@ fn restore_bundle_into_workflow(
         }
     }
 
-    conn.execute("DELETE FROM workflow_edges WHERE workflow_id = ?1", [workflow_id])
-        .map_err(|e| e.to_string())?;
+    conn.execute(
+        "DELETE FROM workflow_edges WHERE workflow_id = ?1",
+        [workflow_id],
+    )
+    .map_err(|e| e.to_string())?;
     if let Some(edges) = bundle.get("edges").and_then(|v| v.as_array()) {
         for (i, edge) in edges.iter().enumerate() {
-            let source_id = edge.get("source_local_id").and_then(|v| v.as_str()).unwrap_or("");
-            let target_id = edge.get("target_local_id").and_then(|v| v.as_str()).unwrap_or("");
+            let source_id = edge
+                .get("source_local_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let target_id = edge
+                .get("target_local_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             if source_id.is_empty() || target_id.is_empty() {
                 continue;
             }
@@ -2756,7 +2820,10 @@ fn restore_bundle_into_workflow(
 }
 
 /// B1: list a workflow's version snapshots (metadata only — no snapshot blob).
-pub async fn get_workflow_versions(State(state): State<AppState>, Path(id): Path<String>) -> Json<Value> {
+pub async fn get_workflow_versions(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Json<Value> {
     let Ok(conn) = state.db.get() else {
         return Json(json!({"ok": false, "error": "DB error"}));
     };
@@ -2863,8 +2930,14 @@ pub async fn restore_workflow_version(
 /// fire before the operator reviews it and maps credentials. `credential_id`
 /// references are preserved as-is (they resolve on the same box; on a different
 /// box the node UI prompts to re-select). Returns the new workflow id.
-pub async fn import_workflow(State(state): State<AppState>, Json(bundle): Json<Value>) -> Json<Value> {
-    let fmt = bundle.get("axon_format").and_then(|v| v.as_i64()).unwrap_or(0);
+pub async fn import_workflow(
+    State(state): State<AppState>,
+    Json(bundle): Json<Value>,
+) -> Json<Value> {
+    let fmt = bundle
+        .get("axon_format")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
     if fmt != 1 {
         return Json(json!({
             "ok": false,
@@ -2936,16 +3009,31 @@ pub async fn import_workflow(State(state): State<AppState>, Json(bundle): Json<V
             .get(local)
             .cloned()
             .unwrap_or_else(|| Uuid::new_v4().to_string());
-        let node_type = n.get("node_type").and_then(|v| v.as_str()).unwrap_or("http");
+        let node_type = n
+            .get("node_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("http");
         let nname = n.get("name").and_then(|v| v.as_str()).unwrap_or("Step");
-        let config = n.get("config").cloned().unwrap_or_else(|| json!({})).to_string();
+        let config = n
+            .get("config")
+            .cloned()
+            .unwrap_or_else(|| json!({}))
+            .to_string();
         let enabled = n.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
         let continue_on_fail = n
             .get("continue_on_fail")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        let retries = n.get("retries").and_then(|v| v.as_i64()).unwrap_or(0).clamp(0, 100);
-        let retry_wait = n.get("retry_wait_ms").and_then(|v| v.as_i64()).unwrap_or(0).max(0);
+        let retries = n
+            .get("retries")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0)
+            .clamp(0, 100);
+        let retry_wait = n
+            .get("retry_wait_ms")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0)
+            .max(0);
         let retry_backoff = n
             .get("retry_backoff")
             .and_then(|v| v.as_str())
@@ -2965,8 +3053,14 @@ pub async fn import_workflow(State(state): State<AppState>, Json(bundle): Json<V
     }
 
     for (i, e) in edges.iter().enumerate() {
-        let src_local = e.get("source_local_id").and_then(|v| v.as_str()).unwrap_or("");
-        let tgt_local = e.get("target_local_id").and_then(|v| v.as_str()).unwrap_or("");
+        let src_local = e
+            .get("source_local_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let tgt_local = e
+            .get("target_local_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         let (Some(src), Some(tgt)) = (id_map.get(src_local), id_map.get(tgt_local)) else {
             continue; // endpoint didn't import — drop the dangling edge
         };
@@ -3077,7 +3171,9 @@ pub async fn stop_workflow(
 
 pub async fn get_credentials(State(state): State<AppState>) -> Json<Value> {
     if let Ok(conn) = state.db.get() {
-        let mut s = try_json!(conn.prepare("SELECT id, name, service FROM credentials ORDER BY created_at"));
+        let mut s = try_json!(
+            conn.prepare("SELECT id, name, service FROM credentials ORDER BY created_at")
+        );
         let creds: Vec<Value> = try_json!(s.query_map([], |r| {
             Ok(json!({
                 "id": r.get::<_, String>(0)?,
@@ -3153,10 +3249,7 @@ pub async fn delete_credential(
 /// material — only `{ok, tested, message|error}`. For services without a known
 /// probe it reports the credential is present/well-formed but `tested:false`,
 /// rather than pretending to have validated it.
-pub async fn test_credential(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Json<Value> {
+pub async fn test_credential(State(state): State<AppState>, Path(id): Path<String>) -> Json<Value> {
     let loaded = state.db.get().ok().and_then(|conn| {
         conn.query_row(
             "SELECT service, data FROM credentials WHERE id = ?1",
@@ -3200,7 +3293,9 @@ pub async fn test_credential(
                 )
                 .await
             }
-            None => Json(json!({"ok": false, "tested": true, "error": "No access token in credential"})),
+            None => {
+                Json(json!({"ok": false, "tested": true, "error": "No access token in credential"}))
+            }
         },
         "google" | "gmail" | "gsheets" | "google_sheets" | "google_drive" => {
             match pick(&["access_token", "token", "api_key"]) {
@@ -3215,15 +3310,25 @@ pub async fn test_credential(
                     )
                     .await
                 }
-                None => Json(json!({"ok": false, "tested": true, "error": "No access token in credential"})),
+                None => Json(
+                    json!({"ok": false, "tested": true, "error": "No access token in credential"}),
+                ),
             }
         }
         _ => {
             // Generic: a bearer token against an explicit `test_url`, otherwise
             // report present-but-untested honestly.
-            match (pick(&["test_url"]), pick(&["api_key", "token", "bearer_token", "access_token"])) {
+            match (
+                pick(&["test_url"]),
+                pick(&["api_key", "token", "bearer_token", "access_token"]),
+            ) {
                 (Some(url), Some(tok)) => {
-                    probe_credential(&client, &url, &[("Authorization".into(), format!("Bearer {tok}"))]).await
+                    probe_credential(
+                        &client,
+                        &url,
+                        &[("Authorization".into(), format!("Bearer {tok}"))],
+                    )
+                    .await
                 }
                 _ => {
                     let has_data = data.as_object().map(|o| !o.is_empty()).unwrap_or(false);
@@ -3233,7 +3338,9 @@ pub async fn test_credential(
                             "message": format!("No automated test for service '{service}'. Credential is present and well-formed.")
                         }))
                     } else {
-                        Json(json!({"ok": false, "tested": false, "error": "Credential has no data"}))
+                        Json(
+                            json!({"ok": false, "tested": false, "error": "Credential has no data"}),
+                        )
                     }
                 }
             }
@@ -3255,12 +3362,18 @@ async fn probe_credential(
         Ok(resp) => {
             let status = resp.status();
             if status.is_success() {
-                Json(json!({"ok": true, "tested": true, "message": format!("Credential is valid (HTTP {})", status.as_u16())}))
+                Json(
+                    json!({"ok": true, "tested": true, "message": format!("Credential is valid (HTTP {})", status.as_u16())}),
+                )
             } else {
-                Json(json!({"ok": false, "tested": true, "error": format!("Service rejected the credential (HTTP {})", status.as_u16())}))
+                Json(
+                    json!({"ok": false, "tested": true, "error": format!("Service rejected the credential (HTTP {})", status.as_u16())}),
+                )
             }
         }
-        Err(e) => Json(json!({"ok": false, "tested": true, "error": format!("Request failed: {e}")})),
+        Err(e) => {
+            Json(json!({"ok": false, "tested": true, "error": format!("Request failed: {e}")}))
+        }
     }
 }
 
@@ -3692,7 +3805,9 @@ mod version_tests {
     fn snapshot_dedupes_throttles_prunes_and_restores() {
         let (pool, path) = temp_pool();
         let settings = RuntimeSettings::new(Arc::clone(&pool));
-        settings.set("workflow.version_min_interval_secs", "0").unwrap();
+        settings
+            .set("workflow.version_min_interval_secs", "0")
+            .unwrap();
         settings
             .set("retention.workflow_versions_per_workflow", "3")
             .unwrap();
@@ -3727,7 +3842,9 @@ mod version_tests {
         assert_eq!(version_count(&conn, "wf1"), 3, "force bypasses throttle");
 
         // Cap = 3: a fourth distinct version prunes the oldest (unlabeled) one.
-        settings.set("workflow.version_min_interval_secs", "0").unwrap();
+        settings
+            .set("workflow.version_min_interval_secs", "0")
+            .unwrap();
         seed_workflow(&conn, "wf1", "Delta");
         snapshot_workflow_version(&conn, &settings, "wf1", false);
         assert_eq!(version_count(&conn, "wf1"), 3, "capped at 3");
@@ -3768,7 +3885,9 @@ mod version_tests {
     fn labeled_versions_survive_the_cap() {
         let (pool, path) = temp_pool();
         let settings = RuntimeSettings::new(Arc::clone(&pool));
-        settings.set("workflow.version_min_interval_secs", "0").unwrap();
+        settings
+            .set("workflow.version_min_interval_secs", "0")
+            .unwrap();
         settings
             .set("retention.workflow_versions_per_workflow", "2")
             .unwrap();

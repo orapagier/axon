@@ -181,7 +181,8 @@ RESPONSE RULES:
     /// B2: byte size above which a node-output string is offloaded to the blob
     /// store instead of being persisted inline in `node_results`. `0` disables.
     pub fn workflow_binary_inline_max_bytes(&self) -> usize {
-        self.get_int("workflow.binary_inline_max_bytes", 65536).max(0) as usize
+        self.get_int("workflow.binary_inline_max_bytes", 65536)
+            .max(0) as usize
     }
     /// B3: max workflow runs executing concurrently. Read once at startup to size
     /// the run semaphore; changing it takes effect on restart.
@@ -223,7 +224,8 @@ RESPONSE RULES:
     /// fires the timeout branch (approval → Reject) if no one resumes it. A per-node
     /// `timeout` always overrides this.
     pub fn workflow_resume_token_default_ttl_secs(&self) -> i64 {
-        self.get_int("workflow.resume_token_default_ttl_secs", 0).max(0)
+        self.get_int("workflow.resume_token_default_ttl_secs", 0)
+            .max(0)
     }
     /// C2: time window (seconds) for body-hash dedup of generic webhooks that
     /// supply no explicit Idempotency-Key/event_id. `0` (default) disables the

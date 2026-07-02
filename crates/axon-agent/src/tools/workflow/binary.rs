@@ -248,7 +248,9 @@ mod tests {
     /// Lock the shared guard and point the blob store at a unique temp dir, so
     /// these unit tests never write into a dev instance's real `wf_blobs`.
     fn test_blob_guard() -> std::sync::MutexGuard<'static, ()> {
-        let g = BLOB_DIR_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let g = BLOB_DIR_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         std::env::set_var(
             "AXON_WF_BLOB_DIR",
             std::env::temp_dir().join(format!(
@@ -281,7 +283,10 @@ mod tests {
         assert_eq!(v["list"][1], serde_json::json!("tiny"));
 
         // Descriptors carry the original byte size.
-        assert_eq!(v["nested"]["huge"][BINARY_KEY]["size"], serde_json::json!(2000));
+        assert_eq!(
+            v["nested"]["huge"][BINARY_KEY]["size"],
+            serde_json::json!(2000)
+        );
 
         rehydrate_value(&mut v);
         assert_eq!(v["nested"]["huge"], serde_json::json!(big));

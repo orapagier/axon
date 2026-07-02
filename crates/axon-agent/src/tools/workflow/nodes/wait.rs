@@ -145,10 +145,10 @@ pub(crate) async fn execute(
 /// `timeout_seconds`. Returns `None` (engine falls back to the configured default
 /// TTL) when no positive timeout is set.
 fn wait_timeout_seconds(config: &Value) -> Option<f64> {
-    if let Some(s) = config
-        .get("timeout_seconds")
-        .and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())))
-    {
+    if let Some(s) = config.get("timeout_seconds").and_then(|v| {
+        v.as_f64()
+            .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+    }) {
         return (s > 0.0).then_some(s);
     }
     let amount = config.get("timeout_amount").and_then(|v| {

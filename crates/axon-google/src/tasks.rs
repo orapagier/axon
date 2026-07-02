@@ -17,7 +17,8 @@ pub async fn list_task_lists(state: &AppState, max_results: u32) -> Result<Value
         .query(&[("maxResults", max_results.to_string())])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -33,7 +34,8 @@ pub async fn create_task_list(state: &AppState, title: &str) -> Result<Value> {
         .json(&json!({ "title": title }))
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -49,7 +51,8 @@ pub async fn rename_task_list(state: &AppState, tasklist_id: &str, title: &str) 
         .json(&json!({ "title": title }))
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -64,7 +67,8 @@ pub async fn delete_task_list(state: &AppState, tasklist_id: &str) -> Result<Val
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?;
+        .ensure_ok()
+        .await?;
     Ok(json!({ "success": true, "deletedTaskListId": tasklist_id }))
 }
 
@@ -100,7 +104,8 @@ pub async fn list_tasks(
         .query(&params)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -115,7 +120,8 @@ pub async fn get_task(state: &AppState, tasklist_id: &str, task_id: &str) -> Res
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -153,7 +159,8 @@ pub async fn create_task(
         .json(&body)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -191,7 +198,8 @@ pub async fn update_task(
         .json(&patch)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -234,7 +242,8 @@ pub async fn delete_task(state: &AppState, tasklist_id: &str, task_id: &str) -> 
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?;
+        .ensure_ok()
+        .await?;
     Ok(json!({ "success": true, "deletedTaskId": task_id }))
 }
 
@@ -247,7 +256,8 @@ pub async fn clear_completed(state: &AppState, tasklist_id: &str) -> Result<Valu
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?;
+        .ensure_ok()
+        .await?;
     Ok(json!({ "success": true, "taskListId": tasklist_id }))
 }
 
@@ -275,7 +285,8 @@ pub async fn move_task(
         .query(&params)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)

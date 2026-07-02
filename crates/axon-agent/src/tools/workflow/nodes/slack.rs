@@ -65,8 +65,8 @@ async fn finish_api(resp: reqwest::Response) -> Result<Value, String> {
         .text()
         .await
         .map_err(|e| format!("Slack: failed to read response: {e}"))?;
-    let body: Value = serde_json::from_str(&text)
-        .map_err(|_| format!("Slack API error {status}: {text}"))?;
+    let body: Value =
+        serde_json::from_str(&text).map_err(|_| format!("Slack API error {status}: {text}"))?;
     if body.get("ok").and_then(|v| v.as_bool()) != Some(true) {
         let err = body
             .get("error")

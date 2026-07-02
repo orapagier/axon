@@ -97,8 +97,10 @@ pub(crate) async fn execute(config: &Value, state: &AppState) -> Result<Value, S
             // (a category is present even if it changed nothing this run).
             let mut deleted_by_cat: serde_json::Map<String, Value> =
                 auto_delete.iter().map(|c| (c.clone(), json!([]))).collect();
-            let mut disabled_by_cat: serde_json::Map<String, Value> =
-                auto_disable.iter().map(|c| (c.clone(), json!([]))).collect();
+            let mut disabled_by_cat: serde_json::Map<String, Value> = auto_disable
+                .iter()
+                .map(|c| (c.clone(), json!([])))
+                .collect();
             let mut delete_errors: Vec<Value> = Vec::new();
             let mut disable_errors: Vec<Value> = Vec::new();
             let mut deleted_count: u64 = 0;
@@ -340,7 +342,9 @@ fn config_bool(config: &Value, key: &str) -> bool {
 fn build_model_payload(config: &Value) -> Value {
     let mut p = serde_json::Map::new();
 
-    for key in ["name", "provider", "model_id", "api_key", "base_url", "role"] {
+    for key in [
+        "name", "provider", "model_id", "api_key", "base_url", "role",
+    ] {
         if let Some(s) = config.get(key).and_then(|v| v.as_str()) {
             if !s.trim().is_empty() {
                 p.insert(key.to_string(), json!(s));
@@ -441,9 +445,18 @@ mod tests {
         });
         assert_eq!(auto_delete_categories(&cfg), vec!["not_found"]);
         // And the allow-list itself never contains a recoverable/local category.
-        for banned in ["misconfigured", "rate_limited", "payment_required",
-                       "server_error", "timeout", "unreachable"] {
-            assert!(!DELETABLE_CATEGORIES.contains(&banned), "{banned} must not be deletable");
+        for banned in [
+            "misconfigured",
+            "rate_limited",
+            "payment_required",
+            "server_error",
+            "timeout",
+            "unreachable",
+        ] {
+            assert!(
+                !DELETABLE_CATEGORIES.contains(&banned),
+                "{banned} must not be deletable"
+            );
         }
     }
 
@@ -481,7 +494,10 @@ mod tests {
         });
         assert!(auto_disable_categories(&cfg).is_empty());
         for banned in ["rate_limited", "misconfigured", "error", "healthy"] {
-            assert!(!DISABLEABLE_CATEGORIES.contains(&banned), "{banned} must not be disableable");
+            assert!(
+                !DISABLEABLE_CATEGORIES.contains(&banned),
+                "{banned} must not be disableable"
+            );
         }
     }
 

@@ -161,9 +161,7 @@ pub async fn call(
         )
     };
 
-    let ollama_opts = options
-        .temperature
-        .map(|t| json!({ "temperature": t }));
+    let ollama_opts = options.temperature.map(|t| json!({ "temperature": t }));
 
     let payload = OllamaReq {
         model: model.model_id.clone(),

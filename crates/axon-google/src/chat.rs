@@ -17,7 +17,8 @@ pub async fn list_spaces(state: &AppState, max_results: u32) -> Result<Value> {
         .query(&[("pageSize", max_results.to_string())])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -33,7 +34,8 @@ pub async fn get_space(state: &AppState, space_name: &str) -> Result<Value> {
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -49,7 +51,8 @@ pub async fn list_members(state: &AppState, space_name: &str, max_results: u32) 
         .query(&[("pageSize", max_results.to_string())])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -80,7 +83,8 @@ pub async fn list_messages(
         .query(&params)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -96,7 +100,8 @@ pub async fn get_message(state: &AppState, message_name: &str) -> Result<Value> 
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -130,7 +135,8 @@ pub async fn send_message(
         .json(&body)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -158,7 +164,8 @@ pub async fn send_card_message(
         .json(&body)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -175,7 +182,8 @@ pub async fn update_message(state: &AppState, message_name: &str, new_text: &str
         .json(&json!({ "text": new_text }))
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -190,7 +198,8 @@ pub async fn delete_message(state: &AppState, message_name: &str) -> Result<Valu
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?;
+        .ensure_ok()
+        .await?;
     Ok(json!({ "success": true, "deletedMessage": message_name }))
 }
 
@@ -207,7 +216,8 @@ pub async fn add_reaction(state: &AppState, message_name: &str, emoji: &str) -> 
         .json(&json!({ "emoji": { "unicode": emoji } }))
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -222,7 +232,8 @@ pub async fn list_reactions(state: &AppState, message_name: &str) -> Result<Valu
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -238,6 +249,7 @@ pub async fn delete_reaction(state: &AppState, reaction_name: &str) -> Result<Va
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?;
+        .ensure_ok()
+        .await?;
     Ok(json!({ "success": true, "deletedReaction": reaction_name }))
 }

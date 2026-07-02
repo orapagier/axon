@@ -614,7 +614,10 @@ pub(crate) async fn run_inner(
     // across the parallel internal + sequential external tool paths.
     let obs_budget = {
         let on = state.settings.get_bool("agent.compress_observations", true);
-        let cap = state.settings.get_int("agent.max_observations_per_run", 4).max(0) as u32;
+        let cap = state
+            .settings
+            .get_int("agent.max_observations_per_run", 4)
+            .max(0) as u32;
         Arc::new(std::sync::atomic::AtomicU32::new(if on { cap } else { 0 }))
     };
     let memory_enabled = ctx.memory_enabled;
@@ -2014,4 +2017,3 @@ fn strip_reasoning(text: &str) -> String {
         .to_string();
     result.trim().to_string()
 }
-

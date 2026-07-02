@@ -167,9 +167,7 @@ fn apply_migration(conn: &Connection, m: &Migration) -> Result<()> {
     // so a single expected "duplicate column" can be skipped without masking
     // any other failure.
     if !m.tolerant_dup_column {
-        return conn
-            .execute_batch(m.sql)
-            .map_err(Into::into);
+        return conn.execute_batch(m.sql).map_err(Into::into);
     }
 
     // Strip `-- ...` line comments BEFORE splitting on ';'. A semicolon *inside*
@@ -248,8 +246,10 @@ mod tests {
     }
 
     fn setting(conn: &Connection, key: &str) -> Option<String> {
-        conn.query_row("SELECT value FROM settings WHERE key=?1", [key], |r| r.get(0))
-            .ok()
+        conn.query_row("SELECT value FROM settings WHERE key=?1", [key], |r| {
+            r.get(0)
+        })
+        .ok()
     }
 
     #[test]
@@ -261,7 +261,9 @@ mod tests {
         init(&conn).unwrap();
 
         let max: i64 = conn
-            .query_row("SELECT MAX(version) FROM schema_migrations", [], |r| r.get(0))
+            .query_row("SELECT MAX(version) FROM schema_migrations", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(
             max,
@@ -298,7 +300,10 @@ mod tests {
 
         // Seeds + normalization: parallel-tool default is the lowered 3, and the
         // new quality-check mode is present.
-        assert_eq!(setting(&conn, "agent.max_parallel_tools").as_deref(), Some("3"));
+        assert_eq!(
+            setting(&conn, "agent.max_parallel_tools").as_deref(),
+            Some("3")
+        );
         assert_eq!(
             setting(&conn, "agent.quality_check_mode").as_deref(),
             Some("mutating")
@@ -327,7 +332,10 @@ mod tests {
         // The additive migration backfilled the missing column on the old table.
         assert!(col_exists(&conn, "watchers", "trigger_condition"));
         // Normalization lowered the untouched 5 -> 3.
-        assert_eq!(setting(&conn, "agent.max_parallel_tools").as_deref(), Some("3"));
+        assert_eq!(
+            setting(&conn, "agent.max_parallel_tools").as_deref(),
+            Some("3")
+        );
     }
 
     #[test]
@@ -343,6 +351,9 @@ mod tests {
         .unwrap();
         init(&conn).unwrap();
         // Only the default-5 is normalized; an explicit 8 is left alone.
-        assert_eq!(setting(&conn, "agent.max_parallel_tools").as_deref(), Some("8"));
+        assert_eq!(
+            setting(&conn, "agent.max_parallel_tools").as_deref(),
+            Some("8")
+        );
     }
 }

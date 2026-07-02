@@ -11,7 +11,10 @@ pub(crate) async fn execute(config: &Value) -> Result<Value, String> {
     } else {
         ("sh", "-c")
     };
-    let fut = tokio::process::Command::new(shell).arg(arg).arg(cmd).output();
+    let fut = tokio::process::Command::new(shell)
+        .arg(arg)
+        .arg(cmd)
+        .output();
     // Bound execution so a hung command can't stall the whole workflow run.
     match tokio::time::timeout(Duration::from_secs(600), fut).await {
         Ok(Ok(o)) => {
@@ -24,7 +27,11 @@ pub(crate) async fn execute(config: &Value) -> Result<Value, String> {
                     "exit_code": o.status.code()
                 }))
             } else {
-                let detail = if stderr.trim().is_empty() { &stdout } else { &stderr };
+                let detail = if stderr.trim().is_empty() {
+                    &stdout
+                } else {
+                    &stderr
+                };
                 Err(format!(
                     "Command failed (exit code {:?}): {}",
                     o.status.code(),

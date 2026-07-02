@@ -293,7 +293,13 @@ pub(crate) fn extract_file_descriptor(
 
     let local_path = pick(&["local_path", "localPath", "path", "file_path", "filePath"])?;
     let file_name = pick(&["original_name", "fileName", "file_name", "name"]);
-    let mime_type = pick(&["mime_type", "mimeType", "mime", "content_type", "contentType"]);
+    let mime_type = pick(&[
+        "mime_type",
+        "mimeType",
+        "mime",
+        "content_type",
+        "contentType",
+    ]);
     Some((local_path, file_name, mime_type))
 }
 
@@ -349,7 +355,11 @@ async fn read_binary_file(config: &Value, default_name: &str) -> Result<Resolved
 }
 
 /// Build a multipart part with an explicit filename and MIME type.
-fn file_part(bytes: Vec<u8>, file_name: String, mime_type: &str) -> Result<multipart::Part, String> {
+fn file_part(
+    bytes: Vec<u8>,
+    file_name: String,
+    mime_type: &str,
+) -> Result<multipart::Part, String> {
     multipart::Part::bytes(bytes)
         .file_name(file_name)
         .mime_str(mime_type)
@@ -605,7 +615,10 @@ fn valid_tag_end(chars: &[char], start: usize) -> Option<usize> {
     while matches!(chars.get(j), Some(c) if c.is_ascii_alphanumeric() || *c == '-') {
         j += 1;
     }
-    let name: String = chars[name_start..j].iter().collect::<String>().to_lowercase();
+    let name: String = chars[name_start..j]
+        .iter()
+        .collect::<String>()
+        .to_lowercase();
     if name.is_empty() || !TELEGRAM_HTML_TAGS.contains(&name.as_str()) {
         return None;
     }
@@ -696,7 +709,11 @@ fn apply_additional_fields(body: &mut serde_json::Map<String, Value>, config: &V
     // reject media messages. (Message `text` is escaped before chunking in
     // send_message / edit_message_text so the length check sees the final text.)
     if parse_mode.eq_ignore_ascii_case("html") {
-        if let Some(caption) = body.get("caption").and_then(|v| v.as_str()).map(str::to_string) {
+        if let Some(caption) = body
+            .get("caption")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+        {
             body.insert("caption".into(), json!(escape_html_for_telegram(&caption)));
         }
     }
@@ -2641,7 +2658,9 @@ mod tests {
     fn test_escape_html_escapes_stray_angle_brackets() {
         // The reported failure: an email address looks like an unsupported tag.
         assert_eq!(
-            escape_html_for_telegram("You have a new email from ChatGPT <noreply@email.openai.com>"),
+            escape_html_for_telegram(
+                "You have a new email from ChatGPT <noreply@email.openai.com>"
+            ),
             "You have a new email from ChatGPT &lt;noreply@email.openai.com&gt;"
         );
     }
@@ -2681,7 +2700,10 @@ mod tests {
     #[test]
     fn test_escape_html_rejects_unknown_and_attributed_plain_tags() {
         // Unknown tag → escaped.
-        assert_eq!(escape_html_for_telegram("<div>x</div>"), "&lt;div&gt;x&lt;/div&gt;");
+        assert_eq!(
+            escape_html_for_telegram("<div>x</div>"),
+            "&lt;div&gt;x&lt;/div&gt;"
+        );
         // A tag that takes no attributes but has trailing text → escaped.
         assert_eq!(escape_html_for_telegram("<i am here>"), "&lt;i am here&gt;");
     }

@@ -944,7 +944,10 @@ pub async fn health_check(router: &SharedRouter, settings: &RuntimeSettings) -> 
                 .unwrap_or("")
                 .to_string();
             let precheck = if resolved_key.trim().is_empty() {
-                Err("no API key after resolution (check AXON_MASTER_KEY / provider env vars)".to_string())
+                Err(
+                    "no API key after resolution (check AXON_MASTER_KEY / provider env vars)"
+                        .to_string(),
+                )
             } else if resolved_key.starts_with("${") && resolved_key.ends_with('}') {
                 Err(format!(
                     "unresolved API key placeholder {resolved_key} (check .env / server env)"
@@ -1018,7 +1021,10 @@ pub async fn health_check(router: &SharedRouter, settings: &RuntimeSettings) -> 
     // Seed every failure bucket up front so absent reasons still appear as an empty
     // list / zero count. BTreeMap also keeps the buckets in a stable, sorted order.
     let mut unhealthy_groups: std::collections::BTreeMap<&'static str, Vec<serde_json::Value>> =
-        FAILURE_CATEGORIES.iter().map(|c| (*c, Vec::new())).collect();
+        FAILURE_CATEGORIES
+            .iter()
+            .map(|c| (*c, Vec::new()))
+            .collect();
     for (category, entry) in results {
         if category == "healthy" {
             healthy_list.push(entry);
@@ -1313,7 +1319,10 @@ mod tests {
             ),
             "misconfigured"
         );
-        assert_eq!(classify_health_error("model has no model_id"), "misconfigured");
+        assert_eq!(
+            classify_health_error("model has no model_id"),
+            "misconfigured"
+        );
         assert_eq!(
             classify_health_error("HTTP to https://x/v1: operation timed out"),
             "timeout"
@@ -1324,7 +1333,10 @@ mod tests {
             ),
             "unreachable"
         );
-        assert_eq!(classify_health_error("something totally unexpected"), "error");
+        assert_eq!(
+            classify_health_error("something totally unexpected"),
+            "error"
+        );
     }
 
     #[test]

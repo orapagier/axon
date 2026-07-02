@@ -330,6 +330,9 @@ mod route_conflict_tests {
                 "/api/workflows/:id/versions/:version",
                 get(|| async {}).post(|| async {}),
             )
-            .route("/api/workflows/:id/versions/:version/restore", post(|| async {}));
+            .route(
+                "/api/workflows/:id/versions/:version/restore",
+                post(|| async {}),
+            );
     }
 }

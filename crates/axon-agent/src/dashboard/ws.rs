@@ -79,7 +79,10 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             // Control frame: stop the run in flight for this session.
             if let Ok(ctrl) = serde_json::from_str::<serde_json::Value>(text) {
                 if ctrl.get("type").and_then(|t| t.as_str()) == Some("cancel") {
-                    let sid = ctrl.get("session_id").and_then(|s| s.as_str()).unwrap_or("");
+                    let sid = ctrl
+                        .get("session_id")
+                        .and_then(|s| s.as_str())
+                        .unwrap_or("");
                     if let Some((run_id, handle)) = active.remove(sid) {
                         handle.abort();
                         mark_run_cancelled(&state, &run_id, "Cancelled by user");

@@ -50,7 +50,9 @@ pub(crate) async fn execute(config: &Value, state: &AppState) -> Result<Value, S
             let stored = value_to_text(config.get("value"));
             conn.execute(UPSERT, rusqlite::params![scope, key, stored])
                 .map_err(|e| format!("engram set: {e}"))?;
-            Ok(json!({ "operation": "set", "scope": scope, "key": key, "value": parse_maybe(&stored) }))
+            Ok(
+                json!({ "operation": "set", "scope": scope, "key": key, "value": parse_maybe(&stored) }),
+            )
         }
         "get" => {
             if key.is_empty() {
@@ -121,7 +123,9 @@ pub(crate) async fn execute(config: &Value, state: &AppState) -> Result<Value, S
             };
             conn.execute(UPSERT, rusqlite::params![scope, key, stored])
                 .map_err(|e| format!("engram increment: {e}"))?;
-            Ok(json!({ "operation": "increment", "scope": scope, "key": key, "value": parse_maybe(&stored) }))
+            Ok(
+                json!({ "operation": "increment", "scope": scope, "key": key, "value": parse_maybe(&stored) }),
+            )
         }
         "list" => {
             let mut stmt = conn
@@ -142,7 +146,9 @@ pub(crate) async fn execute(config: &Value, state: &AppState) -> Result<Value, S
                 keys.push(k);
             }
             let count = keys.len();
-            Ok(json!({ "operation": "list", "scope": scope, "keys": keys, "items": items, "count": count }))
+            Ok(
+                json!({ "operation": "list", "scope": scope, "keys": keys, "items": items, "count": count }),
+            )
         }
         other => Err(format!("Unknown Engram operation: {other}")),
     }

@@ -969,8 +969,14 @@ impl TelegramGateway {
                         let state2 = Arc::clone(&state);
                         let cid = chat_id.clone();
                         tokio::spawn(async move {
-                            this.run_workflow_and_report(state2, cid, workflow_id, workflow_name, None)
-                                .await;
+                            this.run_workflow_and_report(
+                                state2,
+                                cid,
+                                workflow_id,
+                                workflow_name,
+                                None,
+                            )
+                            .await;
                         });
                         true
                     }

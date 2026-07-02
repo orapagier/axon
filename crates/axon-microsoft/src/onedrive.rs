@@ -19,7 +19,8 @@ pub async fn list(state: &AppState, folder_id: Option<&str>, max_count: u32) -> 
         .query(&[("$top", max_count.to_string()), ("$select", SEL.to_owned())])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -35,7 +36,8 @@ pub async fn search(state: &AppState, query: &str, max_count: u32) -> Result<Val
         .query(&[("$top", max_count.to_string()), ("$select", SEL.to_owned())])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -52,7 +54,8 @@ pub async fn move_file(state: &AppState, item_id: &str, new_folder_id: &str) -> 
         }))
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(json!({ "success": true, "moved_to": new_folder_id, "file": resp }))
@@ -77,7 +80,8 @@ pub async fn upload_binary(
         .body(data)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -91,7 +95,8 @@ pub async fn delete(state: &AppState, item_id: &str) -> Result<Value> {
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?;
+        .ensure_ok()
+        .await?;
     Ok(json!({ "success": true }))
 }
 
@@ -103,7 +108,8 @@ pub async fn download_binary(state: &AppState, item_id: &str) -> Result<Value> {
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     let name = meta["name"].as_str().unwrap_or("downloaded_file");
@@ -114,7 +120,8 @@ pub async fn download_binary(state: &AppState, item_id: &str) -> Result<Value> {
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .bytes()
         .await?;
 
@@ -138,7 +145,8 @@ pub async fn create_share_link(state: &AppState, item_id: &str) -> Result<Value>
         .json(&json!({ "type": "view", "scope": "anonymous" }))
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
 

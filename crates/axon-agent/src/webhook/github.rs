@@ -173,10 +173,8 @@ pub async fn handle_github_webhook(
         None,
         Some(enriched),
     ) {
-        Ok(run_id) => {
-            Json(json!({ "ok": true, "workflow_id": workflow_id, "run_id": run_id }))
-                .into_response()
-        }
+        Ok(run_id) => Json(json!({ "ok": true, "workflow_id": workflow_id, "run_id": run_id }))
+            .into_response(),
         Err(e) => {
             tracing::error!("GitHub webhook: failed to trigger {workflow_id}: {e}");
             Json(json!({ "ok": false, "error": e.to_string() })).into_response()

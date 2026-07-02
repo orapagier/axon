@@ -18,7 +18,8 @@ pub async fn list_calendars(state: &AppState) -> Result<Value> {
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -82,7 +83,8 @@ pub async fn list_events(
         .query(&params)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -99,7 +101,8 @@ pub async fn get_event(state: &AppState, event_id: &str, calendar_id: &str) -> R
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -170,7 +173,8 @@ pub async fn create_event(
         .json(&body)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -227,7 +231,8 @@ pub async fn update_event(
         .json(&patch)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -265,7 +270,8 @@ pub async fn delete_event(
             .bearer_auth(&tok)
             .send()
             .await?
-            .ensure_ok().await?
+            .ensure_ok()
+            .await?
             .json()
             .await?;
 
@@ -288,7 +294,8 @@ pub async fn delete_event(
         .bearer_auth(&tok)
         .send()
         .await?
-        .ensure_ok().await?;
+        .ensure_ok()
+        .await?;
 
     Ok(json!({
         "success": true,
@@ -315,7 +322,8 @@ pub async fn move_event(
         .query(&[("destination", &dest), ("sendUpdates", &"all".to_string())])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -332,7 +340,8 @@ pub async fn quick_add(state: &AppState, text: &str, calendar_id: &str) -> Resul
         .query(&[("text", text), ("sendUpdates", "all")])
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)
@@ -360,7 +369,8 @@ pub async fn get_freebusy(
         .json(&body)
         .send()
         .await?
-        .ensure_ok().await?
+        .ensure_ok()
+        .await?
         .json()
         .await?;
     Ok(resp)

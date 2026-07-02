@@ -138,7 +138,10 @@ pub async fn create_with_image(state: &AppState, message: &str, image_url: &str)
         .post(format!("{FB_API}/{pid}/feed"))
         .bearer_auth(&tok)
         .query(&[("fields", "id,permalink_url")])
-        .form(&[("message", message), ("attached_media[0]", attached.as_str())])
+        .form(&[
+            ("message", message),
+            ("attached_media[0]", attached.as_str()),
+        ])
         .send()
         .await?;
     Ok(ensure_ok(resp).await?.json().await?)
@@ -191,8 +194,7 @@ pub async fn create_with_video(state: &AppState, message: &str, video_url: &str)
     let tok = page_token(state).await?;
     let pid = page_id(state).await?;
 
-    let resp_value: Value = if video_url.starts_with("http://")
-        || video_url.starts_with("https://")
+    let resp_value: Value = if video_url.starts_with("http://") || video_url.starts_with("https://")
     {
         let resp = state
             .client

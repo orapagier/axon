@@ -299,7 +299,10 @@ mod tests {
     fn plaintext_untagged_value_is_returned_asis() {
         // A raw key that was stored before encryption existed and is not valid
         // base64 ciphertext must survive verbatim.
-        assert_eq!(decrypt_key("sk-legacy-plaintext-KEY"), "sk-legacy-plaintext-KEY");
+        assert_eq!(
+            decrypt_key("sk-legacy-plaintext-KEY"),
+            "sk-legacy-plaintext-KEY"
+        );
     }
 
     #[test]
@@ -323,10 +326,8 @@ mod tests {
     #[test]
     fn reencrypt_upgrades_legacy_only() {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
-        conn.execute_batch(
-            "CREATE TABLE models (name TEXT PRIMARY KEY, api_key TEXT NOT NULL);",
-        )
-        .unwrap();
+        conn.execute_batch("CREATE TABLE models (name TEXT PRIMARY KEY, api_key TEXT NOT NULL);")
+            .unwrap();
 
         let secret = master_secret();
         let legacy_blob = aes_encrypt("legacy-key", &legacy_key_from(&secret)).unwrap();
@@ -342,14 +343,18 @@ mod tests {
 
         // Legacy row is now v2 and still decrypts to the same plaintext.
         let a: String = conn
-            .query_row("SELECT api_key FROM models WHERE name='a'", [], |r| r.get(0))
+            .query_row("SELECT api_key FROM models WHERE name='a'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert!(a.starts_with(V2_PREFIX));
         assert_eq!(decrypt_key(&a), "legacy-key");
 
         // Plaintext row is untouched.
         let c: String = conn
-            .query_row("SELECT api_key FROM models WHERE name='c'", [], |r| r.get(0))
+            .query_row("SELECT api_key FROM models WHERE name='c'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(c, "raw-plaintext");
 
@@ -360,10 +365,8 @@ mod tests {
     #[test]
     fn credentials_at_rest_encrypts_plaintext_only() {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
-        conn.execute_batch(
-            "CREATE TABLE credentials (id TEXT PRIMARY KEY, data TEXT NOT NULL);",
-        )
-        .unwrap();
+        conn.execute_batch("CREATE TABLE credentials (id TEXT PRIMARY KEY, data TEXT NOT NULL);")
+            .unwrap();
 
         let plaintext_json = r#"{"access_token":"secret-token","page_id":"42"}"#;
         let already_v2 = encrypt_key(r#"{"api_key":"pre-encrypted"}"#);
@@ -378,14 +381,18 @@ mod tests {
 
         // Plaintext row is now v2-tagged and round-trips back to the same JSON.
         let p: String = conn
-            .query_row("SELECT data FROM credentials WHERE id='p'", [], |r| r.get(0))
+            .query_row("SELECT data FROM credentials WHERE id='p'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert!(p.starts_with(V2_PREFIX));
         assert_eq!(decrypt_key(&p), plaintext_json);
 
         // Already-encrypted row is untouched; empty row is skipped.
         let v: String = conn
-            .query_row("SELECT data FROM credentials WHERE id='v'", [], |r| r.get(0))
+            .query_row("SELECT data FROM credentials WHERE id='v'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(v, already_v2);
 
