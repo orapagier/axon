@@ -71,7 +71,7 @@ static RE_TIME_SENSITIVE_TASK: Lazy<regex::Regex> = Lazy::new(|| {
 /// dead end — the promised work never happens.
 static RE_PROMISE_ONLY: Lazy<regex::Regex> = Lazy::new(|| {
     regex::Regex::new(
-        r"(?i)^\W*(sure|okay|ok|alright|got it|certainly|of course|no problem|absolutely)?[\s,!.\-]*(let me|i.ll|i will|i.m going to|i am going to|i.m on it|give me a (moment|sec|second|minute|bit)|one (moment|sec|second|minute)|just a (moment|sec|second|minute)|hold on|hang on|working on (it|that)|right away|will do)\b",
+        r"(?i)^\W*(sure|okay|ok|alright|got it|certainly|of course|no problem|absolutely)?[\s,!.:;\-—–]*(let me|i.ll|i will|i.m going to|i am going to|i.m on it|give me a (moment|sec|second|minute|bit)|one (moment|sec|second|minute)|just a (moment|sec|second|minute)|hold on|hang on|working on (it|that)|right away|will do)\b",
     )
     .unwrap()
 });
@@ -2055,4 +2055,46 @@ fn strip_reasoning(text: &str) -> String {
         .replace_all(&result, "\n\n")
         .to_string();
     result.trim().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn promise_only_regex_catches_deferred_work() {
+        for s in [
+            "Let me grab another PDF from your Google Drive for you.",
+            "Sure, I'll fetch that file now.",
+            "Okay — give me a moment to look that up.",
+            "I'm going to check your calendar.",
+        ] {
+            assert!(RE_PROMISE_ONLY.is_match(s), "should match: {s}");
+        }
+        for s in [
+            "Here you go: the file is attached.",
+            "Done! The PDF has been sent.",
+            "Let me know if you need anything else.",
+        ] {
+            // "Let me know" is excluded by the guard's contains() check, not the
+            // regex itself — assert only the clear negatives here.
+            if !s.to_lowercase().contains("let me know") {
+                assert!(!RE_PROMISE_ONLY.is_match(s), "should not match: {s}");
+            }
+        }
+    }
+
+    #[test]
+    fn resolve_send_file_links_builds_download_link() {
+        let out =
+            resolve_send_file_links("Here you go: <send_file>data/files/My File.pdf</send_file>");
+        assert!(out.contains("[Download My File.pdf]"), "got: {out}");
+        assert!(
+            out.contains("(/api/download?path=data%2Ffiles%2FMy%20File.pdf)"),
+            "got: {out}"
+        );
+        assert!(!out.contains("<send_file>"));
+        // No tag → unchanged
+        assert_eq!(resolve_send_file_links("plain text"), "plain text");
+    }
 }
