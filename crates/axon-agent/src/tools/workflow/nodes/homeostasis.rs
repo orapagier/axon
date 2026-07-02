@@ -230,6 +230,40 @@ pub(crate) async fn execute(config: &Value, state: &AppState) -> Result<Value, S
     Ok(result)
 }
 
+/// Failure categories eligible for Health Check auto-deletion. Deliberately only
+/// the TERMINAL ones — a model that's gone (`not_found`) or whose credentials /
+/// permissions are rejected (`invalid_key` / `forbidden`), plus `bad_request` for a
+/// model the provider won't accept a call for. Recoverable categories
+/// (rate_limited, payment_required, server_error, timeout, unreachable) and
+/// especially `misconfigured` (an unresolved ${VAR} — a server-env problem, not a
+/// bad model) are intentionally absent, so a transient outage or a missing env var
+/// can never auto-delete a good model. Must stay a subset of the router's
+/// `FAILURE_CATEGORIES`.
+const DELETABLE_CATEGORIES: &[&str] = &["not_found", "invalid_key", "forbidden", "bad_request"];
+
+/// Parse the node's `auto_delete` selection into the categories to prune, keeping
+/// only `DELETABLE_CATEGORIES` members (deduplicated, order preserved). Accepts the
+/// multiOptions array shape or a comma-separated string, and silently drops any
+/// category not on the allow-list — so even a hand-edited config can't opt into
+/// deleting `misconfigured` or a recoverable failure.
+fn auto_delete_categories(config: &Value) -> Vec<String> {
+    let raw: Vec<String> = match config.get("auto_delete") {
+        Some(Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
+            .collect(),
+        Some(Value::String(s)) => s.split(',').map(|s| s.trim().to_string()).collect(),
+        _ => Vec::new(),
+    };
+    let mut out: Vec<String> = Vec::new();
+    for c in raw {
+        if DELETABLE_CATEGORIES.contains(&c.as_str()) && !out.contains(&c) {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// Build a typed, sparse model payload from the node config. Only fields the user
 /// set are included — string fields when non-blank, numbers coerced from a real
 /// JSON number or a numeric string, and `enabled` as a tri-state where '' (or
