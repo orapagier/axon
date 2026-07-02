@@ -330,3 +330,50 @@ fn trimmed_field(config: &Value, key: &str) -> String {
         .trim()
         .to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{auto_delete_categories, DELETABLE_CATEGORIES};
+    use serde_json::json;
+
+    #[test]
+    fn accepts_allowed_categories_from_array() {
+        let cfg = json!({ "auto_delete": ["not_found", "invalid_key", "forbidden"] });
+        assert_eq!(
+            auto_delete_categories(&cfg),
+            vec!["not_found", "invalid_key", "forbidden"]
+        );
+    }
+
+    #[test]
+    fn accepts_comma_separated_string() {
+        let cfg = json!({ "auto_delete": "not_found, bad_request" });
+        assert_eq!(auto_delete_categories(&cfg), vec!["not_found", "bad_request"]);
+    }
+
+    #[test]
+    fn drops_non_deletable_and_unknown_categories() {
+        // The safety guarantee: even a hand-edited config can't opt into deleting a
+        // recoverable failure or, worst of all, `misconfigured` (a missing env var).
+        let cfg = json!({
+            "auto_delete": ["misconfigured", "rate_limited", "payment_required",
+                            "server_error", "timeout", "unreachable", "healthy",
+                            "bogus", "not_found"]
+        });
+        // Only the one allow-listed member survives.
+        assert_eq!(auto_delete_categories(&cfg), vec!["not_found"]);
+        // And the allow-list itself never contains a recoverable/local category.
+        for banned in ["misconfigured", "rate_limited", "payment_required",
+                       "server_error", "timeout", "unreachable"] {
+            assert!(!DELETABLE_CATEGORIES.contains(&banned), "{banned} must not be deletable");
+        }
+    }
+
+    #[test]
+    fn deduplicates_and_ignores_missing_or_empty() {
+        assert!(auto_delete_categories(&json!({})).is_empty());
+        assert!(auto_delete_categories(&json!({ "auto_delete": [] })).is_empty());
+        let cfg = json!({ "auto_delete": ["not_found", "not_found", "invalid_key"] });
+        assert_eq!(auto_delete_categories(&cfg), vec!["not_found", "invalid_key"]);
+    }
+}
