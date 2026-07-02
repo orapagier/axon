@@ -3261,6 +3261,8 @@ body::before {
 .page-section-sidebar {
     position: sticky;
     top: 8px;
+    max-height: calc(100vh - 16px);
+    overflow-y: auto;
     border-radius: 16px;
     border: 1px solid var(--border);
     background: rgba(0, 0, 0, 0.02);
@@ -3741,6 +3743,8 @@ textarea::placeholder {
 
     .page-section-sidebar {
         position: static;
+        max-height: none;
+        overflow-y: visible;
     }
 
     .page {
