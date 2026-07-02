@@ -63,7 +63,9 @@ pub(crate) async fn execute(config: &Value, state: &AppState) -> Result<Value, S
     // snapshot) can't see. The report keeps the by_status/summary shape but splits
     // `unhealthy` into fixed failure-reason buckets (rate_limited, payment_required,
     // invalid_key, not_found, …), each list sorted alphabetically by name; api_key is
-    // never included. Async and DB-free, so it sits with `list` above the DB block.
+    // never included. The probe itself is async and DB-free (it sits with `list`
+    // above the DB block), and only opens a connection afterwards if `auto_delete`
+    // asks it to prune terminal-failure models — see below.
     if operation == "health_check" {
         let mut report = crate::router::health_check(&state.router, &state.settings).await;
 
