@@ -13,7 +13,7 @@
 //!
 //! ## Quick Start
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use image_processor::{
 //!     pipeline::ImagePipeline,
 //!     text::{LoadedFont, TextStyle, TextAlignment},

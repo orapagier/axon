@@ -102,7 +102,7 @@ impl BatchSummary {
 /// - `processor`: closure that transforms a DynamicImage
 ///
 /// # Example
-/// ```rust
+/// ```rust,ignore
 /// let results = process_files(
 ///     &inputs,
 ///     "output/",

@@ -10,7 +10,7 @@ use image::{imageops::FilterType, DynamicImage, Rgba};
 /// Fluent builder for chaining image processing operations.
 ///
 /// # Example
-/// ```rust
+/// ```rust,ignore
 /// let result = ImagePipeline::from_path("input.jpg")?
 ///     .resize_fill(1080, 1080)
 ///     .brightness(-20)

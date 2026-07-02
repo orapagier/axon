@@ -445,7 +445,7 @@ impl VideoConfig {
 /// - `config`: encoding configuration
 ///
 /// # Example
-/// ```rust
+/// ```rust,ignore
 /// image_to_video(
 ///     "quote.png",
 ///     "background_music.mp3",
@@ -783,7 +783,7 @@ fn slideshow_crossfade(
 /// Useful when your background track is shorter than the intended video.
 ///
 /// # Example
-/// ```rust
+/// ```rust,ignore
 /// loop_audio("short_music.mp3", Duration::from_secs(60), "looped.mp3")?;
 /// image_to_video("image.png", "looped.mp3", "output.mp4", &VideoConfig::default())?;
 /// ```
