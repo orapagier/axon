@@ -81,6 +81,7 @@ impl ShortTermMemory {
         Ok(self
             .get_messages(session_id)?
             .into_iter()
+            .filter(|r| r.role != "trace")
             .map(|r| match r.role.as_str() {
                 "assistant" => Message::assistant(r.content),
                 _ => Message::user(r.content),
@@ -96,7 +97,13 @@ impl ShortTermMemory {
         session_id: &str,
         limit: usize,
     ) -> anyhow::Result<Vec<Message>> {
-        let mut rows = self.get_messages(session_id)?;
+        // Drop display-only trace rows BEFORE applying the window so they never
+        // consume context slots meant for real turns.
+        let mut rows: Vec<ShortTermRow> = self
+            .get_messages(session_id)?
+            .into_iter()
+            .filter(|r| r.role != "trace")
+            .collect();
         let limit = limit.max(1);
         if rows.len() > limit {
             rows = rows.split_off(rows.len() - limit);

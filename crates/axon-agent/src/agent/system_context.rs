@@ -88,7 +88,15 @@ pub(crate) async fn build_run_context(
     {
         messages.remove(0);
     }
-    if messages.last().map(|m| m.role != "user").unwrap_or(true) {
+    // Always append the current task unless it is literally already the last
+    // user turn. The old `last is user → skip` check let a leftover trailing
+    // user message (from a failed/cancelled prior run) swallow the new request:
+    // the model would answer the stale question and never see this one.
+    let last_is_current_task = messages
+        .last()
+        .map(|m| m.role == "user" && matches!(&m.content, MessageContent::Text(t) if t == task))
+        .unwrap_or(false);
+    if !last_is_current_task {
         messages.push(Message::user(task));
     }
     if memory_enabled {
@@ -130,7 +138,13 @@ pub(crate) async fn build_run_context(
                 );
                 (filtered, serde_json::Value::Object(info))
             } else {
-                state.tool_router.filter_tools(task, &all_tools, &[]).await
+                // Route with the session history so anaphoric follow-ups
+                // ("get me another one") resolve against prior turns instead
+                // of routing blind on four context-free words.
+                state
+                    .tool_router
+                    .filter_tools(task, &all_tools, &messages)
+                    .await
             }
         }
     );
@@ -225,7 +239,9 @@ CRITICAL RULES:\n\
 3. If a tool exists for the request (email, calendar, search, etc.), you MUST call it — do NOT claim you cannot access it.\n\
 4. Provide responses in PLAIN TEXT ONLY. Do not use Markdown formatting.\n\
 5. If your previous chat history contains errors, outages, or broken services, DO NOT bring them up again when the user says 'hi' or greets you. Assume problems may have been resolved in the background. Only discuss past errors if the user explicitly asks.\n\
-6. Do NOT mention the current time/date unless the user asked for it or the task genuinely requires it.\n\n\
+6. Do NOT mention the current time/date unless the user asked for it or the task genuinely requires it.\n\
+7. FOLLOW-UPS: requests like 'another one', 'again', 'one more', 'the same but...' refer to earlier turns. Resolve the reference from the conversation history yourself, then CALL THE TOOL again with the right arguments. Never answer a follow-up from memory when the original answer required a tool, and do not ask what the user means when history makes it clear.\n\
+8. NEVER end your reply with a promise of future work ('Let me get...', 'I'll fetch...', 'one moment'). You cannot act between replies — do the work NOW with tools and reply with the actual result.\n\n\
 FILE HANDLING:\n\
 - To send a file back to the user, include <send_file>/path/to/local/file</send_file> in your final answer.\n\
 - When user attached files are listed above, use the local path directly with upload tools.\n\

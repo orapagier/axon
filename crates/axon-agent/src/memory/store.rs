@@ -26,6 +26,12 @@ impl MemoryStore {
     pub fn add_assistant(&self, s: &str, t: &str) -> anyhow::Result<()> {
         self.short.store_message(s, "assistant", t, None)
     }
+    /// Store a run's reasoning trace (JSON array of display items) alongside
+    /// the transcript. Trace rows are display-only: `to_messages*` filters
+    /// them out so they never reach the model's context.
+    pub fn add_trace(&self, s: &str, t: &str) -> anyhow::Result<()> {
+        self.short.store_message(s, "trace", t, None)
+    }
     /// Store a user turn, trimming this session to `cap` most-recent messages.
     pub fn add_user_capped(&self, s: &str, t: &str, cap: usize) -> anyhow::Result<()> {
         self.short.store_message_capped(s, "user", t, None, cap)

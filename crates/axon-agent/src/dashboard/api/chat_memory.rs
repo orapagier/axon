@@ -45,16 +45,54 @@ pub async fn create_conversation(State(state): State<AppState>) -> Json<Value> {
 
 /// Return the stored user/assistant transcript for one conversation so the UI
 /// can rehydrate the thread when the user reopens it.
+///
+/// Assistant rows are stored with raw `<send_file>` tags (the canonical form
+/// the agent itself uses); resolve them to authorized download links here so
+/// reloaded chats keep working links. Trace rows (persisted at run end, i.e.
+/// right AFTER their assistant row) are re-ordered in front of the answer to
+/// match the live layout: user → trace → agent bubble.
 pub async fn get_conversation_messages(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Json<Value> {
     let rows = state.memory.get_session(&id).unwrap_or_default();
-    let messages: Vec<Value> = rows
-        .into_iter()
-        .filter(|r| r.role == "user" || r.role == "assistant")
-        .map(|r| json!({ "role": r.role, "content": r.content, "created_at": r.created_at }))
-        .collect();
+    let mut messages: Vec<Value> = Vec::new();
+    for r in rows {
+        match r.role.as_str() {
+            "user" => messages.push(json!({
+                "role": "user",
+                "content": r.content,
+                "created_at": r.created_at,
+            })),
+            "assistant" => messages.push(json!({
+                "role": "assistant",
+                "content": crate::agent::r#loop::resolve_send_file_links(&r.content),
+                "created_at": r.created_at,
+            })),
+            "trace" => {
+                let items: Value = serde_json::from_str(&r.content).unwrap_or_else(|_| json!([]));
+                if items.as_array().map(|a| a.is_empty()).unwrap_or(true) {
+                    continue;
+                }
+                let msg = json!({
+                    "role": "trace",
+                    "items": items,
+                    "created_at": r.created_at,
+                });
+                let insert_at = if messages
+                    .last()
+                    .map(|m| m["role"] == "assistant")
+                    .unwrap_or(false)
+                {
+                    messages.len() - 1
+                } else {
+                    messages.len()
+                };
+                messages.insert(insert_at, msg);
+            }
+            _ => {}
+        }
+    }
     Json(json!({ "messages": messages }))
 }
 

@@ -24,6 +24,16 @@ static MULTISTEP: Lazy<Regex> = Lazy::new(|| {
 ).unwrap()
 });
 
+/// Anaphoric follow-up markers: the request leans on earlier turns for its
+/// meaning ("get me another one", "do it again", "same for the other file").
+/// Such messages carry no service keywords themselves, so routing them
+/// requires folding recent history into the routing text.
+static FOLLOWUP: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+    r"(?i)\b(another|again|one\s+more|more\s+of|the\s+same|same\s+(one|thing|file|way)|that\s+(one|file|again)|this\s+one|those|these|them|it|previous|last\s+one|next\s+one|the\s+other|others?|as\s+well|too|also|retry|redo|resend|repeat|continue|keep\s+going)\b"
+).unwrap()
+});
+
 /// Intent-aware static routes: maps (service keywords) → (read_tools, write_tools, all_tools).
 /// When the user mentions a service, we check intent (read vs write) and inject ONLY relevant tools.
 /// This prevents routing noise (e.g., send tools for "check new gmail") and ensures coverage for
@@ -197,6 +207,44 @@ static STATIC_ROUTES: Lazy<Vec<StaticRoute>> = Lazy::new(|| {
     ]
 });
 
+/// Recent-history text used to route anaphoric follow-ups that don't name a
+/// service themselves: the last couple of user turns plus the last assistant
+/// turn, skipping the trailing copy of the current message (the caller appends
+/// the in-flight task to history before routing). Truncated per-message so a
+/// long earlier answer can't drown the routing signal.
+fn history_context_text(msg: &str, history: &[Message]) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let mut users = 0usize;
+    let mut assistants = 0usize;
+    let mut skipped_current = false;
+    for m in history.iter().rev() {
+        let text = match &m.content {
+            crate::providers::types::MessageContent::Text(t) => t,
+            _ => continue,
+        };
+        if !skipped_current && m.role == "user" && text.trim() == msg {
+            skipped_current = true;
+            continue;
+        }
+        match m.role.as_str() {
+            "user" if users < 2 => {
+                users += 1;
+                parts.push(text.chars().take(200).collect());
+            }
+            "assistant" if assistants < 1 => {
+                assistants += 1;
+                parts.push(text.chars().take(200).collect());
+            }
+            _ => {}
+        }
+        if users >= 2 && assistants >= 1 {
+            break;
+        }
+    }
+    parts.reverse();
+    parts.join("\n")
+}
+
 /// Select tools from a StaticRoute based on user intent
 fn select_by_intent(route: &StaticRoute, msg: &str) -> Vec<String> {
     let is_read = READ_INTENT.is_match(msg);
@@ -271,7 +319,10 @@ impl ToolRouter {
     }
 
     // FIX: async fn using .read().await — never calls block_on
-    async fn tier1(&self, msg: &str) -> (Vec<String>, bool) {
+    // Returns (matched tools, confident, service_hit). `service_hit` is exposed
+    // so `filter_tools` can tell "no service named at all" (retry with history
+    // context) apart from "matched but not confidently".
+    async fn tier1(&self, msg: &str) -> (Vec<String>, bool, bool) {
         let p = self.patterns.read().await;
         let mut matched: Vec<String> = p
             .iter()
@@ -295,7 +346,7 @@ impl ToolRouter {
 
         let confident =
             service_hit || (!matched.is_empty() && matched.len() <= 3 && !MULTISTEP.is_match(msg));
-        (matched, confident)
+        (matched, confident, service_hit)
     }
 
     /// Ensure every candidate tool has a cached description embedding. Misses are
@@ -530,13 +581,46 @@ impl ToolRouter {
             return (vec![], serde_json::json!({"tier":"simple_tasks"}));
         }
         let multi = MULTISTEP.is_match(msg);
-        let (hits, confident) = self.tier1(msg).await;
+        let (mut hits, mut confident, service_hit) = self.tier1(msg).await;
+        let mut tier1_label = "regex";
+
+        // Context-aware follow-up routing: when the message names no service
+        // itself and reads like an anaphoric follow-up (or is just short),
+        // re-run the pattern tier over recent history + the message. "get me
+        // another one" then inherits the gdrive route from the previous turn.
+        // The combined text also feeds the embedding tier below, so semantic
+        // matching sees the same context.
+        let mut route_msg = msg.to_string();
+        if !service_hit
+            && !history.is_empty()
+            && (FOLLOWUP.is_match(msg) || msg.split_whitespace().count() <= 12)
+        {
+            let ctx_text = history_context_text(msg, history);
+            if !ctx_text.is_empty() {
+                let combined = format!("{}\n{}", ctx_text, msg);
+                let (ctx_hits, ctx_confident, _) = self.tier1(&combined).await;
+                if !ctx_hits.is_empty() {
+                    for h in ctx_hits {
+                        if !hits.contains(&h) {
+                            hits.push(h);
+                        }
+                    }
+                    confident = confident || ctx_confident;
+                    tier1_label = "regex_context";
+                }
+                route_msg = combined;
+            }
+        }
+
         if confident {
             let tools = hits
                 .iter()
                 .filter_map(|n| by_name.get(n).map(|t| (*t).clone()))
                 .collect();
-            return (tools, serde_json::json!({"tier":"regex","duration_ms":0}));
+            return (
+                tools,
+                serde_json::json!({"tier": tier1_label, "duration_ms": 0}),
+            );
         }
         let candidates: Vec<ToolDefinition> = if multi || hits.is_empty() {
             all_tools.to_vec()
@@ -550,7 +634,7 @@ impl ToolRouter {
         // chat-completion per routing turn with one cheap embedding call. Falls
         // through to the LLM tier only when embeddings are unavailable or nothing
         // clears the similarity floor.
-        if let Some((emb_hits, telem)) = self.tier_embed(msg, &candidates).await {
+        if let Some((emb_hits, telem)) = self.tier_embed(&route_msg, &candidates).await {
             let merged = if multi && !hits.is_empty() {
                 let mut v = hits.clone();
                 for h in &emb_hits {

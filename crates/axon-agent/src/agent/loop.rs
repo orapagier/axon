@@ -65,6 +65,16 @@ static RE_TIME_SENSITIVE_TASK: Lazy<regex::Regex> = Lazy::new(|| {
     )
     .unwrap()
 });
+/// A response that opens with a promise of future action ("Let me grab...",
+/// "I'll fetch...") instead of doing the work. The agent cannot act between
+/// turns, so an answer like this with no successful tool call this run is a
+/// dead end — the promised work never happens.
+static RE_PROMISE_ONLY: Lazy<regex::Regex> = Lazy::new(|| {
+    regex::Regex::new(
+        r"(?i)^\W*(sure|okay|ok|alright|got it|certainly|of course|no problem|absolutely)?[\s,!.\-]*(let me|i.ll|i will|i.m going to|i am going to|i.m on it|give me a (moment|sec|second|minute|bit)|one (moment|sec|second|minute)|just a (moment|sec|second|minute)|hold on|hang on|working on (it|that)|right away|will do)\b",
+    )
+    .unwrap()
+});
 
 // ── Shared constants — single source of truth ────────────────────────────────
 
@@ -426,6 +436,31 @@ async fn validate_response(
             message: "Your response was completely blank or only contained internal thinking blocks. You MUST output a clear, human-readable text response to the user. If the error is due to a service being unreachable, or the task is not possible with your current capabilities and tools, explain it in plain text.".to_string(),
             reason: RetryReason::BlankResponse,
         };
+    }
+
+    // 3.5. Unfulfilled-promise guard (deterministic, zero cost). Catches "Let
+    // me grab that for you." turns that end with only a promise: no successful
+    // tool receipt exists, so the promised work would silently never happen.
+    // Fires even when NO tools were routed — the retry re-routes with fuller
+    // conversation context, which is exactly what anaphoric follow-ups
+    // ("get me another one") need. Shares the nudge counter with the refusal
+    // guard so corrections stay bounded.
+    {
+        let any_success = tool_receipts.iter().any(|r| r.ok);
+        let clean_trimmed = clean.trim();
+        let is_promise_only = !any_success
+            && guard_counts.nudge_count < 2
+            && clean_trimmed.len() < 300
+            && RE_PROMISE_ONLY.is_match(clean_trimmed)
+            && !clean_trimmed.to_lowercase().contains("let me know")
+            && !text.contains("<send_file>");
+        if is_promise_only {
+            guard_counts.nudge_count += 1;
+            return ValidationDecision::Retry {
+                message: "You ended your turn with only a promise of future action ('let me...', 'I'll...'). You CANNOT perform work between turns — the user only sees this message and nothing would ever happen. Re-read the conversation to resolve what the user is referring to, call the needed tool(s) NOW, and reply with the actual result. If the request is genuinely impossible, say so plainly instead of promising.".to_string(),
+                reason: RetryReason::Refusal,
+            };
+        }
     }
 
     // 4. Quality check (LLM call — only when actually needed)
@@ -1368,31 +1403,7 @@ pub(crate) async fn run_inner(
 
                     // Resolve <send_file> tags for dashboard
                     if ctx.platform == "dashboard" {
-                        while let (Some(s), Some(e)) = (
-                            final_output.find("<send_file>"),
-                            final_output.find("</send_file>"),
-                        ) {
-                            if s < e {
-                                let path = final_output[s + 11..e].trim().to_string();
-                                let filename = std::path::Path::new(&path)
-                                    .file_name()
-                                    .unwrap_or_default()
-                                    .to_string_lossy();
-                                let md_link = format!(
-                                    "\n\n📎 **[Download {}](/api/download?path={})**\n\n",
-                                    filename,
-                                    urlencoding::encode(&path)
-                                );
-                                final_output = format!(
-                                    "{}{}{}",
-                                    &final_output[..s],
-                                    md_link,
-                                    &final_output[e + 12..]
-                                );
-                            } else {
-                                break;
-                            }
-                        }
+                        final_output = resolve_send_file_links(&final_output);
                     }
 
                     // Emit token (deferred until we know we're passing). Uses the
@@ -2001,6 +2012,32 @@ fn trim_tool_results_by_budget(messages: &mut Vec<Message>, budget_chars: usize)
 }
 
 // ── Text cleaning ────────────────────────────────────────────────────────────
+
+/// Rewrite `<send_file>path</send_file>` tags into authorized dashboard
+/// download links. Used live before the Token/Done emission, and again when
+/// the dashboard rehydrates a stored transcript (`GET /conversations/:id/messages`)
+/// — the raw tag is what's persisted, so reloaded chats must resolve it too.
+pub fn resolve_send_file_links(text: &str) -> String {
+    let mut out = text.to_string();
+    while let (Some(s), Some(e)) = (out.find("<send_file>"), out.find("</send_file>")) {
+        if s >= e {
+            break;
+        }
+        let path = out[s + 11..e].trim().to_string();
+        let filename = std::path::Path::new(&path)
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let md_link = format!(
+            "\n\n📎 **[Download {}](/api/download?path={})**\n\n",
+            filename,
+            urlencoding::encode(&path)
+        );
+        out = format!("{}{}{}", &out[..s], md_link, &out[e + 12..]);
+    }
+    out
+}
 
 fn strip_reasoning(text: &str) -> String {
     let mut result = RE_THINKING_BLOCK.replace_all(text, "").to_string();

@@ -45,9 +45,21 @@ function uuid() {
 }
 
 function rowToMessage(m) {
+  if (m.role === 'trace') {
+    // Persisted reasoning trace — rehydrated collapsed to save space.
+    return { role: 'trace', trace: Array.isArray(m.items) ? m.items : [], collapsed: true }
+  }
   return m.role === 'assistant'
     ? { role: 'agent', text: m.content, thinking: false, meta: '', status: '' }
     : { role: 'user', text: m.content }
+}
+
+// Collapse the in-flight trace block once its run is over; it stays available
+// behind the "Reasoning" toggle instead of taking up transcript space.
+function collapseTrace() {
+  if (traceIdx >= 0 && messages.value[traceIdx]) {
+    messages.value[traceIdx].collapsed = true
+  }
 }
 
 function resetRunTrackers() {
@@ -255,6 +267,7 @@ function handleWsEvent(ev) {
         const dur = ev.total_duration_ms ? ` | ${ev.total_duration_ms}ms` : ''
         messages.value[agentIdx].meta = `${ev.iterations} iter | ${ev.total_tokens} tokens${dur}`
       }
+      collapseTrace()
       resetRunTrackers()
       disabled.value = false
       // Reconcile the sidebar: a brand-new thread now has a backend title, and
@@ -269,6 +282,7 @@ function handleWsEvent(ev) {
         messages.value[agentIdx].status = ''
       }
       toast(ev.message || 'Agent error', false)
+      collapseTrace()
       resetRunTrackers()
       disabled.value = false
       break
@@ -306,8 +320,8 @@ async function send() {
   disabled.value = true
   adjustInputHeight()
 
-  // Add trace block then agent bubble
-  messages.value.push({ role: 'trace', trace: [] })
+  // Add trace block (expanded while the run streams) then agent bubble
+  messages.value.push({ role: 'trace', trace: [], collapsed: false })
   messages.value.push({ role: 'agent', text: '', thinking: true, meta: '', status: 'Thinking...' })
 
   traceIdx = messages.value.length - 2
@@ -350,6 +364,7 @@ function stop() {
     if (!m.text) m.text = 'Stopped.'
     m.meta = m.meta ? `${m.meta} · stopped` : 'stopped'
   }
+  collapseTrace()
   resetRunTrackers()
   disabled.value = false
 }
@@ -431,6 +446,7 @@ watch(wsStatus, (s) => {
       if (!m.text) m.text = 'Connection lost before a response arrived. Please try again.'
       else m.meta = 'interrupted — connection lost'
     }
+    collapseTrace()
     resetRunTrackers()
     disabled.value = false
   }
@@ -522,8 +538,14 @@ watch(disabled, (newVal) => {
 
         <template v-for="(msg, idx) in messages" :key="idx">
           <div v-if="msg.role === 'trace'" v-show="msg.trace.length > 0" class="tool-trace">
-            <div v-for="(item, i) in msg.trace" :key="i" class="tool-trace-item">
-              <span :style="{ color: item.color }">{{ item.text }}</span>
+            <button class="trace-toggle" type="button" @click="msg.collapsed = !msg.collapsed">
+              <span class="trace-chevron" :class="{ open: !msg.collapsed }">▸</span>
+              Reasoning · {{ msg.trace.length }} step{{ msg.trace.length === 1 ? '' : 's' }}
+            </button>
+            <div v-show="!msg.collapsed" class="trace-items">
+              <div v-for="(item, i) in msg.trace" :key="i" class="tool-trace-item">
+                <span :style="{ color: item.color }">{{ item.text }}</span>
+              </div>
             </div>
           </div>
 
@@ -579,6 +601,37 @@ watch(disabled, (newVal) => {
 </template>
 
 <style scoped>
+.trace-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  opacity: 0.75;
+  cursor: pointer;
+}
+
+.trace-toggle:hover {
+  opacity: 1;
+}
+
+.trace-chevron {
+  display: inline-block;
+  transition: transform 0.15s ease;
+}
+
+.trace-chevron.open {
+  transform: rotate(90deg);
+}
+
+.trace-items {
+  margin-top: 6px;
+}
+
 .chat-workspace {
   display: flex;
   flex-direction: row;
