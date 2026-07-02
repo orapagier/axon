@@ -66,6 +66,81 @@ pub(crate) async fn execute(config: &Value, state: &AppState) -> Result<Value, S
     // never included. Async and DB-free, so it sits with `list` above the DB block.
     if operation == "health_check" {
         let mut report = crate::router::health_check(&state.router, &state.settings).await;
+
+        // Optional inline cleanup. If the node opts into auto-deleting one or more
+        // TERMINAL failure categories, prune those models right here so the workflow
+        // needs no downstream Delete node. `auto_delete_categories` only ever admits
+        // irrecoverable reasons (DELETABLE_CATEGORIES) — recoverable ones
+        // (rate_limited, payment_required, server_error, timeout, unreachable) and,
+        // critically, `misconfigured` (an unresolved ${VAR}, i.e. a server-env
+        // problem, not a bad model) are never eligible, so a transient outage or a
+        // missing env var can't wipe a good row. The health probe already ran
+        // DB-free above, so the connection is opened only now and dropped before the
+        // router reload await, honoring the !Sync-across-await rule.
+        let auto_delete = auto_delete_categories(config);
+        if !auto_delete.is_empty() {
+            // Names to remove come from the report's own unhealthy buckets.
+            let mut targets: Vec<(String, String)> = Vec::new(); // (category, name)
+            if let Some(unhealthy) = report
+                .get("by_status")
+                .and_then(|v| v.get("unhealthy"))
+                .and_then(|v| v.as_object())
+            {
+                for cat in &auto_delete {
+                    if let Some(entries) = unhealthy.get(cat).and_then(|v| v.as_array()) {
+                        for e in entries {
+                            if let Some(name) = e.get("name").and_then(|v| v.as_str()) {
+                                targets.push((cat.clone(), name.to_string()));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Seed the selected categories so the `deleted` shape tracks the ticked
+            // boxes (a category is present even if it removed nothing this run).
+            let mut deleted_by_cat: serde_json::Map<String, Value> =
+                auto_delete.iter().map(|c| (c.clone(), json!([]))).collect();
+            let mut delete_errors: Vec<Value> = Vec::new();
+            let mut deleted_count: u64 = 0;
+
+            if !targets.is_empty() {
+                let reload_models = {
+                    let conn = state.db.get().map_err(|e| format!("DB pool: {e}"))?;
+                    for (cat, name) in &targets {
+                        match crate::dashboard::api::apply_delete_model(&conn, name) {
+                            Ok(0) => {} // already gone — nothing to record
+                            Ok(_) => {
+                                deleted_count += 1;
+                                if let Some(Value::Array(arr)) = deleted_by_cat.get_mut(cat) {
+                                    arr.push(json!(name));
+                                }
+                            }
+                            // Don't discard the whole health report over one bad
+                            // delete; record it and carry on.
+                            Err(e) => delete_errors
+                                .push(json!({ "name": name, "category": cat, "error": e })),
+                        }
+                    }
+                    crate::config::load_models_from_db(&conn).unwrap_or_default()
+                    // `conn` is dropped here, before the await below.
+                };
+                // Hot-reload the router so later nodes and live traffic see the
+                // pruned model set immediately.
+                crate::router::update_models(&state.router, reload_models).await;
+            }
+
+            let mut deleted = serde_json::Map::new();
+            deleted.insert("count".into(), json!(deleted_count));
+            deleted.insert("by_category".into(), Value::Object(deleted_by_cat));
+            if !delete_errors.is_empty() {
+                deleted.insert("errors".into(), Value::Array(delete_errors));
+            }
+            if let Some(obj) = report.as_object_mut() {
+                obj.insert("deleted".into(), Value::Object(deleted));
+            }
+        }
+
         if let Some(obj) = report.as_object_mut() {
             obj.insert("ok".into(), json!(true));
             obj.insert("resource".into(), json!("model"));
