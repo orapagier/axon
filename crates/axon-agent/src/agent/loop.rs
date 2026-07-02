@@ -1348,14 +1348,6 @@ pub(crate) async fn run_inner(
                         }
                     }
 
-                    // Emit token (deferred until we know we're passing)
-                    if !text.is_empty() && !token_emitted {
-                        emit!(AgentEvent::Token {
-                            run_id: run_id.clone(),
-                            text: text.clone()
-                        });
-                    }
-
                     // Clean and finalize output
                     let mut clean = strip_reasoning(&text);
                     if tools_used.is_empty() {
@@ -1401,6 +1393,16 @@ pub(crate) async fn run_inner(
                                 break;
                             }
                         }
+                    }
+
+                    // Emit token (deferred until we know we're passing). Uses the
+                    // fully resolved output so dashboard clients don't render raw
+                    // <send_file> tags or unstripped markdown before `done` arrives.
+                    if !final_output.is_empty() && !token_emitted {
+                        emit!(AgentEvent::Token {
+                            run_id: run_id.clone(),
+                            text: final_output.clone()
+                        });
                     }
 
                     let alerts = drain_alerts(&state.router).await;
