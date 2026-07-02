@@ -1486,36 +1486,37 @@ export const NODE_TYPES = {
                 displayOptions: { show: { operation: ['health_check'] } },
             },
             {
-                displayName: 'Not Found (404)',
-                name: 'auto_delete_not_found',
-                type: 'boolean',
-                default: false,
-                description: 'Delete models that fail with 404 — dropped / retired / wrong ID.',
+                // The four terminal failure reasons that can trigger an
+                // auto-delete, grouped into one titled card. Each option still
+                // binds to its own `auto_delete_<reason>` config key, exactly
+                // what the backend's auto_delete_categories() reads.
+                displayName: 'Delete Models',
+                name: 'auto_delete_group',
+                type: 'checkboxCard',
+                description: 'Tick a reason to permanently delete any model that fails this health check with it. Only terminal, irrecoverable reasons can be ticked; leave all off to only report.',
                 displayOptions: { show: { operation: ['health_check'] } },
-            },
-            {
-                displayName: 'Invalid Key (401)',
-                name: 'auto_delete_invalid_key',
-                type: 'boolean',
-                default: false,
-                description: 'Delete models that fail with 401 — credentials rejected.',
-                displayOptions: { show: { operation: ['health_check'] } },
-            },
-            {
-                displayName: 'Forbidden (403)',
-                name: 'auto_delete_forbidden',
-                type: 'boolean',
-                default: false,
-                description: 'Delete models that fail with 403 — no access to this model.',
-                displayOptions: { show: { operation: ['health_check'] } },
-            },
-            {
-                displayName: 'Bad Request (400)',
-                name: 'auto_delete_bad_request',
-                type: 'boolean',
-                default: false,
-                description: 'Delete models that fail with 400 — unsupported / malformed.',
-                displayOptions: { show: { operation: ['health_check'] } },
+                options: [
+                    {
+                        displayName: 'Not Found (404)',
+                        name: 'auto_delete_not_found',
+                        description: 'Delete models that fail with 404 — dropped / retired / wrong ID.',
+                    },
+                    {
+                        displayName: 'Invalid Key (401)',
+                        name: 'auto_delete_invalid_key',
+                        description: 'Delete models that fail with 401 — credentials rejected.',
+                    },
+                    {
+                        displayName: 'Forbidden (403)',
+                        name: 'auto_delete_forbidden',
+                        description: 'Delete models that fail with 403 — no access to this model.',
+                    },
+                    {
+                        displayName: 'Bad Request (400)',
+                        name: 'auto_delete_bad_request',
+                        description: 'Delete models that fail with 400 — unsupported / malformed.',
+                    },
+                ],
             },
         ],
     },

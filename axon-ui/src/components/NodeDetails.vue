@@ -1853,6 +1853,24 @@ onUnmounted(() => {
                       <button type="button" class="btn-fx-toggle" title="Use an expression" @click="enterExprMode('p:'+prop.name, () => node.data.config[prop.name] = '')">ƒx</button>
                     </div>
                   </template>
+                  <template v-else-if="prop.type === 'checkboxCard'">
+                    <div class="checkbox-card">
+                      <div class="checkbox-card-title">{{ prop.displayName }}</div>
+                      <p v-if="prop.description" class="checkbox-card-desc">{{ prop.description }}</p>
+                      <label
+                        v-for="item in prop.options"
+                        :key="item.name"
+                        class="checkbox-card-item"
+                        :title="item.description || ''"
+                      >
+                        <input type="checkbox" v-model="node.data.config[item.name]" />
+                        <span class="cc-item-text">
+                          <span class="cc-item-name">{{ item.displayName }}</span>
+                          <span v-if="item.description" class="cc-item-desc">{{ item.description }}</span>
+                        </span>
+                      </label>
+                    </div>
+                  </template>
                   <template v-else-if="prop.type === 'options'">
                     <label>{{ prop.displayName }}</label>
                     <ExprInput
@@ -3178,6 +3196,40 @@ small.form-desc {
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    COLLECTIONS (fixedCollection / collection)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+/* Checkbox card — a titled box grouping related boolean toggles
+   (e.g. Homeostasis Health Check's auto-delete reasons). */
+.checkbox-card {
+  grid-column: 1 / -1;
+  margin: 8px 0;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 12px;
+  backdrop-filter: blur(2px);
+}
+.checkbox-card-title {
+  font-size: 10px; font-weight: 800; color: #6366f1;
+  text-transform: uppercase; letter-spacing: 0.1em;
+  margin-bottom: 6px;
+}
+.checkbox-card-desc {
+  margin: 0 0 10px; font-size: 11px; line-height: 1.4;
+  color: #a6a6b2;
+}
+.checkbox-card-item {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 6px; border-radius: 7px; cursor: pointer;
+  transition: background 0.15s;
+}
+.checkbox-card-item:hover { background: rgba(255, 255, 255, 0.04); }
+.checkbox-card-item input[type="checkbox"] {
+  margin: 2px 0 0; width: 15px; height: 15px;
+  accent-color: #6366f1; cursor: pointer; flex-shrink: 0;
+}
+.cc-item-text { display: flex; flex-direction: column; gap: 2px; }
+.cc-item-name { font-size: 12px; font-weight: 600; color: #f2f7ff; }
+.cc-item-desc { font-size: 11px; line-height: 1.35; color: #8b8b96; }
+
 .collection-wrapper { grid-column: 1 / -1; margin: 8px 0; }
 
 .collection-header { margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
