@@ -130,6 +130,12 @@ const MIGRATIONS: &[Migration] = &[
         sql: include_str!("migrations/0017_embedding_model.sql"),
         tolerant_dup_column: true,
     },
+    Migration {
+        version: 18,
+        name: "model_origin",
+        sql: include_str!("migrations/0018_model_origin.sql"),
+        tolerant_dup_column: true,
+    },
 ];
 
 const SEED_SQL: &str = include_str!("seed.sql");
@@ -317,6 +323,9 @@ mod tests {
         assert!(col_exists(&conn, "workflow_runs", "parent_run_id"));
         // Embedding provenance: memory vectors are tagged with their model.
         assert!(col_exists(&conn, "long_term", "embedding_model"));
+        // Model provenance: 'toml' rows belong to models.toml, 'runtime' rows
+        // (dashboard / Homeostasis node) survive the boot sync's prune.
+        assert!(col_exists(&conn, "models", "origin"));
         // Configurable embeddings provider settings are seeded.
         assert!(setting(&conn, "embedder.base_url").is_some());
         assert!(setting(&conn, "embedder.model").is_some());

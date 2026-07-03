@@ -251,43 +251,12 @@ async fn main() -> anyhow::Result<()> {
     let models = {
         let conn = db.get().context("get DB connection for model sync")?;
 
-        // Always try to load from TOML as the "Source of Truth" for configuration
+        // TOML is the Source of Truth for the rows it names: they are upserted
+        // with origin='toml' and pruned when removed from the file. Rows with
+        // origin='runtime' (dashboard / Homeostasis node additions) are never
+        // touched by this sync, so they survive restarts.
         match load_models("config/models.toml") {
-            Ok(toml_models) => {
-                let mut current_names = Vec::new();
-                for m in toml_models {
-                    current_names.push(m.name.clone());
-                    let _ = conn.execute(
-                        "INSERT INTO models (name, provider, model_id, api_key, base_url, timeout_secs, priority, max_tokens, enabled, role) 
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-                         ON CONFLICT(name) DO UPDATE SET 
-                            provider=excluded.provider, 
-                            model_id=excluded.model_id, 
-                            api_key=excluded.api_key, 
-                            base_url=excluded.base_url, 
-                            timeout_secs=excluded.timeout_secs,
-                            priority=excluded.priority, 
-                            max_tokens=excluded.max_tokens, 
-                            enabled=excluded.enabled, 
-                            role=excluded.role",
-                        rusqlite::params![
-                            m.name, m.provider, m.model_id, axon::crypto::encrypt_key(&m.api_key), m.base_url,
-                            m.timeout_secs.map(|v| v as i64), m.priority, m.max_tokens, if m.enabled { 1 } else { 0 }, m.role
-                        ],
-                    );
-                }
-
-                // DELETE models from DB that are no longer in TOML to keep it as Source of Truth
-                if !current_names.is_empty() {
-                    let placeholders = current_names
-                        .iter()
-                        .map(|_| "?")
-                        .collect::<Vec<_>>()
-                        .join(",");
-                    let query = format!("DELETE FROM models WHERE name NOT IN ({})", placeholders);
-                    let _ = conn.execute(&query, rusqlite::params_from_iter(current_names));
-                }
-            }
+            Ok(toml_models) => axon::config::sync_toml_models(&conn, toml_models),
             Err(e) => {
                 tracing::error!("Failed to load config/models.toml: {:?}", e);
             }
