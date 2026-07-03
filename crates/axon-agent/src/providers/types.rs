@@ -55,6 +55,16 @@ pub enum ContentBlock {
         media_type: String,
         data: String,
     },
+    /// Model reasoning returned by providers with thinking enabled. Kept in
+    /// the in-run history so Anthropic can echo it back on multi-turn tool use
+    /// (the API requires signed thinking blocks to be replayed verbatim).
+    /// Never part of user-visible text (`as_text` skips it) and never
+    /// forwarded to providers that don't understand it.
+    Thinking {
+        thinking: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
+    },
 }
 impl ContentBlock {
     pub fn text(s: impl Into<String>) -> Self {
@@ -219,6 +229,15 @@ pub struct ModelRecord {
     pub max_tokens: u32,
     pub enabled: bool,
     pub role: String,
+    /// Anthropic-provider thinking mode (models.toml, optional):
+    /// "adaptive" (Claude 4.6+), "budget" (older Claude models that take a
+    /// thinking token budget), unset/"off" = never send a thinking param.
+    #[serde(default)]
+    pub thinking_mode: Option<String>,
+    /// Set at runtime when a provider rejected `reasoning_effort` with a 400;
+    /// the field is omitted for this model from then on (process lifetime).
+    #[serde(default)]
+    pub no_reasoning: bool,
     #[serde(default)]
     pub status: String,
     #[serde(default)]

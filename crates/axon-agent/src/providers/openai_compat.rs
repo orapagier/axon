@@ -596,7 +596,12 @@ pub async fn call(
         tool_choice,
         tools: oai_tools,
         temperature: options.temperature,
-        reasoning_effort: options.reasoning_effort.clone(),
+        // Omit for models that already rejected the field once this process.
+        reasoning_effort: if model.no_reasoning {
+            None
+        } else {
+            options.reasoning_effort.clone()
+        },
     };
 
     if let Some(stream_sink) = options.stream_sink {
@@ -677,6 +682,36 @@ pub async fn call(
                 StopReason::EndTurn,
                 UsageInfo::default(),
             ));
+        }
+
+        // A provider that doesn't understand `reasoning_effort` rejects the
+        // whole request with a 400. Strip the field, remember this model
+        // can't take it, and retry once (recursion is bounded: no_reasoning
+        // makes the retried payload omit the field, so this branch can't
+        // re-trigger).
+        if status.as_u16() == 400
+            && payload.reasoning_effort.is_some()
+            && body.to_lowercase().contains("reasoning")
+        {
+            tracing::info!(
+                "Model '{}' rejected reasoning_effort; retrying without it (flagged no_reasoning)",
+                model.name
+            );
+            model.no_reasoning = true;
+            return Box::pin(call(
+                model,
+                messages,
+                system,
+                tools,
+                max_tokens,
+                ProviderCallOptions {
+                    stream_sink: None,
+                    temperature: options.temperature,
+                    tool_choice: options.tool_choice,
+                    reasoning_effort: None,
+                },
+            ))
+            .await;
         }
 
         anyhow::bail!("provider error {} at {}: {}", status, url, body);

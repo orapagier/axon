@@ -21,6 +21,8 @@ struct AnthReq<'a> {
     temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_choice: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thinking: Option<Value>,
 }
 #[derive(Serialize, Deserialize)]
 struct AnthMsg {
@@ -44,6 +46,13 @@ enum AnthBlock {
         name: String,
         input: Value,
     },
+    Thinking {
+        thinking: String,
+        signature: Option<String>,
+    },
+    /// Unknown block types (redacted_thinking, future additions) — skipped.
+    #[serde(other)]
+    Other,
 }
 #[derive(Deserialize)]
 struct AnthUsage {
@@ -69,11 +78,15 @@ pub async fn call(
     let msgs: Vec<AnthMsg> = messages.iter().map(|m| {
         let content = match &m.content {
             MessageContent::Text(t) => json!(t),
-            MessageContent::Blocks(b) => json!(b.iter().map(|blk| match blk {
-                ContentBlock::Text { text }       => json!({"type":"text","text":text}),
-                ContentBlock::ToolUse { id,name,input } => json!({"type":"tool_use","id":id,"name":name,"input":input}),
-                ContentBlock::ToolResult { tool_use_id, content } => json!({"type":"tool_result","tool_use_id":tool_use_id,"content":content}),
-                ContentBlock::Image { media_type, data } => json!({"type":"image","source":{"type":"base64","media_type":media_type,"data":data}}),
+            MessageContent::Blocks(b) => json!(b.iter().filter_map(|blk| match blk {
+                ContentBlock::Text { text }       => Some(json!({"type":"text","text":text})),
+                ContentBlock::ToolUse { id,name,input } => Some(json!({"type":"tool_use","id":id,"name":name,"input":input})),
+                ContentBlock::ToolResult { tool_use_id, content } => Some(json!({"type":"tool_result","tool_use_id":tool_use_id,"content":content})),
+                ContentBlock::Image { media_type, data } => Some(json!({"type":"image","source":{"type":"base64","media_type":media_type,"data":data}})),
+                // Signed thinking blocks must be echoed back verbatim on
+                // multi-turn tool use; unsigned ones would be rejected, drop them.
+                ContentBlock::Thinking { thinking, signature } => signature.as_ref().map(|sig|
+                    json!({"type":"thinking","thinking":thinking,"signature":sig})),
             }).collect::<Vec<_>>()),
         };
         AnthMsg { role: m.role.clone(), content }
@@ -122,6 +135,39 @@ pub async fn call(
         }
     };
 
+    // Thinking: enabled when the model opts in via `thinking_mode` in
+    // models.toml AND the caller requested reasoning for this turn (the loop
+    // only sets reasoning_effort on complex/tool-use turns, so simple turns
+    // stay cheap). "adaptive" = Claude 4.6+; "budget" = older Claude models,
+    // budget scaled by effort with >=1024 tokens of answer headroom.
+    // Extended thinking requires default sampling, so temperature is dropped
+    // whenever thinking is active.
+    let thinking = match (
+        model.thinking_mode.as_deref(),
+        options.reasoning_effort.as_deref(),
+    ) {
+        (Some("adaptive"), Some(_)) => Some(json!({"type": "adaptive"})),
+        (Some("budget"), Some(effort)) => {
+            let budget: u32 = match effort {
+                "low" => 2048,
+                "high" => 16384,
+                _ => 8192,
+            };
+            let budget = budget.min(max_tokens.saturating_sub(1024));
+            if budget >= 1024 {
+                Some(json!({"type": "enabled", "budget_tokens": budget}))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    };
+    let temperature = if thinking.is_some() {
+        None
+    } else {
+        options.temperature
+    };
+
     let resp = HTTP_CLIENT
         .post("https://api.anthropic.com/v1/messages")
         .header("x-api-key", &model.api_key)
@@ -133,8 +179,9 @@ pub async fn call(
             messages: msgs,
             system: system_field,
             tools: tool_defs,
-            temperature: options.temperature,
+            temperature,
             tool_choice,
+            thinking,
         })
         .send()
         .await
@@ -162,6 +209,14 @@ pub async fn call(
             AnthBlock::ToolUse { id, name, input } => {
                 blocks.push(ContentBlock::ToolUse { id, name, input })
             }
+            AnthBlock::Thinking {
+                thinking,
+                signature,
+            } => blocks.push(ContentBlock::Thinking {
+                thinking,
+                signature,
+            }),
+            AnthBlock::Other => {}
         }
     }
     let stop = match body.stop_reason.as_deref() {

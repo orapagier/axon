@@ -14,6 +14,11 @@ struct OllamaReq {
     tools: Option<Vec<Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     options: Option<Value>,
+    /// Ollama reasoning toggle. Thinking output arrives in the response's
+    /// `message.thinking` field, which we ignore — it never reaches the user.
+    /// Non-reasoning models ignore the flag.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    think: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -169,6 +174,7 @@ pub async fn call(
         stream: false,
         tools: ollama_tools,
         options: ollama_opts,
+        think: options.reasoning_effort.as_ref().map(|_| true),
     };
 
     let mut client_builder = reqwest::Client::builder();

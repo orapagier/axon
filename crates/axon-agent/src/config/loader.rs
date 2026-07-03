@@ -45,6 +45,9 @@ pub struct RawModel {
     pub enabled: bool,
     #[serde(default)]
     pub role: String,
+    /// Anthropic-provider thinking mode: "adaptive" | "budget" | unset ("off").
+    #[serde(default)]
+    pub thinking_mode: Option<String>,
 }
 fn default_true() -> bool {
     true
@@ -70,6 +73,8 @@ pub fn load_models(path: &str) -> anyhow::Result<Vec<ModelRecord>> {
             max_tokens: m.max_tokens.unwrap_or(4096),
             enabled: m.enabled,
             role: normalize_role(&m.role),
+            thinking_mode: m.thinking_mode,
+            no_reasoning: false,
             status: "available".into(),
             rate_limit_reset_at: None,
             consecutive_errors: 0,
@@ -85,7 +90,7 @@ pub fn load_models(path: &str) -> anyhow::Result<Vec<ModelRecord>> {
 }
 
 pub fn load_models_from_db(conn: &rusqlite::Connection) -> anyhow::Result<Vec<ModelRecord>> {
-    let mut s = conn.prepare("SELECT name, provider, model_id, api_key, base_url, timeout_secs, priority, max_tokens, enabled, role FROM models")?;
+    let mut s = conn.prepare("SELECT name, provider, model_id, api_key, base_url, timeout_secs, priority, max_tokens, enabled, role, thinking_mode FROM models")?;
     let rows = s.query_map([], |r| {
         let provider: String = r.get(1)?;
         let base_url: Option<String> = r.get(4)?;
@@ -102,6 +107,8 @@ pub fn load_models_from_db(conn: &rusqlite::Connection) -> anyhow::Result<Vec<Mo
             max_tokens: r.get(7)?,
             enabled: r.get::<_, i32>(8)? != 0,
             role: normalize_role(&r.get::<_, String>(9)?),
+            thinking_mode: r.get::<_, Option<String>>(10)?,
+            no_reasoning: false,
             status: "available".into(),
             rate_limit_reset_at: None,
             consecutive_errors: 0,

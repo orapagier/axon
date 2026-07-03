@@ -60,11 +60,11 @@ User decisions locked in:
 - [x] Remap-hit evidence for Phase 6: existing `tracing::info!("Auto-remapped hallucinated tool ...")` (loop.rs) and `tracing::warn!("Service mismatch fix ...")` lines serve as the counters — grep logs for these after 1-2 weeks.
 
 ### Phase 3 — Reasoning ON, provider-agnostic
-- [ ] Default `agent.reasoning_effort` `""` → `"medium"` (applied on `complex_tasks` turns per existing gate).
-- [ ] `providers/openai_compat.rs`: on HTTP 400 naming `reasoning`/`reasoning_effort`, retry once without the field; remember per-model so it's omitted subsequently. Route `reasoning_content`-style output into Thinking events, never final text.
-- [ ] `providers/anthropic.rs`: map `reasoning_effort` → `thinking` param via optional per-model `thinking_mode` in models.toml: `"adaptive"` (Claude 4.6+), `"budget"` (low=2048/med=8192/high=16384, budget < max_tokens; e.g. Haiku 4.5), `"off"` (default — safe for models that reject it).
-- [ ] `providers/ollama.rs`: pass `think` when reasoning_effort set (best-effort).
-- [ ] Verify no provider path leaks reasoning into user-visible output (`strip_reasoning` covers text-embedded thinking).
+- [x] Default `agent.reasoning_effort` `""` → `"medium"` (seeded; "off" disables; applied on `complex_tasks` turns per existing gate).
+- [x] `providers/openai_compat.rs`: on HTTP 400 naming `reasoning`, retry once without the field and flag the model `no_reasoning` (process lifetime) so it's omitted subsequently. Reasoning content in unknown response fields (`reasoning_content`) is ignored by serde — never reaches users.
+- [x] `providers/anthropic.rs`: `reasoning_effort` → `thinking` param via per-model `thinking_mode` (models.toml field + `models` DB column via migration 0015): `"adaptive"` (Claude 4.6+), `"budget"` (low=2048/med=8192/high=16384, ≥1024 answer headroom; e.g. Haiku 4.5), unset = off. Temperature dropped when thinking active (API requirement). New `ContentBlock::Thinking` variant round-trips signed thinking blocks on multi-turn tool use; other providers skip it.
+- [x] `providers/ollama.rs`: `think: true` when reasoning_effort set; response `message.thinking` ignored.
+- [x] Leak guard: `strip_reasoning` now also removes `<think>...</think>` blocks (DeepSeek/Qwen-style inline reasoning); `as_text()`/`text_content()` never include Thinking blocks. Unit test added.
 
 ### Phase 4 — Tools that teach
 - [ ] `loop.rs:1786` (missing_required_args diversion): error includes full `parameters` schema + `required` + a corrected example call.

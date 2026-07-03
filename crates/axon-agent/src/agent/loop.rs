@@ -29,6 +29,10 @@ static RE_TOOL_TEXT: Lazy<regex::Regex> =
     Lazy::new(|| regex::Regex::new(r"(?i)\bTool:\s*\w+").unwrap());
 static RE_THINKING_BLOCK: Lazy<regex::Regex> =
     Lazy::new(|| regex::Regex::new(r"(?si)\(Thinking:.*?\)").unwrap());
+/// Reasoning models that emit their chain of thought inline (<think>...</think>,
+/// e.g. DeepSeek/Qwen via OpenAI-compat gateways) must never leak it to users.
+static RE_THINK_TAG: Lazy<regex::Regex> =
+    Lazy::new(|| regex::Regex::new(r"(?si)<think>.*?</think>").unwrap());
 static RE_STRIP_TOOL_LINE: Lazy<regex::Regex> =
     Lazy::new(|| regex::Regex::new(r"(?im)^\s*Tool:\s*.*$").unwrap());
 static RE_STRIP_PARAMS_LINE: Lazy<regex::Regex> =
@@ -987,11 +991,16 @@ pub(crate) async fn run_inner(
         // Low sampling temperature reduces hallucinated tool syntax and
         // correction oscillation. Configurable; default 0.3.
         let temperature = state.settings.get_f64("agent.temperature", 0.3) as f32;
-        // Reasoning effort is opt-in (default off) — many free OpenAI-compat
-        // providers 400 on an unexpected field. When set, apply it only on the
-        // capable/correction phase where deeper planning actually pays off.
-        let reasoning_cfg = state.settings.get_str("agent.reasoning_effort", "");
-        let reasoning_effort = if !reasoning_cfg.is_empty() && preferred_role == "complex_tasks" {
+        // Reasoning is ON by default ("medium"). Providers that reject the
+        // field degrade gracefully: openai_compat strips it on a 400 and
+        // remembers per-model; anthropic sends a thinking param only when the
+        // model's thinking_mode opts in. Applied only on the capable/correction
+        // phase where deeper planning pays off. Set "off" to disable.
+        let reasoning_cfg = state.settings.get_str("agent.reasoning_effort", "medium");
+        let reasoning_effort = if !reasoning_cfg.is_empty()
+            && reasoning_cfg != "off"
+            && preferred_role == "complex_tasks"
+        {
             Some(reasoning_cfg)
         } else {
             None
@@ -2068,7 +2077,8 @@ pub fn resolve_send_file_links(text: &str) -> String {
 }
 
 fn strip_reasoning(text: &str) -> String {
-    let mut result = RE_THINKING_BLOCK.replace_all(text, "").to_string();
+    let mut result = RE_THINK_TAG.replace_all(text, "").to_string();
+    result = RE_THINKING_BLOCK.replace_all(&result, "").to_string();
     result = RE_STRIP_TOOL_LINE.replace_all(&result, "").to_string();
     result = RE_STRIP_PARAMS_LINE.replace_all(&result, "").to_string();
     result = RE_STRIP_ACTION_LINE.replace_all(&result, "").to_string();
@@ -2110,6 +2120,17 @@ mod tests {
                 assert!(!RE_PROMISE_ONLY.is_match(s), "should not match: {s}");
             }
         }
+    }
+
+    #[test]
+    fn strip_reasoning_removes_think_tags() {
+        let out = strip_reasoning(
+            "<think>The user wants X, so I should\ncall the tool.</think>Here is your answer.",
+        );
+        assert_eq!(out, "Here is your answer.");
+        // Unclosed tag is left alone rather than eating the whole message.
+        let out = strip_reasoning("<think>partial only");
+        assert!(out.contains("partial only"));
     }
 
     #[test]

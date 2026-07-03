@@ -524,7 +524,7 @@ enabled    = true
 # The name inside ${...} must match EXACTLY — a mismatch surfaces at runtime
 # as "All models exhausted".
 #
-# thinking_mode (optional, anthropic provider, active from refactor Phase 3):
+# thinking_mode (optional, anthropic provider):
 #   "adaptive" — Claude 4.6+ adaptive thinking
 #   "budget"   — older Claude models that take a thinking token budget
 #   "off"      — default; safe for models that reject the parameter
