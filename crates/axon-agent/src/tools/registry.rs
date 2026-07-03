@@ -103,6 +103,15 @@ fn internal_tools() -> Vec<ToolDefinition> {
             d
         },
         ToolDefinition::internal(
+            "search_tools",
+            "Search the full tool registry by keywords when the capability you need is not in your current tool list (e.g. 'send email attachment', 'calendar events', 'upload drive', 'facebook post'). Matching tools are attached to this conversation immediately, so you can call them in your next step. Always search before claiming a capability is unavailable.",
+            serde_json::json!({
+                "query": {"type": "string", "description": "Keywords describing the capability, e.g. 'send email' or 'list calendar events'"},
+                "max_results": {"type": "integer", "default": 5, "description": "Max matching tools to attach (up to 10)"}
+            }),
+            vec!["query".into()],
+        ),
+        ToolDefinition::internal(
             "cron_job_tool",
             "Create, edit, pause, resume, or delete a scheduled periodic cron job. IMPORTANT: ALWAYS use this tool to schedule cron jobs, periodic tasks, or scheduled follow-ups. NEVER attempt to manually edit crontabs or systemd timers via ssh_tool.",
             serde_json::json!({

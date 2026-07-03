@@ -574,6 +574,29 @@ impl ToolRouter {
         all_tools: &[ToolDefinition],
         history: &[Message],
     ) -> (Vec<ToolDefinition>, serde_json::Value) {
+        self.filter_tools_impl(msg, all_tools, history, true).await
+    }
+
+    /// Hybrid tool scope: pattern + embedding tiers only. When neither is
+    /// confident, returns the (possibly empty) pattern hits instead of paying
+    /// an LLM routing call — the agent's `search_tools` meta-tool covers
+    /// anything the cheap tiers miss.
+    pub async fn filter_tools_cheap(
+        &self,
+        msg: &str,
+        all_tools: &[ToolDefinition],
+        history: &[Message],
+    ) -> (Vec<ToolDefinition>, serde_json::Value) {
+        self.filter_tools_impl(msg, all_tools, history, false).await
+    }
+
+    async fn filter_tools_impl(
+        &self,
+        msg: &str,
+        all_tools: &[ToolDefinition],
+        history: &[Message],
+        allow_llm_tier: bool,
+    ) -> (Vec<ToolDefinition>, serde_json::Value) {
         let msg = msg.trim();
         let by_name: HashMap<String, &ToolDefinition> =
             all_tools.iter().map(|t| (t.name.clone(), t)).collect();
@@ -651,6 +674,16 @@ impl ToolRouter {
                 .filter_map(|n| by_name.get(n).map(|t| (*t).clone()))
                 .collect();
             return (tools, telem);
+        }
+
+        if !allow_llm_tier {
+            // Cheap mode: unconfident routing returns the pattern hits as-is
+            // (possibly empty) rather than paying an LLM call per iteration.
+            let tools = hits
+                .iter()
+                .filter_map(|n| by_name.get(n).map(|t| (*t).clone()))
+                .collect();
+            return (tools, serde_json::json!({"tier": "pattern_unconfident"}));
         }
 
         let (llm_hits, telem) = self.tier2(msg, &candidates, history, multi).await;

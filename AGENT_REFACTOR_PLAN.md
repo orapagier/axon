@@ -85,6 +85,21 @@ User decisions locked in:
 - [x] QC correction cap 3 → 1 (`should_qc` gate); `quality_check_mode = "mutating"` unchanged.
 - [ ] DEFERRED (needs ~1-2 weeks of production metrics after deploying Phases 1-5): if `runs` guard counters ≈ 0 and the "Auto-remapped hallucinated tool" / "Service mismatch fix" log lines stop appearing, then (a) flip `agent.quality_check` default to false, (b) delete TOOL_NAME_REMAPS and the pre-execution service remap in loop.rs, (c) trim the hardest `agent/repair.rs` paths (keep the blocked-hallucination path). Evidence: `SELECT SUM(nudge_count), SUM(claim_guard_count), SUM(qc_correction_count) FROM runs WHERE created_at > <deploy date>` + grep the logs.
 
+### Phase 7 — Hybrid tool scope (search_tools discovery)
+
+Added 2026-07-03 after Phase 6: the registry holds ~300 tools, so `tool_scope=all`
+(45k–75k tokens of schemas per iteration) is too expensive on providers without
+prompt caching, and even cached tokens usually count against TPM limits. Hybrid
+is Anthropic's "tool search with deferred loading" pattern implemented in-harness.
+
+- [x] `agent.tool_scope` default `all` → `hybrid` (seed.sql; normalize.sql moves hosts off the one-day transient `all` default; `all` and `routed` remain selectable).
+- [x] Hybrid iteration tool list = cheap routed subset (`filter_tools_cheap`: pattern + embedding tiers, NO LLM tier — unconfident returns pattern hits instead of paying a routing call) ∪ run-discovered tools ∪ always-on core (`search_tools`, `update_plan`), sorted for prompt-cache stability.
+- [x] `agent/tool_discovery.rs`: run-id-keyed discovered set (cleared in `finalize`) + keyword search over names/descriptions (name hit 3× description hit, fuzzy fallback via `closest_tool_names`).
+- [x] `search_tools` internal tool (read-only): returns matches (name/description/required) and attaches them to the run so they're callable next iteration.
+- [x] Unknown-tool teaching errors auto-attach their top-3 suggestions — a wrong tool-name guess self-corrects in one step even under hybrid scope.
+- [x] TOOL DISCOVERY system-prompt hint (hybrid only): "if the capability isn't in your list, call search_tools — never claim it's unavailable before searching."
+- [x] Unit tests: search ranking + fuzzy fallback, discovered-set lifecycle.
+
 ## Verification (each phase)
 
 1. `cargo fmt --check` · `cargo test -p axon` · `cargo build`.

@@ -139,20 +139,35 @@ pub(crate) async fn build_run_context(
                     serde_json::Value::String("manual".to_string()),
                 );
                 (filtered, serde_json::Value::Object(info))
-            } else if state.settings.get_str("agent.tool_scope", "all") == "all" {
-                // Full tool scope: the loop hands the model every enabled tool
-                // on every iteration, so there is nothing to pre-route. Skip
-                // the router — and its potential embedding/LLM tier calls —
-                // entirely. The loop's "all" branch ignores this placeholder.
-                (Vec::new(), serde_json::json!({"tier": "all"}))
             } else {
-                // Route with the session history so anaphoric follow-ups
-                // ("get me another one") resolve against prior turns instead
-                // of routing blind on four context-free words.
-                state
-                    .tool_router
-                    .filter_tools(task, &all_tools, &messages)
-                    .await
+                match state
+                    .settings
+                    .get_str("agent.tool_scope", "hybrid")
+                    .as_str()
+                {
+                    // Full tool scope: the loop hands the model every enabled
+                    // tool on every iteration, so there is nothing to
+                    // pre-route. The loop's "all" branch ignores this
+                    // placeholder.
+                    "all" => (Vec::new(), serde_json::json!({"tier": "all"})),
+                    // Hybrid: cheap tiers only (no LLM routing call); the
+                    // loop unions in discovered + core tools each iteration.
+                    "hybrid" => {
+                        state
+                            .tool_router
+                            .filter_tools_cheap(task, &all_tools, &messages)
+                            .await
+                    }
+                    // Legacy routed mode. Routes with the session history so
+                    // anaphoric follow-ups ("get me another one") resolve
+                    // against prior turns instead of routing blind.
+                    _ => {
+                        state
+                            .tool_router
+                            .filter_tools(task, &all_tools, &messages)
+                            .await
+                    }
+                }
             }
         }
     );
@@ -249,6 +264,19 @@ pub(crate) async fn build_run_context(
         ""
     };
 
+    // Hybrid tool scope: the model only sees a routed subset per turn, so it
+    // must know the rest of the registry is reachable via search_tools —
+    // otherwise it refuses tasks whose tools simply weren't attached yet.
+    let discovery_hint = if state.settings.get_str("agent.tool_scope", "hybrid") == "hybrid"
+        && !tool_free
+        && ctx.allowed_tools.is_none()
+        && !is_conversational
+    {
+        "\n\nTOOL DISCOVERY:\nOnly the most relevant tools are attached to each turn. Many more exist (email, calendar, files, social media, servers, workflows, scheduling...). If the capability you need is not in your tool list, call search_tools with a few keywords — matching tools are attached immediately and you can call them in your next step. NEVER claim a capability is unavailable before searching for it."
+    } else {
+        ""
+    };
+
     let mut sys = if tool_free {
         if context_block.is_empty() {
             base_system.to_string()
@@ -280,6 +308,7 @@ FILE HANDLING:\n\
             base_system, context_block
         )
     };
+    sys.push_str(discovery_hint);
     sys.push_str(planning_hint);
 
     RunSystemContext {

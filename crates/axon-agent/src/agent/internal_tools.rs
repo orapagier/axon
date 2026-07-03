@@ -94,6 +94,46 @@ pub(crate) async fn handle_internal(
                 "guidance": "Execute the next open step now. Call update_plan again (full list, statuses updated) as steps complete."
             }))
         }
+        "search_tools" => {
+            let query = args
+                .get("query")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if query.is_empty() {
+                anyhow::bail!("query is required");
+            }
+            let max = args
+                .get("max_results")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(5)
+                .clamp(1, 10) as usize;
+            let all = state.tools.all_enabled_for_agent().await;
+            let matches = crate::agent::tool_discovery::search(&query, &all, max);
+            if matches.is_empty() {
+                return Ok(serde_json::json!({
+                    "matches": [],
+                    "guidance": "No tools matched. Try different keywords: a service name ('gmail', 'facebook', 'drive') or an action ('send', 'upload', 'schedule')."
+                }));
+            }
+            let names: Vec<String> = matches.iter().map(|t| t.name.clone()).collect();
+            crate::agent::tool_discovery::discover(&run_id, &names);
+            let items: Vec<serde_json::Value> = matches
+                .iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "name": t.name,
+                        "description": t.description,
+                        "required": t.required,
+                    })
+                })
+                .collect();
+            Ok(serde_json::json!({
+                "matches": items,
+                "guidance": "These tools are now attached to this conversation — call the right one directly in your next step."
+            }))
+        }
         "cron_job_tool" => handle_job(args, state, ctx, run_id).await,
         "watcher_tool" => handle_watcher(args, state, ctx).await,
         "agent_memory_tool" => handle_memory(args, state).await,

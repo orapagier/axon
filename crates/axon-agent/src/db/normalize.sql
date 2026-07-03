@@ -52,6 +52,14 @@ UPDATE settings SET value = '2'
 UPDATE settings SET value = '0'
  WHERE key = 'workflow.resume_token_default_ttl_secs' AND value = '604800';
 
+-- Harness refactor: 'all' was the seeded tool-scope default for less than a
+-- day before the hybrid search_tools mode replaced it (a ~300-tool registry
+-- makes full-list iterations too expensive on non-caching providers). Move
+-- hosts still on that transient default to 'hybrid'; a deliberate 'routed'
+-- (or any other value) is left untouched.
+UPDATE settings SET value = 'hybrid'
+ WHERE key = 'agent.tool_scope' AND value = 'all';
+
 -- Harness refactor: widen the dashboard context window (5 -> 20 messages) on
 -- hosts still on the old seeded default. A 5-message window forced the model
 -- to answer follow-ups blind; 20 messages (10 exchanges) resolves anaphora

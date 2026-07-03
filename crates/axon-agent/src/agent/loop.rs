@@ -683,10 +683,14 @@ pub(crate) async fn run_inner(
         Arc::new(std::sync::atomic::AtomicU32::new(if on { cap } else { 0 }))
     };
     let memory_enabled = ctx.memory_enabled;
-    // Tool scope: "all" (default) exposes every enabled tool to the model on
-    // every iteration — the model, not a pre-filter, decides what to use.
-    // "routed" restores the legacy regex/embedding/LLM router as a rollback path.
-    let tool_scope_all = state.settings.get_str("agent.tool_scope", "all") == "all";
+    // Tool scope — how much of the registry the model sees each iteration:
+    //   "hybrid" (default) — cheap routed subset + run-discovered tools + the
+    //             search_tools/update_plan core. Best for large registries:
+    //             small context, but every tool stays reachable via discovery.
+    //   "all"    — every enabled tool every iteration. Simplest; fine for
+    //             small registries or fully cached providers.
+    //   "routed" — legacy regex/embedding/LLM pre-filter (rollback path).
+    let tool_scope = state.settings.get_str("agent.tool_scope", "hybrid");
     // Char budget for tool results kept in the model's context; oldest complete
     // tool exchanges are dropped first (see trim_tool_results_by_budget).
     let tool_result_budget = state
@@ -860,7 +864,7 @@ pub(crate) async fn run_inner(
                 "final".to_string(),
                 Vec::<String>::new(),
             )
-        } else if tool_scope_all && ctx.allowed_tools.is_none() {
+        } else if tool_scope == "all" && ctx.allowed_tools.is_none() {
             // Full scope: every enabled tool, deterministically sorted so the
             // provider-side prompt cache sees a stable prefix. No Tools UI
             // event here — ToolStart events already show live usage, and a
@@ -877,6 +881,61 @@ pub(crate) async fn run_inner(
                 f.sort_by(|a, b| a.name.cmp(&b.name));
                 let names: Vec<String> = f.iter().map(|t| t.name.clone()).collect();
                 (f, "all".to_string(), names)
+            }
+        } else if tool_scope == "hybrid" && ctx.allowed_tools.is_none() {
+            // Hybrid scope: cheap routed base (pattern + embedding tiers, no
+            // LLM tier) ∪ tools discovered this run (via search_tools or
+            // unknown-tool suggestions) ∪ the always-on core. Sorted so the
+            // provider prompt cache sees a stable prefix.
+            if is_conversational {
+                (
+                    Vec::<ToolDefinition>::new(),
+                    "conversational".to_string(),
+                    Vec::<String>::new(),
+                )
+            } else {
+                let (base, info) = if iters == 1 {
+                    (
+                        filtered_initial.clone(),
+                        serde_json::json!({"tier": tier_initial.clone()}),
+                    )
+                } else {
+                    state
+                        .tool_router
+                        .filter_tools_cheap(task, &all_tools, &messages)
+                        .await
+                };
+                let mut f = base;
+                for name in crate::agent::tool_discovery::discovered(&run_id) {
+                    if !f.iter().any(|t| t.name == name) {
+                        if let Some(t) = all_tools.iter().find(|t| t.name == name) {
+                            f.push(t.clone());
+                        }
+                    }
+                }
+                for core in ["search_tools", "update_plan"] {
+                    if !f.iter().any(|t| t.name == core) {
+                        if let Some(t) = all_tools.iter().find(|t| t.name == core) {
+                            f.push(t.clone());
+                        }
+                    }
+                }
+                f.sort_by(|a, b| a.name.cmp(&b.name));
+                let names: Vec<String> = f.iter().map(|t| t.name.clone()).collect();
+                let t = info
+                    .get("tier")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("hybrid")
+                    .to_string();
+                if !names.is_empty() {
+                    emit!(AgentEvent::Tools {
+                        run_id: run_id.clone(),
+                        tools: names.clone(),
+                        tier: t.clone(),
+                        parallel: names.len() > 1
+                    });
+                }
+                (f, t, names)
             }
         } else if iters == 1 {
             let names: Vec<String> = filtered_initial.iter().map(|t| t.name.clone()).collect();
@@ -1840,6 +1899,9 @@ pub(crate) async fn run_inner(
                 if !known {
                     let suggestions =
                         crate::tools::schema::closest_tool_names(&tc.name, &all_tools, 3);
+                    // Attach the suggestions to this run so the model can call
+                    // the right one next iteration even under hybrid scope.
+                    crate::agent::tool_discovery::discover(&run_id, &suggestions);
                     emit!(AgentEvent::ToolEnd {
                         run_id: run_id.clone(),
                         tool: tc.name.clone(),
@@ -1857,7 +1919,7 @@ pub(crate) async fn run_inner(
                         serde_json::json!({
                             "error": format!("No tool named '{}' exists.", tc.name),
                             "guidance": format!(
-                                "Closest available tools: {}. Call one of these (with its own schema) or answer without a tool.",
+                                "Closest available tools: {}. They are now attached — call the right one directly (with its own schema), or use search_tools to find something else.",
                                 suggestions.join(", ")
                             ),
                         }),
@@ -2014,8 +2076,9 @@ fn finalize(
     tools: &[String],
     guards: &GuardCounts,
 ) {
-    // Drop run-scoped plan state on every exit path.
+    // Drop run-scoped plan + tool-discovery state on every exit path.
     crate::agent::plan::clear(id);
+    crate::agent::tool_discovery::clear(id);
     if let Ok(conn) = state.db.get() {
         let _ = conn.execute(
             "UPDATE runs SET status=?1,result=?2,iterations=?3,total_tokens=?4,models_used=?5,tools_used=?6,\

@@ -6,6 +6,7 @@ pub mod plan;
 pub mod quality;
 pub mod repair;
 pub mod system_context;
+pub mod tool_discovery;
 pub mod tool_writer;
 pub use context::{AgentEvent, RunContext};
 pub use r#loop::{run_task, run_task_streaming};
