@@ -44,6 +44,28 @@ timeout_secs = 15
 enabled    = true
 
 [[models]]
+name       = "cerebras-orapagier"
+provider   = "cerebras"
+model_id   = "gpt-oss-120b"
+api_key    = "${CEREBRAS_API_KEY_ORAPAGIER}"
+base_url   = "https://api.cerebras.ai/v1"
+role       = ""
+priority = 1
+timeout_secs = 15
+enabled    = true
+
+[[models]]
+name       = "cerebras-oraparamlej"
+provider   = "cerebras"
+model_id   = "gpt-oss-120b"
+api_key    = "${CEREBRAS_API_KEY_ORAPARAMLEJ}"
+base_url   = "https://api.cerebras.ai/v1"
+role       = ""
+priority = 1
+timeout_secs = 15
+enabled    = true
+
+[[models]]
 name       = "groq-shirahproject3"
 provider   = "groq"
 model_id   = "openai/gpt-oss-120b"
@@ -51,6 +73,28 @@ api_key    = "${GROQ_API_KEY_SHIRAHPROJECT3}"
 base_url   = "https://api.groq.com/openai/v1"
 role       = ""
 priority   = 1
+timeout_secs = 15
+enabled    = true
+
+[[models]]
+name       = "groq-shirahn8n2"
+provider   = "groq"
+model_id   = "openai/gpt-oss-120b"
+api_key    = "${GROQ_API_KEY_SHIRAHN8N2}"
+base_url   = "https://api.groq.com/openai/v1"
+role       = ""
+priority = 1
+timeout_secs = 15
+enabled    = true
+
+[[models]]
+name       = "groq-samsam12232020"
+provider   = "groq"
+model_id   = "openai/gpt-oss-120b"
+api_key    = "${GROQ_API_KEY_SAMSAM12232020}"
+base_url   = "https://api.groq.com/openai/v1"
+role       = ""
+priority = 1
 timeout_secs = 15
 enabled    = true
 
@@ -304,7 +348,7 @@ priority   = 4
 timeout_secs = 45
 enabled    = true
 
-# ── P5 OLLAMA CLOUD (last resort — observed 126s cold; 2 model_ids/record) ──
+# ── P5 OLLAMA CLOUD (last resort; 2 model_ids/record) ──
 
 [[models]]
 name       = "ollama-shirahhn8n1"
@@ -464,51 +508,11 @@ enabled    = true
 
 # ── AXON NODE (2 keys; shirahproject3 moved to general P1) ───────────────────
 
-[[models]]
-name       = "groq-shirahn8n2"
-provider   = "groq"
-model_id   = "openai/gpt-oss-120b"
-api_key    = "${GROQ_API_KEY_SHIRAHN8N2}"
-base_url   = "https://api.groq.com/openai/v1"
-role       = "axon_node"
-priority = 10
-timeout_secs = 30
-enabled    = true
 
-[[models]]
-name       = "groq-samsam12232020"
-provider   = "groq"
-model_id   = "openai/gpt-oss-120b"
-api_key    = "${GROQ_API_KEY_SAMSAM12232020}"
-base_url   = "https://api.groq.com/openai/v1"
-role       = "axon_node"
-priority = 10
-timeout_secs = 30
-enabled    = true
 
 # ── MEMORY COMPRESSOR (background — latency-tolerant) ────────────────────────
 
-[[models]]
-name       = "cerebras-orapagier"
-provider   = "cerebras"
-model_id   = "gpt-oss-120b"
-api_key    = "${CEREBRAS_API_KEY_ORAPAGIER}"
-base_url   = "https://api.cerebras.ai/v1"
-role       = "memory_compressor"
-priority = 1
-timeout_secs = 60
-enabled    = true
 
-[[models]]
-name       = "cerebras-oraparamlej"
-provider   = "cerebras"
-model_id   = "gpt-oss-120b"
-api_key    = "${CEREBRAS_API_KEY_ORAPARAMLEJ}"
-base_url   = "https://api.cerebras.ai/v1"
-role       = "memory_compressor"
-priority = 1
-timeout_secs = 60
-enabled    = true
 
 # ── PHASE-AWARE ROLES (agent loop) ──────────────────────────────────────────
 #
