@@ -139,7 +139,7 @@ use axon::{
     config::{load_models, load_models_from_db, AppConfig, RuntimeSettings},
     dashboard::build_router,
     mcp::McpManager,
-    memory::MemoryStore,
+    memory::{embeddings::Embedder, MemoryStore},
     messaging::{DiscordGateway, MessagingHub, SlackGateway, TelegramGateway},
     router::{RouterState, ToolRouter},
     scheduler::{JobStore, SchedulerEngine},
@@ -334,8 +334,29 @@ async fn main() -> anyhow::Result<()> {
     let memory = Arc::new(MemoryStore::new(
         Arc::clone(&db),
         settings.get_int("memory.short_term_max_msgs", 50) as usize,
-        std::env::var("VOYAGE_API_KEY").ok(),
+        Embedder::from_settings(&settings),
     ));
+
+    // A provider/model switch leaves persisted memory vectors in the old
+    // embedding space. Sweep them back into the active one in the background;
+    // until a row is re-embedded, search treats it as having no embedding.
+    {
+        let mem = Arc::clone(&memory);
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+            match mem.long.reembed_stale().await {
+                Ok(0) => {}
+                Ok(n) => tracing::info!(
+                    "Memory: re-embedded {} rows for the active embedding model",
+                    n
+                ),
+                Err(e) => tracing::warn!(
+                    "Memory re-embed sweep stopped (will resume next boot): {}",
+                    e
+                ),
+            }
+        });
+    }
 
     // Make integration settings (Instagram base URL, OAuth redirect host, poll
     // timeouts) visible to the in-process MCP services before they're built.

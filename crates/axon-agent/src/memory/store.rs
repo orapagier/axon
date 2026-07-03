@@ -1,3 +1,4 @@
+use super::embeddings::Embedder;
 use super::long_term::{LongTermMemory, MemoryEntry};
 use super::short_term::{ShortTermMemory, ShortTermRow};
 use r2d2::Pool;
@@ -13,11 +14,11 @@ impl MemoryStore {
     pub fn new(
         db: Arc<Pool<SqliteConnectionManager>>,
         max_short: usize,
-        voyage_key: Option<String>,
+        embedder: Option<Embedder>,
     ) -> Self {
         MemoryStore {
             short: ShortTermMemory::new(Arc::clone(&db), max_short),
-            long: LongTermMemory::new(db, voyage_key),
+            long: LongTermMemory::new(db, embedder),
         }
     }
     pub fn add_user(&self, s: &str, t: &str) -> anyhow::Result<()> {

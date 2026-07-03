@@ -77,6 +77,17 @@ INSERT OR IGNORE INTO settings VALUES
     ('workflow.webhook_dedup_window_secs',    '0',    'int',  'Seconds to dedup generic webhooks by body hash when they send no Idempotency-Key/event_id (0 = off; explicit-key dedup is always on)', 'workflow', datetime('now')),
     ('retention.trigger_dedup_days',          '7',    'int',  'Days of trigger idempotency keys (webhook/github redelivery dedup) kept before pruning', 'retention', datetime('now'));
 
+-- Embeddings provider (semantic tool-router tier + long-term memory recall).
+-- One OpenAI-compatible code path; switching providers is a settings change:
+--   Google: https://generativelanguage.googleapis.com/v1beta/openai + gemini-embedding-001
+--   Ollama: http://localhost:11434/v1 + all-minilm (leave api_key blank)
+--   Voyage: https://api.voyageai.com/v1 + voyage-4
+-- Blank base_url keeps the legacy VOYAGE_API_KEY env-var behavior.
+INSERT OR IGNORE INTO settings VALUES
+    ('embedder.base_url', '', 'string', 'OpenAI-compatible embeddings base URL (Google: https://generativelanguage.googleapis.com/v1beta/openai, Ollama: http://localhost:11434/v1, Voyage: https://api.voyageai.com/v1). Blank = legacy VOYAGE_API_KEY fallback. Restart after changing.', 'embedder', datetime('now')),
+    ('embedder.model',    '', 'string', 'Embedding model name (e.g. gemini-embedding-001, all-minilm, voyage-4). Changing it re-embeds stored memories in the background on next start; re-check router.embed_floor after switching.', 'embedder', datetime('now')),
+    ('embedder.api_key',  '', 'string', 'API key for the embeddings endpoint; a ${VAR} placeholder resolves from settings then environment (e.g. ${GEMINI_API_KEY}). Leave blank for local Ollama.', 'embedder', datetime('now'));
+
 -- Web search.
 INSERT OR IGNORE INTO settings VALUES
     ('websearch.enabled',             'false', 'bool',   'Enable Web Search tool (requires Tavily accounts below)',      'websearch', datetime('now')),

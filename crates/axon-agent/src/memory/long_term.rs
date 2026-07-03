@@ -1,4 +1,4 @@
-use super::embeddings::{bytes_to_vec, cosine_similarity, vec_to_bytes, VoyageEmbedder};
+use super::embeddings::{bytes_to_vec, cosine_similarity, vec_to_bytes, Embedder};
 use anyhow::Context;
 use qdrant_client::qdrant::PointStruct;
 use qdrant_client::Qdrant;
@@ -19,13 +19,13 @@ pub struct MemoryEntry {
 
 pub struct LongTermMemory {
     db: Arc<Pool<SqliteConnectionManager>>,
-    embedder: Option<VoyageEmbedder>,
+    embedder: Option<Embedder>,
     qdrant: Option<Qdrant>,
     collection_name: String,
 }
 
 impl LongTermMemory {
-    pub fn new(db: Arc<Pool<SqliteConnectionManager>>, key: Option<String>) -> Self {
+    pub fn new(db: Arc<Pool<SqliteConnectionManager>>, embedder: Option<Embedder>) -> Self {
         let qdrant = std::env::var("QDRANT_URL").ok().and_then(|url| {
             let mut builder = Qdrant::from_url(&url);
             if let Ok(api_key) = std::env::var("QDRANT_API_KEY") {
@@ -40,7 +40,7 @@ impl LongTermMemory {
 
         LongTermMemory {
             db,
-            embedder: key.filter(|k| !k.is_empty()).map(VoyageEmbedder::new),
+            embedder,
             qdrant,
             collection_name: "axon_memory".to_string(),
         }
@@ -61,11 +61,17 @@ impl LongTermMemory {
         } else {
             None
         };
+        // Tag the vector with the model that produced it — embeddings from a
+        // different provider/model live in another space and must never be
+        // cosine-compared against this one.
+        let emb_model: Option<&str> = emb
+            .as_ref()
+            .and_then(|_| self.embedder.as_ref().map(|e| e.model_id()));
         let tags_json = serde_json::to_string(tags).unwrap_or_else(|_| "[]".into());
         let conn = self.db.get().context("DB pool")?;
         conn.execute(
-            "INSERT INTO long_term (content,embedding,source,tags) VALUES (?1,?2,?3,?4)",
-            rusqlite::params![content, emb, source, tags_json],
+            "INSERT INTO long_term (content,embedding,source,tags,embedding_model) VALUES (?1,?2,?3,?4,?5)",
+            rusqlite::params![content, emb, source, tags_json, emb_model],
         )?;
         let id = conn.last_insert_rowid();
 
@@ -342,14 +348,24 @@ impl LongTermMemory {
                         .map(|(i, _)| format!("?{}", i + 1))
                         .collect::<Vec<_>>()
                         .join(",");
-                    let sql = format!("SELECT id,embedding FROM long_term WHERE id IN ({}) AND embedding IS NOT NULL", ph);
+                    // Only compare vectors produced by the active model; rows
+                    // embedded under a previous provider (awaiting the re-embed
+                    // sweep) score the neutral 0.5, same as rows with no
+                    // embedding at all.
+                    let sql = format!("SELECT id,embedding,embedding_model FROM long_term WHERE id IN ({}) AND embedding IS NOT NULL", ph);
                     let mut s = conn.prepare(&sql)?;
+                    let cur_model = embedder.model_id().to_string();
                     let emap: std::collections::HashMap<i64, Vec<f32>> = s
                         .query_map(rusqlite::params_from_iter(ids.iter()), |r| {
-                            Ok((r.get(0)?, r.get::<_, Vec<u8>>(1)?))
+                            Ok((
+                                r.get(0)?,
+                                r.get::<_, Vec<u8>>(1)?,
+                                r.get::<_, Option<String>>(2)?,
+                            ))
                         })?
                         .filter_map(|r| r.ok())
-                        .map(|(id, b)| (id, bytes_to_vec(&b)))
+                        .filter(|(_, _, model)| model.as_deref() == Some(cur_model.as_str()))
+                        .map(|(id, b, _)| (id, bytes_to_vec(&b)))
                         .collect();
                     let mut scored: Vec<(f32, _)> = hits
                         .into_iter()
@@ -396,6 +412,61 @@ impl LongTermMemory {
                 score: None,
             })
             .collect())
+    }
+
+    /// Re-embed rows whose stored vector was produced by a different model (or
+    /// never produced at all — e.g. stored while no embedder was configured).
+    /// Run in the background after startup so a provider/model switch converges
+    /// the whole store back into one comparable vector space. Returns the
+    /// number of rows re-embedded; stops (and can resume next boot) on the
+    /// first provider error.
+    pub async fn reembed_stale(&self) -> anyhow::Result<usize> {
+        let embedder = match &self.embedder {
+            Some(e) => e,
+            None => return Ok(0),
+        };
+        let model = embedder.model_id().to_string();
+        let mut total = 0usize;
+        loop {
+            let batch: Vec<(i64, String)> = {
+                let conn = self.db.get().context("DB pool")?;
+                let mut s = conn.prepare(
+                    "SELECT id, content FROM long_term
+                     WHERE embedding IS NULL OR embedding_model IS NULL OR embedding_model != ?1
+                     ORDER BY id LIMIT 32",
+                )?;
+                let rows: Vec<(i64, String)> = s
+                    .query_map(rusqlite::params![model], |r| Ok((r.get(0)?, r.get(1)?)))?
+                    .filter_map(|r| r.ok())
+                    .collect();
+                rows
+            };
+            if batch.is_empty() {
+                break;
+            }
+            let texts: Vec<&str> = batch.iter().map(|(_, c)| c.as_str()).collect();
+            let embs = embedder.embed(&texts).await?;
+            if embs.len() != batch.len() {
+                anyhow::bail!(
+                    "re-embed: expected {} vectors, got {}",
+                    batch.len(),
+                    embs.len()
+                );
+            }
+            {
+                let conn = self.db.get().context("DB pool")?;
+                for ((id, _), emb) in batch.iter().zip(&embs) {
+                    conn.execute(
+                        "UPDATE long_term SET embedding=?1, embedding_model=?2 WHERE id=?3",
+                        rusqlite::params![vec_to_bytes(emb), model, id],
+                    )?;
+                }
+            }
+            total += batch.len();
+            // Gentle pacing so a big backlog stays polite to free-tier quotas.
+            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        }
+        Ok(total)
     }
 
     pub fn delete(&self, id: i64) -> anyhow::Result<()> {

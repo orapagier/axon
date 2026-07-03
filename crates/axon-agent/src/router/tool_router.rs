@@ -1,5 +1,5 @@
 use crate::config::RuntimeSettings;
-use crate::memory::embeddings::{cosine_similarity, VoyageEmbedder};
+use crate::memory::embeddings::{cosine_similarity, Embedder};
 use crate::providers::types::Message;
 use crate::router::model_router::SharedRouter;
 use crate::tools::schema::ToolDefinition;
@@ -266,9 +266,10 @@ pub struct ToolRouter {
     db: Arc<Pool<SqliteConnectionManager>>,
     router: SharedRouter,
     settings: Arc<RuntimeSettings>,
-    /// Optional embedder for the zero-LLM semantic tool tier. `None` when no
-    /// VOYAGE_API_KEY is configured — the router then falls back to the LLM tier.
-    embedder: Option<VoyageEmbedder>,
+    /// Optional embedder for the zero-LLM semantic tool tier. Built from the
+    /// `embedder.*` settings (legacy fallback: VOYAGE_API_KEY); `None` when
+    /// unconfigured — the router then falls back to the LLM tier.
+    embedder: Option<Embedder>,
     /// Cache of tool-description embeddings, keyed by tool name. Filled lazily
     /// (and batched) the first time each tool is a routing candidate.
     tool_embeddings: Arc<RwLock<HashMap<String, Vec<f32>>>>,
@@ -280,10 +281,7 @@ impl ToolRouter {
         router: SharedRouter,
         settings: Arc<RuntimeSettings>,
     ) -> Self {
-        let embedder = std::env::var("VOYAGE_API_KEY")
-            .ok()
-            .filter(|k| !k.is_empty())
-            .map(VoyageEmbedder::new);
+        let embedder = Embedder::from_settings(&settings);
         ToolRouter {
             patterns: Arc::new(RwLock::new(HashMap::new())),
             db,
@@ -350,13 +348,9 @@ impl ToolRouter {
     }
 
     /// Ensure every candidate tool has a cached description embedding. Misses are
-    /// batched (chunked to stay within Voyage's per-request limits) and the write
-    /// lock is only taken after all network calls complete.
-    async fn ensure_tool_embeddings(
-        &self,
-        candidates: &[ToolDefinition],
-        embedder: &VoyageEmbedder,
-    ) {
+    /// batched (chunked to stay within provider per-request input limits) and the
+    /// write lock is only taken after all network calls complete.
+    async fn ensure_tool_embeddings(&self, candidates: &[ToolDefinition], embedder: &Embedder) {
         let missing: Vec<(String, String)> = {
             let cache = self.tool_embeddings.read().await;
             candidates

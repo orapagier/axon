@@ -79,7 +79,9 @@ impl SshTool {
             lines.push(format!("- {}: {}@{}:{}", name, user, ip, port));
         }
         if lines.is_empty() {
-            return Ok(serde_json::json!({ "output": "No SSH servers are configured. ssh_tool only reaches REMOTE servers that have been added to the ssh_servers list. To run commands on the LOCAL machine hosting the agent, call shell_tool instead — do NOT tell the user this capability is unavailable." }));
+            return Ok(
+                serde_json::json!({ "output": "No SSH servers are configured. ssh_tool only reaches REMOTE servers that have been added to the ssh_servers list. To run commands on the LOCAL machine hosting the agent, call shell_tool instead — do NOT tell the user this capability is unavailable." }),
+            );
         }
         Ok(serde_json::json!({ "output": lines.join("\n") }))
     }

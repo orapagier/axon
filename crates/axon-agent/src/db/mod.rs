@@ -124,6 +124,12 @@ const MIGRATIONS: &[Migration] = &[
         sql: include_str!("migrations/0016_shell_tool_routing.sql"),
         tolerant_dup_column: false,
     },
+    Migration {
+        version: 17,
+        name: "embedding_model",
+        sql: include_str!("migrations/0017_embedding_model.sql"),
+        tolerant_dup_column: true,
+    },
 ];
 
 const SEED_SQL: &str = include_str!("seed.sql");
@@ -309,6 +315,12 @@ mod tests {
         assert!(col_exists(&conn, "workflow_nodes", "retry_wait_ms"));
         assert!(col_exists(&conn, "workflow_nodes", "retry_backoff"));
         assert!(col_exists(&conn, "workflow_runs", "parent_run_id"));
+        // Embedding provenance: memory vectors are tagged with their model.
+        assert!(col_exists(&conn, "long_term", "embedding_model"));
+        // Configurable embeddings provider settings are seeded.
+        assert!(setting(&conn, "embedder.base_url").is_some());
+        assert!(setting(&conn, "embedder.model").is_some());
+        assert!(setting(&conn, "embedder.api_key").is_some());
 
         // Seeds + normalization: parallel-tool default is the lowered 3, and the
         // new quality-check mode is present.
