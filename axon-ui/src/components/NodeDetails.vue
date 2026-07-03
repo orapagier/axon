@@ -849,6 +849,57 @@ function removeCollectionItem(propName, index) {
   }
 }
 
+// Drag-to-reorder for fixedCollection items (e.g. Circadian's Schedules list).
+// `draggable` is only turned on while the mouse is held on the item's own grip
+// handle, so dragging text inside its inputs still works normally. Disabled for
+// collections whose items map to dynamic output handles (Switch's rules) since
+// reordering those would desync connected edges without also re-indexing them.
+const dragArmed = reactive({ propName: null, index: null })
+const dragState = reactive({ propName: null, index: null })
+
+function armDrag(propName, index) {
+  dragArmed.propName = propName
+  dragArmed.index = index
+}
+
+function disarmDrag() {
+  dragArmed.propName = null
+  dragArmed.index = null
+  dragState.propName = null
+  dragState.index = null
+}
+
+function isDragArmed(propName, index) {
+  return dragArmed.propName === propName && dragArmed.index === index
+}
+
+function isDraggingItem(propName, index) {
+  return dragState.propName === propName && dragState.index === index
+}
+
+function onFcDragStart(event, propName, index) {
+  if (!isDragArmed(propName, index)) {
+    event.preventDefault()
+    return
+  }
+  dragState.propName = propName
+  dragState.index = index
+  event.dataTransfer.effectAllowed = 'move'
+  event.dataTransfer.setData('text/plain', String(index))
+}
+
+function onFcDrop(propName, targetIndex) {
+  if (dragState.propName !== propName || dragState.index === null) return
+  const fromIndex = dragState.index
+  disarmDrag()
+  if (fromIndex === targetIndex) return
+  const coll = props.node.data.config[propName]
+  if (!coll?.parameters) return
+  const items = coll.parameters
+  const [moved] = items.splice(fromIndex, 1)
+  items.splice(targetIndex, 0, moved)
+}
+
 // Filter an options-field's choices by another field's current value.
 // A subProp may declare `filterBy: 'dataType'`; each option may declare
 // `show: ['string','number',...]`. Used by IF/Switch so the operator list
@@ -1992,7 +2043,18 @@ onUnmounted(() => {
                       </div>
                       <div class="fixed-collection">
                       <div class="fc-items">
-                        <div v-for="(item, idx) in (node.data.config[prop.name]?.parameters || [])" :key="idx" class="fc-item" style="flex-direction: column;">
+                        <div
+                          v-for="(item, idx) in (node.data.config[prop.name]?.parameters || [])"
+                          :key="idx"
+                          class="fc-item"
+                          :class="{ 'fc-item-dragging': isDraggingItem(prop.name, idx) }"
+                          style="flex-direction: column;"
+                          :draggable="isDragArmed(prop.name, idx)"
+                          @dragstart="onFcDragStart($event, prop.name, idx)"
+                          @dragover.prevent
+                          @drop.prevent="onFcDrop(prop.name, idx)"
+                          @dragend="disarmDrag"
+                        >
                           <!-- Full-width rows (e.g. textareas). Use <template> so
                                sub-fields without a row textarea don't leave empty
                                flex children behind — those were injecting dead
@@ -2035,6 +2097,15 @@ onUnmounted(() => {
 
                           <!-- Inline grouped fields -->
                           <div style="display: flex; gap: 8px; width: 100%; align-items: flex-start;">
+                            <div v-if="!isDynamicOutputCollection(prop.name)" class="fc-drag-handle">
+                              <label v-if="idx === 0" class="fc-header-label" style="display: block; margin-bottom: 4px; visibility: hidden;">&nbsp;</label>
+                              <span
+                                class="fc-drag-grip"
+                                title="Drag to reorder"
+                                @mousedown="armDrag(prop.name, idx)"
+                                @mouseup="disarmDrag()"
+                              >⠿</span>
+                            </div>
                             <div class="fc-item-fields">
                             <template v-for="subProp in prop.options" :key="'inline-'+subProp.name">
                               <div v-if="shouldShowProperty(subProp, item) && !subProp.typeOptions?.rows" class="fc-sub-field" :class="{ 'fc-sub-nolabel': subProp.hideLabel }">
@@ -2112,7 +2183,10 @@ onUnmounted(() => {
                               </div>
                             </template>
                           </div>
-                          <button class="btn-fc-remove" type="button" @click="removeCollectionItem(prop.name, idx)" title="Remove item">✕</button>
+                          <div class="fc-item-remove-col">
+                            <label v-if="idx === 0" class="fc-header-label" style="display: block; margin-bottom: 4px; visibility: hidden;">&nbsp;</label>
+                            <button class="btn-fc-remove" type="button" @click="removeCollectionItem(prop.name, idx)" title="Remove item">✕</button>
+                          </div>
                           </div> <!-- close the flex row wrapper -->
                         </div>
                       </div>
@@ -3698,6 +3772,22 @@ small.form-desc {
   padding: 5px 10px; border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer; transition: all 0.2s; margin-top: 6px;
 }
 .btn-fc-add:hover { background: rgba(255, 255, 255, 0.08); color: var(--text); border-color: rgba(255, 255, 255, 0.2); }
+
+/* Drag-to-reorder handle + the remove button's column. Both mirror the
+   fc-sub-field label spacer (see the hidden fc-header-label above them in the
+   template) so the grip/✕ line up with the row's inputs, not its labels. */
+.fc-drag-handle { display: flex; flex-direction: column; flex-shrink: 0; }
+.fc-drag-grip {
+  width: 16px; height: 32px;
+  display: flex; align-items: center; justify-content: center;
+  color: #6b6b76; font-size: 14px; line-height: 1;
+  cursor: grab; user-select: none; border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+}
+.fc-drag-grip:hover { color: #a6a6b2; background: rgba(255, 255, 255, 0.05); }
+.fc-drag-grip:active { cursor: grabbing; }
+.fc-item-remove-col { display: flex; flex-direction: column; flex-shrink: 0; }
+.fc-item-dragging { opacity: 0.4; }
 
 /* Regular collection string fields */
 .cf-row {
