@@ -45,7 +45,7 @@ impl MicrosoftService {
             // Outlook
             Tool {
                 name: "outlook_list_emails".into(),
-                description: "List Outlook emails with subject, from, date, and preview.".into(),
+                description: "List Outlook emails with subject, from, date, and preview. Use this when asked to check Outlook/Microsoft email or unread mail (filter 'isRead eq false').".into(),
                 input_schema: schema!({"max_items":{"type":"integer","default":10},"folder_id":{"type":"string","description":"Folder ID (default: inbox)"},"filter":{"type":"string","description":"OData filter, e.g. isRead eq false"}}, []),
             },
             Tool {
@@ -96,7 +96,7 @@ impl MicrosoftService {
             },
             Tool {
                 name: "mscal_list_events".into(),
-                description: "List Microsoft Calendar events. Supports free-text search via 'query'. Note: 'calendar_id' and 'query' cannot be used together — if both are supplied an error is returned.".into(),
+                description: "List Microsoft Calendar events. Use this when asked about the Outlook/Microsoft calendar or schedule. Supports free-text search via 'query'. Note: 'calendar_id' and 'query' cannot be used together — if both are supplied an error is returned.".into(),
                 input_schema: schema!({"max_count":{"type":"integer","default":10,"description":"Max events to return (up to 50)"},"start_datetime":{"type":"string","description":"ISO 8601 start filter"},"end_datetime":{"type":"string"},"query":{"type":"string","description":"Free-text search. Cannot be combined with calendar_id."},"calendar_id":{"type":"string","description":"Specific calendar ID. Cannot be combined with query."}}, []),
             },
             Tool {
@@ -152,7 +152,7 @@ impl MicrosoftService {
             // OneDrive
             Tool {
                 name: "onedrive_list".into(),
-                description: "List OneDrive files and folders.".into(),
+                description: "List OneDrive files and folders. Use this when asked what files or folders are in OneDrive.".into(),
                 input_schema: schema!({"folder_id":{"type":"string"},"max_count":{"type":"integer","default":10}}, []),
             },
             Tool {

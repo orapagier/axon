@@ -81,6 +81,91 @@ impl ToolDefinition {
             is_mutating,
         })
     }
+
+    /// Compact teaching block for correction messages: everything the model
+    /// needs to re-issue the call correctly in one step — description, the
+    /// parameter schema, the required list, and a skeleton example. An error
+    /// message that teaches beats a retry loop of blind guesses.
+    pub fn teaching_block(&self) -> String {
+        let mut schema = serde_json::to_string(&self.parameters).unwrap_or_else(|_| "{}".into());
+        if schema.len() > 1500 {
+            schema.truncate(1500);
+            schema.push_str("... [schema truncated]");
+        }
+        let example_args: Vec<String> = self
+            .required
+            .iter()
+            .map(|r| {
+                let ty = self
+                    .parameters
+                    .get(r)
+                    .and_then(|p| p.get("type"))
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("string");
+                format!("\"{}\": <{}>", r, ty)
+            })
+            .collect();
+        format!(
+            "Tool '{}': {}\nParameters schema: {}\nRequired: {}\nExample call: {}({{{}}})",
+            self.name,
+            self.description,
+            schema,
+            if self.required.is_empty() {
+                "(none)".to_string()
+            } else {
+                self.required.join(", ")
+            },
+            self.name,
+            example_args.join(", ")
+        )
+    }
+}
+
+/// Top-k tool names closest to a (typically hallucinated) name, for
+/// "no tool named X, did you mean Y?" teaching errors. Substring containment
+/// counts as a near-match (gmail_check → gmail_list beats gmail_trash on
+/// intent even when edit distance says otherwise), then edit distance ranks.
+pub fn closest_tool_names(name: &str, all_tools: &[ToolDefinition], k: usize) -> Vec<String> {
+    let target = name.to_ascii_lowercase();
+    let mut scored: Vec<(usize, &str)> = all_tools
+        .iter()
+        .map(|t| {
+            let cand = t.name.to_ascii_lowercase();
+            let mut d = levenshtein(&target, &cand);
+            // Shared service prefix ("gmail_", "fb_", ...) is a strong signal.
+            if let (Some(tp), Some(cp)) = (target.split('_').next(), cand.split('_').next()) {
+                if tp == cp {
+                    d = d.saturating_sub(3);
+                }
+            }
+            if cand.contains(&target) || target.contains(&cand) {
+                d = d.min(1);
+            }
+            (d, t.name.as_str())
+        })
+        .collect();
+    scored.sort_by_key(|(d, _)| *d);
+    scored
+        .into_iter()
+        .take(k)
+        .map(|(_, n)| n.to_string())
+        .collect()
+}
+
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut cur = vec![0usize; b.len() + 1];
+    for (i, ca) in a.iter().enumerate() {
+        cur[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let cost = if ca == cb { 0 } else { 1 };
+            cur[j + 1] = (prev[j + 1] + 1).min(cur[j] + 1).min(prev[j] + cost);
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    prev[b.len()]
 }
 
 /// Default classification of whether a tool mutates state, derived from its name.
@@ -190,7 +275,50 @@ fn meta(src: &str, key: &str) -> anyhow::Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::derive_is_mutating;
+    use super::{closest_tool_names, derive_is_mutating, ToolDefinition};
+
+    #[test]
+    fn teaching_block_shows_schema_and_example() {
+        let def = ToolDefinition::internal(
+            "gmail_send",
+            "Send a Gmail email.",
+            serde_json::json!({
+                "to": {"type": "string"},
+                "subject": {"type": "string"},
+                "body": {"type": "string"}
+            }),
+            vec!["to".into(), "subject".into(), "body".into()],
+        );
+        let block = def.teaching_block();
+        assert!(block.contains("Tool 'gmail_send': Send a Gmail email."));
+        assert!(block.contains("Required: to, subject, body"));
+        assert!(block
+            .contains(r#"gmail_send({"to": <string>, "subject": <string>, "body": <string>})"#));
+    }
+
+    #[test]
+    fn closest_tool_names_ranks_hallucinated_names() {
+        let tools: Vec<ToolDefinition> = [
+            "gmail_list",
+            "gmail_send",
+            "gcal_list_events",
+            "fb_list_posts",
+        ]
+        .iter()
+        .map(|n| ToolDefinition::internal(*n, "", serde_json::json!({}), vec![]))
+        .collect();
+        // Substring intent match wins ("gmail_check" isn't a substring, but
+        // shared prefix "gmail" pulls the gmail tools to the top).
+        let got = closest_tool_names("gmail_check", &tools, 2);
+        assert!(
+            got.contains(&"gmail_list".to_string()) || got.contains(&"gmail_send".to_string()),
+            "expected gmail tools first, got {:?}",
+            got
+        );
+        // Containment: "calendar" tools surface for gcal-ish guesses.
+        let got = closest_tool_names("gcal_events", &tools, 1);
+        assert_eq!(got, vec!["gcal_list_events".to_string()]);
+    }
 
     #[test]
     fn read_tools_are_not_mutating() {

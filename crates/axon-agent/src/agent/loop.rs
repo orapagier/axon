@@ -1739,7 +1739,15 @@ pub(crate) async fn run_inner(
                     let guidance = if stall_triggered {
                         "You have repeated this exact call several times without progress. Do NOT retry it. Tools are disabled for your next turn — write your best final answer to the user in plain text using what you already have, and clearly state what could not be completed and why.".to_string()
                     } else {
-                        format!("Tool '{}' returned an error. Review the error message, adjust your parameters, and try again.", name)
+                        let teach = all_tools
+                            .iter()
+                            .find(|t| t.name == name)
+                            .map(|t| format!("\n{}", t.teaching_block()))
+                            .unwrap_or_default();
+                        format!(
+                            "Tool '{}' returned an error. Review the error message, adjust your arguments, and retry once.{}",
+                            name, teach
+                        )
                     };
                     let enriched = serde_json::json!({ "result": val, "guidance": guidance });
                     result_msgs.push(Message::tool_result(&id, enriched));
@@ -1799,10 +1807,39 @@ pub(crate) async fn run_inner(
                 }
             }
 
-            // Pre-execution validation: divert calls missing required args and
-            // answer them inline with guidance, saving a wasted network round-trip.
+            // Pre-execution validation: divert unknown tools and calls missing
+            // required args, answering them inline with an error that teaches —
+            // the schema and an example beat a blind retry loop.
             let mut valid_calls = Vec::with_capacity(final_calls.len());
             for tc in final_calls {
+                let known = all_tools.iter().any(|t| t.name == tc.name);
+                if !known {
+                    let suggestions =
+                        crate::tools::schema::closest_tool_names(&tc.name, &all_tools, 3);
+                    emit!(AgentEvent::ToolEnd {
+                        run_id: run_id.clone(),
+                        tool: tc.name.clone(),
+                        tool_call_id: tc.id.clone(),
+                        duration_ms: 0,
+                        ok: false
+                    });
+                    tool_receipts.push(ToolExecutionReceipt {
+                        name: tc.name.clone(),
+                        ok: false,
+                        is_mutating: receipt_is_mutating(&tc.name, &all_tools),
+                    });
+                    result_msgs.push(Message::tool_result(
+                        &tc.id,
+                        serde_json::json!({
+                            "error": format!("No tool named '{}' exists.", tc.name),
+                            "guidance": format!(
+                                "Closest available tools: {}. Call one of these (with its own schema) or answer without a tool.",
+                                suggestions.join(", ")
+                            ),
+                        }),
+                    ));
+                    continue;
+                }
                 let missing = missing_required_args(&tc.name, &tc.input, &all_tools);
                 if missing.is_empty() {
                     valid_calls.push(tc);
@@ -1820,14 +1857,18 @@ pub(crate) async fn run_inner(
                     ok: false,
                     is_mutating: receipt_is_mutating(&tc.name, &all_tools),
                 });
+                let teach = all_tools
+                    .iter()
+                    .find(|t| t.name == tc.name)
+                    .map(|t| t.teaching_block())
+                    .unwrap_or_default();
                 result_msgs.push(Message::tool_result(
                     &tc.id,
                     serde_json::json!({
                         "error": format!("Missing required parameter(s): {}", missing.join(", ")),
                         "guidance": format!(
-                            "Tool '{}' requires: {}. Re-call it with every required field set.",
-                            tc.name,
-                            missing.join(", ")
+                            "Re-call the tool with every required field set.\n{}",
+                            teach
                         ),
                     }),
                 ));
@@ -1878,7 +1919,15 @@ pub(crate) async fn run_inner(
                     let guidance = if stall_triggered {
                         "You have repeated this exact call several times without progress. Do NOT retry it. Tools are disabled for your next turn — write your best final answer to the user in plain text using what you already have, and clearly state what could not be completed and why.".to_string()
                     } else {
-                        format!("Tool '{}' failed. Check your parameters and try again with corrected input. Common issues: missing required fields, wrong field names, auth not set up.", res.tool_name)
+                        let teach = all_tools
+                            .iter()
+                            .find(|t| t.name == res.tool_name)
+                            .map(|t| format!("\n{}", t.teaching_block()))
+                            .unwrap_or_default();
+                        format!(
+                            "Tool '{}' failed. Read the error, fix the arguments, and retry once. If it is an auth/service problem, say so instead of retrying.{}",
+                            res.tool_name, teach
+                        )
                     };
                     let enriched = serde_json::json!({
                         "error": res.error,

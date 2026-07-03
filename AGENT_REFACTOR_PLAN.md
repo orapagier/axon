@@ -67,10 +67,11 @@ User decisions locked in:
 - [x] Leak guard: `strip_reasoning` now also removes `<think>...</think>` blocks (DeepSeek/Qwen-style inline reasoning); `as_text()`/`text_content()` never include Thinking blocks. Unit test added.
 
 ### Phase 4 — Tools that teach
-- [ ] `loop.rs:1786` (missing_required_args diversion): error includes full `parameters` schema + `required` + a corrected example call.
-- [ ] `loop.rs:1840` (external tool failure): guidance includes the tool's `description` + `parameters` schema.
-- [ ] Unknown tool name: "No tool named X. Closest matches: [top-3 by name similarity]" from the registry.
-- [ ] Description audit (`tools/registry.rs` + Python tool docstrings): add "Use this when …" trigger sentence + one example invocation to top-traffic tools (gmail_*, gcal_*, gdrive_*, outlook_*, fb_*, shell/ssh).
+- [x] `ToolDefinition::teaching_block()` (tools/schema.rs): description + parameter schema (capped 1500 chars) + required list + skeleton example call.
+- [x] Missing-args diversion, internal tool errors, and external tool errors all include the teaching block so the model self-corrects in one step.
+- [x] Unknown tool name diverted pre-execution with "No tool named X. Closest available tools: [top-3]" via `closest_tool_names` (levenshtein + service-prefix + containment ranking) — dynamic replacement groundwork for the static remap table.
+- [x] Description audit: "Use this when …" trigger sentences appended to the tools the remap table proves get confused — gmail_list, gcal_list_events, gdrive_list (axon-google), outlook_list_emails, mscal_list_events, onedrive_list (axon-microsoft), fb_list_messenger_chats, fb_list_posts (axon-facebook). Note: there are no repo-tracked Python tools; agent-written temp tools live in `tools_temp/` on the deployment only.
+- [x] Unit tests: teaching_block rendering + closest_tool_names ranking.
 
 ### Phase 5 — Plan-then-execute
 - [ ] New `agent/plan.rs` + internal tool `update_plan` (register in `agent/internal_tools.rs`): model creates/updates a numbered checklist (`[{step, status}]`), stored in run state.
