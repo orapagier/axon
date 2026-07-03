@@ -81,9 +81,9 @@ User decisions locked in:
 - [x] Unit test: plan lifecycle (render/open/remind-once/clear).
 
 ### Phase 6 — Guard consolidation (data-driven)
-- [ ] Keep unchanged: execution receipts + claim guard, blank check, promise-only guard, raw-tool-syntax check, stall detection, correction/token budgets, refusal nudge.
-- [ ] Lower QC correction cap 3 → 1 (`loop.rs` `should_qc` gate); keep `quality_check_mode = "mutating"`.
-- [ ] DEFERRED (needs ~1-2 weeks of production metrics): if `runs` guard counters ≈ 0 after Phases 1-5, flip `agent.quality_check` default to false and delete TOOL_NAME_REMAPS + pre-execution service remap (`loop.rs:1529`) + hardest `agent/repair.rs` paths (keep the blocked-hallucination path). Evidence source: Phase 2 tracing counters + `runs` table.
+- [x] Kept unchanged: execution receipts + claim guard, blank check, promise-only guard, raw-tool-syntax check, stall detection, correction/token budgets, refusal nudge.
+- [x] QC correction cap 3 → 1 (`should_qc` gate); `quality_check_mode = "mutating"` unchanged.
+- [ ] DEFERRED (needs ~1-2 weeks of production metrics after deploying Phases 1-5): if `runs` guard counters ≈ 0 and the "Auto-remapped hallucinated tool" / "Service mismatch fix" log lines stop appearing, then (a) flip `agent.quality_check` default to false, (b) delete TOOL_NAME_REMAPS and the pre-execution service remap in loop.rs, (c) trim the hardest `agent/repair.rs` paths (keep the blocked-hallucination path). Evidence: `SELECT SUM(nudge_count), SUM(claim_guard_count), SUM(qc_correction_count) FROM runs WHERE created_at > <deploy date>` + grep the logs.
 
 ## Verification (each phase)
 

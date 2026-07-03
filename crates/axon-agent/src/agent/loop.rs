@@ -531,12 +531,16 @@ async fn validate_response(
         _ => any_mutating_success || tools_routed_but_unused || is_blank,
     };
 
+    // One LLM-judged correction per run. The deterministic guards (claim
+    // guard, plan check, structural checks) carry the load; with a capable
+    // model on complex turns, repeated LLM re-judging mostly burned tokens
+    // and oscillated between phrasings.
     let should_qc = qc_enabled
         && qc_scope_ok
         && (!tools_used.is_empty() || is_blank || tools_routed_but_unused)
         && !is_subtask
         && !is_completion_confirm
-        && guard_counts.qc_correction_count < 3;
+        && guard_counts.qc_correction_count < 1;
 
     if should_qc {
         let tool_evidence = extract_tool_evidence(messages);
@@ -1351,10 +1355,8 @@ pub(crate) async fn run_inner(
                                 format!("Nudging model to use tools: [{}]", tool_names.join(", ")),
                             RetryReason::ClaimGuard =>
                                 "Validating tool-backed claims against execution receipts".into(),
-                            RetryReason::QualityCheck => format!(
-                                "Quality issue found, refining response (Attempt {}/3)...",
-                                guard_counts.qc_correction_count
-                            ),
+                            RetryReason::QualityCheck =>
+                                "Quality issue found, refining response...".into(),
                             RetryReason::BlankResponse =>
                                 "Response was blank, requesting retry".into(),
                             RetryReason::HallucinatedToolCall =>
