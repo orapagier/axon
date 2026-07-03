@@ -705,6 +705,10 @@ defineExpose({
     @pointerdown="trackPointer"
     tabindex="0"
   >
+    <!-- connect-on-click=false: Vue Flow's native click-to-connect arms connectionClickStartHandle
+         on every handle click and is never cleared by our custom "click + to add a node" flow (which
+         bypasses Vue Flow's connect API), so the next unrelated handle click would otherwise complete
+         a stale connection back to the first handle. -->
     <VueFlow
       :id="canvasId"
       :nodes="nodes"
@@ -718,6 +722,7 @@ defineExpose({
       :min-zoom="0.1"
       :max-zoom="4"
       :selection-key-code="true"
+      :connect-on-click="false"
       :zoom-activation-key-code="['Control', 'Meta']"
       :pan-activation-key-code="[' ', 'Control', 'Meta']"
       :pan-on-drag="[1]"
