@@ -369,7 +369,33 @@ pub async fn call_llm_with_options(
             .map(|p| p == sticky_name)
             .unwrap_or(false);
 
-        if !already_tried {
+        // Role fidelity: a sticky model from a different pool must not shadow
+        // the requested role while that role has available models (e.g. a
+        // general free model staying sticky into a complex_tasks turn once a
+        // strong model is configured). Same-role stickiness is preserved —
+        // that's what keeps multi-step runs on one model.
+        let shadowed_by_role = if !role.is_empty() && role != "paid_model" {
+            let g = router.lock().await;
+            let sticky_in_role = g
+                .models
+                .iter()
+                .any(|m| m.name == sticky_name && m.role == role);
+            !sticky_in_role
+                && g.models
+                    .iter()
+                    .any(|m| m.role == role && m.enabled && m.is_available())
+        } else {
+            false
+        };
+        if shadowed_by_role {
+            tracing::info!(
+                "Sticky model '{}' skipped this turn: requested role '{}' has available models",
+                sticky_name,
+                role
+            );
+        }
+
+        if !already_tried && !shadowed_by_role {
             let sticky_models: Vec<(usize, String, u32)> = {
                 let g = router.lock().await;
                 g.models

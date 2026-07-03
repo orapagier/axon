@@ -502,6 +502,67 @@ priority = 1
 timeout_secs = 60
 enabled    = true
 
+# ── PHASE-AWARE ROLES (agent loop) ──────────────────────────────────────────
+#
+# The agent loop routes each turn to a role (crates/axon-agent/src/agent/loop.rs):
+#   complex_tasks — every tool-use turn, correction turn, and iteration > 1
+#                   (i.e. all planning and acting). Put ONE strong paid model
+#                   here: it is the single highest-leverage quality upgrade.
+#   simple_tasks  — first-turn conversational chit-chat, no tools. Cheap/fast.
+#
+# Both pools fall back to the general pool (role = "") when empty, so these
+# entries are optional and safe to add/remove at any time.
+#
+# Provider-agnostic: any provider works in any role.
+#   provider = "anthropic"  → native Anthropic API
+#   provider = "ollama"     → Ollama API (set base_url)
+#   provider = anything else ("google", "openrouter", "nvidia", "groq",
+#              "cerebras", ...) → OpenAI-compatible API (set base_url unless
+#              the provider has a built-in default)
+#
+# api_key "${VAR}" resolves from the settings DB first, then the environment.
+# The name inside ${...} must match EXACTLY — a mismatch surfaces at runtime
+# as "All models exhausted".
+#
+# thinking_mode (optional, anthropic provider, active from refactor Phase 3):
+#   "adaptive" — Claude 4.6+ adaptive thinking
+#   "budget"   — older Claude models that take a thinking token budget
+#   "off"      — default; safe for models that reject the parameter
+#
+# Uncomment ONE of the complex_tasks templates and fill in your model:
+
+# [[models]]
+# name       = "strong-complex-anthropic"
+# provider   = "anthropic"
+# model_id   = "claude-haiku-4-5"
+# api_key    = "${ANTHROPIC_API_KEY}"
+# role       = "complex_tasks"
+# thinking_mode = "budget"
+# priority   = 1
+# timeout_secs = 120
+# enabled    = true
+
+# [[models]]
+# name       = "strong-complex-openai-compat"
+# provider   = "openrouter"                      # any OpenAI-compatible provider
+# model_id   = "<paid-model-id>"
+# api_key    = "${YOUR_PROVIDER_API_KEY}"
+# base_url   = "https://openrouter.ai/api/v1"
+# role       = "complex_tasks"
+# priority   = 1
+# timeout_secs = 120
+# enabled    = true
+
+# [[models]]
+# name       = "fast-simple"
+# provider   = "google"
+# model_id   = "gemini-2.5-flash"
+# api_key    = "${GEMINI_API_KEY_ORAPARAMLEJ}"
+# role       = "simple_tasks"
+# priority   = 1
+# timeout_secs = 60
+# enabled    = true
+
 # ── PAID MODEL - ULTIMATE FALLBACK ─────────────────────────────────────────────
 
 [[models]]

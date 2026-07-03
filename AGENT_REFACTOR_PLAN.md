@@ -48,8 +48,8 @@ User decisions locked in:
 - [x] Write `AGENT_REFACTOR_PLAN.md` to repo root, commit + push.
 
 ### Phase 1 — Provider-agnostic strong-model slot (config only)
-- [ ] `config/models.toml`: add commented template `[[models]]` entries for `role = "complex_tasks"` and `role = "simple_tasks"` showing any-provider usage (`anthropic` / `google` / `openrouter` / `nvidia` / `groq` / custom `base_url`), with notes: `${VAR}` api_key resolves DB-then-env and the var name must match exactly (mismatch ⇒ "All models exhausted"); tool-use/correction/multi-iteration turns route to `complex_tasks`, chit-chat to `simple_tasks`, both fall back to the general pool when empty.
-- [ ] `router/model_router.rs`: verify role-preferred selection outranks `sticky_model_name` when the turn's role changes (a `simple_tasks` model must not stay sticky into a `complex_tasks` turn). Patch if needed.
+- [x] `config/models.toml`: add commented template `[[models]]` entries for `role = "complex_tasks"` and `role = "simple_tasks"` showing any-provider usage (`anthropic` / `google` / `openrouter` / `nvidia` / `groq` / custom `base_url`), with notes: `${VAR}` api_key resolves DB-then-env and the var name must match exactly (mismatch ⇒ "All models exhausted"); tool-use/correction/multi-iteration turns route to `complex_tasks`, chit-chat to `simple_tasks`, both fall back to the general pool when empty.
+- [x] `router/model_router.rs`: role fidelity patch — the sticky pass (Pass 0) ran BEFORE the role pool pass, so a general-pool model could shadow a configured `complex_tasks` model for the whole run. Sticky is now skipped when the requested role has available models and the sticky model isn't in that role (same-role stickiness preserved).
 
 ### Phase 2 — Show the model everything
 - [ ] New setting `agent.tool_scope` = `"all"` (new default) | `"routed"` (rollback path).
