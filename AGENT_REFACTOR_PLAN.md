@@ -74,10 +74,11 @@ User decisions locked in:
 - [x] Unit tests: teaching_block rendering + closest_tool_names ranking.
 
 ### Phase 5 — Plan-then-execute
-- [ ] New `agent/plan.rs` + internal tool `update_plan` (register in `agent/internal_tools.rs`): model creates/updates a numbered checklist (`[{step, status}]`), stored in run state.
-- [ ] Inject `[PLAN]` block (checked/unchecked) into each iteration's context while a plan exists.
-- [ ] System-prompt instruction to call `update_plan` first, gated on existing MULTISTEP / `is_bulk_task` heuristics. Setting `agent.planning` default true.
-- [ ] `validate_response`: if final answer arrives with unchecked plan items, inject one reminder listing them (shares global correction budget).
+- [x] `agent/plan.rs` (run-id-keyed state, cleared in `finalize` on every exit) + internal tool `update_plan` (registered in tools/registry.rs with `is_mutating=false` so plan bookkeeping can never vouch for a fabricated write in the claim guard; dispatched in agent/internal_tools.rs).
+- [x] Plan visibility: every `update_plan` tool result returns the full rendered `[PLAN]` checklist, so current state rides in conversation history without mutating the system prompt per iteration (provider prompt caches stay valid).
+- [x] PLANNING system-prompt instruction gated on MULTISTEP / `is_bulk_task` + `agent.planning` (seeded, default true); skipped for conversational, tool-free, and workflow-node (allow-listed) runs.
+- [x] `validate_response`: one-shot PLAN CHECK retry (new `RetryReason::PlanIncomplete`) listing open steps when a final answer arrives early; shares the global correction budget.
+- [x] Unit test: plan lifecycle (render/open/remind-once/clear).
 
 ### Phase 6 — Guard consolidation (data-driven)
 - [ ] Keep unchanged: execution receipts + claim guard, blank check, promise-only guard, raw-tool-syntax check, stall detection, correction/token budgets, refusal nudge.

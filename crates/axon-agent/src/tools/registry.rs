@@ -76,6 +76,32 @@ const WORKFLOW_ONLY_WRITE_TOOLS: &[&str] = &[
 
 fn internal_tools() -> Vec<ToolDefinition> {
     vec![
+        {
+            let mut d = ToolDefinition::internal(
+                "update_plan",
+                "Create or update your step-by-step plan for a multi-step task. Call this FIRST with a numbered list of steps, then again each time you finish a step — always send the FULL list, marking finished steps with status \"done\". Give your final answer only when every step is done or explicitly skipped (say why).",
+                serde_json::json!({
+                    "steps": {
+                        "type": "array",
+                        "description": "The full plan, every call. Each item: {step, status}.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "step":   {"type": "string", "description": "What this step accomplishes"},
+                                "status": {"type": "string", "enum": ["pending", "done"], "default": "pending"}
+                            },
+                            "required": ["step"]
+                        }
+                    }
+                }),
+                vec!["steps".into()],
+            );
+            // Bookkeeping, not a side effect: must never satisfy the claim
+            // guard's "successful mutating execution" receipt (the name-derived
+            // default classifies the `update` verb as mutating).
+            d.is_mutating = false;
+            d
+        },
         ToolDefinition::internal(
             "cron_job_tool",
             "Create, edit, pause, resume, or delete a scheduled periodic cron job. IMPORTANT: ALWAYS use this tool to schedule cron jobs, periodic tasks, or scheduled follow-ups. NEVER attempt to manually edit crontabs or systemd timers via ssh_tool.",

@@ -78,6 +78,22 @@ pub(crate) async fn handle_internal(
     run_id: String,
 ) -> anyhow::Result<serde_json::Value> {
     match name {
+        "update_plan" => {
+            let steps: Vec<crate::agent::plan::PlanStep> =
+                serde_json::from_value(args.get("steps").cloned().unwrap_or_default()).map_err(
+                    |e| anyhow::anyhow!("steps must be an array of {{step, status}} objects: {e}"),
+                )?;
+            if steps.is_empty() {
+                anyhow::bail!("steps must not be empty");
+            }
+            crate::agent::plan::set_steps(&run_id, steps);
+            let rendered = crate::agent::plan::render(&run_id).unwrap_or_default();
+            Ok(serde_json::json!({
+                "ok": true,
+                "plan": rendered,
+                "guidance": "Execute the next open step now. Call update_plan again (full list, statuses updated) as steps complete."
+            }))
+        }
         "cron_job_tool" => handle_job(args, state, ctx, run_id).await,
         "watcher_tool" => handle_watcher(args, state, ctx).await,
         "agent_memory_tool" => handle_memory(args, state).await,

@@ -2,6 +2,7 @@ pub mod context;
 pub mod internal_tools;
 pub mod r#loop;
 pub mod notifications;
+pub mod plan;
 pub mod quality;
 pub mod repair;
 pub mod system_context;

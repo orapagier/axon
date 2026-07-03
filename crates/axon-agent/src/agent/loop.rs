@@ -176,6 +176,8 @@ enum RetryReason {
     ClaimGuard,
     QualityCheck,
     BlankResponse,
+    /// Final answer arrived while the run's plan still has open steps.
+    PlanIncomplete,
 }
 
 /// Per-run counters for observability. Written to the DB at finalization.
@@ -302,7 +304,7 @@ fn is_explicit_tool_authoring_task(task: &str) -> bool {
 /// Returns true when the task implies a bulk/recurring operation.
 /// Uses positive + negative signals to reduce false positives.
 /// E.g. "tell me all about Paris" has "all" but is not a bulk task.
-fn is_bulk_task(task: &str) -> bool {
+pub(crate) fn is_bulk_task(task: &str) -> bool {
     let lower = task.to_lowercase();
     let positives = ["all", "every", "each", "multiple", "recurring", "batch"];
     let negatives = [
@@ -386,6 +388,7 @@ async fn validate_response(
     settings: &crate::config::RuntimeSettings,
     qc_enabled: bool,
     is_subtask: bool,
+    run_id: &str,
 ) -> ValidationDecision {
     // 1. Claim guard (deterministic, zero cost)
     if let Some(correction) = deterministic_tool_claim_guard(text, tool_names, tool_receipts) {
@@ -463,6 +466,22 @@ async fn validate_response(
             return ValidationDecision::Retry {
                 message: "You ended your turn with only a promise of future action ('let me...', 'I'll...'). You CANNOT perform work between turns — the user only sees this message and nothing would ever happen. Re-read the conversation to resolve what the user is referring to, call the needed tool(s) NOW, and reply with the actual result. If the request is genuinely impossible, say so plainly instead of promising.".to_string(),
                 reason: RetryReason::Refusal,
+            };
+        }
+    }
+
+    // 3.7. Plan completion check (deterministic, zero cost, one-shot). A
+    // final answer while the run's plan still has open steps usually means
+    // the model lost track mid-task. Remind once, listing the open steps;
+    // shares the global correction budget so it can't loop.
+    if let Some(open) = crate::agent::plan::open_steps(run_id) {
+        if !open.is_empty() && crate::agent::plan::mark_reminded(run_id) {
+            return ValidationDecision::Retry {
+                message: format!(
+                    "PLAN CHECK — your plan still has open steps:\n{}\n\nEither complete them now (call the needed tools, then update_plan with status \"done\"), or state plainly in your final answer why each remaining step was skipped.",
+                    open.join("\n")
+                ),
+                reason: RetryReason::PlanIncomplete,
             };
         }
     }
@@ -1245,6 +1264,7 @@ pub(crate) async fn run_inner(
                 &state.settings,
                 qc_enabled,
                 is_subtask,
+                &run_id,
             )
             .await;
 
@@ -1339,6 +1359,8 @@ pub(crate) async fn run_inner(
                                 "Response was blank, requesting retry".into(),
                             RetryReason::HallucinatedToolCall =>
                                 "Blocking raw tool syntax in response".into(),
+                            RetryReason::PlanIncomplete =>
+                                "Plan has open steps — asking the model to finish or account for them".into(),
                         }
                     });
                     messages.push(Message::user(&message));
@@ -1990,6 +2012,8 @@ fn finalize(
     tools: &[String],
     guards: &GuardCounts,
 ) {
+    // Drop run-scoped plan state on every exit path.
+    crate::agent::plan::clear(id);
     if let Ok(conn) = state.db.get() {
         let _ = conn.execute(
             "UPDATE runs SET status=?1,result=?2,iterations=?3,total_tokens=?4,models_used=?5,tools_used=?6,\

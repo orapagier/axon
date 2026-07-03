@@ -232,7 +232,24 @@ pub(crate) async fn build_run_context(
     let tool_free = matches!(ctx.allowed_tools.as_deref(), Some([]));
     let context_block = format!("{}{}{}{}", time_ctx, mem_ctx, obs_ctx, files_ctx);
 
-    let sys = if tool_free {
+    // Plan-then-execute: on multi-step-looking tasks, tell the model to lay
+    // out a checklist via the update_plan tool before acting. Weak models
+    // drift mid-task; a visible plan anchors them far better than post-hoc
+    // corrections. Skipped for workflow-node runs (their allow-list usually
+    // excludes update_plan) and simple/conversational tasks.
+    let planning_hint = if state.settings.get_bool("agent.planning", true)
+        && !tool_free
+        && ctx.allowed_tools.is_none()
+        && !is_conversational
+        && (crate::router::tool_router::MULTISTEP.is_match(task)
+            || crate::agent::r#loop::is_bulk_task(task))
+    {
+        "\n\nPLANNING:\nThis request looks multi-step. FIRST call update_plan with a numbered list of steps. Execute the steps in order, calling update_plan to mark each one done as you complete it. Give your final answer only when every step is done or explicitly skipped (say why)."
+    } else {
+        ""
+    };
+
+    let mut sys = if tool_free {
         if context_block.is_empty() {
             base_system.to_string()
         } else {
@@ -263,6 +280,7 @@ FILE HANDLING:\n\
             base_system, context_block
         )
     };
+    sys.push_str(planning_hint);
 
     RunSystemContext {
         sys,

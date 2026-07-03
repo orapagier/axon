@@ -49,7 +49,8 @@ INSERT OR IGNORE INTO settings VALUES
 INSERT OR IGNORE INTO settings VALUES
     ('agent.tool_scope',            'all',    'string', 'Tools shown to the model each iteration: all (every enabled tool; the model decides) or routed (legacy regex/embedding/LLM pre-filter)', 'agent', datetime('now')),
     ('agent.tool_result_budget_chars','100000','int',   'Max chars of tool results kept in the model''s context per run; oldest complete tool exchanges are dropped first', 'agent', datetime('now')),
-    ('agent.reasoning_effort',      'medium', 'string', 'Reasoning depth on complex/tool-use turns: off, low, medium, high. Providers that reject the field are detected and skipped automatically', 'agent', datetime('now'));
+    ('agent.reasoning_effort',      'medium', 'string', 'Reasoning depth on complex/tool-use turns: off, low, medium, high. Providers that reject the field are detected and skipped automatically', 'agent', datetime('now')),
+    ('agent.planning',              'true',   'bool',   'On multi-step tasks, instruct the model to lay out a checklist via update_plan first and check steps off as it works', 'agent', datetime('now'));
 
 -- Watcher / Smart Notifications.
 INSERT OR IGNORE INTO settings VALUES

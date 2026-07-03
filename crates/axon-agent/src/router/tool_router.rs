@@ -18,7 +18,7 @@ pub static CONVERSATIONAL: Lazy<Regex> = Lazy::new(|| {
 ).unwrap()
 });
 
-static MULTISTEP: Lazy<Regex> = Lazy::new(|| {
+pub static MULTISTEP: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
     r"(?i)\b(then|and\s+then|after\s+that|afterwards|next\s*[,;]?|and\s+also|followed\s+by|once\s+(that.?s?\s+)?done|first\s*[,;]|second\s*[,;]|finally\s*[,;]?|additionally|as\s+well\s+as)\b"
 ).unwrap()
