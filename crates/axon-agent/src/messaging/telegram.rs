@@ -34,6 +34,12 @@ struct WorkflowSlashCommand {
 pub struct TelegramGateway {
     token: String,
     connected: Arc<AtomicBool>,
+    // Set by a superseding gateway (see reconnect_messaging) so this
+    // instance's polling loop exits instead of running forever alongside
+    // the new one — two live pollers on the same bot token race for
+    // getUpdates and occasionally both win a cycle, producing duplicate
+    // replies to a single incoming message.
+    stopped: Arc<AtomicBool>,
     client: reqwest::Client,
 }
 
@@ -173,11 +179,19 @@ impl TelegramGateway {
         TelegramGateway {
             token,
             connected: Arc::new(AtomicBool::new(ok)),
+            stopped: Arc::new(AtomicBool::new(false)),
             client: reqwest::Client::new(),
         }
     }
     fn api(&self, method: &str) -> String {
         format!("https://api.telegram.org/bot{}/{}", self.token, method)
+    }
+
+    /// Signal this gateway's `start_polling` loop to exit on its next cycle.
+    /// Called on a superseded gateway when a new one takes over the same
+    /// bot token, so only one poller is ever fetching updates at a time.
+    pub fn stop_polling(&self) {
+        self.stopped.store(true, Ordering::Relaxed);
     }
 
     pub async fn start_polling(self: Arc<Self>, state: Arc<crate::state::AppState>) {
@@ -188,15 +202,36 @@ impl TelegramGateway {
             tracing::warn!("Telegram setMyCommands failed: {}", e);
         }
         tracing::info!("Telegram polling started");
-        let mut offset: i64 = 0;
+        // Resume from the last acknowledged update instead of 0. Starting
+        // from 0 after every restart makes Telegram redeliver every update
+        // it still considers unacked (anything fetched but not yet
+        // superseded by a later offset) — the tail of that replay lands on
+        // an agent run that already completed and replied once, producing
+        // a second, independently-generated reply to the same message.
+        let mut offset: i64 = state
+            .settings
+            .get_int("messaging.telegram_update_offset", 0);
         let mut consecutive_errors: u32 = 0;
         loop {
+            if self.stopped.load(Ordering::Relaxed) {
+                tracing::info!("Telegram polling stopped (superseded by a newer gateway)");
+                return;
+            }
             match Arc::clone(&self)
                 .poll_once(offset, Arc::clone(&state))
                 .await
             {
                 Ok(n) => {
-                    offset = n;
+                    if n != offset {
+                        offset = n;
+                        if let Ok(conn) = state.db.get() {
+                            let _ = conn.execute(
+                                "INSERT INTO settings (key,value,value_type,category) VALUES ('messaging.telegram_update_offset',?1,'int','messaging') \
+                                 ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=datetime('now')",
+                                rusqlite::params![offset.to_string()],
+                            );
+                        }
+                    }
                     consecutive_errors = 0;
                 }
                 Err(e) => {

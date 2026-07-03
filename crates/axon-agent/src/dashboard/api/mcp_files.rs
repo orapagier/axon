@@ -130,6 +130,13 @@ pub async fn reconnect_messaging(
                 let gw = Arc::new(crate::messaging::TelegramGateway::new(token));
                 {
                     let mut lock = state.messaging.telegram.lock().await;
+                    // Stop the outgoing gateway's poll loop before swapping it out —
+                    // otherwise it keeps calling getUpdates in the background forever,
+                    // racing the new poller for the same bot token and occasionally
+                    // both winning a cycle, which produces duplicate replies.
+                    if let Some(old) = lock.take() {
+                        old.stop_polling();
+                    }
                     *lock = Some(Arc::clone(&gw));
                 }
                 tokio::spawn(async move { gw.start_polling(s2).await });
