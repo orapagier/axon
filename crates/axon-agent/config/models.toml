@@ -3,17 +3,58 @@
 # ── 'axon' model (local axon-api-proxy @ localhost:5000) removed 2026-06-27:
 #    proxy decommissioned; Gemini/OpenRouter/etc. now handle all routing.
 
-# ── GENERAL ROLE GEMINI ─────────────────────────────────────────────
+# ── ROUTING DESIGN (2026-07-03 latency rework) ──────────────────────────────
+#
+# Priority = strict speed tiers. The router round-robins between provider
+# buckets WITHIN a tier (load balancing, not ordering), so mixing fast and
+# slow providers in one tier makes the slow one answer a fair share of calls.
+# Each tier must therefore hold only providers of similar speed:
+#
+#   P1  cerebras + groq   (~1s)     fastest inference available
+#   P2  gemini flash      (~2-25s)  proven reliable tool calling, 9 keys
+#   P3  nvidia NIM        (~10-40s) slow reasoning endpoints, spiky
+#   P4  openrouter :free  (variable) harsh daily caps, use before ollama
+#   P5  ollama cloud      (up to ~2min cold) absolute last resort
+#
+# timeout_secs is per attempt (per model_id!). A record with two model_ids can
+# burn 2x its timeout before failing over, so slow tiers get 45s, fast get 15s.
+
+# ── P1 FAST TIER (moved from router/axon_node roles 2026-07-03) ─────────────
 
 [[models]]
-name       = "gemini-axondev1991"
-provider   = "google"
-model_id   = "gemini-2.5-flash"
-api_key    = "${GEMINI_API_KEY_AXONDEV1991}"
+name       = "cerebras-shirahproject1"
+provider   = "cerebras"
+model_id   = "gpt-oss-120b"
+api_key    = "${CEREBRAS_API_KEY_SHIRAHPROJECT1}"
+base_url   = "https://api.cerebras.ai/v1"
 role       = ""
 priority   = 1
-timeout_secs = 60
+timeout_secs = 15
 enabled    = true
+
+[[models]]
+name       = "cerebras-shirahproject2"
+provider   = "cerebras"
+model_id   = "gpt-oss-120b"
+api_key    = "${CEREBRAS_API_KEY_SHIRAHPROJECT2}"
+base_url   = "https://api.cerebras.ai/v1"
+role       = ""
+priority   = 1
+timeout_secs = 15
+enabled    = true
+
+[[models]]
+name       = "groq-shirahproject3"
+provider   = "groq"
+model_id   = "openai/gpt-oss-120b"
+api_key    = "${GROQ_API_KEY_SHIRAHPROJECT3}"
+base_url   = "https://api.groq.com/openai/v1"
+role       = ""
+priority   = 1
+timeout_secs = 15
+enabled    = true
+
+# ── P2 GEMINI ────────────────────────────────────────────────────────────────
 
 [[models]]
 name       = "gemini-samuzzielorapa"
@@ -21,8 +62,8 @@ provider   = "google"
 model_id   = "gemini-2.5-flash"
 api_key    = "${GEMINI_API_KEY_SAMUZZIELORAPA}"
 role       = ""
-priority   = 1
-timeout_secs = 60
+priority   = 2
+timeout_secs = 30
 enabled    = true
 
 [[models]]
@@ -31,8 +72,8 @@ provider   = "google"
 model_id   = "gemini-2.5-flash"
 api_key    = "${GEMINI_API_KEY_SHIRAHPROJECT2}"
 role       = ""
-priority   = 1
-timeout_secs = 60
+priority   = 2
+timeout_secs = 30
 enabled    = true
 
 [[models]]
@@ -41,8 +82,8 @@ provider   = "google"
 model_id   = "gemini-2.5-flash"
 api_key    = "${GEMINI_API_KEY_SHIRAHPROJECT3}"
 role       = ""
-priority   = 1
-timeout_secs = 60
+priority   = 2
+timeout_secs = 30
 enabled    = true
 
 [[models]]
@@ -51,8 +92,8 @@ provider   = "google"
 model_id   = "gemini-2.5-flash"
 api_key    = "${GEMINI_API_KEY_SHIRAHN8N1}"
 role       = ""
-priority   = 1
-timeout_secs = 60
+priority   = 2
+timeout_secs = 30
 enabled    = true
 
 [[models]]
@@ -61,8 +102,8 @@ provider   = "google"
 model_id   = "gemini-2.5-flash"
 api_key    = "${GEMINI_API_KEY_SHIRAHN8N2}"
 role       = ""
-priority   = 1
-timeout_secs = 60
+priority   = 2
+timeout_secs = 30
 enabled    = true
 
 [[models]]
@@ -71,8 +112,8 @@ provider   = "google"
 model_id   = "gemini-2.5-flash"
 api_key    = "${GEMINI_API_KEY_SAMSAM12232020}"
 role       = ""
-priority   = 1
-timeout_secs = 60
+priority   = 2
+timeout_secs = 30
 enabled    = true
 
 [[models]]
@@ -81,8 +122,8 @@ provider   = "google"
 model_id   = "gemini-2.5-flash"
 api_key    = "${GEMINI_API_KEY_ORAPARAMLEJ}"
 role       = ""
-priority   = 1
-timeout_secs = 60
+priority   = 2
+timeout_secs = 30
 enabled    = true
 
 [[models]]
@@ -91,8 +132,8 @@ provider   = "google"
 model_id   = "gemini-2.5-flash"
 api_key    = "${GEMINI_API_KEY_ORAPAGIER}"
 role       = ""
-priority   = 1
-timeout_secs = 60
+priority   = 2
+timeout_secs = 30
 enabled    = true
 
 [[models]]
@@ -101,246 +142,11 @@ provider   = "google"
 model_id   = "gemini-2.5-flash"
 api_key    = "${GEMINI_API_KEY_SHIRAHPROJECT1}"
 role       = ""
-priority   = 1
-timeout_secs = 60
-enabled    = true
-
-# ── GENERAL ROLE OLLAMA ─────────────────────────────────────────────
-
-[[models]]
-name       = "ollama-shirahhn8n1"
-provider   = "ollama"
-model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
-api_key    = "${OLLAMA_API_KEY_SHIRAHN8N1}"
-base_url   = "https://ollama.com"
-role       = ""
 priority   = 2
-timeout_secs = 60
+timeout_secs = 30
 enabled    = true
 
-[[models]]
-name       = "ollama-shirahhn8n2"
-provider   = "ollama"
-model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
-api_key    = "${OLLAMA_API_KEY_SHIRAHN8N2}"
-base_url   = "https://ollama.com"
-role       = ""
-priority   = 2
-timeout_secs = 60
-enabled    = true
-
-[[models]]
-name       = "ollama-shirahproject1"
-provider   = "ollama"
-model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
-api_key    = "${OLLAMA_API_KEY_SHIRAHPROJECT1}"
-base_url   = "https://ollama.com"
-role       = ""
-priority   = 2
-timeout_secs = 60
-enabled    = true
-
-[[models]]
-name       = "ollama-shirahproject2"
-provider   = "ollama"
-model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
-api_key    = "${OLLAMA_API_KEY_SHIRAHPROJECT2}"
-base_url   = "https://ollama.com"
-role       = ""
-priority   = 2
-timeout_secs = 60
-enabled    = true
-
-[[models]]
-name       = "ollama-shirahproject3"
-provider   = "ollama"
-model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
-api_key    = "${OLLAMA_API_KEY_SHIRAHPROJECT3}"
-base_url   = "https://ollama.com"
-role       = ""
-priority   = 2
-timeout_secs = 60
-enabled    = true
-
-[[models]]
-name       = "ollama-samsam12232020"
-provider   = "ollama"
-model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
-api_key    = "${OLLAMA_API_KEY_SAMSAM12232020}"
-base_url   = "https://ollama.com"
-role       = ""
-priority   = 2
-timeout_secs = 60
-enabled    = true
-
-[[models]]
-name       = "ollama-orapagier"
-provider   = "ollama"
-model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
-api_key    = "${OLLAMA_API_KEY_ORAPAGIER}"
-base_url   = "https://ollama.com"
-role       = ""
-priority   = 2
-timeout_secs = 60
-enabled    = true
-
-[[models]]
-name       = "ollama-oraparamlej"
-provider   = "ollama"
-model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
-api_key    = "${OLLAMA_API_KEY_ORAPARAMLEJ}"
-base_url   = "https://ollama.com"
-role       = ""
-priority   = 2
-timeout_secs = 60
-enabled    = true
-
-[[models]]
-name       = "ollama-orapajelmar2"
-provider   = "ollama"
-model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
-api_key    = "${OLLAMA_API_KEY_ORAPAJELMAR2}"
-base_url   = "https://ollama.com"
-role       = ""
-priority   = 2
-timeout_secs = 60
-enabled    = true
-
-[[models]]
-name       = "ollama-samuzzielorapa"
-provider   = "ollama"
-model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
-api_key    = "${OLLAMA_API_KEY_SAMUZZIELORAPA}"
-base_url   = "https://ollama.com"
-role       = ""
-priority   = 2
-timeout_secs = 60
-enabled    = true
-
-[[models]]
-name       = "ollama-1"
-provider   = "ollama"
-model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
-api_key    = "${OLLAMA_API_KEY_1}"
-base_url   = "https://ollama.com"
-role       = ""
-priority   = 2
-timeout_secs = 60
-enabled    = true
-
-# ── GENERAL ROLE OPENROUTER ─────────────────────────────────────────────
-
-[[models]]
-name       = "openrouter-shirahhn8n1"
-provider   = "openrouter"
-model_id   = "nvidia/nemotron-3-super-120b-a12b:free"
-api_key    = "${OPENROUTER_API_KEY_SHIRAHN8N1}"
-base_url   = "https://openrouter.ai/api/v1"
-role       = ""
-priority   = 2
-timeout_secs = 60
-enabled    = true
-
-[[models]]
-name       = "openrouter-shirahhn8n2"
-provider   = "openrouter"
-model_id   = "nvidia/nemotron-3-super-120b-a12b:free"
-api_key    = "${OPENROUTER_API_KEY_SHIRAHN8N2}"
-base_url   = "https://openrouter.ai/api/v1"
-role       = ""
-priority   = 2
-timeout_secs = 60
-enabled    = true
-
-[[models]]
-name       = "openrouter-shirahproject1"
-provider   = "openrouter"
-model_id   = "nvidia/nemotron-3-super-120b-a12b:free"
-api_key    = "${OPENROUTER_API_KEY_SHIRAHPROJECT1}"
-base_url   = "https://openrouter.ai/api/v1"
-role       = ""
-priority   = 2
-timeout_secs = 60
-enabled    = true
-
-[[models]]
-name       = "openrouter-shirahproject2"
-provider   = "openrouter"
-model_id   = "nvidia/nemotron-3-super-120b-a12b:free"
-api_key    = "${OPENROUTER_API_KEY_SHIRAHPROJECT2}"
-base_url   = "https://openrouter.ai/api/v1"
-role       = ""
-priority   = 2
-timeout_secs = 60
-enabled    = true
-
-[[models]]
-name       = "openrouter-shirahproject3"
-provider   = "openrouter"
-model_id   = "nvidia/nemotron-3-super-120b-a12b:free"
-api_key    = "${OPENROUTER_API_KEY_SHIRAHPROJECT3}"
-base_url   = "https://openrouter.ai/api/v1"
-role       = ""
-priority   = 2
-timeout_secs = 60
-enabled    = true
-
-[[models]]
-name       = "openrouter-samsam12232020"
-provider   = "openrouter"
-model_id   = "nvidia/nemotron-3-super-120b-a12b:free"
-api_key    = "${OPENROUTER_API_KEY_SAMSAM12232020}"
-base_url   = "https://openrouter.ai/api/v1"
-role       = ""
-priority   = 2
-timeout_secs = 60
-enabled    = true
-
-[[models]]
-name       = "openrouter-orapagier"
-provider   = "openrouter"
-model_id   = "nvidia/nemotron-3-super-120b-a12b:free"
-api_key    = "${OPENROUTER_API_KEY_ORAPAGIER}"
-base_url   = "https://openrouter.ai/api/v1"
-role       = ""
-priority   = 2
-timeout_secs = 60
-enabled    = true
-
-[[models]]
-name       = "openrouter-oraparamlej"
-provider   = "openrouter"
-model_id   = "nvidia/nemotron-3-super-120b-a12b:free"
-api_key    = "${OPENROUTER_API_KEY_ORAPARAMLEJ}"
-base_url   = "https://openrouter.ai/api/v1"
-role       = ""
-priority   = 2
-timeout_secs = 60
-enabled    = true
-
-[[models]]
-name       = "openrouter-orapajelmar2"
-provider   = "openrouter"
-model_id   = "nvidia/nemotron-3-super-120b-a12b:free"
-api_key    = "${OPENROUTER_API_KEY_ORAPAJELMAR2}"
-base_url   = "https://openrouter.ai/api/v1"
-role       = ""
-priority   = 2
-timeout_secs = 60
-enabled    = true
-
-[[models]]
-name       = "openrouter-samuzzielorapa"
-provider   = "openrouter"
-model_id   = "nvidia/nemotron-3-super-120b-a12b:free"
-api_key    = "${OPENROUTER_API_KEY_SAMUZZIELORAPA}"
-base_url   = "https://openrouter.ai/api/v1"
-role       = ""
-priority   = 2
-timeout_secs = 60
-enabled    = true
-
-# ── GENERAL ROLE NVIDIA ─────────────────────────────────────────────
+# ── P3 NVIDIA (slow reasoning endpoints — was priority 1, demoted) ──────────
 
 [[models]]
 name = "nvidia-shirahn8n1"
@@ -349,8 +155,8 @@ model_id = "deepseek-ai/deepseek-v4-pro"
 api_key = "${NVIDIA_API_KEY_SHIRAHN8N1}"
 base_url = "https://integrate.api.nvidia.com/v1"
 role = ""
-priority = 1
-timeout_secs = 60
+priority = 3
+timeout_secs = 45
 enabled = true
 
 [[models]]
@@ -360,8 +166,8 @@ model_id = "deepseek-ai/deepseek-v4-pro"
 api_key = "${NVIDIA_API_KEY_ORAPAJELMAR}"
 base_url = "https://integrate.api.nvidia.com/v1"
 role = ""
-priority = 1
-timeout_secs = 60
+priority = 3
+timeout_secs = 45
 enabled = true
 
 [[models]]
@@ -371,8 +177,8 @@ model_id = "deepseek-ai/deepseek-v4-pro"
 api_key = "${NVIDIA_API_KEY_ORAPAGIER}"
 base_url = "https://integrate.api.nvidia.com/v1"
 role = ""
-priority = 1
-timeout_secs = 60
+priority = 3
+timeout_secs = 45
 enabled = true
 
 [[models]]
@@ -382,11 +188,246 @@ model_id = "deepseek-ai/deepseek-v4-pro"
 api_key = "${NVIDIA_API_KEY_ORAPARAMLEJ}"
 base_url = "https://integrate.api.nvidia.com/v1"
 role = ""
-priority = 1
-timeout_secs = 60
+priority = 3
+timeout_secs = 45
 enabled = true
 
-# ── TOOL ROUTER ─────────────────────────────────────────────
+# ── P4 OPENROUTER (free tier: hard daily caps, variable speed) ──────────────
+
+[[models]]
+name       = "openrouter-shirahhn8n1"
+provider   = "openrouter"
+model_id   = "nvidia/nemotron-3-super-120b-a12b:free"
+api_key    = "${OPENROUTER_API_KEY_SHIRAHN8N1}"
+base_url   = "https://openrouter.ai/api/v1"
+role       = ""
+priority   = 4
+timeout_secs = 45
+enabled    = true
+
+[[models]]
+name       = "openrouter-shirahhn8n2"
+provider   = "openrouter"
+model_id   = "nvidia/nemotron-3-super-120b-a12b:free"
+api_key    = "${OPENROUTER_API_KEY_SHIRAHN8N2}"
+base_url   = "https://openrouter.ai/api/v1"
+role       = ""
+priority   = 4
+timeout_secs = 45
+enabled    = true
+
+[[models]]
+name       = "openrouter-shirahproject1"
+provider   = "openrouter"
+model_id   = "nvidia/nemotron-3-super-120b-a12b:free"
+api_key    = "${OPENROUTER_API_KEY_SHIRAHPROJECT1}"
+base_url   = "https://openrouter.ai/api/v1"
+role       = ""
+priority   = 4
+timeout_secs = 45
+enabled    = true
+
+[[models]]
+name       = "openrouter-shirahproject2"
+provider   = "openrouter"
+model_id   = "nvidia/nemotron-3-super-120b-a12b:free"
+api_key    = "${OPENROUTER_API_KEY_SHIRAHPROJECT2}"
+base_url   = "https://openrouter.ai/api/v1"
+role       = ""
+priority   = 4
+timeout_secs = 45
+enabled    = true
+
+[[models]]
+name       = "openrouter-shirahproject3"
+provider   = "openrouter"
+model_id   = "nvidia/nemotron-3-super-120b-a12b:free"
+api_key    = "${OPENROUTER_API_KEY_SHIRAHPROJECT3}"
+base_url   = "https://openrouter.ai/api/v1"
+role       = ""
+priority   = 4
+timeout_secs = 45
+enabled    = true
+
+[[models]]
+name       = "openrouter-samsam12232020"
+provider   = "openrouter"
+model_id   = "nvidia/nemotron-3-super-120b-a12b:free"
+api_key    = "${OPENROUTER_API_KEY_SAMSAM12232020}"
+base_url   = "https://openrouter.ai/api/v1"
+role       = ""
+priority   = 4
+timeout_secs = 45
+enabled    = true
+
+[[models]]
+name       = "openrouter-orapagier"
+provider   = "openrouter"
+model_id   = "nvidia/nemotron-3-super-120b-a12b:free"
+api_key    = "${OPENROUTER_API_KEY_ORAPAGIER}"
+base_url   = "https://openrouter.ai/api/v1"
+role       = ""
+priority   = 4
+timeout_secs = 45
+enabled    = true
+
+[[models]]
+name       = "openrouter-oraparamlej"
+provider   = "openrouter"
+model_id   = "nvidia/nemotron-3-super-120b-a12b:free"
+api_key    = "${OPENROUTER_API_KEY_ORAPARAMLEJ}"
+base_url   = "https://openrouter.ai/api/v1"
+role       = ""
+priority   = 4
+timeout_secs = 45
+enabled    = true
+
+[[models]]
+name       = "openrouter-orapajelmar2"
+provider   = "openrouter"
+model_id   = "nvidia/nemotron-3-super-120b-a12b:free"
+api_key    = "${OPENROUTER_API_KEY_ORAPAJELMAR2}"
+base_url   = "https://openrouter.ai/api/v1"
+role       = ""
+priority   = 4
+timeout_secs = 45
+enabled    = true
+
+[[models]]
+name       = "openrouter-samuzzielorapa"
+provider   = "openrouter"
+model_id   = "nvidia/nemotron-3-super-120b-a12b:free"
+api_key    = "${OPENROUTER_API_KEY_SAMUZZIELORAPA}"
+base_url   = "https://openrouter.ai/api/v1"
+role       = ""
+priority   = 4
+timeout_secs = 45
+enabled    = true
+
+# ── P5 OLLAMA CLOUD (last resort — observed 126s cold; 2 model_ids/record) ──
+
+[[models]]
+name       = "ollama-shirahhn8n1"
+provider   = "ollama"
+model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
+api_key    = "${OLLAMA_API_KEY_SHIRAHN8N1}"
+base_url   = "https://ollama.com"
+role       = ""
+priority   = 5
+timeout_secs = 45
+enabled    = true
+
+[[models]]
+name       = "ollama-shirahhn8n2"
+provider   = "ollama"
+model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
+api_key    = "${OLLAMA_API_KEY_SHIRAHN8N2}"
+base_url   = "https://ollama.com"
+role       = ""
+priority   = 5
+timeout_secs = 45
+enabled    = true
+
+[[models]]
+name       = "ollama-shirahproject1"
+provider   = "ollama"
+model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
+api_key    = "${OLLAMA_API_KEY_SHIRAHPROJECT1}"
+base_url   = "https://ollama.com"
+role       = ""
+priority   = 5
+timeout_secs = 45
+enabled    = true
+
+[[models]]
+name       = "ollama-shirahproject2"
+provider   = "ollama"
+model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
+api_key    = "${OLLAMA_API_KEY_SHIRAHPROJECT2}"
+base_url   = "https://ollama.com"
+role       = ""
+priority   = 5
+timeout_secs = 45
+enabled    = true
+
+[[models]]
+name       = "ollama-shirahproject3"
+provider   = "ollama"
+model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
+api_key    = "${OLLAMA_API_KEY_SHIRAHPROJECT3}"
+base_url   = "https://ollama.com"
+role       = ""
+priority   = 5
+timeout_secs = 45
+enabled    = true
+
+[[models]]
+name       = "ollama-samsam12232020"
+provider   = "ollama"
+model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
+api_key    = "${OLLAMA_API_KEY_SAMSAM12232020}"
+base_url   = "https://ollama.com"
+role       = ""
+priority   = 5
+timeout_secs = 45
+enabled    = true
+
+[[models]]
+name       = "ollama-orapagier"
+provider   = "ollama"
+model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
+api_key    = "${OLLAMA_API_KEY_ORAPAGIER}"
+base_url   = "https://ollama.com"
+role       = ""
+priority   = 5
+timeout_secs = 45
+enabled    = true
+
+[[models]]
+name       = "ollama-oraparamlej"
+provider   = "ollama"
+model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
+api_key    = "${OLLAMA_API_KEY_ORAPARAMLEJ}"
+base_url   = "https://ollama.com"
+role       = ""
+priority   = 5
+timeout_secs = 45
+enabled    = true
+
+[[models]]
+name       = "ollama-orapajelmar2"
+provider   = "ollama"
+model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
+api_key    = "${OLLAMA_API_KEY_ORAPAJELMAR2}"
+base_url   = "https://ollama.com"
+role       = ""
+priority   = 5
+timeout_secs = 45
+enabled    = true
+
+[[models]]
+name       = "ollama-samuzzielorapa"
+provider   = "ollama"
+model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
+api_key    = "${OLLAMA_API_KEY_SAMUZZIELORAPA}"
+base_url   = "https://ollama.com"
+role       = ""
+priority   = 5
+timeout_secs = 45
+enabled    = true
+
+[[models]]
+name       = "ollama-1"
+provider   = "ollama"
+model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
+api_key    = "${OLLAMA_API_KEY_1}"
+base_url   = "https://ollama.com"
+role       = ""
+priority   = 5
+timeout_secs = 45
+enabled    = true
+
+# ── TOOL ROUTER (3 keys; shirahproject1/2 moved to general P1) ───────────────
 
 [[models]]
 name       = "cerebras-shirahhn8n1"
@@ -396,7 +437,7 @@ api_key    = "${CEREBRAS_API_KEY_SHIRAHN8N1}"
 base_url   = "https://api.cerebras.ai/v1"
 role       = "router"
 priority = 1
-timeout_secs = 60
+timeout_secs = 20
 enabled    = true
 
 [[models]]
@@ -407,29 +448,7 @@ api_key    = "${CEREBRAS_API_KEY_SHIRAHN8N2}"
 base_url   = "https://api.cerebras.ai/v1"
 role       = "router"
 priority = 1
-timeout_secs = 60
-enabled    = true
-
-[[models]]
-name       = "cerebras-shirahproject1"
-provider   = "cerebras"
-model_id   = "gpt-oss-120b"
-api_key    = "${CEREBRAS_API_KEY_SHIRAHPROJECT1}"
-base_url   = "https://api.cerebras.ai/v1"
-role       = "router"
-priority = 1
-timeout_secs = 60
-enabled    = true
-
-[[models]]
-name       = "cerebras-shirahproject2"
-provider   = "cerebras"
-model_id   = "gpt-oss-120b"
-api_key    = "${CEREBRAS_API_KEY_SHIRAHPROJECT2}"
-base_url   = "https://api.cerebras.ai/v1"
-role       = "router"
-priority = 1
-timeout_secs = 60
+timeout_secs = 20
 enabled    = true
 
 [[models]]
@@ -440,21 +459,10 @@ api_key    = "${CEREBRAS_API_KEY_SAMSAM12232020}"
 base_url   = "https://api.cerebras.ai/v1"
 role       = "router"
 priority = 1
-timeout_secs = 60
+timeout_secs = 20
 enabled    = true
 
-# ── AXON NODE ─────────────────────────────────────────────
-
-[[models]]
-name       = "groq-shirahproject3"
-provider   = "groq"
-model_id   = "openai/gpt-oss-120b"
-api_key    = "${GROQ_API_KEY_SHIRAHPROJECT3}"
-base_url   = "https://api.groq.com/openai/v1"
-role       = "axon_node"
-priority = 10
-timeout_secs = 60
-enabled    = true
+# ── AXON NODE (2 keys; shirahproject3 moved to general P1) ───────────────────
 
 [[models]]
 name       = "groq-shirahn8n2"
@@ -464,7 +472,7 @@ api_key    = "${GROQ_API_KEY_SHIRAHN8N2}"
 base_url   = "https://api.groq.com/openai/v1"
 role       = "axon_node"
 priority = 10
-timeout_secs = 60
+timeout_secs = 30
 enabled    = true
 
 [[models]]
@@ -475,10 +483,10 @@ api_key    = "${GROQ_API_KEY_SAMSAM12232020}"
 base_url   = "https://api.groq.com/openai/v1"
 role       = "axon_node"
 priority = 10
-timeout_secs = 60
+timeout_secs = 30
 enabled    = true
 
-# ── MEMORY COMPRESSOR ─────────────────────────────────────────────
+# ── MEMORY COMPRESSOR (background — latency-tolerant) ────────────────────────
 
 [[models]]
 name       = "cerebras-orapagier"
