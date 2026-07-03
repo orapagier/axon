@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { get, post, put, del } from '../lib/api.js'
 import { toast } from '../lib/toast.js'
 import { fmtTokens, timeAgo } from '../lib/utils.js'
@@ -121,6 +121,22 @@ function statusType(s) {
   return s === 'available' ? 'ok' : s === 'rate_limited' ? 'warn' : 'err'
 }
 
+const summary = computed(() => {
+  const c = { total: models.value.length, healthy: 0, rateLimited: 0, unavailable: 0, disabled: 0 }
+  for (const m of models.value) {
+    if (m.enabled === false) {
+      c.disabled++
+    } else if (m.status === 'rate_limited') {
+      c.rateLimited++
+    } else if (m.status === 'available') {
+      c.healthy++
+    } else {
+      c.unavailable++
+    }
+  }
+  return c
+})
+
 function getPct(m) {
   const rl = m.rl_snapshot || {}
   if (rl.tokens_remaining_per_min && rl.tokens_limit_per_min) {
@@ -157,9 +173,23 @@ onMounted(load)
           <div class="card-title-group">
             <h2>Active Models</h2>
           </div>
-          <span class="card-summary">{{ models.length }} configured</span>
+          <div class="fleet-summary">
+            <span class="fleet-total">{{ summary.total }} configured</span>
+            <span class="fleet-stat" :class="{ dim: summary.healthy === 0 }">
+              <i class="dot ok"></i>{{ summary.healthy }} healthy
+            </span>
+            <span class="fleet-stat" :class="{ dim: summary.rateLimited === 0 }">
+              <i class="dot warn"></i>{{ summary.rateLimited }} rate limited
+            </span>
+            <span class="fleet-stat" :class="{ dim: summary.unavailable === 0 }">
+              <i class="dot err"></i>{{ summary.unavailable }} unavailable
+            </span>
+            <span class="fleet-stat" :class="{ dim: summary.disabled === 0 }">
+              <i class="dot muted"></i>{{ summary.disabled }} disabled
+            </span>
+          </div>
         </div>
-        
+
         <div class="service-list">
           <div
             v-for="m in models"
@@ -192,44 +222,28 @@ onMounted(load)
                   <button class="btn btn-sm btn-danger" @click="remove(m)">✕</button>
                 </div>
               </div>
-              
-              <div class="model-meta">
+
+              <div class="model-meta-line">
                 <span class="provider-pill">{{ m.provider }}</span>
                 <span class="model-id-text">{{ m.model_id }}</span>
                 <span class="priority-pill">P{{ m.priority }}</span>
+                <span class="meta-sep">·</span>
+                <span>{{ m.total_calls }} calls</span>
+                <span class="meta-sep">·</span>
+                <span>{{ fmtTokens(m.total_input_tokens) }} in / {{ fmtTokens(m.total_output_tokens) }} out</span>
+                <span class="meta-sep">·</span>
+                <span :class="{ 'text-danger': m.consecutive_errors > 0 }">{{ m.consecutive_errors }} errors</span>
+                <template v-if="m.rate_limit_reset_at">
+                  <span class="meta-sep">·</span>
+                  <span>resets {{ timeAgo(m.rate_limit_reset_at) }}</span>
+                </template>
               </div>
 
-              <div class="model-stats-grid">
-                <div class="stat-item">
-                  <div class="stat-label">Calls</div>
-                  <div class="stat-value">{{ m.total_calls }}</div>
-                </div>
-                <div class="stat-item">
-                  <div class="stat-label">Input</div>
-                  <div class="stat-value">{{ fmtTokens(m.total_input_tokens) }}</div>
-                </div>
-                <div class="stat-item">
-                  <div class="stat-label">Output</div>
-                  <div class="stat-value">{{ fmtTokens(m.total_output_tokens) }}</div>
-                </div>
-                <div class="stat-item">
-                  <div class="stat-label">Errors</div>
-                  <div class="stat-value" :class="{ 'text-danger': m.consecutive_errors > 0 }">{{ m.consecutive_errors }}</div>
-                </div>
-                <div v-if="m.rate_limit_reset_at" class="stat-item">
-                  <div class="stat-label">Reset</div>
-                  <div class="stat-value">{{ timeAgo(m.rate_limit_reset_at) }}</div>
-                </div>
-              </div>
-
-              <div v-if="getPct(m) !== null" class="rate-limit-container">
-                <div class="rate-limit-header">
-                  <span>Rate Limit</span>
-                  <span>{{ getPct(m) }}% Remaining</span>
-                </div>
+              <div v-if="getPct(m) !== null" class="rate-limit-row">
                 <div class="premium-progress" :title="`${m.rl_snapshot.tokens_remaining_per_min} / ${m.rl_snapshot.tokens_limit_per_min} tokens remaining`">
                   <div class="progress-fill" :style="{ width: getPct(m) + '%' }"></div>
                 </div>
+                <span class="rate-limit-pct">{{ getPct(m) }}% left</span>
               </div>
             </div>
           </div>
@@ -315,14 +329,14 @@ onMounted(load)
   display: flex;
   justify-content: space-between;
   align-items: flex-end;
-  margin-bottom: 30px;
+  margin-bottom: 18px;
 }
 
 .page-header h1 {
-  font-size: 28px;
+  font-size: 22px;
   font-weight: 800;
   letter-spacing: -0.02em;
-  margin-bottom: 8px;
+  margin-bottom: 4px;
   background: linear-gradient(90deg, #1e2433, #6c5ce7);
   -webkit-background-clip: text;
   background-clip: text;
@@ -331,7 +345,7 @@ onMounted(load)
 
 .page-desc {
   color: var(--muted);
-  font-size: 14px;
+  font-size: 13px;
   margin: 0;
 }
 
@@ -340,9 +354,9 @@ onMounted(load)
   background: rgba(255, 255, 255, 0.4);
   backdrop-filter: blur(20px);
   border: 1px solid rgba(0, 0, 0, 0.05);
-  border-radius: 16px;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
-  margin-bottom: 24px;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+  margin-bottom: 16px;
   overflow: hidden;
   transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -351,9 +365,51 @@ onMounted(load)
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 20px 30px;
+  padding: 12px 20px;
   background: rgba(0, 0, 0, 0.1);
+  flex-wrap: wrap;
+  gap: 8px;
 }
+
+.fleet-summary {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.fleet-total {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.fleet-stat {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.fleet-stat.dim {
+  opacity: 0.45;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.dot.ok { background: #00cec9; }
+.dot.warn { background: #f59e0b; }
+.dot.err { background: #ff7675; }
+.dot.muted { background: var(--muted); }
 
 .card-title-group h2 {
   font-size: 13px;
@@ -364,22 +420,13 @@ onMounted(load)
   margin: 0;
 }
 
-.card-summary {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--muted);
-  background: rgba(0, 0, 0, 0.2);
-  padding: 4px 10px;
-  border-radius: 20px;
-}
-
 .service-list {
   display: flex;
   flex-direction: column;
 }
 
 .service-item {
-  padding: 24px 30px;
+  padding: 12px 20px;
   border-bottom: 1px solid rgba(0, 0, 0, 0.05);
   transition: background 0.2s;
 }
@@ -404,40 +451,49 @@ onMounted(load)
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
+  margin-bottom: 6px;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .service-name-group {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .service-name {
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 700;
   color: var(--text);
 }
 
-.model-meta {
+.model-meta-line {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 16px;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.meta-sep {
+  opacity: 0.4;
 }
 
 .provider-pill {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 800;
   text-transform: uppercase;
   color: #a29bfe;
   background: rgba(162, 155, 254, 0.1);
-  padding: 2px 8px;
+  padding: 1px 7px;
   border-radius: 4px;
 }
 
 .model-id-text {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--muted);
   font-family: 'Fira Code', monospace;
 }
@@ -451,58 +507,22 @@ onMounted(load)
   border-radius: 4px;
 }
 
-.model-stats-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-  gap: 16px;
-  background: rgba(0, 0, 0, 0.2);
-  padding: 12px 18px;
-  border-radius: 10px;
-  margin-bottom: 16px;
-}
-
-.stat-item {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.stat-label {
-  font-size: 10px;
-  font-weight: 800;
-  text-transform: uppercase;
-  color: var(--muted);
-  letter-spacing: 0.05em;
-}
-
-.stat-value {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-}
-
 .text-danger {
   color: #ff7675;
 }
 
 /* Rate Limit Bar */
-.rate-limit-container {
-  margin-top: 12px;
-}
-
-.rate-limit-header {
+.rate-limit-row {
   display: flex;
-  justify-content: space-between;
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--muted);
-  margin-bottom: 6px;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
 }
 
 .premium-progress {
-  height: 6px;
+  flex: 1;
+  max-width: 200px;
+  height: 4px;
   background: rgba(0, 0, 0, 0.05);
   border-radius: 10px;
   overflow: hidden;
@@ -513,6 +533,12 @@ onMounted(load)
   background: linear-gradient(90deg, #6c5ce7, #a29bfe);
   border-radius: 10px;
   transition: width 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.rate-limit-pct {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
 }
 
 .empty-state-container {
