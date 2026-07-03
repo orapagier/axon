@@ -407,6 +407,17 @@ function cancelRename() {
   cursor: pointer;
 }
 
+/* The dot stays visually 12px, but clicks/drags landing in a much bigger
+   invisible ring around it still hit the handle — a click on a pseudo-element
+   resolves to its host, so this doesn't need its own pointer handling. Fixes
+   the handle being hard to hit precisely at the small visual size. */
+.canvas-node :deep(.vue-flow__handle::before) {
+  content: '';
+  position: absolute;
+  inset: -9px;
+  border-radius: 50%;
+}
+
 .canvas-node :deep(.vue-flow__handle.source) {
   border-color: rgba(255, 255, 255, 0.5);
 }
