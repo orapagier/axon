@@ -52,6 +52,13 @@ UPDATE settings SET value = '2'
 UPDATE settings SET value = '0'
  WHERE key = 'workflow.resume_token_default_ttl_secs' AND value = '604800';
 
+-- Harness refactor: widen the dashboard context window (5 -> 20 messages) on
+-- hosts still on the old seeded default. A 5-message window forced the model
+-- to answer follow-ups blind; 20 messages (10 exchanges) resolves anaphora
+-- without stressing free-tier token limits. Operator-set values are untouched.
+UPDATE settings SET value = '20'
+ WHERE key = 'memory.dashboard_context_window' AND value = '5';
+
 -- Drop settings made defunct by the rework: the adaptive/fair-share timeout knobs,
 -- the exponential-backoff cap, and the per-iteration chain budget are no longer
 -- read (the per-iteration deadline is now just the run deadline). Harmless if absent.

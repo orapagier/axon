@@ -16,7 +16,7 @@ INSERT OR IGNORE INTO settings VALUES
     ('router.error_threshold',      '2',     'int',    'Consecutive non-rate-limit errors before parking a model until midnight', 'router', datetime('now')),
     ('router.model_call_timeout_secs','30',  'int',    'Flat per-attempt model timeout in seconds (overridable per model); on timeout the router fails over immediately', 'router', datetime('now')),
     ('memory.short_term_max_msgs',  '50',    'int',    'Max messages kept per session',                 'memory',    datetime('now')),
-    ('memory.dashboard_context_window','5',  'int',    'Newest messages fed to the model as context per dashboard chat (0=send full thread; transcript is still retained up to short_term_max_msgs)', 'memory', datetime('now')),
+    ('memory.dashboard_context_window','20',  'int',    'Newest messages fed to the model as context per dashboard chat (0=send full thread; transcript is still retained up to short_term_max_msgs)', 'memory', datetime('now')),
     ('memory.long_term_top_k',      '5',     'int',    'Memories injected per agent call',              'memory',    datetime('now')),
     ('scheduler.max_jobs',          '100',   'int',    'Maximum active scheduled jobs',                 'scheduler', datetime('now')),
     ('scheduler.follow_up_retries', '3',     'int',    'Follow-up attempts before abandoning task',     'scheduler', datetime('now')),
@@ -44,6 +44,11 @@ INSERT OR IGNORE INTO settings VALUES
 -- Quality-check scoping.
 INSERT OR IGNORE INTO settings VALUES
     ('agent.quality_check_mode',    'mutating', 'string', 'When to spend an LLM quality check: all (every tool-backed answer), mutating (only state-changing actions, false refusals, or blank/fake-success responses), off', 'agent', datetime('now'));
+
+-- Harness refactor: tool scope + tool-result context budget.
+INSERT OR IGNORE INTO settings VALUES
+    ('agent.tool_scope',            'all',    'string', 'Tools shown to the model each iteration: all (every enabled tool; the model decides) or routed (legacy regex/embedding/LLM pre-filter)', 'agent', datetime('now')),
+    ('agent.tool_result_budget_chars','100000','int',   'Max chars of tool results kept in the model''s context per run; oldest complete tool exchanges are dropped first', 'agent', datetime('now'));
 
 -- Watcher / Smart Notifications.
 INSERT OR IGNORE INTO settings VALUES

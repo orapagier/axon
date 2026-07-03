@@ -52,12 +52,12 @@ User decisions locked in:
 - [x] `router/model_router.rs`: role fidelity patch — the sticky pass (Pass 0) ran BEFORE the role pool pass, so a general-pool model could shadow a configured `complex_tasks` model for the whole run. Sticky is now skipped when the requested role has available models and the sticky model isn't in that role (same-role stickiness preserved).
 
 ### Phase 2 — Show the model everything
-- [ ] New setting `agent.tool_scope` = `"all"` (new default) | `"routed"` (rollback path).
-- [ ] `loop.rs:815-903` + `agent/system_context.rs` initial routing: when `"all"` and task not CONVERSATIONAL, pass the full enabled tool list (sorted by name for provider-side prompt-cache stability). Keep `ctx.allowed_tools` manual filtering (workflow nodes) and the conversational zero-tool short-circuit. Tier2 router LLM call no longer runs in `"all"` mode.
-- [ ] Tools UI event: emit tier1 hint subset (cheap) or skip when `"all"`.
-- [ ] `memory.dashboard_context_window` default 5 → 20.
-- [ ] New setting `agent.tool_result_budget_chars` default 100_000 (was hardcoded 50_000).
-- [ ] Add tracing counters for TOOL_NAME_REMAPS hits + service-mismatch remap hits (Phase 6 deletion evidence).
+- [x] New setting `agent.tool_scope` = `"all"` (new default) | `"routed"` (rollback path). Seeded in `db/seed.sql`.
+- [x] `loop.rs` + `agent/system_context.rs`: when `"all"` and task not CONVERSATIONAL, the model gets the full enabled tool list every iteration (sorted by name for provider-side prompt-cache stability). `ctx.allowed_tools` manual filtering (workflow nodes) and the conversational zero-tool short-circuit preserved. Router (incl. tier2 LLM call) fully bypassed in `"all"` mode, including the initial routing in `build_run_context`.
+- [x] Tools UI event skipped in `"all"` mode (ToolStart events show live usage).
+- [x] `memory.dashboard_context_window` 5 → 20: seed.sql (fresh installs), normalize.sql WHERE-guarded update (existing installs still on the old default), inline code default.
+- [x] New setting `agent.tool_result_budget_chars` default 100_000 (was hardcoded 50_000). Seeded.
+- [x] Remap-hit evidence for Phase 6: existing `tracing::info!("Auto-remapped hallucinated tool ...")` (loop.rs) and `tracing::warn!("Service mismatch fix ...")` lines serve as the counters — grep logs for these after 1-2 weeks.
 
 ### Phase 3 — Reasoning ON, provider-agnostic
 - [ ] Default `agent.reasoning_effort` `""` → `"medium"` (applied on `complex_tasks` turns per existing gate).

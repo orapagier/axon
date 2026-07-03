@@ -50,7 +50,9 @@ pub(crate) async fn build_run_context(
                 // short_term_max_msgs) but only feed the model the newest few
                 // turns, so per-message context stays cheap even in a long
                 // thread. Other platforms keep the full session window.
-                let ctx_window = state.settings.get_int("memory.dashboard_context_window", 5);
+                let ctx_window = state
+                    .settings
+                    .get_int("memory.dashboard_context_window", 20);
                 if ctx.platform == "dashboard" && ctx_window > 0 {
                     state
                         .memory
@@ -137,6 +139,12 @@ pub(crate) async fn build_run_context(
                     serde_json::Value::String("manual".to_string()),
                 );
                 (filtered, serde_json::Value::Object(info))
+            } else if state.settings.get_str("agent.tool_scope", "all") == "all" {
+                // Full tool scope: the loop hands the model every enabled tool
+                // on every iteration, so there is nothing to pre-route. Skip
+                // the router — and its potential embedding/LLM tier calls —
+                // entirely. The loop's "all" branch ignores this placeholder.
+                (Vec::new(), serde_json::json!({"tier": "all"}))
             } else {
                 // Route with the session history so anaphoric follow-ups
                 // ("get me another one") resolve against prior turns instead

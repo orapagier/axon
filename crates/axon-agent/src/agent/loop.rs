@@ -656,6 +656,16 @@ pub(crate) async fn run_inner(
         Arc::new(std::sync::atomic::AtomicU32::new(if on { cap } else { 0 }))
     };
     let memory_enabled = ctx.memory_enabled;
+    // Tool scope: "all" (default) exposes every enabled tool to the model on
+    // every iteration — the model, not a pre-filter, decides what to use.
+    // "routed" restores the legacy regex/embedding/LLM router as a rollback path.
+    let tool_scope_all = state.settings.get_str("agent.tool_scope", "all") == "all";
+    // Char budget for tool results kept in the model's context; oldest complete
+    // tool exchanges are dropped first (see trim_tool_results_by_budget).
+    let tool_result_budget = state
+        .settings
+        .get_int("agent.tool_result_budget_chars", 100_000)
+        .max(1_000) as usize;
     let task_is_bulk = is_bulk_task(task);
     let is_conversational = crate::router::tool_router::CONVERSATIONAL.is_match(task);
     let needs_time_context = task_needs_time_context(task);
@@ -823,6 +833,24 @@ pub(crate) async fn run_inner(
                 "final".to_string(),
                 Vec::<String>::new(),
             )
+        } else if tool_scope_all && ctx.allowed_tools.is_none() {
+            // Full scope: every enabled tool, deterministically sorted so the
+            // provider-side prompt cache sees a stable prefix. No Tools UI
+            // event here — ToolStart events already show live usage, and a
+            // full-registry name list per iteration is noise. Conversational
+            // turns stay tool-free (cheap small-talk path).
+            if is_conversational {
+                (
+                    Vec::<ToolDefinition>::new(),
+                    "conversational".to_string(),
+                    Vec::<String>::new(),
+                )
+            } else {
+                let mut f = all_tools.clone();
+                f.sort_by(|a, b| a.name.cmp(&b.name));
+                let names: Vec<String> = f.iter().map(|t| t.name.clone()).collect();
+                (f, "all".to_string(), names)
+            }
         } else if iters == 1 {
             let names: Vec<String> = filtered_initial.iter().map(|t| t.name.clone()).collect();
             if !names.is_empty() {
@@ -902,7 +930,7 @@ pub(crate) async fn run_inner(
             (f, t, names)
         };
 
-        trim_tool_results_by_budget(&mut messages, 50_000);
+        trim_tool_results_by_budget(&mut messages, tool_result_budget);
 
         // ── Model selection & call ───────────────────────────────────────────
 
