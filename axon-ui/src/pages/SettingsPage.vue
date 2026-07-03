@@ -14,15 +14,17 @@ const retentionRunning = ref(false)
 const retentionResult = ref('')
 
 const CATEGORY_META = {
-  auth: { title: 'Authentication', description: 'Access control, tokens, and session security.' },
+  agent: { title: 'Agent', description: 'Core agent-loop behavior: iteration and correction budgets, run/tool timeouts, tool scope, reasoning effort, temperature, token caps, and the system prompt.' },
+  embedder: { title: 'Embeddings', description: 'OpenAI-compatible embeddings provider powering the semantic tool-routing tier and long-term memory recall.' },
   instagram: { title: 'Instagram Publishing', description: 'Media hosting URLs, bind address, TTL, and image/video processing waits.' },
   memory: { title: 'Memory', description: 'Retention, recall, and knowledge persistence behavior.' },
+  messaging: { title: 'Messaging', description: 'Chat gateway tokens (Telegram, Discord, Slack) and Telegram workflow-runner access control.' },
   retention: { title: 'Database Retention', description: 'How long agent run history, tool observations, workflow runs, and webhook events are kept before the daily housekeeping sweep prunes them. Lower values keep the database smaller.' },
-  router: { title: 'Router', description: 'Prompt routing and tool decision behavior.' },
-  runtime: { title: 'Runtime', description: 'Execution defaults, timeouts, and runtime controls.' },
+  router: { title: 'Router', description: 'Model failover behavior and the pattern → embedding → LLM tool-routing tiers.' },
   scheduler: { title: 'Scheduler', description: 'Background jobs, polling cadence, and automation timing.' },
-  storage: { title: 'Storage', description: 'File handling, persistence paths, and storage policy.' },
+  watcher: { title: 'Smart Notifications', description: 'Auto-polling watchers (Gmail, Outlook, Calendar, Facebook), quiet hours, and where notifications are delivered.' },
   websearch: { title: 'Web Search', description: 'Search provider behavior and retrieval policy.' },
+  workflow: { title: 'Workflows', description: 'Run concurrency and queueing, version snapshots, resume/approval links, and webhook deduplication.' },
 }
 
 function humanizeCategory(cat) {
@@ -167,8 +169,11 @@ function selectSection(id) {
   activeSection.value = id
 }
 
-function isSecret(key) {
-  const k = key.toLowerCase()
+function isSecret(s) {
+  // Only string values can be secrets — int knobs like max_total_tokens or
+  // resume_token_default_ttl_secs must not be masked just for containing "token".
+  if (s.value_type !== 'string') return false
+  const k = s.key.toLowerCase()
   return k.includes('key') || k.includes('token') || k.includes('password')
 }
 
@@ -230,7 +235,7 @@ onMounted(load)
                 ></textarea>
 
                 <input
-                  v-else-if="isSecret(s.key)"
+                  v-else-if="isSecret(s)"
                   type="password"
                   v-model="s.draft"
                   class="premium-input setting-input"

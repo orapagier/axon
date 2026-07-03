@@ -482,7 +482,13 @@ impl ToolRouter {
             .into_iter()
             .rev()
             .collect();
-        let sys_prompt = self.settings.get_str("router.system_prompt", "You are a routing proxy. Reply ONLY with comma-separated names of the tools needed, or exactly NONE. Do not use quotes or backticks.");
+        // Both prompts are seeded (visible in the Settings page); a blank value
+        // means "use the built-in" — router.user_prompt is seeded blank because
+        // its default embeds the generated disambiguation block below.
+        let mut sys_prompt = self.settings.get_str("router.system_prompt", "");
+        if sys_prompt.trim().is_empty() {
+            sys_prompt = "You are a routing proxy. Reply ONLY with comma-separated names of the tools needed, or exactly NONE. Do not use quotes or backticks.".to_string();
+        }
         // The SERVICE DISAMBIGUATION block is generated from the single
         // `service_map::SERVICE_PAIRS` registry so it can never drift from the
         // pre-execution corrector and quality gate in the agent loop.
@@ -490,9 +496,10 @@ impl ToolRouter {
             "You are a strict tool router. Based on the request, select the necessary tools from the list.\nTools:\n{{tool_list}}\n{{prior}}{{multi}}{}\nRequest: {{msg}}\n\nRULES:\n1. Output strictly a comma-separated list of tool names.\n2. Do NOT output anything else (no markdown, no quotes, no conversational text).\n3. If NO tools are needed, output exactly: NONE\n4. NEVER mix Google and Microsoft tools for the same request.\n\nTools needed:",
             crate::router::service_map::router_disambiguation_block()
         );
-        let user_tmpl = self
-            .settings
-            .get_str("router.user_prompt", &default_user_tmpl);
+        let mut user_tmpl = self.settings.get_str("router.user_prompt", "");
+        if user_tmpl.trim().is_empty() {
+            user_tmpl = default_user_tmpl;
+        }
         let prior_str = if prior.is_empty() {
             String::new()
         } else {

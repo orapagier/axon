@@ -81,3 +81,19 @@ DELETE FROM settings WHERE key IN (
     'agent.request_timeout_secs',
     'agent.request_timeout_max_secs'
 );
+
+-- Settings-page cleanup (2026-07): drop rows nothing reads anymore. The Facebook
+-- webhook takes app_secret/verify_token from credentials.json and its built-in
+-- auto-reply pipeline was replaced by workflow dispatch; the two scheduler knobs
+-- were never wired to the scheduler engine; the streaming switch was reserved
+-- but never implemented. Harmless if absent.
+DELETE FROM settings WHERE key IN (
+    'webhook.fb_verify_token',
+    'webhook.fb_app_secret',
+    'webhook.fb_auto_reply',
+    'webhook.fb_reply_prompt',
+    'webhook.fb_notify_replies',
+    'scheduler.max_jobs',
+    'scheduler.follow_up_retries',
+    'agent.stream_model_tokens'
+);

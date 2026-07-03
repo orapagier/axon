@@ -10,7 +10,6 @@ INSERT OR IGNORE INTO settings VALUES
     ('agent.tool_timeout_secs',     '30',    'int',    'Python tool subprocess timeout seconds',         'agent',     datetime('now')),
     ('agent.allow_tool_writing',    'true',  'bool',   'Allow agent to write temporary tools',           'agent',     datetime('now')),
     ('agent.temp_tool_max_retries', '2',     'int',    'Retries for agent-written tools',               'agent',     datetime('now')),
-    ('agent.stream_model_tokens',   'false', 'bool',   'Reserved switch for provider token streaming; disabled by default', 'agent', datetime('now')),
     ('agent.quality_check',         'true',  'bool',   'Run quality check on responses that used tools (requires quality_checker model role)', 'agent', datetime('now')),
     ('agent.utc_offset_hours',      '8',     'int',    'Operator timezone as a fixed UTC offset in hours (-12..14); used for schedule parsing and the agent''s time context', 'agent', datetime('now')),
     ('router.error_threshold',      '2',     'int',    'Consecutive non-rate-limit errors before parking a model until midnight', 'router', datetime('now')),
@@ -18,8 +17,6 @@ INSERT OR IGNORE INTO settings VALUES
     ('memory.short_term_max_msgs',  '50',    'int',    'Max messages kept per session',                 'memory',    datetime('now')),
     ('memory.dashboard_context_window','20',  'int',    'Newest messages fed to the model as context per dashboard chat (0=send full thread; transcript is still retained up to short_term_max_msgs)', 'memory', datetime('now')),
     ('memory.long_term_top_k',      '5',     'int',    'Memories injected per agent call',              'memory',    datetime('now')),
-    ('scheduler.max_jobs',          '100',   'int',    'Maximum active scheduled jobs',                 'scheduler', datetime('now')),
-    ('scheduler.follow_up_retries', '3',     'int',    'Follow-up attempts before abandoning task',     'scheduler', datetime('now')),
     ('messaging.telegram_token',    '',      'string', 'Telegram Bot Token (TELOXIDE_TOKEN)',           'messaging', datetime('now')),
     ('messaging.discord_token',     '',      'string', 'Discord Bot Token (DISCORD_TOKEN)',             'messaging', datetime('now')),
     ('messaging.slack_token',       '',      'string', 'Slack Bot Token (SLACK_BOT_TOKEN)',             'messaging', datetime('now')),
@@ -51,6 +48,28 @@ INSERT OR IGNORE INTO settings VALUES
     ('agent.tool_result_budget_chars','100000','int',   'Max chars of tool results kept in the model''s context per run; oldest complete tool exchanges are dropped first', 'agent', datetime('now')),
     ('agent.reasoning_effort',      'medium', 'string', 'Reasoning depth on complex/tool-use turns: off, low, medium, high. Providers that reject the field are detected and skipped automatically', 'agent', datetime('now')),
     ('agent.planning',              'true',   'bool',   'On multi-step tasks, instruct the model to lay out a checklist via update_plan first and check steps off as it works', 'agent', datetime('now'));
+
+-- Cost redesign: per-run budgets + observation compression (defaults mirror the code).
+INSERT OR IGNORE INTO settings VALUES
+    ('agent.temperature',             '0.3',  'float', 'Sampling temperature for agent model calls; low values reduce hallucinated tool syntax and correction oscillation', 'agent', datetime('now')),
+    ('agent.run_timeout_secs',        '300',  'int',   'Hard wall-clock deadline for one agent run in seconds; on expiry the run stops with a best-effort answer', 'agent', datetime('now')),
+    ('agent.max_corrections',         '6',    'int',   'Global correction budget per run across ALL retry reasons (claim guard, refusal nudge, blank answer, hallucinated tool syntax, quality check)', 'agent', datetime('now')),
+    ('agent.max_total_tokens',        '0',    'int',   'Hard ceiling on cumulative tokens (input+output) per run — caps spend even when a few iterations carry huge contexts (0 = off)', 'agent', datetime('now')),
+    ('agent.compress_observations',   'true', 'bool',  'Compress large tool observations in the background for later recall (each compression is one LLM call)', 'agent', datetime('now')),
+    ('agent.max_observations_per_run','4',    'int',   'Max background observation compressions per run; bounds the most invisible recurring cost', 'agent', datetime('now'));
+
+-- Tool-router tiers (pattern → embedding → LLM), used by hybrid and routed tool scopes.
+INSERT OR IGNORE INTO settings VALUES
+    ('router.use_embeddings',  'true', 'bool',  'Use the embedding tier for tool routing: one cheap embedding call instead of an LLM completion when regex patterns miss', 'router', datetime('now')),
+    ('router.embed_top_k',     '5',    'int',   'Max tools the embedding tier returns per routing decision', 'router', datetime('now')),
+    ('router.embed_floor',     '0.45', 'float', 'Minimum cosine similarity for the embedding tier; below it the router falls back to the LLM tier. Re-tune after switching embedder.model', 'router', datetime('now')),
+    ('router.system_prompt',   'You are a routing proxy. Reply ONLY with comma-separated names of the tools needed, or exactly NONE. Do not use quotes or backticks.', 'string', 'System prompt for the LLM routing tier (blank = built-in default)', 'router', datetime('now')),
+    ('router.user_prompt',     '',     'string', 'User-prompt template for the LLM routing tier; placeholders: {tool_list}, {prior}, {multi}, {msg}. Blank = built-in template, which includes the auto-generated Google/Microsoft disambiguation rules', 'router', datetime('now'));
+
+-- Telegram /workflows access control (blank = anyone in a chat the bot serves).
+INSERT OR IGNORE INTO settings VALUES
+    ('messaging.workflow_runner_chat_ids', '', 'string', 'Comma-separated Telegram chat IDs allowed to use the /workflows run menu (blank = any chat)', 'messaging', datetime('now')),
+    ('messaging.workflow_runner_user_ids', '', 'string', 'Comma-separated Telegram user IDs allowed to use the /workflows run menu (blank = any user)', 'messaging', datetime('now'));
 
 -- Watcher / Smart Notifications.
 INSERT OR IGNORE INTO settings VALUES
@@ -93,14 +112,6 @@ INSERT OR IGNORE INTO settings VALUES
     ('websearch.enabled',             'false', 'bool',   'Enable Web Search tool (requires Tavily accounts below)',      'websearch', datetime('now')),
     ('websearch.max_results',         '5',     'int',    'Default max results per search (1-10)',                       'websearch', datetime('now')),
     ('websearch.search_depth',        'basic', 'string', 'Tavily search depth: basic (1 credit) or advanced (2 credits)', 'websearch', datetime('now'));
-
--- Facebook webhook.
-INSERT OR IGNORE INTO settings VALUES
-    ('webhook.fb_verify_token',  '',   'string', 'Facebook Webhook Verify Token (set in FB App -> Webhooks)',            'webhook', datetime('now')),
-    ('webhook.fb_app_secret',    '',   'string', 'Facebook App Secret (for HMAC signature validation)',                 'webhook', datetime('now')),
-    ('webhook.fb_auto_reply',    'true',  'bool',   'Auto-reply to Facebook comments and messages via webhook',         'webhook', datetime('now')),
-    ('webhook.fb_reply_prompt',  'You are an AI assistant managing a Facebook page. Reply warmly and helpfully on behalf of the page owner. Keep replies concise (1-3 sentences). Match the language of the commenter/sender. If the comment is spam or just a reaction (amen, nice, emoji-only), respond with EXACTLY: DO_NOT_REPLY. Output ONLY the reply text, nothing else.', 'string', 'System prompt for Facebook auto-replies (editable)', 'webhook', datetime('now')),
-    ('webhook.fb_notify_replies','true',  'bool',   'Send notification when Axon auto-replies to Facebook',             'webhook', datetime('now'));
 
 -- Scheduler nudge prompt (single quotes inside are SQL-escaped as '').
 INSERT OR IGNORE INTO settings VALUES

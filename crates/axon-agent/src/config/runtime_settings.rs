@@ -104,9 +104,6 @@ impl RuntimeSettings {
     pub fn temp_tool_max_retries(&self) -> u32 {
         self.get_int("agent.temp_tool_max_retries", 2) as u32
     }
-    pub fn stream_model_tokens(&self) -> bool {
-        self.get_bool("agent.stream_model_tokens", false)
-    }
     pub fn system_prompt(&self) -> String {
         self.get_str("agent.system_prompt", "\
 You are Axon, a capable AI agent. Always provide responses in plain text only, no Markdown formatting.
