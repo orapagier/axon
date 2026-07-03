@@ -406,17 +406,6 @@ timeout_secs = 45
 enabled    = true
 
 [[models]]
-name       = "ollama-samsam12232020"
-provider   = "ollama"
-model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
-api_key    = "${OLLAMA_API_KEY_SAMSAM12232020}"
-base_url   = "https://ollama.com"
-role       = ""
-priority   = 5
-timeout_secs = 45
-enabled    = true
-
-[[models]]
 name       = "ollama-orapagier"
 provider   = "ollama"
 model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
@@ -438,40 +427,7 @@ priority   = 5
 timeout_secs = 45
 enabled    = true
 
-[[models]]
-name       = "ollama-orapajelmar2"
-provider   = "ollama"
-model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
-api_key    = "${OLLAMA_API_KEY_ORAPAJELMAR2}"
-base_url   = "https://ollama.com"
-role       = ""
-priority   = 5
-timeout_secs = 45
-enabled    = true
-
-[[models]]
-name       = "ollama-samuzzielorapa"
-provider   = "ollama"
-model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
-api_key    = "${OLLAMA_API_KEY_SAMUZZIELORAPA}"
-base_url   = "https://ollama.com"
-role       = ""
-priority   = 5
-timeout_secs = 45
-enabled    = true
-
-[[models]]
-name       = "ollama-1"
-provider   = "ollama"
-model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
-api_key    = "${OLLAMA_API_KEY_1}"
-base_url   = "https://ollama.com"
-role       = ""
-priority   = 5
-timeout_secs = 45
-enabled    = true
-
-# ── TOOL ROUTER (3 keys; shirahproject1/2 moved to general P1) ───────────────
+# ── TOOL ROUTER ───────────────
 
 [[models]]
 name       = "cerebras-shirahhn8n1"
@@ -506,13 +462,40 @@ priority = 1
 timeout_secs = 20
 enabled    = true
 
-# ── AXON NODE (2 keys; shirahproject3 moved to general P1) ───────────────────
-
-
-
 # ── MEMORY COMPRESSOR (background — latency-tolerant) ────────────────────────
 
+[[models]]
+name       = "ollama-orapajelmar2"
+provider   = "ollama"
+model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
+api_key    = "${OLLAMA_API_KEY_ORAPAJELMAR2}"
+base_url   = "https://ollama.com"
+role       = "memory_compressor"
+priority   = 5
+timeout_secs = 60
+enabled    = true
 
+[[models]]
+name       = "ollama-samuzzielorapa"
+provider   = "ollama"
+model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
+api_key    = "${OLLAMA_API_KEY_SAMUZZIELORAPA}"
+base_url   = "https://ollama.com"
+role       = "memory_compressor"
+priority   = 5
+timeout_secs = 60
+enabled    = true
+
+[[models]]
+name       = "ollama-samsam12232020"
+provider   = "ollama"
+model_id   = "gemma4:31b-cloud,qwen3.5:397b-cloud"
+api_key    = "${OLLAMA_API_KEY_SAMSAM12232020}"
+base_url   = "https://ollama.com"
+role       = "memory_compressor"
+priority   = 5
+timeout_secs = 60
+enabled    = true
 
 # ── PHASE-AWARE ROLES (agent loop) ──────────────────────────────────────────
 #
@@ -580,9 +563,9 @@ enabled    = true
 [[models]]
 name       = "gemini-orapajelmar"
 provider   = "google"
-model_id   = "gemini-2.5-flash-lite"
+model_id   = "gemini-2.5-flash"
 api_key    = "${GEMINI_API_KEY_ORAPAJELMAR}"
 role       = "paid_model"
 priority = 100
 timeout_secs = 60
-enabled    = false
+enabled    = true
