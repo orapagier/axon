@@ -222,13 +222,22 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    let manager = SqliteConnectionManager::file(&cfg.db_path).with_flags(
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE,
-    );
+    let manager = SqliteConnectionManager::file(&cfg.db_path)
+        .with_flags(
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE,
+        )
+        // Applied to every connection the pool opens, not just the bootstrap
+        // one below. Without busy_timeout, a connection that finds the DB
+        // write-locked (WAL still serializes writers) errors immediately
+        // instead of waiting — and callers like agent::loop::finalize()
+        // swallow that error, silently leaving a run's status stuck at
+        // 'running' forever.
+        .with_init(|c| {
+            c.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=10000;")
+        });
     let pool = Pool::new(manager).context("create SQLite pool")?;
     {
         let conn = pool.get().context("get DB connection")?;
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
         axon::db::init(&conn).context("initialize database")?;
         // D1: upgrade any pre-KDF (v1) stored secrets to the v2 scheme in place.
         axon::crypto::reencrypt_legacy_secrets(&conn);

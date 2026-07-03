@@ -594,11 +594,16 @@ pub async fn run_task_streaming(
 }
 
 fn mark_run_failed_if_running(state: &AppState, run_id: &str) {
-    if let Ok(conn) = state.db.get() {
-        let _ = conn.execute(
-            "UPDATE runs SET status='failed', result='Agent task terminated unexpectedly', finished_at=datetime('now') WHERE id=?1 AND status='running'",
-            rusqlite::params![run_id],
-        );
+    match state.db.get() {
+        Ok(conn) => {
+            if let Err(e) = conn.execute(
+                "UPDATE runs SET status='failed', result='Agent task terminated unexpectedly', finished_at=datetime('now') WHERE id=?1 AND status='running'",
+                rusqlite::params![run_id],
+            ) {
+                tracing::error!("run {run_id}: failed to mark run failed: {e}");
+            }
+        }
+        Err(e) => tracing::error!("run {run_id}: failed to get DB connection to mark run failed: {e}"),
     }
 }
 
@@ -626,11 +631,16 @@ pub(crate) async fn run_inner(
 ) -> anyhow::Result<String> {
     let run_id = ctx.run_id.clone();
 
-    if let Ok(conn) = state.db.get() {
-        let _ = conn.execute(
-            "INSERT INTO runs (id,task,status,platform,session_id,job_id,parent_run_id) VALUES (?1,?2,'running',?3,?4,?5,?6)",
-            rusqlite::params![run_id, task, ctx.platform, ctx.session_id, ctx.job_id, ctx.parent_run_id],
-        );
+    match state.db.get() {
+        Ok(conn) => {
+            if let Err(e) = conn.execute(
+                "INSERT INTO runs (id,task,status,platform,session_id,job_id,parent_run_id) VALUES (?1,?2,'running',?3,?4,?5,?6)",
+                rusqlite::params![run_id, task, ctx.platform, ctx.session_id, ctx.job_id, ctx.parent_run_id],
+            ) {
+                tracing::error!("run {run_id}: failed to insert run row: {e}");
+            }
+        }
+        Err(e) => tracing::error!("run {run_id}: failed to get DB connection to insert run row: {e}"),
     }
 
     macro_rules! emit {
@@ -2079,20 +2089,25 @@ fn finalize(
     // Drop run-scoped plan + tool-discovery state on every exit path.
     crate::agent::plan::clear(id);
     crate::agent::tool_discovery::clear(id);
-    if let Ok(conn) = state.db.get() {
-        let _ = conn.execute(
-            "UPDATE runs SET status=?1,result=?2,iterations=?3,total_tokens=?4,models_used=?5,tools_used=?6,\
-             nudge_count=?7,claim_guard_count=?8,qc_correction_count=?9,finished_at=datetime('now') WHERE id=?10",
-            rusqlite::params![
-                status, result, iters, tokens,
-                serde_json::to_string(models).ok(),
-                serde_json::to_string(tools).ok(),
-                guards.nudge_count,
-                guards.claim_guard_count,
-                guards.qc_correction_count,
-                id
-            ]
-        );
+    match state.db.get() {
+        Ok(conn) => {
+            if let Err(e) = conn.execute(
+                "UPDATE runs SET status=?1,result=?2,iterations=?3,total_tokens=?4,models_used=?5,tools_used=?6,\
+                 nudge_count=?7,claim_guard_count=?8,qc_correction_count=?9,finished_at=datetime('now') WHERE id=?10",
+                rusqlite::params![
+                    status, result, iters, tokens,
+                    serde_json::to_string(models).ok(),
+                    serde_json::to_string(tools).ok(),
+                    guards.nudge_count,
+                    guards.claim_guard_count,
+                    guards.qc_correction_count,
+                    id
+                ]
+            ) {
+                tracing::error!("run {id}: failed to finalize run status to '{status}': {e}");
+            }
+        }
+        Err(e) => tracing::error!("run {id}: failed to get DB connection to finalize run status to '{status}': {e}"),
     }
 }
 
