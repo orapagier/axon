@@ -1479,6 +1479,33 @@ function normalizeConfig() {
     }
   })
 
+  // Legacy shape migration: a field that later became a fixedCollection (e.g.
+  // the Sheets batch-read `ranges`, once a JSON-array textarea) may be stored
+  // as a string or bare array. Wrap it in the {parameters: [...]} envelope so
+  // saved rows render and the Add button works.
+  nodeDefinition.value.properties.forEach(p => {
+    if (p.type !== 'fixedCollection') return
+    const v = props.node.data.config[p.name]
+    if (v === undefined || (v && typeof v === 'object' && !Array.isArray(v))) return
+    const key = p.options?.[0]?.name
+    let items = []
+    if (Array.isArray(v)) {
+      items = v
+    } else if (typeof v === 'string' && v.trim()) {
+      const t = v.trim()
+      if (t.startsWith('[')) {
+        try { items = JSON.parse(t) } catch { items = [t] }
+      } else {
+        items = [t]
+      }
+    }
+    props.node.data.config[p.name] = {
+      parameters: items
+        .filter(x => x !== null && x !== undefined && x !== '')
+        .map(x => (x && typeof x === 'object') ? x : (key ? { [key]: String(x) } : {})),
+    }
+  })
+
   // Backward compatibility for Circadian/Stimulus nodes using legacy cron_nl
   if ((props.node.data.node_type === 'circadian' || props.node.data.node_type === 'stimulus') && props.node.data.config.schedules?.parameters) {
     props.node.data.config.schedules.parameters.forEach(p => {
