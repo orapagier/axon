@@ -793,6 +793,50 @@ Reference fields in downstream nodes with expressions, e.g. `{{ $json.changes[0]
    (Returns linked leads, deals, and activity history)
 ```
 
+### Automation 1: New Lead → Welcome Email
+
+```
+[Stimulus: CRM, event = New Lead]
+   → [Gmail: Send]  to: {{ $json.changes[0].email }}
+                    subject: "Welcome, {{ $json.changes[0].name }}!"
+                    body: personalized welcome / next steps
+   → [CRM: crm_activity_log]  entity_id: {{ $json.changes[0].id }},
+                    entity_type: "lead", kind: "email", title: "Welcome email sent"
+```
+Leads created without an email still fire the trigger — add an If node on `{{ $json.changes[0].email }}` to skip the send.
+
+### Automation 2: Lead Qualified → Convert to Deal
+
+```
+[Stimulus: CRM, event = Any Change]
+   → [If: {{ $json.changes[0].entity_type }} == "lead"
+         AND {{ $json.changes[0].status }} == "Qualified"]
+   → [CRM: crm_lead_convert_to_deal]  lead_id: {{ $json.changes[0].id }}
+```
+`crm_lead_convert_to_deal` leaves the lead in Qualified status by default, and a conversion edits the *lead*, not a second qualifying event — so this doesn't loop. Add amount/stage params on the convert node as desired.
+
+### Automation 3: Deal Won → Telegram Notification
+
+```
+[Stimulus: CRM, event = Deal Stage Changed]
+   → [If: {{ $json.changes[0].stage }} == "Won"]
+   → [Telegram: Send Message]
+        "🎉 Deal won: {{ $json.changes[0].title }} —
+         {{ $json.changes[0].amount }} {{ $json.changes[0].currency }}
+         (was {{ $json.changes[0].previous_stage }})"
+```
+Messaging gateways (Telegram/WhatsApp) are workflow/chat surfaces — this is the sanctioned way to push CRM news to them.
+
+### Automation 4: Weekly Pipeline Digest
+
+```
+[Stimulus: Circadian, weekly Mon 08:00]
+   → [CRM: crm_dashboard_summary]
+   → [Cortex: summarize the dashboard JSON into a short human digest]
+   → [Telegram: Send Message]
+```
+Pair with a second one-node Circadian workflow calling `crm_backup_db` for the weekly backup.
+
 ---
 
 ## Legacy JSON Import
