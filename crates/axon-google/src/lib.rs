@@ -704,7 +704,14 @@ impl GoogleService {
                 sheets::read_range(&self.0, s("spreadsheet_id")?, s("range")?).await
             }
             "gsheets_batch_read" => {
-                sheets::batch_read(&self.0, s("spreadsheet_id")?, json_arr(a, "ranges")?).await
+                let ranges = parse_batch_read_ranges(a.get("ranges"));
+                if ranges.is_empty() {
+                    anyhow::bail!(
+                        "gsheets_batch_read: no valid ranges to read. Add at least one range \
+                         like 'Sheet1!A1:C10' (a range that resolves to null/blank is skipped)."
+                    );
+                }
+                sheets::batch_read(&self.0, s("spreadsheet_id")?, ranges).await
             }
             "gsheets_write_range" => {
                 let values = parse_2d_values(a);
