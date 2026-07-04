@@ -180,7 +180,7 @@ impl TelegramGateway {
             token,
             connected: Arc::new(AtomicBool::new(ok)),
             stopped: Arc::new(AtomicBool::new(false)),
-            client: reqwest::Client::new(),
+            client: crate::http::shared(),
         }
     }
     fn api(&self, method: &str) -> String {
