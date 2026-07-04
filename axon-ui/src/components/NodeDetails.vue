@@ -819,7 +819,9 @@ function isDynamicOutputCollection(propName) {
 }
 
 function addCollectionItem(propName, options) {
-  if (!props.node.data.config[propName]) {
+  // A leftover legacy value (string/number) can't hold a parameters array;
+  // strict mode would throw on the property assignment below. Reset it.
+  if (!props.node.data.config[propName] || typeof props.node.data.config[propName] !== 'object') {
     props.node.data.config[propName] = { parameters: [] }
   }
   if (!props.node.data.config[propName].parameters) {
