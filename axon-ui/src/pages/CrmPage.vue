@@ -987,6 +987,11 @@ onMounted(loadDashboard)
   gap: 4px;
 }
 
+/* Global .card-content zeroes top padding; give list bodies breathing room below the header. */
+.card-content.mini-list {
+  padding-top: 10px !important;
+}
+
 .mini-row {
   display: flex;
   justify-content: space-between;

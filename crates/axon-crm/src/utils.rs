@@ -213,12 +213,39 @@ pub fn validate_email(field: &str, value: Option<&str>) -> Result<()> {
             "param '{field}' must be a valid email address"
         ));
     };
-    if local.is_empty() || domain.is_empty() || !domain.contains('.') {
+    if local.is_empty()
+        || domain.is_empty()
+        || !domain.contains('.')
+        || value.contains(char::is_whitespace)
+    {
         return Err(anyhow::anyhow!(
             "param '{field}' must be a valid email address"
         ));
     }
     Ok(())
+}
+
+/// Separator characters stripped when comparing phone numbers. The SQL twin is
+/// the `replace(...)` chain in [`phone_match_sql`] — keep the two in sync.
+const PHONE_STRIP_CHARS: &[char] = &[' ', '-', '(', ')', '+', '.'];
+
+/// Strip common separators so `0917-555-1234`, `(0917) 555 1234` and
+/// `0917.555.1234` all compare equal. Deliberately does NOT equate national
+/// and international prefixes (`0917...` vs `63917...`) — that needs a
+/// region database and guessing wrong merges different people.
+pub fn normalize_phone(phone: &str) -> String {
+    phone
+        .chars()
+        .filter(|c| !PHONE_STRIP_CHARS.contains(c))
+        .collect()
+}
+
+/// SQL expression normalizing a phone column the same way [`normalize_phone`]
+/// normalizes the input side.
+pub fn phone_match_sql(column: &str) -> String {
+    format!(
+        "replace(replace(replace(replace(replace(replace({column}, ' ', ''), '-', ''), '(', ''), ')', ''), '+', ''), '.', '')"
+    )
 }
 
 pub fn validate_currency(field: &str, value: &str) -> Result<()> {
