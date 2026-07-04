@@ -16,7 +16,7 @@ impl SlackGateway {
         SlackGateway {
             bot_token: token,
             connected: Arc::new(AtomicBool::new(ok)),
-            client: reqwest::Client::new(),
+            client: crate::http::shared(),
         }
     }
     pub async fn handle_event(
