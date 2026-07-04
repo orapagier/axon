@@ -1,5 +1,5 @@
 use crate::state::AppState;
-use crate::tools::workflow::{execute_gmail_trigger, trigger_data};
+use crate::tools::workflow::{execute_crm_trigger, execute_gmail_trigger, trigger_data};
 use serde_json::{json, Value};
 
 pub(crate) async fn execute(
