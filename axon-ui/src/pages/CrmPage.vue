@@ -453,7 +453,7 @@ onMounted(loadDashboard)
               <div class="card-title-group"><h2>Pipeline Health</h2></div>
               <span v-if="pipeline" class="card-summary">win rate {{ pipeline.win_rate_pct }}%</span>
             </div>
-            <div class="kv-list">
+            <div class="card-content kv-list">
               <div class="kv-row"><span>Active pipeline</span><strong>{{ fmtTotals(dash.pipeline.active_pipeline_value) }}</strong></div>
               <div class="kv-row"><span>Weighted (by probability)</span><strong>{{ fmtTotals(dash.pipeline.weighted_pipeline_value) }}</strong></div>
               <div class="kv-row"><span>Stale leads / deals ({{ dash.parameters.stale_days }}d)</span><strong>{{ dash.pipeline.stale_leads }} / {{ dash.pipeline.stale_deals }}</strong></div>
