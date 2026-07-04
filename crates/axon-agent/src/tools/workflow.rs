@@ -3361,11 +3361,14 @@ fn should_trigger(wf: &Workflow, utc_offset_hours: i32) -> bool {
     }
 
     // 2. Fallback to legacy interval-based polling
-    let mut mins = if wf.trigger_type == "gmail" {
-        // Gmail triggers use poll_interval from config (default 5 min)
+    let mut mins = if wf.trigger_type == "gmail" || wf.trigger_type == "crm" {
+        // Gmail/CRM triggers use poll_interval from config (default 5 min)
         wf.trigger_config
             .get("poll_interval")
-            .and_then(|v| v.as_u64())
+            .and_then(|v| {
+                v.as_u64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            })
             .unwrap_or(5)
     } else if wf.trigger_type == "watcher" {
         15
