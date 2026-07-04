@@ -1112,6 +1112,63 @@ fn parse_2d_values(a: &Map<String, Value>) -> Vec<Vec<Value>> {
     }
 }
 
+/// Parse the `ranges` argument for `gsheets_batch_read` into range strings.
+/// Like `parse_batch_write_data` below, this reaches us in several shapes:
+///   • a JSON array of range strings (LLM tool call, legacy saved nodes)
+///   • an array of `{range}` objects or a `{"parameters": [...]}`
+///     fixedCollection wrapper (workflow UI node)
+///   • a JSON *string* of any of the above, or a single bare range string
+/// Blank/unresolvable entries are skipped; the caller errors if none survive.
+fn parse_batch_read_ranges(v: Option<&Value>) -> Vec<String> {
+    let Some(v) = v else {
+        return vec![];
+    };
+
+    let entries: Vec<Value> = match v {
+        Value::Array(arr) => arr.clone(),
+        Value::Object(obj) => obj
+            .get("parameters")
+            .and_then(|p| p.as_array())
+            .cloned()
+            .unwrap_or_default(),
+        Value::String(s) => {
+            let t = s.trim();
+            if t.is_empty() {
+                vec![]
+            } else if t.starts_with('[') || t.starts_with('{') {
+                match serde_json::from_str::<Value>(t) {
+                    Ok(Value::Array(arr)) => arr,
+                    Ok(Value::Object(obj)) => obj
+                        .get("parameters")
+                        .and_then(|p| p.as_array())
+                        .cloned()
+                        .unwrap_or_default(),
+                    _ => vec![Value::String(t.to_string())],
+                }
+            } else {
+                vec![Value::String(t.to_string())]
+            }
+        }
+        _ => vec![],
+    };
+
+    entries
+        .iter()
+        .filter_map(|entry| {
+            let raw = match entry {
+                Value::Object(obj) => obj.get("range")?,
+                other => other,
+            };
+            let s = match raw {
+                Value::String(s) => s.trim().to_string(),
+                Value::Number(n) => n.to_string(),
+                _ => return None,
+            };
+            (!s.is_empty()).then_some(s)
+        })
+        .collect()
+}
+
 /// Parse the `data` argument for `gsheets_batch_write` into `(range, values)`
 /// pairs. This is deliberately permissive because `data` reaches us in several
 /// shapes depending on the caller:
