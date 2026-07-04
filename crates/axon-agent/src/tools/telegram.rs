@@ -24,7 +24,6 @@ use base64::Engine;
 use reqwest::multipart;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::time::Duration;
 
 use crate::tools::schema::{ToolDefinition, ToolSource};
 
