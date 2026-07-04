@@ -235,7 +235,7 @@ case "$ACTION" in
             else
                 pkill -f axon || true
                 sleep 1
-                cd "$DEPLOY_DIR/core" && ./axon > "$DEPLOY_DIR/agent.log" 2>&1 &
+                cd "$DEPLOY_DIR/core" && MALLOC_ARENA_MAX=2 MALLOC_TRIM_THRESHOLD_=131072 ./axon > "$DEPLOY_DIR/agent.log" 2>&1 &
                 echo "⚠️ Started in background. Use './run.sh --install' for auto-restart."
             fi
         fi
