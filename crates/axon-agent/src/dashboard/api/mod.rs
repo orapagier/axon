@@ -24,6 +24,7 @@ macro_rules! try_json {
 mod channels;
 mod chat_memory;
 mod credentials;
+mod crm;
 mod google;
 mod infra;
 mod jobs;
@@ -39,6 +40,7 @@ mod workflows;
 pub use channels::*;
 pub use chat_memory::*;
 pub use credentials::*;
+pub use crm::*;
 pub use google::*;
 pub use infra::*;
 pub use jobs::*;

@@ -574,6 +574,281 @@ async fn org_overview(
     }))
 }
 
+// ── Change feed (CRM triggers) ────────────────────────────────────────────────
+
+/// The SQL twin of `utils::format_utc` (same trick as migration 0003):
+/// `created_at`/`updated_at` are stored as `Utc::now().to_rfc3339()` — always
+/// UTC but with variable sub-second precision — so both sides of every cursor
+/// comparison are rewritten to the fixed shape before comparing.
+const UTC_NORM: &str = "strftime('%Y-%m-%dT%H:%M:%fZ', ";
+
+#[derive(sqlx::FromRow)]
+struct LeadChangeRow {
+    id: String,
+    name: String,
+    email: Option<String>,
+    phone: Option<String>,
+    company: Option<String>,
+    org_id: Option<String>,
+    status: String,
+    source: Option<String>,
+    tags: String,
+    notes: Option<String>,
+    created_at: String,
+    updated_at: String,
+    created_at_utc: String,
+    updated_at_utc: String,
+}
+
+impl LeadChangeRow {
+    fn into_change(self) -> (String, String, Value) {
+        let tags = self.tags.clone();
+        let value = inject_tags(
+            serde_json::json!({
+                "entity_type": "lead",
+                "id": self.id,
+                "name": self.name,
+                "email": self.email,
+                "phone": self.phone,
+                "company": self.company,
+                "org_id": self.org_id,
+                "status": self.status,
+                "source": self.source,
+                "notes": self.notes,
+                "created_at": self.created_at,
+                "updated_at": self.updated_at,
+                "updated_at_utc": self.updated_at_utc,
+            }),
+            &tags,
+        );
+        (self.created_at_utc, self.updated_at_utc, value)
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct DealChangeRow {
+    id: String,
+    title: String,
+    amount_minor: i64,
+    currency: String,
+    stage: String,
+    probability: Option<i64>,
+    contact_id: String,
+    org_id: Option<String>,
+    expected_close: Option<String>,
+    tags: String,
+    notes: Option<String>,
+    created_at: String,
+    updated_at: String,
+    created_at_utc: String,
+    updated_at_utc: String,
+}
+
+impl DealChangeRow {
+    fn into_change(self) -> (String, String, Value) {
+        let tags = self.tags.clone();
+        let value = inject_tags(
+            serde_json::json!({
+                "entity_type": "deal",
+                "id": self.id,
+                "title": self.title,
+                "amount": minor_to_amount(self.amount_minor),
+                "amount_minor": self.amount_minor,
+                "currency": self.currency,
+                "stage": self.stage,
+                "probability": self.probability,
+                "contact_id": self.contact_id,
+                "org_id": self.org_id,
+                "expected_close": self.expected_close,
+                "notes": self.notes,
+                "created_at": self.created_at,
+                "updated_at": self.updated_at,
+                "updated_at_utc": self.updated_at_utc,
+            }),
+            &tags,
+        );
+        (self.created_at_utc, self.updated_at_utc, value)
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct OrgChangeRow {
+    id: String,
+    name: String,
+    website: Option<String>,
+    industry: Option<String>,
+    size: Option<String>,
+    country: Option<String>,
+    phone: Option<String>,
+    email: Option<String>,
+    tags: String,
+    notes: Option<String>,
+    created_at: String,
+    updated_at: String,
+    created_at_utc: String,
+    updated_at_utc: String,
+}
+
+impl OrgChangeRow {
+    fn into_change(self) -> (String, String, Value) {
+        let tags = self.tags.clone();
+        let value = inject_tags(
+            serde_json::json!({
+                "entity_type": "org",
+                "id": self.id,
+                "name": self.name,
+                "website": self.website,
+                "industry": self.industry,
+                "size": self.size,
+                "country": self.country,
+                "phone": self.phone,
+                "email": self.email,
+                "notes": self.notes,
+                "created_at": self.created_at,
+                "updated_at": self.updated_at,
+                "updated_at_utc": self.updated_at_utc,
+            }),
+            &tags,
+        );
+        (self.created_at_utc, self.updated_at_utc, value)
+    }
+}
+
+/// Change feed for CRM triggers and "what changed" checks: active records
+/// whose `updated_at` is after the `since` cursor, oldest-first, each tagged
+/// `change: "created"` (created after the cursor) or `"updated"`. The returned
+/// `cursor` is the last row's normalized `updated_at` — pass it back as the
+/// next `since`. `has_more: true` means the window was cut by `limit`; poll
+/// again immediately with the new cursor.
+pub async fn changes_since(pool: &SqlitePool, args: &Map<String, Value>) -> Result<Value> {
+    let since_raw = require_non_empty_str(args, "since")?;
+    let since = parse_rfc3339_utc("since", Some(since_raw))?
+        .expect("parse_rfc3339_utc returns Some for Some input");
+    let limit = i64_arg(args, "limit")?.unwrap_or(50).clamp(1, 200);
+
+    let wanted: Vec<String> = match args.get("entity_types") {
+        None | Some(Value::Null) => ACTIVITY_ENTITY_TYPES.iter().map(|s| s.to_string()).collect(),
+        Some(Value::Array(arr)) => {
+            let mut kinds: Vec<String> = Vec::new();
+            for item in arr {
+                let kind = item.as_str().ok_or_else(|| {
+                    anyhow::anyhow!("param 'entity_types' must contain only strings")
+                })?;
+                validate_entity_kind(kind)?;
+                if !kinds.iter().any(|k| k == kind) {
+                    kinds.push(kind.to_owned());
+                }
+            }
+            if kinds.is_empty() {
+                ACTIVITY_ENTITY_TYPES.iter().map(|s| s.to_string()).collect()
+            } else {
+                kinds
+            }
+        }
+        Some(_) => {
+            return Err(anyhow::anyhow!(
+                "param 'entity_types' must be an array of: {}",
+                ACTIVITY_ENTITY_TYPES.join(", ")
+            ))
+        }
+    };
+
+    // Fetch limit+1 per entity so truncation of the merged list is detectable.
+    let fetch = limit + 1;
+    // (created_at_utc, updated_at_utc, record)
+    let mut merged: Vec<(String, String, Value)> = Vec::new();
+
+    if wanted.iter().any(|k| k == "lead") {
+        let rows = sqlx::query_as::<_, LeadChangeRow>(&format!(
+            "SELECT id, name, email, phone, company, org_id, status, source, tags, notes,
+                    created_at, updated_at,
+                    {UTC_NORM}created_at) AS created_at_utc,
+                    {UTC_NORM}updated_at) AS updated_at_utc
+             FROM leads
+             WHERE deleted_at IS NULL AND {UTC_NORM}updated_at) > ?
+             ORDER BY updated_at_utc ASC LIMIT ?"
+        ))
+        .bind(&since)
+        .bind(fetch)
+        .fetch_all(pool)
+        .await?;
+        merged.extend(rows.into_iter().map(LeadChangeRow::into_change));
+    }
+
+    if wanted.iter().any(|k| k == "deal") {
+        let rows = sqlx::query_as::<_, DealChangeRow>(&format!(
+            "SELECT id, title, amount_minor, currency, stage, probability, contact_id, org_id,
+                    expected_close, tags, notes, created_at, updated_at,
+                    {UTC_NORM}created_at) AS created_at_utc,
+                    {UTC_NORM}updated_at) AS updated_at_utc
+             FROM deals
+             WHERE deleted_at IS NULL AND {UTC_NORM}updated_at) > ?
+             ORDER BY updated_at_utc ASC LIMIT ?"
+        ))
+        .bind(&since)
+        .bind(fetch)
+        .fetch_all(pool)
+        .await?;
+        merged.extend(rows.into_iter().map(DealChangeRow::into_change));
+    }
+
+    if wanted.iter().any(|k| k == "org") {
+        let rows = sqlx::query_as::<_, OrgChangeRow>(&format!(
+            "SELECT id, name, website, industry, size, country, phone, email, tags, notes,
+                    created_at, updated_at,
+                    {UTC_NORM}created_at) AS created_at_utc,
+                    {UTC_NORM}updated_at) AS updated_at_utc
+             FROM orgs
+             WHERE deleted_at IS NULL AND {UTC_NORM}updated_at) > ?
+             ORDER BY updated_at_utc ASC LIMIT ?"
+        ))
+        .bind(&since)
+        .bind(fetch)
+        .fetch_all(pool)
+        .await?;
+        merged.extend(rows.into_iter().map(OrgChangeRow::into_change));
+    }
+
+    merged.sort_by(|a, b| a.1.cmp(&b.1));
+    let has_more = merged.len() as i64 > limit;
+    merged.truncate(limit as usize);
+
+    let cursor = merged
+        .last()
+        .map(|(_, updated, _)| updated.clone())
+        .unwrap_or_else(|| since.clone());
+
+    let changes: Vec<Value> = merged
+        .into_iter()
+        .map(|(created_utc, _, mut record)| {
+            let change = if created_utc > since { "created" } else { "updated" };
+            if let Value::Object(ref mut map) = record {
+                map.insert("change".to_owned(), Value::from(change));
+            }
+            record
+        })
+        .collect();
+
+    Ok(serde_json::json!({
+        "since": since,
+        "cursor": cursor,
+        "count": changes.len(),
+        "has_more": has_more,
+        "changes": changes,
+    }))
+}
+
+fn validate_entity_kind(kind: &str) -> Result<()> {
+    if ACTIVITY_ENTITY_TYPES.contains(&kind) {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!(
+            "param 'entity_types' must contain only: {}",
+            ACTIVITY_ENTITY_TYPES.join(", ")
+        ))
+    }
+}
+
 async fn recent_activities(
     pool: &SqlitePool,
     entity_type: &str,

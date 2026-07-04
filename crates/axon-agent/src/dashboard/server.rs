@@ -232,6 +232,30 @@ pub fn build_router(state: AppState) -> Router {
             "/api/credentials/:id/test",
             axum::routing::post(api::test_credential),
         )
+        // CRM page (Phase 5): thin wrappers over the in-process crm_* tools.
+        // Static segments (pipeline/dashboard/…) coexist with the `:entity`
+        // param routes — matchit gives statics priority (see route test below).
+        .route("/api/crm/pipeline", get(api::crm_get_pipeline))
+        .route("/api/crm/dashboard", get(api::crm_get_dashboard))
+        .route("/api/crm/archived", get(api::crm_get_archived))
+        .route("/api/crm/search", get(api::crm_search_all_records))
+        .route("/api/crm/overview/:entity/:id", get(api::crm_get_overview))
+        .route(
+            "/api/crm/:entity",
+            get(api::crm_list_records).post(api::crm_create_record),
+        )
+        .route(
+            "/api/crm/:entity/:id",
+            get(api::crm_get_record).put(api::crm_update_record),
+        )
+        .route(
+            "/api/crm/:entity/:id/archive",
+            axum::routing::post(api::crm_archive_record),
+        )
+        .route(
+            "/api/crm/:entity/:id/restore",
+            axum::routing::post(api::crm_restore_record),
+        )
         .route("/ws", get(ws::ws_handler))
         // C3: observability. /metrics is the Prometheus scrape target; /api/health
         // is a compact JSON status. Both sit behind require_auth — Prometheus
@@ -309,7 +333,7 @@ pub fn build_router(state: AppState) -> Router {
 #[cfg(test)]
 mod route_conflict_tests {
     use axum::{
-        routing::{delete, get, post},
+        routing::{delete, get, post, put},
         Router,
     };
 
@@ -334,5 +358,22 @@ mod route_conflict_tests {
                 "/api/workflows/:id/versions/:version/restore",
                 post(|| async {}),
             );
+    }
+
+    // Phase 5 CRM routes mix static segments (/pipeline, /dashboard, /archived,
+    // /search, /overview) with `:entity` param routes at the same position, and
+    // `:entity/:id` under them. Building the router is the assertion.
+    #[test]
+    fn crm_static_and_entity_param_routes_coexist() {
+        let _r: Router<()> = Router::new()
+            .route("/api/crm/pipeline", get(|| async {}))
+            .route("/api/crm/dashboard", get(|| async {}))
+            .route("/api/crm/archived", get(|| async {}))
+            .route("/api/crm/search", get(|| async {}))
+            .route("/api/crm/overview/:entity/:id", get(|| async {}))
+            .route("/api/crm/:entity", get(|| async {}).post(|| async {}))
+            .route("/api/crm/:entity/:id", get(|| async {}).put(|| async {}))
+            .route("/api/crm/:entity/:id/archive", post(|| async {}))
+            .route("/api/crm/:entity/:id/restore", post(|| async {}));
     }
 }
