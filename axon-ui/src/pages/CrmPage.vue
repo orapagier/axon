@@ -478,7 +478,7 @@ onMounted(loadDashboard)
             <div class="card-header-row no-collapse">
               <div class="card-title-group"><h2>Stage Rollup</h2></div>
             </div>
-            <div class="kv-list">
+            <div class="card-content kv-list">
               <div v-for="s in dash.deal_stage_rollup" :key="s.stage" class="kv-row">
                 <span>{{ s.stage }} ({{ s.count }})</span>
                 <strong>{{ fmtTotals(s.total_value) }}</strong>
