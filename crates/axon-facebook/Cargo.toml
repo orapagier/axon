@@ -13,4 +13,4 @@ url = "2.5"
 serde = { version = "1.0", features = ["derive"] }
 rmcp = { version = "0.1", features = ["server"] }
 mime_guess = "2.0.5"
-reqwest = "0.11"
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "http2", "charset"] }
