@@ -333,7 +333,7 @@ pub fn build_router(state: AppState) -> Router {
 #[cfg(test)]
 mod route_conflict_tests {
     use axum::{
-        routing::{delete, get, post, put},
+        routing::{delete, get, post},
         Router,
     };
 

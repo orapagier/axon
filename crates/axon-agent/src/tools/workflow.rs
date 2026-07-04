@@ -1163,9 +1163,8 @@ impl WorkflowEngine {
         // genuinely untyped run — "manual" (the Run button) or a "subflow" entry
         // (narrowed separately by the pin below) — starts from every trigger node.
         let entry_trigger_type: Option<&str> = match trigger_source {
-            "telegram" | "gmail" | "whatsapp" | "webhook" | "github" | "facebook" | "cron" => {
-                Some(trigger_source)
-            }
+            "telegram" | "gmail" | "whatsapp" | "webhook" | "github" | "facebook" | "cron"
+            | "crm" => Some(trigger_source),
             // An error run (A3) starts ONLY from error-type trigger nodes; a normal
             // run never does (handled by `is_error_trigger` exclusion below).
             "error" => Some("error"),
