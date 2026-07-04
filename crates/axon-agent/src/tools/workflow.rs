@@ -2842,7 +2842,7 @@ impl WorkflowEngine {
                          FROM workflows w
                          LEFT JOIN workflow_nodes wn ON wn.workflow_id = w.id AND wn.node_type IN ('trigger', 'circadian', 'stimulus')
                          WHERE w.enabled = 1
-                    ) WHERE trigger_type IN ('cron', 'watcher', 'gmail')"
+                    ) WHERE trigger_type IN ('cron', 'watcher', 'gmail', 'crm')"
                 )
                     .and_then(|mut s| s.query_map([], |r| Ok(Workflow {
                         id: r.get(0)?, name: r.get(1)?, description: String::new(), enabled: true,
