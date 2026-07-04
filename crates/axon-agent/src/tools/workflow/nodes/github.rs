@@ -387,7 +387,7 @@ pub(crate) async fn execute(config: &Value) -> Result<Value, String> {
         })?;
     let token = token.trim().to_string();
 
-    let client = reqwest::Client::new();
+    let client = crate::http::shared();
     let operation = str_val(config, "operation").unwrap_or_else(|| "createIssue".to_string());
 
     match operation.as_str() {
