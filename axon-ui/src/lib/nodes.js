@@ -76,6 +76,7 @@ export const NODE_TYPES = {
                     { name: 'Webhook', value: 'webhook' },
                     { name: 'GitHub', value: 'github' },
                     { name: 'Facebook', value: 'facebook' },
+                    { name: 'CRM', value: 'crm' },
                     { name: 'On Error (Failure Handler)', value: 'error' },
                 ],
                 default: 'manual',

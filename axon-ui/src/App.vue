@@ -11,6 +11,7 @@ const PAGES = {
   memories: markRaw(defineAsyncComponent(() => import('./pages/MemoriesPage.vue'))),
   tasks: markRaw(defineAsyncComponent(() => import('./pages/TasksPage.vue'))),
   workflows: markRaw(defineAsyncComponent(() => import('./pages/WorkflowsPage.vue'))),
+  crm: markRaw(defineAsyncComponent(() => import('./pages/CrmPage.vue'))),
   services: markRaw(defineAsyncComponent(() => import('./pages/ServicesPage.vue'))),
   files: markRaw(defineAsyncComponent(() => import('./pages/FilesPage.vue'))),
   docs: markRaw(defineAsyncComponent(() => import('./pages/DocsPage.vue'))),
@@ -59,6 +60,13 @@ const NAV = [
     description: 'Visual automation canvas',
     tint: '#fda4af',
     icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="18" cy="12" r="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="6" cy="18" r="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 7.2 15.5 10.8M8.5 16.8l7-3.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+  },
+  {
+    id: 'crm',
+    label: 'CRM',
+    description: 'Leads, deals, and organizations',
+    tint: '#f9a8d4',
+    icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="9.5" cy="7.5" r="3.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M21 21v-2a4 4 0 0 0-3-3.87M15.5 4.13a3.5 3.5 0 0 1 0 6.75" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
   },
   {
     id: 'services',
