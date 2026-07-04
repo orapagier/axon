@@ -560,7 +560,7 @@ async fn legacy_real_db_migrates_to_cents_and_utc() -> Result<()> {
     let version: i64 = sqlx::query_scalar("PRAGMA user_version")
         .fetch_one(&pool)
         .await?;
-    assert_eq!(version, 3, "all migrations should be recorded");
+    assert_eq!(version, 4, "all migrations should be recorded");
 
     let deal = deals::get(&pool, "deal-legacy").await?;
     assert_eq!(deal["amount"], json!(123.45));
@@ -575,7 +575,7 @@ async fn legacy_real_db_migrates_to_cents_and_utc() -> Result<()> {
     let version: i64 = sqlx::query_scalar("PRAGMA user_version")
         .fetch_one(&reopened)
         .await?;
-    assert_eq!(version, 3);
+    assert_eq!(version, 4);
 
     Ok(())
 }
@@ -914,6 +914,452 @@ async fn changes_since_tracks_creates_updates_and_cursor() -> Result<()> {
         views::changes_since(&pool, &args(json!({ "since": cursor, "limit": 1 }))).await?;
     assert_eq!(limited["count"], json!(1));
     assert_eq!(limited["has_more"], json!(true));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn phone_is_searchable_and_guards_duplicates() -> Result<()> {
+    let (_dir, pool) = test_pool().await?;
+
+    let lead = leads::create(
+        &pool,
+        &args(json!({ "name": "Engr. Ramos", "phone": "0917-555-1234" })),
+    )
+    .await?;
+    let lead_id = string_field(&lead, "id").to_owned();
+
+    // Separator-insensitive search: spaces in the query, dashes in the record.
+    let by_phone = leads::search(&pool, &args(json!({ "query": "0917 555 1234" }))).await?;
+    assert_eq!(by_phone["total"], json!(1), "got: {by_phone}");
+    let partial = leads::search(&pool, &args(json!({ "query": "555-1234" }))).await?;
+    assert_eq!(partial["total"], json!(1), "got: {partial}");
+
+    // A lead's own values never collide with itself.
+    leads::update(
+        &pool,
+        &args(json!({ "id": lead_id, "phone": "0917-555-1234" })),
+    )
+    .await?;
+
+    // Same phone with different separators is a duplicate; the teaching error
+    // carries the existing id.
+    let dup_err = leads::create(
+        &pool,
+        &args(json!({ "name": "J. Ramos", "phone": "(0917) 555 1234" })),
+    )
+    .await
+    .expect_err("expected duplicate-phone guard");
+    assert!(dup_err.to_string().contains(&lead_id), "got: {dup_err}");
+
+    leads::create(
+        &pool,
+        &args(json!({ "name": "J. Ramos", "phone": "0917 555 1234", "allow_duplicate": true })),
+    )
+    .await?;
+
+    // Update guard: pointing another lead's phone/email at an existing one is
+    // rejected unless allowed — and updates NOT touching those fields pass.
+    let other = leads::create(
+        &pool,
+        &args(json!({ "name": "Other Buyer", "email": "other@buyer.test" })),
+    )
+    .await?;
+    let other_id = string_field(&other, "id").to_owned();
+    let update_err = leads::update(
+        &pool,
+        &args(json!({ "id": other_id, "phone": "0917.555.1234" })),
+    )
+    .await
+    .expect_err("expected duplicate-phone guard on update");
+    assert!(update_err.to_string().contains(&lead_id));
+    leads::update(
+        &pool,
+        &args(json!({ "id": other_id, "status": "Contacted" })),
+    )
+    .await?;
+    leads::update(
+        &pool,
+        &args(json!({ "id": other_id, "phone": "0917-555-1234", "allow_duplicate": true })),
+    )
+    .await?;
+
+    // Org search also matches phone and email now.
+    orgs::create(
+        &pool,
+        &args(json!({ "name": "Cavite Roadworks", "phone": "046-123-4567", "email": "buy@cavite.test" })),
+    )
+    .await?;
+    let org_by_phone = orgs::search(&pool, &args(json!({ "query": "046 123" }))).await?;
+    assert_eq!(org_by_phone["total"], json!(1), "got: {org_by_phone}");
+    let org_by_email = orgs::search(&pool, &args(json!({ "query": "buy@cavite" }))).await?;
+    assert_eq!(org_by_email["total"], json!(1));
+
+    let all = views::search_all(&pool, &args(json!({ "query": "555 1234" }))).await?;
+    assert!(
+        all["counts"]["leads"].as_i64().unwrap() >= 1,
+        "search_all should match phones, got: {all}"
+    );
+
+    // Whitespace inside an email is rejected.
+    let email_err = leads::create(
+        &pool,
+        &args(json!({ "name": "Bad Email", "email": "bad email@x.test" })),
+    )
+    .await
+    .expect_err("expected whitespace-email rejection");
+    assert!(email_err.to_string().contains("valid email"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn deal_and_conversion_duplicate_guards() -> Result<()> {
+    let (_dir, pool) = test_pool().await?;
+
+    let lead = leads::create(&pool, &args(json!({ "name": "Retry Victim" }))).await?;
+    let lead_id = string_field(&lead, "id").to_owned();
+
+    let deal = deals::create(
+        &pool,
+        &args(json!({ "title": "Culverts 300pcs", "contact_id": lead_id, "amount": 870000.0 })),
+    )
+    .await?;
+    let deal_id = string_field(&deal, "id").to_owned();
+
+    // A retry with the same title (case-insensitive) teaches instead of duping.
+    let dup_err = deals::create(
+        &pool,
+        &args(json!({ "title": "culverts 300PCS", "contact_id": lead_id, "amount": 870000.0 })),
+    )
+    .await
+    .expect_err("expected duplicate-deal guard");
+    assert!(dup_err.to_string().contains(&deal_id), "got: {dup_err}");
+
+    // A genuinely different opportunity for the same contact is fine.
+    deals::create(
+        &pool,
+        &args(json!({ "title": "Aggregates delivery", "contact_id": lead_id })),
+    )
+    .await?;
+    deals::create(
+        &pool,
+        &args(
+            json!({ "title": "Culverts 300pcs", "contact_id": lead_id, "allow_duplicate": true }),
+        ),
+    )
+    .await?;
+
+    // Converting twice with the same (default) title is the classic agent
+    // retry — second call gets the existing deal id back.
+    let lead2 = leads::create(&pool, &args(json!({ "name": "Convert Twice" }))).await?;
+    let lead2_id = string_field(&lead2, "id").to_owned();
+    let converted = leads::convert_to_deal(&pool, &args(json!({ "lead_id": lead2_id }))).await?;
+    let convert_err = leads::convert_to_deal(&pool, &args(json!({ "lead_id": lead2_id })))
+        .await
+        .expect_err("expected convert idempotency guard");
+    assert!(
+        convert_err
+            .to_string()
+            .contains(string_field(&converted, "deal_id")),
+        "got: {convert_err}"
+    );
+    leads::convert_to_deal(
+        &pool,
+        &args(json!({ "lead_id": lead2_id, "allow_duplicate": true })),
+    )
+    .await?;
+
+    // Org rename guard: colliding rename teaches, allow_duplicate overrides,
+    // and renaming an org to its own name is never a collision.
+    let org_a = orgs::create(&pool, &args(json!({ "name": "Alpha Gravel" }))).await?;
+    let org_b = orgs::create(&pool, &args(json!({ "name": "Beta Gravel" }))).await?;
+    let rename_err = orgs::update(
+        &pool,
+        &args(json!({ "id": string_field(&org_b, "id"), "name": "alpha gravel" })),
+    )
+    .await
+    .expect_err("expected org rename guard");
+    assert!(rename_err.to_string().contains(string_field(&org_a, "id")));
+    orgs::update(
+        &pool,
+        &args(json!({ "id": string_field(&org_a, "id"), "name": "Alpha Gravel", "notes": "self-rename ok" })),
+    )
+    .await?;
+    orgs::update(
+        &pool,
+        &args(json!({ "id": string_field(&org_b, "id"), "name": "Alpha Gravel", "allow_duplicate": true })),
+    )
+    .await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn date_only_inputs_normalize_to_midnight_utc() -> Result<()> {
+    let (_dir, pool) = test_pool().await?;
+
+    let lead = leads::create(&pool, &args(json!({ "name": "Date Fan" }))).await?;
+    let lead_id = string_field(&lead, "id").to_owned();
+
+    let deal = deals::create(
+        &pool,
+        &args(json!({
+            "title": "Plain-date close",
+            "contact_id": lead_id,
+            "expected_close": "2027-07-15"
+        })),
+    )
+    .await?;
+    let stored = deals::get(&pool, string_field(&deal, "id")).await?;
+    assert_eq!(stored["expected_close"], json!("2027-07-15T00:00:00.000Z"));
+
+    let activity = activities::log(
+        &pool,
+        &args(json!({
+            "entity_id": lead_id,
+            "entity_type": "lead",
+            "kind": "task",
+            "title": "Follow up quote",
+            "due_at": "2027-07-20"
+        })),
+    )
+    .await?;
+    let stored_activity = activities::get(&pool, string_field(&activity, "id")).await?;
+    assert_eq!(stored_activity["due_at"], json!("2027-07-20T00:00:00.000Z"));
+
+    let garbage_err = deals::update(
+        &pool,
+        &args(json!({ "id": string_field(&deal, "id"), "expected_close": "next tuesday" })),
+    )
+    .await
+    .expect_err("expected date parse error");
+    assert!(garbage_err.to_string().contains("YYYY-MM-DD"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn tasks_due_worklist_and_dashboard_counts() -> Result<()> {
+    let (_dir, pool) = test_pool().await?;
+
+    let lead = leads::create(&pool, &args(json!({ "name": "Task Magnet" }))).await?;
+    let lead_id = string_field(&lead, "id").to_owned();
+
+    let stamp = |days: i64| (Utc::now() + Duration::days(days)).to_rfc3339();
+    let overdue_task = activities::log(
+        &pool,
+        &args(json!({
+            "entity_id": lead_id, "entity_type": "lead", "kind": "task",
+            "title": "Chase unpaid quote", "due_at": stamp(-2)
+        })),
+    )
+    .await?;
+    activities::log(
+        &pool,
+        &args(json!({
+            "entity_id": lead_id, "entity_type": "lead", "kind": "task",
+            "title": "Send delivery schedule", "due_at": stamp(3)
+        })),
+    )
+    .await?;
+    activities::log(
+        &pool,
+        &args(json!({
+            "entity_id": lead_id, "entity_type": "lead", "kind": "task",
+            "title": "Far-future check-in", "due_at": stamp(30)
+        })),
+    )
+    .await?;
+    activities::log(
+        &pool,
+        &args(json!({
+            "entity_id": lead_id, "entity_type": "lead", "kind": "task",
+            "title": "Already handled", "due_at": stamp(-5), "done": true
+        })),
+    )
+    .await?;
+    activities::log(
+        &pool,
+        &args(json!({
+            "entity_id": lead_id, "entity_type": "lead", "kind": "task",
+            "title": "Someday follow-up"
+        })),
+    )
+    .await?;
+    // Non-task kinds never enter the worklist.
+    activities::log(
+        &pool,
+        &args(json!({
+            "entity_id": lead_id, "entity_type": "lead", "kind": "note",
+            "title": "Just a note", "due_at": stamp(1)
+        })),
+    )
+    .await?;
+
+    // Default window (7 days): overdue + due-in-3, oldest due first, labeled.
+    let due = activities::tasks_due(&pool, &args(json!({}))).await?;
+    assert_eq!(due["count"], json!(2), "got: {due}");
+    assert_eq!(due["overdue_count"], json!(1));
+    let tasks = due["tasks"].as_array().unwrap();
+    assert_eq!(tasks[0]["title"], json!("Chase unpaid quote"));
+    assert_eq!(tasks[0]["overdue"], json!(true));
+    assert_eq!(tasks[0]["entity_label"], json!("Task Magnet"));
+    assert_eq!(tasks[1]["overdue"], json!(false));
+
+    // Widen the window and pull in undated open tasks.
+    let wide = activities::tasks_due(
+        &pool,
+        &args(json!({ "due_within_days": 60, "include_undated": true })),
+    )
+    .await?;
+    assert_eq!(wide["count"], json!(4), "got: {wide}");
+
+    // Completing a task removes it from the worklist; done filter sees it.
+    activities::update(
+        &pool,
+        &args(json!({ "id": string_field(&overdue_task, "id"), "done": true })),
+    )
+    .await?;
+    let after_done = activities::tasks_due(&pool, &args(json!({}))).await?;
+    assert_eq!(after_done["count"], json!(1));
+    let done_list = activities::list(&pool, &args(json!({ "kind": "task", "done": true }))).await?;
+    assert_eq!(done_list["total"], json!(2));
+
+    let dashboard = views::dashboard_summary(&pool, &args(json!({}))).await?;
+    assert_eq!(dashboard["tasks"]["open"], json!(3), "got: {dashboard}");
+    assert_eq!(dashboard["tasks"]["overdue"], json!(0));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn changes_since_cursor_never_skips_same_millisecond_rows() -> Result<()> {
+    let (_dir, pool) = test_pool().await?;
+
+    // Three leads sharing one exact timestamp — a bulk import. The old
+    // timestamp-only cursor lost whichever rows the limit cut off.
+    let ts = "2026-06-01T08:00:00.000+00:00";
+    for i in 0..3 {
+        sqlx::query(
+            "INSERT INTO leads (id, name, status, tags, created_at, updated_at)
+             VALUES (?, ?, 'Open', '[]', ?, ?)",
+        )
+        .bind(format!("bulk-{i}"))
+        .bind(format!("Bulk Lead {i}"))
+        .bind(ts)
+        .bind(ts)
+        .execute(&pool)
+        .await?;
+    }
+
+    let first = views::changes_since(
+        &pool,
+        &args(json!({ "since": "2026-06-01T00:00:00Z", "limit": 2 })),
+    )
+    .await?;
+    assert_eq!(first["count"], json!(2), "got: {first}");
+    assert_eq!(first["has_more"], json!(true));
+    let cursor = string_field(&first, "cursor").to_owned();
+    assert!(
+        cursor.contains('|'),
+        "cursor should carry an id tie-breaker"
+    );
+
+    let second = views::changes_since(&pool, &args(json!({ "since": cursor }))).await?;
+    assert_eq!(
+        second["count"],
+        json!(1),
+        "the same-millisecond leftover must surface: {second}"
+    );
+    assert_eq!(second["changes"][0]["id"], json!("bulk-2"));
+
+    // And the composite cursor is exclusive on replay.
+    let cursor2 = string_field(&second, "cursor").to_owned();
+    let replay = views::changes_since(&pool, &args(json!({ "since": cursor2 }))).await?;
+    assert_eq!(replay["count"], json!(0));
+    assert_eq!(replay["cursor"], json!(cursor2));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn org_overview_rolls_up_child_activity() -> Result<()> {
+    let (_dir, pool) = test_pool().await?;
+
+    let org = orgs::create(&pool, &args(json!({ "name": "Rollup Builders" }))).await?;
+    let org_id = string_field(&org, "id").to_owned();
+    let lead = leads::create(
+        &pool,
+        &args(json!({ "name": "Site Foreman", "org_id": org_id })),
+    )
+    .await?;
+    let lead_id = string_field(&lead, "id").to_owned();
+    let deal = deals::create(
+        &pool,
+        &args(json!({ "title": "Roadbase order", "contact_id": lead_id, "org_id": org_id })),
+    )
+    .await?;
+
+    for (entity_id, entity_type, title) in [
+        (org_id.as_str(), "org", "Org-level note"),
+        (lead_id.as_str(), "lead", "Call with foreman"),
+        (string_field(&deal, "id"), "deal", "Quote sent"),
+    ] {
+        activities::log(
+            &pool,
+            &args(json!({
+                "entity_id": entity_id, "entity_type": entity_type, "title": title
+            })),
+        )
+        .await?;
+    }
+
+    let overview =
+        views::record_overview(&pool, &args(json!({ "entity_type": "org", "id": org_id }))).await?;
+    let rolled = overview["recent_activities"].as_array().unwrap();
+    assert_eq!(
+        rolled.len(),
+        3,
+        "org + lead + deal activity, got: {overview}"
+    );
+    assert_eq!(overview["summary"]["activity_count"], json!(3));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn default_currency_provider_applies_to_new_deals() -> Result<()> {
+    let (_dir, pool) = test_pool().await?;
+
+    // Process-global OnceLock: first set wins for the whole test binary. No
+    // other test asserts the currency of a default-created deal, and the
+    // trim+uppercase normalization is exercised on the way through.
+    crate::set_default_currency_provider(|| " php ".to_owned());
+
+    let lead = leads::create(&pool, &args(json!({ "name": "Peso Payer" }))).await?;
+    let deal = deals::create(
+        &pool,
+        &args(json!({ "title": "Sand and gravel", "contact_id": string_field(&lead, "id") })),
+    )
+    .await?;
+    let stored = deals::get(&pool, string_field(&deal, "id")).await?;
+    assert_eq!(stored["currency"], json!("PHP"));
+
+    // An explicit currency still wins.
+    let usd = deals::create(
+        &pool,
+        &args(json!({
+            "title": "Export order",
+            "contact_id": string_field(&lead, "id"),
+            "currency": "USD"
+        })),
+    )
+    .await?;
+    assert_eq!(
+        deals::get(&pool, string_field(&usd, "id")).await?["currency"],
+        json!("USD")
+    );
 
     Ok(())
 }

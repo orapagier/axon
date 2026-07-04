@@ -122,37 +122,39 @@ impl CrmService {
             },
             Tool {
                 name: "crm_lead_convert_to_deal".into(),
-                description: "Convert a lead into a deal/opportunity and optionally update the lead status.".into(),
+                description: "Convert a lead into a deal/opportunity and optionally update the lead status. Rejects a re-conversion that would duplicate an active deal (same contact + title) with the existing deal's id unless allow_duplicate: true.".into(),
                 input_schema: schema!({
                     "lead_id":         { "type": "string" },
                     "title":           { "type": "string", "description": "Optional deal title. Defaults from the lead/company." },
                     "amount":          { "type": "number", "minimum": 0 },
-                    "currency":        { "type": "string", "default": "USD" },
+                    "currency":        { "type": "string", "description": "3-letter code; defaults to the crm.default_currency setting" },
                     "stage":           { "type": "string", "enum": ["Prospecting", "Qualified", "Proposal", "Negotiation", "Won", "Lost"], "default": "Prospecting" },
                     "probability":     { "type": "integer", "minimum": 0, "maximum": 100 },
                     "org_id":          { "type": "string", "description": "Optional org override. Defaults to the lead's org_id." },
-                    "expected_close":  { "type": "string", "description": "Expected close date (ISO 8601)" },
+                    "expected_close":  { "type": "string", "description": "Expected close date (ISO 8601 or YYYY-MM-DD)" },
                     "tags":            { "type": "array", "items": { "type": "string" } },
                     "notes":           { "type": "string" },
-                    "lead_status":     { "type": "string", "enum": ["Open", "Contacted", "Qualified", "Lost"], "default": "Qualified" }
+                    "lead_status":     { "type": "string", "enum": ["Open", "Contacted", "Qualified", "Lost"], "default": "Qualified" },
+                    "allow_duplicate": { "type": "boolean", "default": false, "description": "Convert even if an active deal with the same contact and title exists" }
                 }, ["lead_id"]),
             },
 
             // ── Deals (7) ────────────────────────────────────────────────
             Tool {
                 name: "crm_deal_create".into(),
-                description: "Create a new sales deal linked to a lead or contact.".into(),
+                description: "Create a new sales deal linked to a lead or contact. Rejects a duplicate active deal (same contact + title) with the existing deal's id — update that deal instead, or pass allow_duplicate: true.".into(),
                 input_schema: schema!({
                     "title":          { "type": "string" },
                     "amount":         { "type": "number", "minimum": 0 },
-                    "currency":       { "type": "string", "default": "USD" },
+                    "currency":       { "type": "string", "description": "3-letter code; defaults to the crm.default_currency setting" },
                     "stage":          { "type": "string", "enum": ["Prospecting", "Qualified", "Proposal", "Negotiation", "Won", "Lost"], "default": "Prospecting" },
                     "probability":    { "type": "integer", "minimum": 0, "maximum": 100, "description": "Win probability as percentage" },
                     "contact_id":     { "type": "string", "description": "ID of the associated lead or contact" },
                     "org_id":         { "type": "string", "description": "ID of the associated organization" },
-                    "expected_close": { "type": "string", "description": "Expected close date (ISO 8601)" },
+                    "expected_close": { "type": "string", "description": "Expected close date (ISO 8601 or YYYY-MM-DD)" },
                     "tags":           { "type": "array", "items": { "type": "string" } },
-                    "notes":          { "type": "string" }
+                    "notes":          { "type": "string" },
+                    "allow_duplicate": { "type": "boolean", "default": false, "description": "Create even if an active deal with the same contact and title exists" }
                 }, ["title", "contact_id"]),
             },
             Tool {
@@ -181,7 +183,7 @@ impl CrmService {
                     "probability":    { "type": "integer", "minimum": 0, "maximum": 100 },
                     "contact_id":     { "type": "string" },
                     "org_id":         { "type": "string" },
-                    "expected_close": { "type": "string" },
+                    "expected_close": { "type": "string", "description": "ISO 8601 or YYYY-MM-DD" },
                     "tags":           { "type": "array", "items": { "type": "string" } },
                     "notes":          { "type": "string" }
                 }, ["id"]),
@@ -242,7 +244,7 @@ impl CrmService {
             },
             Tool {
                 name: "crm_org_update".into(),
-                description: "Update any field(s) of an existing organization.".into(),
+                description: "Update any field(s) of an existing organization. Renaming to a name another active org already uses (case-insensitive) is rejected with that org's id unless allow_duplicate: true.".into(),
                 input_schema: schema!({
                     "id":       { "type": "string" },
                     "name":     { "type": "string" },
@@ -253,7 +255,8 @@ impl CrmService {
                     "phone":    { "type": "string" },
                     "email":    { "type": "string" },
                     "tags":     { "type": "array", "items": { "type": "string" } },
-                    "notes":    { "type": "string" }
+                    "notes":    { "type": "string" },
+                    "allow_duplicate": { "type": "boolean", "default": false, "description": "Rename even if the new name collides with another active org" }
                 }, ["id"]),
             },
             Tool {
@@ -266,7 +269,7 @@ impl CrmService {
             },
             Tool {
                 name: "crm_org_search".into(),
-                description: "Search organizations by name, industry, country, website, notes, or tags.".into(),
+                description: "Search organizations by name, industry, country, website, phone, email, notes, or tags.".into(),
                 input_schema: schema!({
                     "query":  { "type": "string" },
                     "limit":  { "type": "integer", "default": 50 },
@@ -274,17 +277,19 @@ impl CrmService {
                 }, ["query"]),
             },
 
-            // ── Activities (4) ───────────────────────────────────────────
+            // ── Activities (6) ───────────────────────────────────────────
             Tool {
                 name: "crm_activity_log".into(),
-                description: "Log an activity (note, call, email, meeting, task) on a lead, deal, or org.".into(),
+                description: "Log an activity (note, call, email, meeting, task) on a lead, deal, or org. Tasks may carry a due_at for follow-up tracking (see crm_tasks_due).".into(),
                 input_schema: schema!({
                     "entity_id":   { "type": "string", "description": "ID of the lead, deal, or org" },
                     "entity_type": { "type": "string", "enum": ["lead", "deal", "org"] },
                     "kind":        { "type": "string", "enum": ["note", "call", "email", "meeting", "task", "other"], "default": "note" },
                     "title":       { "type": "string", "description": "Short summary of the activity" },
                     "body":        { "type": "string", "description": "Full details or transcript" },
-                    "occurred_at": { "type": "string", "description": "ISO 8601 timestamp (defaults to now)" }
+                    "occurred_at": { "type": "string", "description": "ISO 8601 or YYYY-MM-DD (defaults to now)" },
+                    "due_at":      { "type": "string", "description": "When this is due (ISO 8601 or YYYY-MM-DD). Meant for kind: task" },
+                    "done":        { "type": "boolean", "default": false, "description": "Mark completed on creation (e.g. logging an already-finished task)" }
                 }, ["entity_id", "entity_type", "title"]),
             },
             Tool {
@@ -294,6 +299,7 @@ impl CrmService {
                     "entity_id": { "type": "string", "description": "Filter by entity ID (optional)" },
                     "entity_type": { "type": "string", "enum": ["lead", "deal", "org"], "description": "Optional entity type filter" },
                     "kind":      { "type": "string", "enum": ["note", "call", "email", "meeting", "task", "other"] },
+                    "done":      { "type": "boolean", "description": "Filter by completion state (mostly useful with kind: task)" },
                     "limit":     { "type": "integer", "default": 50 },
                     "offset":    { "type": "integer", "default": 0 }
                 }, []),
@@ -305,7 +311,7 @@ impl CrmService {
             },
             Tool {
                 name: "crm_activity_update".into(),
-                description: "Update an existing activity log entry, including reassignment to another CRM record.".into(),
+                description: "Update an existing activity log entry: reassign it, set/clear its due date, or mark a task done.".into(),
                 input_schema: schema!({
                     "id":          { "type": "string" },
                     "entity_id":   { "type": "string", "description": "If provided, must be paired with entity_type" },
@@ -313,8 +319,21 @@ impl CrmService {
                     "kind":        { "type": "string", "enum": ["note", "call", "email", "meeting", "task", "other"] },
                     "title":       { "type": "string" },
                     "body":        { "type": "string" },
-                    "occurred_at": { "type": "string", "description": "ISO 8601 timestamp" }
+                    "occurred_at": { "type": "string", "description": "ISO 8601 or YYYY-MM-DD" },
+                    "due_at":      { "type": "string", "description": "ISO 8601 or YYYY-MM-DD; pass null or \"\" to clear" },
+                    "done":        { "type": "boolean", "description": "true = task completed" }
                 }, ["id"]),
+            },
+            Tool {
+                name: "crm_tasks_due".into(),
+                description: "List open (not done) task activities that are overdue or due within the window, oldest due first, each with the name of the lead/deal/org it belongs to. The follow-up worklist.".into(),
+                input_schema: schema!({
+                    "due_within_days": { "type": "integer", "default": 7, "description": "Include tasks due up to this many days from now" },
+                    "include_overdue": { "type": "boolean", "default": true },
+                    "include_undated": { "type": "boolean", "default": false, "description": "Also list open tasks that have no due_at" },
+                    "limit":  { "type": "integer", "default": 50, "maximum": 200 },
+                    "offset": { "type": "integer", "default": 0 }
+                }, []),
             },
             Tool {
                 name: "crm_activity_delete".into(),
@@ -371,7 +390,7 @@ impl CrmService {
             },
             Tool {
                 name: "crm_dashboard_summary".into(),
-                description: "Get an operational CRM dashboard: lead status mix, pipeline health, stale deals, and closing-soon deals.".into(),
+                description: "Get an operational CRM dashboard: lead status mix, pipeline health, stale deals, closing-soon deals, and open/overdue task counts.".into(),
                 input_schema: schema!({
                     "stale_days":          { "type": "integer", "default": 30 },
                     "closing_within_days": { "type": "integer", "default": 30 },
@@ -394,9 +413,9 @@ impl CrmService {
             },
             Tool {
                 name: "crm_changes_since".into(),
-                description: "Change feed: active leads/deals/orgs created or updated after the 'since' timestamp, oldest first, each tagged change: 'created' or 'updated'. Returns a 'cursor' to pass as the next 'since' (has_more: true means the window was cut by 'limit' — poll again). Powers the CRM workflow trigger; also handy for \"what changed today\" checks.".into(),
+                description: "Change feed: active leads/deals/orgs created or updated after the 'since' cursor, oldest first, each tagged change: 'created' or 'updated'. Returns a 'cursor' to pass as the next 'since' (has_more: true means the window was cut by 'limit' — poll again). Powers the CRM workflow trigger; also handy for \"what changed today\" checks.".into(),
                 input_schema: schema!({
-                    "since":        { "type": "string", "description": "RFC 3339 timestamp; any offset accepted" },
+                    "since":        { "type": "string", "description": "RFC 3339 timestamp (any offset) or YYYY-MM-DD, or the cursor returned by a previous call" },
                     "entity_types": { "type": "array", "items": { "type": "string", "enum": ["lead", "deal", "org"] }, "description": "Default: all three" },
                     "limit":        { "type": "integer", "default": 50, "maximum": 200 }
                 }, ["since"]),
@@ -453,6 +472,7 @@ impl CrmService {
                 records::require_confirmed_delete(a).await?;
                 activities::delete(pool, require_str(a, "id")?).await
             }
+            "crm_tasks_due" => activities::tasks_due(pool, a).await,
 
             // Insights / workflows
             "crm_record_archive" => records::archive(pool, a).await,

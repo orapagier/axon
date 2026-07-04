@@ -72,7 +72,7 @@ pub async fn create(pool: &SqlitePool, args: &Map<String, Value>) -> Result<Valu
     let title = require_non_empty_str(args, "title")?;
     let contact_id = require_non_empty_str(args, "contact_id")?;
     let amount_minor = amount_arg_minor(args, "amount")?.unwrap_or(0);
-    let currency = string_opt(args, "currency")?.unwrap_or_else(|| "USD".to_owned());
+    let currency = string_opt(args, "currency")?.unwrap_or_else(crate::default_currency);
     let stage = string_opt(args, "stage")?.unwrap_or_else(|| "Prospecting".to_owned());
     let probability = i64_arg(args, "probability")?;
     let org_id = string_opt(args, "org_id")?;
@@ -92,6 +92,14 @@ pub async fn create(pool: &SqlitePool, args: &Map<String, Value>) -> Result<Valu
     validate_currency("currency", &currency)?;
     validate_choice(&stage, DEAL_STAGES, "stage")?;
     let expected_close = parse_rfc3339_utc("expected_close", expected_close.as_deref())?;
+
+    // Idempotency guard: a retrying agent re-creating the same deal gets a
+    // teaching error with the existing id instead of a second pipeline entry.
+    // A contact may hold many deals, so only the same title collides.
+    let allow_duplicate = crate::utils::bool_arg(args, "allow_duplicate")?.unwrap_or(false);
+    if !allow_duplicate {
+        ensure_no_duplicate_deal(pool, contact_id, title, "crm_deal_create").await?;
+    }
 
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
@@ -440,6 +448,33 @@ pub async fn pipeline_summary(pool: &SqlitePool) -> Result<Value> {
         "win_rate_pct": win_rate,
         "won_share_of_all_deals_pct": won_share_of_all_deals,
     }))
+}
+
+/// Duplicate-deal guard shared by `crm_deal_create` and
+/// `crm_lead_convert_to_deal`: another ACTIVE deal for the same contact with
+/// the same title (case-insensitive) is almost always an agent retry, not a
+/// real second opportunity.
+pub(crate) async fn ensure_no_duplicate_deal(
+    pool: &SqlitePool,
+    contact_id: &str,
+    title: &str,
+    caller: &str,
+) -> Result<()> {
+    if let Some((dup_id, dup_stage)) = sqlx::query_as::<_, (String, String)>(
+        "SELECT id, stage FROM deals
+        WHERE deleted_at IS NULL AND contact_id = ? AND lower(title) = lower(?) LIMIT 1",
+    )
+    .bind(contact_id)
+    .bind(title)
+    .fetch_optional(pool)
+    .await?
+    {
+        return Err(anyhow::anyhow!(
+            "A deal titled '{title}' already exists for this contact (id: {dup_id}, stage: {dup_stage}). \
+             Update it with crm_deal_update, or pass 'allow_duplicate': true to {caller} to create a second one anyway."
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) async fn ensure_lead_exists(conn: &mut SqliteConnection, lead_id: &str) -> Result<()> {

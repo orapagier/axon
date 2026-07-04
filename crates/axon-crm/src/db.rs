@@ -67,6 +67,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "utc_timestamps",
         sql: include_str!("migrations/0003_utc_timestamps.sql"),
     },
+    Migration {
+        version: 4,
+        name: "activity_tasks",
+        sql: include_str!("migrations/0004_activity_tasks.sql"),
+    },
 ];
 
 async fn migrate(pool: &SqlitePool) -> Result<()> {

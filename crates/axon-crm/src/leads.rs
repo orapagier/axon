@@ -4,12 +4,12 @@ use serde_json::{Map, Value};
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
-use crate::deals::ensure_org_exists;
+use crate::deals::{ensure_no_duplicate_deal, ensure_org_exists};
 use crate::utils::{
-    amount_arg_minor, check_len, i64_arg, inject_tags, like, page_args, parse_rfc3339_utc,
-    require_non_empty_str, string_opt, string_patch, tags_json_from_value, validate_choice,
-    validate_currency, validate_email, DEAL_STAGES, LEAD_STATUSES, MAX_CONTACT_LEN, MAX_NAME_LEN,
-    MAX_TEXT_LEN,
+    amount_arg_minor, check_len, i64_arg, inject_tags, like, normalize_phone, page_args,
+    parse_rfc3339_utc, phone_match_sql, require_non_empty_str, string_opt, string_patch,
+    tags_json_from_value, validate_choice, validate_currency, validate_email, DEAL_STAGES,
+    LEAD_STATUSES, MAX_CONTACT_LEN, MAX_NAME_LEN, MAX_TEXT_LEN,
 };
 
 #[derive(sqlx::FromRow)]
@@ -92,22 +92,11 @@ pub async fn create(pool: &SqlitePool, args: &Map<String, Value>) -> Result<Valu
     // Duplicate guard: agents in a loop will happily re-create the same
     // contact. A teaching error carrying the existing id steers them to
     // crm_lead_update instead; 'allow_duplicate': true overrides deliberately.
+    // Phone matters as much as email here — walk-in/call-in customers often
+    // have no email at all.
     let allow_duplicate = crate::utils::bool_arg(args, "allow_duplicate")?.unwrap_or(false);
     if !allow_duplicate {
-        if let Some(email) = email.as_deref() {
-            if let Some((dup_id, dup_name)) = sqlx::query_as::<_, (String, String)>(
-                "SELECT id, name FROM leads WHERE deleted_at IS NULL AND lower(email) = lower(?) LIMIT 1",
-            )
-            .bind(email)
-            .fetch_optional(pool)
-            .await?
-            {
-                return Err(anyhow::anyhow!(
-                    "A lead with email '{email}' already exists: '{dup_name}' (id: {dup_id}). \
-                     Update it with crm_lead_update, or pass 'allow_duplicate': true to create a second lead anyway."
-                ));
-            }
-        }
+        ensure_no_duplicate_contact(pool, email.as_deref(), phone.as_deref(), None).await?;
     }
 
     let id = Uuid::new_v4().to_string();
@@ -236,6 +225,23 @@ pub async fn update(pool: &SqlitePool, args: &Map<String, Value>) -> Result<Valu
         notes.as_deref(),
     )?;
 
+    // Same duplicate guard as create, but only for the fields this call is
+    // actually changing — untouched values never block an unrelated update.
+    let allow_duplicate = crate::utils::bool_arg(args, "allow_duplicate")?.unwrap_or(false);
+    if !allow_duplicate {
+        let changed_email = args.contains_key("email");
+        let changed_phone = args.contains_key("phone");
+        if changed_email || changed_phone {
+            ensure_no_duplicate_contact(
+                pool,
+                email.as_deref().filter(|_| changed_email),
+                phone.as_deref().filter(|_| changed_phone),
+                Some(id),
+            )
+            .await?;
+        }
+    }
+
     if let Some(org_id) = org_id.as_deref() {
         ensure_org_exists(&mut tx, org_id).await?;
     }
@@ -319,39 +325,35 @@ pub async fn search(pool: &SqlitePool, args: &Map<String, Value>) -> Result<Valu
     let (limit, offset) = page_args(args);
     let pattern = like(query);
 
-    let total = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM leads
-        WHERE deleted_at IS NULL AND (
-              name LIKE ? ESCAPE '\\'
-           OR email LIKE ? ESCAPE '\\'
-           OR company LIKE ? ESCAPE '\\'
-           OR notes LIKE ? ESCAPE '\\'
-           OR tags LIKE ? ESCAPE '\\')",
-    )
-    .bind(&pattern)
-    .bind(&pattern)
-    .bind(&pattern)
-    .bind(&pattern)
-    .bind(&pattern)
-    .fetch_one(pool)
-    .await?;
+    // Phone matches both verbatim and separator-stripped, so "0917 555 1234"
+    // finds a lead stored as "0917-555-1234".
+    let phone_pattern = crate::utils::like(&normalize_phone(query));
+    let where_clause = format!(
+        "deleted_at IS NULL AND (
+              name LIKE ?1 ESCAPE '\\'
+           OR email LIKE ?1 ESCAPE '\\'
+           OR phone LIKE ?1 ESCAPE '\\'
+           OR {} LIKE ?2 ESCAPE '\\'
+           OR company LIKE ?1 ESCAPE '\\'
+           OR notes LIKE ?1 ESCAPE '\\'
+           OR tags LIKE ?1 ESCAPE '\\')",
+        phone_match_sql("phone")
+    );
 
-    let rows = sqlx::query_as::<_, LeadRow>(
-        "SELECT * FROM leads
-        WHERE deleted_at IS NULL AND (
-              name LIKE ? ESCAPE '\\'
-           OR email LIKE ? ESCAPE '\\'
-           OR company LIKE ? ESCAPE '\\'
-           OR notes LIKE ? ESCAPE '\\'
-           OR tags LIKE ? ESCAPE '\\')
+    let total =
+        sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM leads WHERE {where_clause}"))
+            .bind(&pattern)
+            .bind(&phone_pattern)
+            .fetch_one(pool)
+            .await?;
+
+    let rows = sqlx::query_as::<_, LeadRow>(&format!(
+        "SELECT * FROM leads WHERE {where_clause}
         ORDER BY updated_at DESC
-        LIMIT ? OFFSET ?",
-    )
+        LIMIT ?3 OFFSET ?4"
+    ))
     .bind(&pattern)
-    .bind(&pattern)
-    .bind(&pattern)
-    .bind(&pattern)
-    .bind(&pattern)
+    .bind(&phone_pattern)
     .bind(limit)
     .bind(offset)
     .fetch_all(pool)
@@ -383,7 +385,7 @@ pub async fn convert_to_deal(pool: &SqlitePool, args: &Map<String, Value>) -> Re
         }
     });
     let amount_minor = amount_arg_minor(args, "amount")?.unwrap_or(0);
-    let currency = string_opt(args, "currency")?.unwrap_or_else(|| "USD".to_owned());
+    let currency = string_opt(args, "currency")?.unwrap_or_else(crate::default_currency);
     let stage = string_opt(args, "stage")?.unwrap_or_else(|| "Prospecting".to_owned());
     let probability = i64_arg(args, "probability")?;
     let org_id = string_opt(args, "org_id")?.or_else(|| lead.org_id.clone());
@@ -407,6 +409,14 @@ pub async fn convert_to_deal(pool: &SqlitePool, args: &Map<String, Value>) -> Re
     validate_choice(&stage, DEAL_STAGES, "stage")?;
     validate_choice(&mark_lead_status, LEAD_STATUSES, "lead_status")?;
     let expected_close = parse_rfc3339_utc("expected_close", expected_close.as_deref())?;
+
+    // Idempotency guard: a retrying agent must not convert the same lead into
+    // two deals. The default title is deterministic, so a plain re-conversion
+    // collides here and gets the existing deal id back.
+    let allow_duplicate = crate::utils::bool_arg(args, "allow_duplicate")?.unwrap_or(false);
+    if !allow_duplicate {
+        ensure_no_duplicate_deal(pool, lead_id, &title, "crm_lead_convert_to_deal").await?;
+    }
 
     let deal_id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
@@ -464,4 +474,58 @@ fn patch_or_existing(
         Some(value) => Ok(value),
         None => Ok(existing),
     }
+}
+
+/// Duplicate-contact guard shared by create and update: rejects (with a
+/// teaching error carrying the existing id) when another active lead already
+/// uses this email (case-insensitive) or phone (separator-insensitive, see
+/// [`normalize_phone`]). `exclude_id` skips the record being updated.
+async fn ensure_no_duplicate_contact(
+    pool: &SqlitePool,
+    email: Option<&str>,
+    phone: Option<&str>,
+    exclude_id: Option<&str>,
+) -> Result<()> {
+    let exclude = exclude_id.unwrap_or("");
+
+    if let Some(email) = email {
+        if let Some((dup_id, dup_name)) = sqlx::query_as::<_, (String, String)>(
+            "SELECT id, name FROM leads
+            WHERE deleted_at IS NULL AND lower(email) = lower(?) AND id != ? LIMIT 1",
+        )
+        .bind(email)
+        .bind(exclude)
+        .fetch_optional(pool)
+        .await?
+        {
+            return Err(anyhow::anyhow!(
+                "A lead with email '{email}' already exists: '{dup_name}' (id: {dup_id}). \
+                 Update it with crm_lead_update, or pass 'allow_duplicate': true to keep both."
+            ));
+        }
+    }
+
+    if let Some(phone) = phone {
+        let normalized = normalize_phone(phone);
+        if !normalized.is_empty() {
+            let sql = format!(
+                "SELECT id, name FROM leads
+                WHERE deleted_at IS NULL AND phone IS NOT NULL AND {} = ? AND id != ? LIMIT 1",
+                phone_match_sql("phone")
+            );
+            if let Some((dup_id, dup_name)) = sqlx::query_as::<_, (String, String)>(&sql)
+                .bind(&normalized)
+                .bind(exclude)
+                .fetch_optional(pool)
+                .await?
+            {
+                return Err(anyhow::anyhow!(
+                    "A lead with phone '{phone}' already exists: '{dup_name}' (id: {dup_id}). \
+                     Update it with crm_lead_update, or pass 'allow_duplicate': true to keep both."
+                ));
+            }
+        }
+    }
+
+    Ok(())
 }

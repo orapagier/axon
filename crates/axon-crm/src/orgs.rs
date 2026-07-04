@@ -233,6 +233,26 @@ pub async fn update(pool: &SqlitePool, args: &Map<String, Value>) -> Result<Valu
         notes.as_deref(),
     )?;
 
+    // Same duplicate-name guard as create, applied only when this call renames
+    // the org, and never tripped by the org's own current name.
+    let allow_duplicate = crate::utils::bool_arg(args, "allow_duplicate")?.unwrap_or(false);
+    if !allow_duplicate && args.contains_key("name") {
+        if let Some((dup_id,)) = sqlx::query_as::<_, (String,)>(
+            "SELECT id FROM orgs
+            WHERE deleted_at IS NULL AND lower(name) = lower(?) AND id != ? LIMIT 1",
+        )
+        .bind(&name)
+        .bind(id)
+        .fetch_optional(pool)
+        .await?
+        {
+            return Err(anyhow::anyhow!(
+                "An organization named '{name}' already exists (id: {dup_id}). \
+                 Use that record, or pass 'allow_duplicate': true to rename anyway."
+            ));
+        }
+    }
+
     sqlx::query(
         "UPDATE orgs
         SET name = ?, website = ?, industry = ?, size = ?, country = ?, phone = ?, email = ?,
@@ -283,43 +303,36 @@ pub async fn search(pool: &SqlitePool, args: &Map<String, Value>) -> Result<Valu
     let (limit, offset) = page_args(args);
     let pattern = like(query);
 
-    let total = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM orgs
-        WHERE deleted_at IS NULL AND (
-              name LIKE ? ESCAPE '\\'
-           OR industry LIKE ? ESCAPE '\\'
-           OR country LIKE ? ESCAPE '\\'
-           OR website LIKE ? ESCAPE '\\'
-           OR notes LIKE ? ESCAPE '\\'
-           OR tags LIKE ? ESCAPE '\\')",
-    )
-    .bind(&pattern)
-    .bind(&pattern)
-    .bind(&pattern)
-    .bind(&pattern)
-    .bind(&pattern)
-    .bind(&pattern)
-    .fetch_one(pool)
-    .await?;
+    // Phone matches both verbatim and separator-stripped (see leads::search).
+    let phone_pattern = like(&crate::utils::normalize_phone(query));
+    let where_clause = format!(
+        "deleted_at IS NULL AND (
+              name LIKE ?1 ESCAPE '\\'
+           OR industry LIKE ?1 ESCAPE '\\'
+           OR country LIKE ?1 ESCAPE '\\'
+           OR website LIKE ?1 ESCAPE '\\'
+           OR phone LIKE ?1 ESCAPE '\\'
+           OR {} LIKE ?2 ESCAPE '\\'
+           OR email LIKE ?1 ESCAPE '\\'
+           OR notes LIKE ?1 ESCAPE '\\'
+           OR tags LIKE ?1 ESCAPE '\\')",
+        crate::utils::phone_match_sql("phone")
+    );
 
-    let rows = sqlx::query_as::<_, OrgRow>(
-        "SELECT * FROM orgs
-        WHERE deleted_at IS NULL AND (
-              name LIKE ? ESCAPE '\\'
-           OR industry LIKE ? ESCAPE '\\'
-           OR country LIKE ? ESCAPE '\\'
-           OR website LIKE ? ESCAPE '\\'
-           OR notes LIKE ? ESCAPE '\\'
-           OR tags LIKE ? ESCAPE '\\')
+    let total =
+        sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM orgs WHERE {where_clause}"))
+            .bind(&pattern)
+            .bind(&phone_pattern)
+            .fetch_one(pool)
+            .await?;
+
+    let rows = sqlx::query_as::<_, OrgRow>(&format!(
+        "SELECT * FROM orgs WHERE {where_clause}
         ORDER BY updated_at DESC
-        LIMIT ? OFFSET ?",
-    )
+        LIMIT ?3 OFFSET ?4"
+    ))
     .bind(&pattern)
-    .bind(&pattern)
-    .bind(&pattern)
-    .bind(&pattern)
-    .bind(&pattern)
-    .bind(&pattern)
+    .bind(&phone_pattern)
     .bind(limit)
     .bind(offset)
     .fetch_all(pool)

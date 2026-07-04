@@ -107,6 +107,12 @@ impl RuntimeSettings {
     pub fn crm_agent_write_tools(&self) -> bool {
         self.get_bool("crm.agent_write_tools", false)
     }
+    /// Currency assigned to deals created without an explicit one. Read per
+    /// call (via the provider registered in main.rs) so changing the setting
+    /// applies without a restart; axon-crm validates and falls back to USD.
+    pub fn crm_default_currency(&self) -> String {
+        self.get_str("crm.default_currency", "USD")
+    }
     pub fn temp_tool_max_retries(&self) -> u32 {
         self.get_int("agent.temp_tool_max_retries", 2) as u32
     }

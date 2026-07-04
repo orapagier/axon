@@ -56,6 +56,8 @@ struct ActivityCardRow {
     title: String,
     body: Option<String>,
     occurred_at: String,
+    due_at: Option<String>,
+    done: bool,
     created_at: String,
 }
 
@@ -140,6 +142,8 @@ impl ActivityCardRow {
             "title": self.title,
             "body": self.body,
             "occurred_at": self.occurred_at,
+            "due_at": self.due_at,
+            "done": self.done,
             "created_at": self.created_at,
         })
     }
@@ -149,47 +153,48 @@ pub async fn search_all(pool: &SqlitePool, args: &Map<String, Value>) -> Result<
     let query = require_non_empty_str(args, "query")?;
     let limit_per_type = i64_arg(args, "limit_per_type")?.unwrap_or(10).clamp(1, 50);
     let pattern = like(query);
+    // Phone matches both verbatim and separator-stripped (see leads::search).
+    let phone_pattern = like(&crate::utils::normalize_phone(query));
+    let phone_norm = crate::utils::phone_match_sql("phone");
 
-    let orgs = sqlx::query_as::<_, OrgCardRow>(
+    let orgs = sqlx::query_as::<_, OrgCardRow>(&format!(
         "SELECT id, name, website, industry, email, tags, updated_at
         FROM orgs
         WHERE deleted_at IS NULL AND (
-              name LIKE ? ESCAPE '\\'
-           OR industry LIKE ? ESCAPE '\\'
-           OR country LIKE ? ESCAPE '\\'
-           OR website LIKE ? ESCAPE '\\'
-           OR notes LIKE ? ESCAPE '\\'
-           OR tags LIKE ? ESCAPE '\\')
+              name LIKE ?1 ESCAPE '\\'
+           OR industry LIKE ?1 ESCAPE '\\'
+           OR country LIKE ?1 ESCAPE '\\'
+           OR website LIKE ?1 ESCAPE '\\'
+           OR phone LIKE ?1 ESCAPE '\\'
+           OR {phone_norm} LIKE ?2 ESCAPE '\\'
+           OR email LIKE ?1 ESCAPE '\\'
+           OR notes LIKE ?1 ESCAPE '\\'
+           OR tags LIKE ?1 ESCAPE '\\')
         ORDER BY updated_at DESC
-        LIMIT ?",
-    )
+        LIMIT ?3"
+    ))
     .bind(&pattern)
-    .bind(&pattern)
-    .bind(&pattern)
-    .bind(&pattern)
-    .bind(&pattern)
-    .bind(&pattern)
+    .bind(&phone_pattern)
     .bind(limit_per_type)
     .fetch_all(pool)
     .await?;
 
-    let leads = sqlx::query_as::<_, LeadCardRow>(
+    let leads = sqlx::query_as::<_, LeadCardRow>(&format!(
         "SELECT id, name, email, company, status, org_id, tags, updated_at
         FROM leads
         WHERE deleted_at IS NULL AND (
-              name LIKE ? ESCAPE '\\'
-           OR email LIKE ? ESCAPE '\\'
-           OR company LIKE ? ESCAPE '\\'
-           OR notes LIKE ? ESCAPE '\\'
-           OR tags LIKE ? ESCAPE '\\')
+              name LIKE ?1 ESCAPE '\\'
+           OR email LIKE ?1 ESCAPE '\\'
+           OR phone LIKE ?1 ESCAPE '\\'
+           OR {phone_norm} LIKE ?2 ESCAPE '\\'
+           OR company LIKE ?1 ESCAPE '\\'
+           OR notes LIKE ?1 ESCAPE '\\'
+           OR tags LIKE ?1 ESCAPE '\\')
         ORDER BY updated_at DESC
-        LIMIT ?",
-    )
+        LIMIT ?3"
+    ))
     .bind(&pattern)
-    .bind(&pattern)
-    .bind(&pattern)
-    .bind(&pattern)
-    .bind(&pattern)
+    .bind(&phone_pattern)
     .bind(limit_per_type)
     .fetch_all(pool)
     .await?;
@@ -303,8 +308,16 @@ pub async fn dashboard_summary(pool: &SqlitePool, args: &Map<String, Value>) -> 
         currency: String,
         weighted_minor: f64,
     }
+    // Deals without an explicit probability weight in at a stage-typical
+    // default instead of vanishing from the forecast at 0%.
     let weighted_pipeline_value = sqlx::query_as::<_, CurrencyWeightedRow>(
-        "SELECT currency, CAST(SUM(amount_minor * COALESCE(probability, 0) / 100.0) AS REAL) AS weighted_minor
+        "SELECT currency, CAST(SUM(amount_minor * COALESCE(probability, CASE stage
+            WHEN 'Prospecting' THEN 10
+            WHEN 'Qualified'   THEN 25
+            WHEN 'Proposal'    THEN 50
+            WHEN 'Negotiation' THEN 75
+            ELSE 0
+        END) / 100.0) AS REAL) AS weighted_minor
         FROM deals
         WHERE deleted_at IS NULL AND stage NOT IN ('Won', 'Lost')
         GROUP BY currency",
@@ -384,6 +397,21 @@ pub async fn dashboard_summary(pool: &SqlitePool, args: &Map<String, Value>) -> 
     .fetch_all(pool)
     .await?;
 
+    // Follow-up health: open task activities (see crm_tasks_due for the list).
+    let open_tasks = scalar_count(
+        pool,
+        "SELECT COUNT(*) FROM activities WHERE deleted_at IS NULL AND kind = 'task' AND done = 0",
+    )
+    .await?;
+    let overdue_tasks = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM activities
+        WHERE deleted_at IS NULL AND kind = 'task' AND done = 0
+          AND due_at IS NOT NULL AND due_at < ?",
+    )
+    .bind(&now_ts)
+    .fetch_one(pool)
+    .await?;
+
     Ok(serde_json::json!({
         "generated_at": now_rfc3339,
         "parameters": {
@@ -407,6 +435,10 @@ pub async fn dashboard_summary(pool: &SqlitePool, args: &Map<String, Value>) -> 
             "stale_deals": stale_deals,
             "overdue_deals_count": overdue_deals_count,
             "closing_soon_count": closing_soon_count,
+        },
+        "tasks": {
+            "open": open_tasks,
+            "overdue": overdue_tasks,
         },
         "closing_soon_deals": closing_soon_deals.into_iter().map(DealCardRow::into_json).collect::<Vec<_>>(),
         "stale_deals": stale_deal_list.into_iter().map(DealCardRow::into_json).collect::<Vec<_>>(),
@@ -556,7 +588,31 @@ async fn org_overview(
     .fetch_all(pool)
     .await?;
 
-    let activities = recent_activities(pool, "org", id, activity_limit).await?;
+    // Roll up activity from the org itself AND its leads/deals — a call logged
+    // on a contractor's purchaser is part of that contractor's history. Each
+    // row keeps entity_type/entity_id so the caller can see where it happened.
+    const ORG_ACTIVITY_SCOPE: &str = "a.deleted_at IS NULL AND (
+           (a.entity_type = 'org'  AND a.entity_id = ?1)
+        OR (a.entity_type = 'lead' AND a.entity_id IN (SELECT id FROM leads WHERE org_id = ?1 AND deleted_at IS NULL))
+        OR (a.entity_type = 'deal' AND a.entity_id IN (SELECT id FROM deals WHERE org_id = ?1 AND deleted_at IS NULL)))";
+
+    let activities = sqlx::query_as::<_, ActivityCardRow>(&format!(
+        "SELECT a.id, a.entity_id, a.entity_type, a.kind, a.title, a.body, a.occurred_at, a.due_at, a.done, a.created_at
+        FROM activities a
+        WHERE {ORG_ACTIVITY_SCOPE}
+        ORDER BY a.occurred_at DESC, a.created_at DESC
+        LIMIT ?2"
+    ))
+    .bind(id)
+    .bind(activity_limit)
+    .fetch_all(pool)
+    .await?;
+    let activity_count = sqlx::query_scalar::<_, i64>(&format!(
+        "SELECT COUNT(*) FROM activities a WHERE {ORG_ACTIVITY_SCOPE}"
+    ))
+    .bind(id)
+    .fetch_one(pool)
+    .await?;
 
     Ok(serde_json::json!({
         "entity_type": "org",
@@ -565,11 +621,11 @@ async fn org_overview(
             "leads": leads.into_iter().map(LeadCardRow::into_json).collect::<Vec<_>>(),
             "deals": deals.into_iter().map(DealCardRow::into_json).collect::<Vec<_>>(),
         },
-        "recent_activities": activities,
+        "recent_activities": activities.into_iter().map(ActivityCardRow::into_json).collect::<Vec<_>>(),
         "summary": {
             "lead_count": sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM leads WHERE deleted_at IS NULL AND org_id = ?").bind(id).fetch_one(pool).await?,
             "deal_count": sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM deals WHERE deleted_at IS NULL AND org_id = ?").bind(id).fetch_one(pool).await?,
-            "activity_count": sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM activities WHERE deleted_at IS NULL AND entity_type = 'org' AND entity_id = ?").bind(id).fetch_one(pool).await?,
+            "activity_count": activity_count,
         }
     }))
 }
@@ -601,7 +657,7 @@ struct LeadChangeRow {
 }
 
 impl LeadChangeRow {
-    fn into_change(self) -> (String, String, Value) {
+    fn into_change(self) -> ChangeTuple {
         let tags = self.tags.clone();
         let value = inject_tags(
             serde_json::json!({
@@ -621,7 +677,7 @@ impl LeadChangeRow {
             }),
             &tags,
         );
-        (self.created_at_utc, self.updated_at_utc, value)
+        (self.created_at_utc, self.updated_at_utc, self.id, value)
     }
 }
 
@@ -645,7 +701,7 @@ struct DealChangeRow {
 }
 
 impl DealChangeRow {
-    fn into_change(self) -> (String, String, Value) {
+    fn into_change(self) -> ChangeTuple {
         let tags = self.tags.clone();
         let value = inject_tags(
             serde_json::json!({
@@ -667,7 +723,7 @@ impl DealChangeRow {
             }),
             &tags,
         );
-        (self.created_at_utc, self.updated_at_utc, value)
+        (self.created_at_utc, self.updated_at_utc, self.id, value)
     }
 }
 
@@ -690,7 +746,7 @@ struct OrgChangeRow {
 }
 
 impl OrgChangeRow {
-    fn into_change(self) -> (String, String, Value) {
+    fn into_change(self) -> ChangeTuple {
         let tags = self.tags.clone();
         let value = inject_tags(
             serde_json::json!({
@@ -710,19 +766,33 @@ impl OrgChangeRow {
             }),
             &tags,
         );
-        (self.created_at_utc, self.updated_at_utc, value)
+        (self.created_at_utc, self.updated_at_utc, self.id, value)
     }
 }
+
+/// (created_at_utc, updated_at_utc, id, record) — id is the cursor tie-breaker.
+type ChangeTuple = (String, String, String, Value);
+
+/// A `id > sentinel` comparison that is false for every real id, so the
+/// tie-break clause is inert when the cursor carries no id part.
+const CURSOR_ID_MAX: &str = "\u{10FFFF}";
 
 /// Change feed for CRM triggers and "what changed" checks: active records
 /// whose `updated_at` is after the `since` cursor, oldest-first, each tagged
 /// `change: "created"` (created after the cursor) or `"updated"`. The returned
-/// `cursor` is the last row's normalized `updated_at` — pass it back as the
-/// next `since`. `has_more: true` means the window was cut by `limit`; poll
+/// `cursor` is `"<normalized updated_at>|<id>"` of the last row — pass it back
+/// as the next `since`. The id tie-breaker means rows sharing one millisecond
+/// (bulk imports, agent loops) can never be skipped when `limit` cuts the
+/// window mid-timestamp. A plain timestamp is accepted too and compares
+/// strictly (`>`). `has_more: true` means the window was cut by `limit`; poll
 /// again immediately with the new cursor.
 pub async fn changes_since(pool: &SqlitePool, args: &Map<String, Value>) -> Result<Value> {
     let since_raw = require_non_empty_str(args, "since")?;
-    let since = parse_rfc3339_utc("since", Some(since_raw))?
+    let (since_ts_raw, since_id) = match since_raw.split_once('|') {
+        Some((ts, id)) => (ts, Some(id.to_owned())),
+        None => (since_raw, None),
+    };
+    let since = parse_rfc3339_utc("since", Some(since_ts_raw))?
         .expect("parse_rfc3339_utc returns Some for Some input");
     let limit = i64_arg(args, "limit")?.unwrap_or(50).clamp(1, 200);
 
@@ -761,8 +831,11 @@ pub async fn changes_since(pool: &SqlitePool, args: &Map<String, Value>) -> Resu
 
     // Fetch limit+1 per entity so truncation of the merged list is detectable.
     let fetch = limit + 1;
-    // (created_at_utc, updated_at_utc, record)
-    let mut merged: Vec<(String, String, Value)> = Vec::new();
+    // Composite (updated_at, id) comparison: strictly newer rows, plus rows in
+    // the cursor's exact millisecond that sort after its id. With no id part
+    // the sentinel makes the tie clause false — plain strict `>`.
+    let cursor_id = since_id.clone().unwrap_or_else(|| CURSOR_ID_MAX.to_owned());
+    let mut merged: Vec<ChangeTuple> = Vec::new();
 
     if wanted.iter().any(|k| k == "lead") {
         let rows = sqlx::query_as::<_, LeadChangeRow>(&format!(
@@ -771,10 +844,12 @@ pub async fn changes_since(pool: &SqlitePool, args: &Map<String, Value>) -> Resu
                     {UTC_NORM}created_at) AS created_at_utc,
                     {UTC_NORM}updated_at) AS updated_at_utc
              FROM leads
-             WHERE deleted_at IS NULL AND {UTC_NORM}updated_at) > ?
-             ORDER BY updated_at_utc ASC LIMIT ?"
+             WHERE deleted_at IS NULL AND ({UTC_NORM}updated_at) > ?1
+                OR ({UTC_NORM}updated_at) = ?1 AND id > ?2))
+             ORDER BY updated_at_utc ASC, id ASC LIMIT ?3"
         ))
         .bind(&since)
+        .bind(&cursor_id)
         .bind(fetch)
         .fetch_all(pool)
         .await?;
@@ -788,10 +863,12 @@ pub async fn changes_since(pool: &SqlitePool, args: &Map<String, Value>) -> Resu
                     {UTC_NORM}created_at) AS created_at_utc,
                     {UTC_NORM}updated_at) AS updated_at_utc
              FROM deals
-             WHERE deleted_at IS NULL AND {UTC_NORM}updated_at) > ?
-             ORDER BY updated_at_utc ASC LIMIT ?"
+             WHERE deleted_at IS NULL AND ({UTC_NORM}updated_at) > ?1
+                OR ({UTC_NORM}updated_at) = ?1 AND id > ?2))
+             ORDER BY updated_at_utc ASC, id ASC LIMIT ?3"
         ))
         .bind(&since)
+        .bind(&cursor_id)
         .bind(fetch)
         .fetch_all(pool)
         .await?;
@@ -805,28 +882,34 @@ pub async fn changes_since(pool: &SqlitePool, args: &Map<String, Value>) -> Resu
                     {UTC_NORM}created_at) AS created_at_utc,
                     {UTC_NORM}updated_at) AS updated_at_utc
              FROM orgs
-             WHERE deleted_at IS NULL AND {UTC_NORM}updated_at) > ?
-             ORDER BY updated_at_utc ASC LIMIT ?"
+             WHERE deleted_at IS NULL AND ({UTC_NORM}updated_at) > ?1
+                OR ({UTC_NORM}updated_at) = ?1 AND id > ?2))
+             ORDER BY updated_at_utc ASC, id ASC LIMIT ?3"
         ))
         .bind(&since)
+        .bind(&cursor_id)
         .bind(fetch)
         .fetch_all(pool)
         .await?;
         merged.extend(rows.into_iter().map(OrgChangeRow::into_change));
     }
 
-    merged.sort_by(|a, b| a.1.cmp(&b.1));
+    merged.sort_by(|a, b| (&a.1, &a.2).cmp(&(&b.1, &b.2)));
     let has_more = merged.len() as i64 > limit;
     merged.truncate(limit as usize);
 
+    let since_echo = match since_id {
+        Some(id) => format!("{since}|{id}"),
+        None => since.clone(),
+    };
     let cursor = merged
         .last()
-        .map(|(_, updated, _)| updated.clone())
-        .unwrap_or_else(|| since.clone());
+        .map(|(_, updated, id, _)| format!("{updated}|{id}"))
+        .unwrap_or_else(|| since_echo.clone());
 
     let changes: Vec<Value> = merged
         .into_iter()
-        .map(|(created_utc, _, mut record)| {
+        .map(|(created_utc, _, _, mut record)| {
             let change = if created_utc > since {
                 "created"
             } else {
@@ -840,7 +923,7 @@ pub async fn changes_since(pool: &SqlitePool, args: &Map<String, Value>) -> Resu
         .collect();
 
     Ok(serde_json::json!({
-        "since": since,
+        "since": since_echo,
         "cursor": cursor,
         "count": changes.len(),
         "has_more": has_more,
@@ -866,7 +949,7 @@ async fn recent_activities(
     limit: i64,
 ) -> Result<Vec<Value>> {
     let rows = sqlx::query_as::<_, ActivityCardRow>(
-        "SELECT id, entity_id, entity_type, kind, title, body, occurred_at, created_at
+        "SELECT id, entity_id, entity_type, kind, title, body, occurred_at, due_at, done, created_at
         FROM activities
         WHERE deleted_at IS NULL AND entity_type = ? AND entity_id = ?
         ORDER BY occurred_at DESC, created_at DESC

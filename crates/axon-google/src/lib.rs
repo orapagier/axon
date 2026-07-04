@@ -1253,7 +1253,8 @@ mod tests {
         );
 
         // Workflow UI fixedCollection envelope with {range} objects
-        let v = json!({"parameters": [{"range": " Sheet1!A1:B2 "}, {"range": ""}, {"range": "C1:D2"}]});
+        let v =
+            json!({"parameters": [{"range": " Sheet1!A1:B2 "}, {"range": ""}, {"range": "C1:D2"}]});
         assert_eq!(
             parse_batch_read_ranges(Some(&v)),
             vec!["Sheet1!A1:B2", "C1:D2"]

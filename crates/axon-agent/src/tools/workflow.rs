@@ -3387,12 +3387,18 @@ async fn check_and_trigger_crm(
 
     let hits = filter_crm_hits(event, &changes, &mut known_stages);
 
-    // Bound the stage map so trigger_config can't grow without limit. Won/Lost
-    // deals stop changing, so eviction is rare at single-company scale; an
-    // evicted deal simply re-records on its next edit and fires from the one
-    // after.
+    // Bound the stage map so trigger_config can't grow without limit. Closed
+    // (Won/Lost) deals stop changing, so they are evicted first; only if none
+    // remain does an open deal go (serde_json::Map is key-ordered, so there is
+    // no true "oldest" — an evicted open deal simply re-records on its next
+    // edit and fires from the one after).
     while known_stages.len() > 1000 {
-        let Some(key) = known_stages.keys().next().cloned() else {
+        let key = known_stages
+            .iter()
+            .find(|(_, stage)| matches!(stage.as_str(), Some("Won") | Some("Lost")))
+            .map(|(id, _)| id.clone())
+            .or_else(|| known_stages.keys().next().cloned());
+        let Some(key) = key else {
             break;
         };
         known_stages.remove(&key);

@@ -429,9 +429,9 @@ async fn export_deals(pool: &SqlitePool, include_archived: bool) -> Result<Vec<V
 
 async fn export_activities(pool: &SqlitePool, include_archived: bool) -> Result<Vec<Value>> {
     let sql = if include_archived {
-        "SELECT id, entity_id, entity_type, kind, title, body, occurred_at, created_at, deleted_at FROM activities ORDER BY occurred_at DESC, created_at DESC"
+        "SELECT id, entity_id, entity_type, kind, title, body, occurred_at, due_at, done, created_at, deleted_at FROM activities ORDER BY occurred_at DESC, created_at DESC"
     } else {
-        "SELECT id, entity_id, entity_type, kind, title, body, occurred_at, created_at, deleted_at FROM activities WHERE deleted_at IS NULL ORDER BY occurred_at DESC, created_at DESC"
+        "SELECT id, entity_id, entity_type, kind, title, body, occurred_at, due_at, done, created_at, deleted_at FROM activities WHERE deleted_at IS NULL ORDER BY occurred_at DESC, created_at DESC"
     };
     let rows = sqlx::query(sql).fetch_all(pool).await?;
     Ok(rows
@@ -445,6 +445,8 @@ async fn export_activities(pool: &SqlitePool, include_archived: bool) -> Result<
                 "title": row.get::<String, _>("title"),
                 "body": row.get::<Option<String>, _>("body"),
                 "occurred_at": row.get::<String, _>("occurred_at"),
+                "due_at": row.get::<Option<String>, _>("due_at"),
+                "done": row.get::<bool, _>("done"),
                 "created_at": row.get::<String, _>("created_at"),
                 "deleted_at": row.get::<Option<String>, _>("deleted_at"),
             })

@@ -111,7 +111,8 @@ INSERT OR IGNORE INTO settings VALUES
 -- (create/update/delete/convert/archive/restore) are workflow-only unless this
 -- is on. Workflow nodes always have full CRM access either way.
 INSERT OR IGNORE INTO settings VALUES
-    ('crm.agent_write_tools', 'false', 'bool', 'Allow the chat agent to call CRM write tools (create/update/delete/convert/archive). Off = agent reads only; workflows can always read and write.', 'crm', datetime('now'));
+    ('crm.agent_write_tools', 'false', 'bool', 'Allow the chat agent to call CRM write tools (create/update/delete/convert/archive). Off = agent reads only; workflows can always read and write.', 'crm', datetime('now')),
+    ('crm.default_currency', 'USD', 'string', 'Currency assigned to deals created without an explicit one (3-letter code, e.g. PHP, USD, EUR). Applies immediately, no restart needed.', 'crm', datetime('now'));
 
 -- Web search.
 INSERT OR IGNORE INTO settings VALUES

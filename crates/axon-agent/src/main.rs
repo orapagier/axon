@@ -269,6 +269,13 @@ async fn main() -> anyhow::Result<()> {
     let db = Arc::new(pool);
     let settings = Arc::new(RuntimeSettings::new(Arc::clone(&db)));
 
+    // Live provider for the CRM's default deal currency (crm.default_currency):
+    // read per call so dashboard changes apply without a restart.
+    {
+        let settings = Arc::clone(&settings);
+        axon_crm::set_default_currency_provider(move || settings.crm_default_currency());
+    }
+
     let models = {
         let conn = db.get().context("get DB connection for model sync")?;
 
