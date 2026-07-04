@@ -2917,6 +2917,37 @@ impl WorkflowEngine {
                             Err(e) => tracing::warn!("Gmail trigger '{}' failed: {}", wf_name, e),
                         }
                     });
+                } else if wf.trigger_type == "crm" {
+                    // CRM trigger: same poll-first watcher pattern as Gmail, but
+                    // over the crm_changes_since feed with a stored cursor.
+                    if !should_trigger(&wf, state.settings.agent_utc_offset_hours()) {
+                        continue;
+                    }
+                    if Self::is_workflow_run_active(state.as_ref(), &wf.id) {
+                        tracing::info!(
+                            "Workflow '{}' ({}) already running; skip duplicate CRM trigger",
+                            wf.name,
+                            wf.id
+                        );
+                        continue;
+                    }
+
+                    let s = state.clone();
+                    let wf_id = wf.id.clone();
+                    let wf_name = wf.name.clone();
+                    tokio::spawn(async move {
+                        match check_and_trigger_crm(&wf_id, &wf_name, &wf.trigger_config, &s).await
+                        {
+                            Ok(true) => tracing::info!(
+                                "CRM trigger '{}': changes found, workflow triggered",
+                                wf_name
+                            ),
+                            Ok(false) => {
+                                tracing::debug!("CRM trigger '{}': no changes", wf_name)
+                            }
+                            Err(e) => tracing::warn!("CRM trigger '{}' failed: {}", wf_name, e),
+                        }
+                    });
                 } else {
                     let triggered = should_trigger(&wf, state.settings.agent_utc_offset_hours());
                     if triggered {
