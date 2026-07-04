@@ -36,6 +36,16 @@ pub(crate) async fn execute(
                 Ok(json!({"trigger": trigger_source, "gmail_error": e}))
             }
         }
+    } else if trigger_type == Some("crm") {
+        // Background fires consume the changes staged by check_and_trigger_crm;
+        // a manual Execute Step live-fetches recent CRM changes.
+        match execute_crm_trigger(config, state, workflow_id, run_id).await {
+            Ok(data) => Ok(data),
+            Err(e) => {
+                tracing::warn!("CRM trigger fetch failed: {}", e);
+                Ok(json!({"trigger": trigger_source, "crm_error": e}))
+            }
+        }
     } else if matches!(
         trigger_type,
         // GitHub deliveries and Facebook webhook events ride the same staging
