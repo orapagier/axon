@@ -505,8 +505,8 @@ onMounted(loadDashboard)
               <div class="card-title-group"><h2>Stale Deals</h2></div>
               <span class="card-summary">&gt; {{ dash.parameters.stale_days }}d untouched</span>
             </div>
-            <div v-if="!dash.stale_deals.length" class="empty-state">No stale deals.</div>
-            <div v-else class="mini-list">
+            <div v-if="!dash.stale_deals.length" class="card-content empty-state">No stale deals.</div>
+            <div v-else class="card-content mini-list">
               <button v-for="d in dash.stale_deals" :key="d.id" class="mini-row" @click="openDrawer('deal', d.id)">
                 <span class="mini-title">{{ d.title }}</span>
                 <span class="mini-meta">{{ d.stage }} · updated {{ timeAgo(d.updated_at) }}</span>
