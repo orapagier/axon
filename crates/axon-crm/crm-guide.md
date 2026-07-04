@@ -6,7 +6,7 @@ This CRM is a SQLite-backed, MCP (Model Context Protocol) tool server built in R
 
 ### Agent vs. Workflow Access
 
-Workflow nodes can always call **every** CRM tool. The chat agent gets the **read** tools (list/get/search/overview/pipeline/dashboard/export/backup) by default; the **write** tools (create/update/delete/convert/archive/restore) are workflow-only unless the operator enables **Settings → CRM → "Allow the chat agent to call CRM write tools"** (`crm.agent_write_tools`). The toggle applies immediately, no restart needed. This mirrors the Facebook/Instagram pattern: mutations flow through deliberate, reviewable workflows; conversation stays read-only by default.
+Workflow nodes can always call **every** CRM tool. The chat agent gets the **read** tools (list/get/search/overview/pipeline/dashboard/change feed/export/backup) by default; the **write** tools (create/update/delete/convert/archive/restore) are workflow-only unless the operator enables **Settings → CRM → "Allow the chat agent to call CRM write tools"** (`crm.agent_write_tools`). The toggle applies immediately, no restart needed. This mirrors the Facebook/Instagram pattern: mutations flow through deliberate, reviewable workflows; conversation stays read-only by default.
 
 ### Data Model
 
