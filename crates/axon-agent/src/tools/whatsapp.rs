@@ -144,11 +144,10 @@ struct WhatsAppClient {
 
 impl WhatsAppClient {
     fn new(creds: WhatsAppCredentials) -> Self {
-        let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()
-            .expect("Failed to build WhatsApp HTTP client");
-        Self { http, creds }
+        Self {
+            http: crate::http::shared_30s(),
+            creds,
+        }
     }
 
     /// POST a JSON body. Adds Bearer auth header automatically.
