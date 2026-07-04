@@ -132,7 +132,7 @@ impl CrmService {
             },
             Tool {
                 name: "crm_deal_list".into(),
-                description: "List sales deals, optionally filtered by stage. Returns total pipeline value.".into(),
+                description: "List sales deals, optionally filtered by stage. Returns total pipeline value per currency.".into(),
                 input_schema: schema!({
                     "stage":  { "type": "string", "enum": ["Prospecting", "Qualified", "Proposal", "Negotiation", "Won", "Lost", "All"], "default": "All" },
                     "limit":  { "type": "integer", "default": 50 },
@@ -180,7 +180,7 @@ impl CrmService {
             },
             Tool {
                 name: "crm_pipeline_summary".into(),
-                description: "Get a full pipeline overview: deal counts and values grouped by stage, win rate.".into(),
+                description: "Get a full pipeline overview: deal counts and per-currency values grouped by stage, win rate.".into(),
                 input_schema: schema!({}, []),
             },
 

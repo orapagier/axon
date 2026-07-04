@@ -338,9 +338,9 @@ async fn export_leads(pool: &SqlitePool, include_archived: bool) -> Result<Vec<V
 
 async fn export_deals(pool: &SqlitePool, include_archived: bool) -> Result<Vec<Value>> {
     let sql = if include_archived {
-        "SELECT id, title, amount, currency, stage, probability, contact_id, org_id, expected_close, tags, notes, created_at, updated_at, deleted_at FROM deals ORDER BY updated_at DESC"
+        "SELECT id, title, amount_minor, currency, stage, probability, contact_id, org_id, expected_close, tags, notes, created_at, updated_at, deleted_at FROM deals ORDER BY updated_at DESC"
     } else {
-        "SELECT id, title, amount, currency, stage, probability, contact_id, org_id, expected_close, tags, notes, created_at, updated_at, deleted_at FROM deals WHERE deleted_at IS NULL ORDER BY updated_at DESC"
+        "SELECT id, title, amount_minor, currency, stage, probability, contact_id, org_id, expected_close, tags, notes, created_at, updated_at, deleted_at FROM deals WHERE deleted_at IS NULL ORDER BY updated_at DESC"
     };
     let rows = sqlx::query(sql).fetch_all(pool).await?;
     Ok(rows
@@ -350,7 +350,8 @@ async fn export_deals(pool: &SqlitePool, include_archived: bool) -> Result<Vec<V
                 serde_json::json!({
                     "id": row.get::<String, _>("id"),
                     "title": row.get::<String, _>("title"),
-                    "amount": row.get::<f64, _>("amount"),
+                    "amount": crate::utils::minor_to_amount(row.get::<i64, _>("amount_minor")),
+                    "amount_minor": row.get::<i64, _>("amount_minor"),
                     "currency": row.get::<String, _>("currency"),
                     "stage": row.get::<String, _>("stage"),
                     "probability": row.get::<Option<i64>, _>("probability"),

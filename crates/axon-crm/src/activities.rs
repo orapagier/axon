@@ -1,12 +1,13 @@
-use anyhow::Result;
+﻿use anyhow::Result;
 use chrono::Utc;
 use serde_json::{Map, Value};
 use sqlx::{QueryBuilder, Sqlite, SqlitePool};
 use uuid::Uuid;
 
 use crate::utils::{
-    page_args, require_non_empty_str, string_opt, string_patch, validate_choice,
-    validate_rfc3339_opt, ACTIVITY_ENTITY_TYPES, ACTIVITY_KINDS,
+    check_len, format_utc, page_args, parse_rfc3339_utc, require_non_empty_str, string_opt,
+    string_patch, validate_choice, ACTIVITY_ENTITY_TYPES, ACTIVITY_KINDS, MAX_NAME_LEN,
+    MAX_TEXT_LEN,
 };
 
 #[derive(sqlx::FromRow)]
@@ -22,7 +23,7 @@ struct ActivityRow {
 }
 
 impl ActivityRow {
-    fn to_json(self) -> Value {
+    fn into_json(self) -> Value {
         serde_json::json!({
             "id": self.id,
             "entity_id": self.entity_id,
@@ -46,7 +47,9 @@ pub async fn log(pool: &SqlitePool, args: &Map<String, Value>) -> Result<Value> 
 
     validate_choice(entity_type, ACTIVITY_ENTITY_TYPES, "entity_type")?;
     validate_choice(&kind, ACTIVITY_KINDS, "kind")?;
-    validate_rfc3339_opt("occurred_at", occurred_at.as_deref())?;
+    check_len("title", Some(title), MAX_NAME_LEN)?;
+    check_len("body", body.as_deref(), MAX_TEXT_LEN)?;
+    let occurred_at = parse_rfc3339_utc("occurred_at", occurred_at.as_deref())?;
 
     if !entity_exists(pool, entity_type, entity_id).await? {
         return Err(anyhow::anyhow!(
@@ -58,7 +61,7 @@ pub async fn log(pool: &SqlitePool, args: &Map<String, Value>) -> Result<Value> 
 
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
-    let occurred_at = occurred_at.unwrap_or_else(|| now.clone());
+    let occurred_at = occurred_at.unwrap_or_else(|| format_utc(Utc::now()));
 
     sqlx::query(
         "INSERT INTO activities
@@ -117,7 +120,7 @@ pub async fn list(pool: &SqlitePool, args: &Map<String, Value>) -> Result<Value>
     .await?;
 
     Ok(serde_json::json!({
-        "activities": rows.into_iter().map(ActivityRow::to_json).collect::<Vec<_>>(),
+        "activities": rows.into_iter().map(ActivityRow::into_json).collect::<Vec<_>>(),
         "total": total,
         "limit": limit,
         "offset": offset,
@@ -129,7 +132,7 @@ pub async fn get(pool: &SqlitePool, id: &str) -> Result<Value> {
         .bind(id)
         .fetch_optional(pool)
         .await?
-        .map(ActivityRow::to_json)
+        .map(ActivityRow::into_json)
         .ok_or_else(|| anyhow::anyhow!("Activity '{id}' not found."))
 }
 
@@ -183,7 +186,9 @@ pub async fn update(pool: &SqlitePool, args: &Map<String, Value>) -> Result<Valu
 
     validate_choice(&entity_type, ACTIVITY_ENTITY_TYPES, "entity_type")?;
     validate_choice(&kind, ACTIVITY_KINDS, "kind")?;
-    validate_rfc3339_opt("occurred_at", occurred_at.as_deref())?;
+    check_len("title", Some(&title), MAX_NAME_LEN)?;
+    check_len("body", body.as_deref(), MAX_TEXT_LEN)?;
+    let occurred_at = parse_rfc3339_utc("occurred_at", occurred_at.as_deref())?;
 
     if !entity_exists(pool, &entity_type, &entity_id).await? {
         return Err(anyhow::anyhow!(

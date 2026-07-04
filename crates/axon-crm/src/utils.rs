@@ -1,9 +1,20 @@
 use anyhow::Result;
-use chrono::DateTime;
+use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
 use std::collections::HashSet;
 
 pub const LEAD_STATUSES: &[&str] = &["Open", "Contacted", "Qualified", "Lost"];
+
+// Field length caps: stop a looping agent from writing megabytes into a record.
+pub const MAX_NAME_LEN: usize = 500; // name, title, company, website, ...
+pub const MAX_CONTACT_LEN: usize = 200; // email, phone
+pub const MAX_TEXT_LEN: usize = 64 * 1024; // notes, body
+pub const MAX_TAGS: usize = 50;
+pub const MAX_TAG_LEN: usize = 100;
+
+// Cap in minor units (10^13 major units) — keeps cents exactly representable
+// in both i64 and the f64 the JSON layer speaks.
+const MAX_AMOUNT_MINOR: f64 = 1_000_000_000_000_000.0;
 pub const DEAL_STAGES: &[&str] = &[
     "Prospecting",
     "Qualified",
@@ -135,10 +146,23 @@ pub fn tags_json_from_value(value: Option<&Value>) -> Result<Option<String>> {
         if trimmed.is_empty() {
             continue;
         }
+        let len = trimmed.chars().count();
+        if len > MAX_TAG_LEN {
+            return Err(anyhow::anyhow!(
+                "param 'tags': each tag must be at most {MAX_TAG_LEN} characters (got one with {len}). Use 'notes' for longer text."
+            ));
+        }
         let key = trimmed.to_ascii_lowercase();
         if seen.insert(key) {
             tags.push(trimmed.to_owned());
         }
+    }
+
+    if tags.len() > MAX_TAGS {
+        return Err(anyhow::anyhow!(
+            "param 'tags' accepts at most {MAX_TAGS} tags (got {}). Keep tags as a small set of labels.",
+            tags.len()
+        ));
     }
 
     Ok(Some(serde_json::to_string(&tags)?))
@@ -207,12 +231,59 @@ pub fn validate_currency(field: &str, value: &str) -> Result<()> {
     }
 }
 
-pub fn validate_rfc3339_opt(field: &str, value: Option<&str>) -> Result<()> {
+/// Fixed-width UTC storage format. Views compare timestamps lexicographically,
+/// so everything comparable must be written in exactly this shape (the SQL
+/// twin is `strftime('%Y-%m-%dT%H:%M:%fZ', ...)` in migration 0003).
+pub fn format_utc(dt: DateTime<Utc>) -> String {
+    dt.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
+}
+
+/// Parse any RFC 3339 offset and rewrite it as fixed-format UTC. Timestamps
+/// were previously stored verbatim, which made lexicographic comparisons wrong
+/// for non-UTC offsets (e.g. `+10:00` sorts after the same instant in UTC).
+pub fn parse_rfc3339_utc(field: &str, value: Option<&str>) -> Result<Option<String>> {
     let Some(value) = value else {
-        return Ok(());
+        return Ok(None);
     };
 
     DateTime::parse_from_rfc3339(value)
-        .map(|_| ())
+        .map(|dt| Some(format_utc(dt.with_timezone(&Utc))))
         .map_err(|_| anyhow::anyhow!("param '{field}' must be an ISO 8601 / RFC 3339 timestamp"))
+}
+
+/// Dollars (or any major unit) → integer minor units, round-half-even.
+pub fn amount_to_minor(field: &str, amount: f64) -> Result<i64> {
+    if !amount.is_finite() || amount < 0.0 {
+        return Err(anyhow::anyhow!("param '{field}' must be >= 0"));
+    }
+    let minor = (amount * 100.0).round_ties_even();
+    if minor > MAX_AMOUNT_MINOR {
+        return Err(anyhow::anyhow!("param '{field}' is too large"));
+    }
+    Ok(minor as i64)
+}
+
+/// Optional decimal amount argument, converted to minor units.
+pub fn amount_arg_minor(args: &Map<String, Value>, key: &str) -> Result<Option<i64>> {
+    match f64_arg(args, key)? {
+        Some(value) => Ok(Some(amount_to_minor(key, value)?)),
+        None => Ok(None),
+    }
+}
+
+pub fn minor_to_amount(minor: i64) -> f64 {
+    minor as f64 / 100.0
+}
+
+pub fn check_len(field: &str, value: Option<&str>, max: usize) -> Result<()> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    let len = value.chars().count();
+    if len > max {
+        return Err(anyhow::anyhow!(
+            "param '{field}' is too long: {len} characters (max {max}). Shorten it or split the content across activity entries."
+        ));
+    }
+    Ok(())
 }

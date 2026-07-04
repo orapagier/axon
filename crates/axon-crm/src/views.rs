@@ -1,9 +1,13 @@
-use anyhow::Result;
+﻿use anyhow::Result;
 use chrono::{Duration, Utc};
 use serde_json::{Map, Value};
 use sqlx::SqlitePool;
 
-use crate::utils::{i64_arg, inject_tags, like, require_non_empty_str, DEAL_STAGES, LEAD_STATUSES};
+use crate::deals::{currency_totals_json, CurrencyTotalRow};
+use crate::utils::{
+    format_utc, i64_arg, inject_tags, like, minor_to_amount, require_non_empty_str, DEAL_STAGES,
+    LEAD_STATUSES,
+};
 
 #[derive(sqlx::FromRow)]
 struct LeadCardRow {
@@ -21,7 +25,7 @@ struct LeadCardRow {
 struct DealCardRow {
     id: String,
     title: String,
-    amount: f64,
+    amount_minor: i64,
     currency: String,
     stage: String,
     probability: Option<i64>,
@@ -62,14 +66,15 @@ struct CountByKeyRow {
 }
 
 #[derive(sqlx::FromRow)]
-struct DealStageRollupRow {
+struct StageCurrencyRollupRow {
     stage: String,
+    currency: String,
     count: i64,
-    total_value: f64,
+    total_minor: i64,
 }
 
 impl LeadCardRow {
-    fn to_json(self) -> Value {
+    fn into_json(self) -> Value {
         let tags = self.tags.clone();
         inject_tags(
             serde_json::json!({
@@ -87,13 +92,14 @@ impl LeadCardRow {
 }
 
 impl DealCardRow {
-    fn to_json(self) -> Value {
+    fn into_json(self) -> Value {
         let tags = self.tags.clone();
         inject_tags(
             serde_json::json!({
                 "id": self.id,
                 "title": self.title,
-                "amount": self.amount,
+                "amount": minor_to_amount(self.amount_minor),
+                "amount_minor": self.amount_minor,
                 "currency": self.currency,
                 "stage": self.stage,
                 "probability": self.probability,
@@ -108,7 +114,7 @@ impl DealCardRow {
 }
 
 impl OrgCardRow {
-    fn to_json(self) -> Value {
+    fn into_json(self) -> Value {
         let tags = self.tags.clone();
         inject_tags(
             serde_json::json!({
@@ -125,7 +131,7 @@ impl OrgCardRow {
 }
 
 impl ActivityCardRow {
-    fn to_json(self) -> Value {
+    fn into_json(self) -> Value {
         serde_json::json!({
             "id": self.id,
             "entity_id": self.entity_id,
@@ -189,7 +195,7 @@ pub async fn search_all(pool: &SqlitePool, args: &Map<String, Value>) -> Result<
     .await?;
 
     let deals = sqlx::query_as::<_, DealCardRow>(
-        "SELECT id, title, amount, currency, stage, probability, contact_id, org_id, expected_close, tags, updated_at
+        "SELECT id, title, amount_minor, currency, stage, probability, contact_id, org_id, expected_close, tags, updated_at
         FROM deals
         WHERE deleted_at IS NULL AND (
               title LIKE ? ESCAPE '\\'
@@ -214,9 +220,9 @@ pub async fn search_all(pool: &SqlitePool, args: &Map<String, Value>) -> Result<
             "leads": leads.len(),
             "deals": deals.len(),
         },
-        "organizations": orgs.into_iter().map(OrgCardRow::to_json).collect::<Vec<_>>(),
-        "leads": leads.into_iter().map(LeadCardRow::to_json).collect::<Vec<_>>(),
-        "deals": deals.into_iter().map(DealCardRow::to_json).collect::<Vec<_>>(),
+        "organizations": orgs.into_iter().map(OrgCardRow::into_json).collect::<Vec<_>>(),
+        "leads": leads.into_iter().map(LeadCardRow::into_json).collect::<Vec<_>>(),
+        "deals": deals.into_iter().map(DealCardRow::into_json).collect::<Vec<_>>(),
     }))
 }
 
@@ -248,9 +254,13 @@ pub async fn dashboard_summary(pool: &SqlitePool, args: &Map<String, Value>) -> 
 
     let now = Utc::now();
     let now_rfc3339 = now.to_rfc3339();
+    // Cutoffs compared against expected_close/occurred_at use the fixed UTC
+    // storage format so lexicographic comparison is exact; stale_cutoff is
+    // compared against updated_at, which is written by to_rfc3339().
+    let now_ts = format_utc(now);
     let stale_cutoff = (now - Duration::days(stale_days)).to_rfc3339();
-    let closing_cutoff = (now + Duration::days(closing_within_days)).to_rfc3339();
-    let activity_cutoff = (now - Duration::days(activity_window_days)).to_rfc3339();
+    let closing_cutoff = format_utc(now + Duration::days(closing_within_days));
+    let activity_cutoff = format_utc(now - Duration::days(activity_window_days));
 
     let total_orgs =
         scalar_count(pool, "SELECT COUNT(*) FROM orgs WHERE deleted_at IS NULL").await?;
@@ -270,29 +280,43 @@ pub async fn dashboard_summary(pool: &SqlitePool, args: &Map<String, Value>) -> 
     )
     .fetch_all(pool)
     .await?;
-    let deal_stage_rollup = sqlx::query_as::<_, DealStageRollupRow>(
-        "SELECT stage, COUNT(*) AS count, CAST(COALESCE(SUM(amount), 0) AS REAL) AS total_value
+    let deal_stage_rollup = sqlx::query_as::<_, StageCurrencyRollupRow>(
+        "SELECT stage, currency, COUNT(*) AS count, SUM(amount_minor) AS total_minor
         FROM deals
         WHERE deleted_at IS NULL
-        GROUP BY stage",
+        GROUP BY stage, currency",
     )
     .fetch_all(pool)
     .await?;
 
-    let active_pipeline_value = sqlx::query_scalar::<_, f64>(
-        "SELECT CAST(COALESCE(SUM(amount), 0) AS REAL)
+    let active_pipeline_value = sqlx::query_as::<_, CurrencyTotalRow>(
+        "SELECT currency, SUM(amount_minor) AS total_minor
         FROM deals
-        WHERE deleted_at IS NULL AND stage NOT IN ('Won', 'Lost')",
+        WHERE deleted_at IS NULL AND stage NOT IN ('Won', 'Lost')
+        GROUP BY currency",
     )
-    .fetch_one(pool)
+    .fetch_all(pool)
     .await?;
-    let weighted_pipeline_value = sqlx::query_scalar::<_, f64>(
-        "SELECT CAST(COALESCE(SUM(amount * COALESCE(probability, 0) / 100.0), 0) AS REAL)
+
+    #[derive(sqlx::FromRow)]
+    struct CurrencyWeightedRow {
+        currency: String,
+        weighted_minor: f64,
+    }
+    let weighted_pipeline_value = sqlx::query_as::<_, CurrencyWeightedRow>(
+        "SELECT currency, CAST(SUM(amount_minor * COALESCE(probability, 0) / 100.0) AS REAL) AS weighted_minor
         FROM deals
-        WHERE deleted_at IS NULL AND stage NOT IN ('Won', 'Lost')",
+        WHERE deleted_at IS NULL AND stage NOT IN ('Won', 'Lost')
+        GROUP BY currency",
     )
-    .fetch_one(pool)
+    .fetch_all(pool)
     .await?;
+    let weighted_pipeline_value: Value = Value::Object(
+        weighted_pipeline_value
+            .into_iter()
+            .map(|row| (row.currency, Value::from(row.weighted_minor / 100.0)))
+            .collect::<Map<String, Value>>(),
+    );
     let stale_leads = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM leads
         WHERE deleted_at IS NULL AND updated_at < ? AND status NOT IN ('Qualified', 'Lost')",
@@ -314,7 +338,7 @@ pub async fn dashboard_summary(pool: &SqlitePool, args: &Map<String, Value>) -> 
           AND expected_close < ?
           AND stage NOT IN ('Won', 'Lost')",
     )
-    .bind(&now_rfc3339)
+    .bind(&now_ts)
     .fetch_one(pool)
     .await?;
     let closing_soon_count = sqlx::query_scalar::<_, i64>(
@@ -325,13 +349,13 @@ pub async fn dashboard_summary(pool: &SqlitePool, args: &Map<String, Value>) -> 
           AND expected_close <= ?
           AND stage NOT IN ('Won', 'Lost')",
     )
-    .bind(&now_rfc3339)
+    .bind(&now_ts)
     .bind(&closing_cutoff)
     .fetch_one(pool)
     .await?;
 
     let stale_deal_list = sqlx::query_as::<_, DealCardRow>(
-        "SELECT id, title, amount, currency, stage, probability, contact_id, org_id, expected_close, tags, updated_at
+        "SELECT id, title, amount_minor, currency, stage, probability, contact_id, org_id, expected_close, tags, updated_at
         FROM deals
         WHERE deleted_at IS NULL
           AND updated_at < ?
@@ -344,7 +368,7 @@ pub async fn dashboard_summary(pool: &SqlitePool, args: &Map<String, Value>) -> 
     .fetch_all(pool)
     .await?;
     let closing_soon_deals = sqlx::query_as::<_, DealCardRow>(
-        "SELECT id, title, amount, currency, stage, probability, contact_id, org_id, expected_close, tags, updated_at
+        "SELECT id, title, amount_minor, currency, stage, probability, contact_id, org_id, expected_close, tags, updated_at
         FROM deals
         WHERE deleted_at IS NULL
           AND expected_close IS NOT NULL
@@ -354,7 +378,7 @@ pub async fn dashboard_summary(pool: &SqlitePool, args: &Map<String, Value>) -> 
         ORDER BY expected_close ASC
         LIMIT ?",
     )
-    .bind(&now_rfc3339)
+    .bind(&now_ts)
     .bind(&closing_cutoff)
     .bind(list_limit)
     .fetch_all(pool)
@@ -377,15 +401,15 @@ pub async fn dashboard_summary(pool: &SqlitePool, args: &Map<String, Value>) -> 
         "lead_status_counts": counts_with_defaults(LEAD_STATUSES, &lead_status_counts),
         "deal_stage_rollup": stage_rollup_with_defaults(DEAL_STAGES, &deal_stage_rollup),
         "pipeline": {
-            "active_pipeline_value": active_pipeline_value,
+            "active_pipeline_value": currency_totals_json(active_pipeline_value),
             "weighted_pipeline_value": weighted_pipeline_value,
             "stale_leads": stale_leads,
             "stale_deals": stale_deals,
             "overdue_deals_count": overdue_deals_count,
             "closing_soon_count": closing_soon_count,
         },
-        "closing_soon_deals": closing_soon_deals.into_iter().map(DealCardRow::to_json).collect::<Vec<_>>(),
-        "stale_deals": stale_deal_list.into_iter().map(DealCardRow::to_json).collect::<Vec<_>>(),
+        "closing_soon_deals": closing_soon_deals.into_iter().map(DealCardRow::into_json).collect::<Vec<_>>(),
+        "stale_deals": stale_deal_list.into_iter().map(DealCardRow::into_json).collect::<Vec<_>>(),
     }))
 }
 
@@ -410,13 +434,13 @@ async fn lead_overview(
         .bind(org_id)
         .fetch_optional(pool)
         .await?
-        .map(OrgCardRow::to_json)
+        .map(OrgCardRow::into_json)
     } else {
         None
     };
 
     let related_deals = sqlx::query_as::<_, DealCardRow>(
-        "SELECT id, title, amount, currency, stage, probability, contact_id, org_id, expected_close, tags, updated_at
+        "SELECT id, title, amount_minor, currency, stage, probability, contact_id, org_id, expected_close, tags, updated_at
         FROM deals
         WHERE deleted_at IS NULL AND contact_id = ?
         ORDER BY updated_at DESC
@@ -430,10 +454,10 @@ async fn lead_overview(
 
     Ok(serde_json::json!({
         "entity_type": "lead",
-        "entity": lead.to_json(),
+        "entity": lead.into_json(),
         "linked": {
             "organization": related_org,
-            "deals": related_deals.into_iter().map(DealCardRow::to_json).collect::<Vec<_>>(),
+            "deals": related_deals.into_iter().map(DealCardRow::into_json).collect::<Vec<_>>(),
         },
         "recent_activities": activities,
         "summary": {
@@ -450,7 +474,7 @@ async fn deal_overview(
     activity_limit: i64,
 ) -> Result<Value> {
     let deal = sqlx::query_as::<_, DealCardRow>(
-        "SELECT id, title, amount, currency, stage, probability, contact_id, org_id, expected_close, tags, updated_at
+        "SELECT id, title, amount_minor, currency, stage, probability, contact_id, org_id, expected_close, tags, updated_at
         FROM deals WHERE id = ? AND deleted_at IS NULL",
     )
     .bind(id)
@@ -464,7 +488,7 @@ async fn deal_overview(
     .bind(&deal.contact_id)
     .fetch_optional(pool)
     .await?
-    .map(LeadCardRow::to_json);
+    .map(LeadCardRow::into_json);
 
     let org = if let Some(org_id) = deal.org_id.as_deref() {
         sqlx::query_as::<_, OrgCardRow>(
@@ -473,7 +497,7 @@ async fn deal_overview(
         .bind(org_id)
         .fetch_optional(pool)
         .await?
-        .map(OrgCardRow::to_json)
+        .map(OrgCardRow::into_json)
     } else {
         None
     };
@@ -482,7 +506,7 @@ async fn deal_overview(
 
     Ok(serde_json::json!({
         "entity_type": "deal",
-        "entity": deal.to_json(),
+        "entity": deal.into_json(),
         "linked": {
             "lead": lead,
             "organization": org,
@@ -521,7 +545,7 @@ async fn org_overview(
     .await?;
 
     let deals = sqlx::query_as::<_, DealCardRow>(
-        "SELECT id, title, amount, currency, stage, probability, contact_id, org_id, expected_close, tags, updated_at
+        "SELECT id, title, amount_minor, currency, stage, probability, contact_id, org_id, expected_close, tags, updated_at
         FROM deals
         WHERE deleted_at IS NULL AND org_id = ?
         ORDER BY updated_at DESC
@@ -536,10 +560,10 @@ async fn org_overview(
 
     Ok(serde_json::json!({
         "entity_type": "org",
-        "entity": org.to_json(),
+        "entity": org.into_json(),
         "linked": {
-            "leads": leads.into_iter().map(LeadCardRow::to_json).collect::<Vec<_>>(),
-            "deals": deals.into_iter().map(DealCardRow::to_json).collect::<Vec<_>>(),
+            "leads": leads.into_iter().map(LeadCardRow::into_json).collect::<Vec<_>>(),
+            "deals": deals.into_iter().map(DealCardRow::into_json).collect::<Vec<_>>(),
         },
         "recent_activities": activities,
         "summary": {
@@ -569,7 +593,7 @@ async fn recent_activities(
     .fetch_all(pool)
     .await?;
 
-    Ok(rows.into_iter().map(ActivityCardRow::to_json).collect())
+    Ok(rows.into_iter().map(ActivityCardRow::into_json).collect())
 }
 
 async fn scalar_count(pool: &SqlitePool, sql: &str) -> Result<i64> {
@@ -590,15 +614,23 @@ fn counts_with_defaults(allowed: &[&str], rows: &[CountByKeyRow]) -> Vec<Value> 
         .collect()
 }
 
-fn stage_rollup_with_defaults(allowed: &[&str], rows: &[DealStageRollupRow]) -> Vec<Value> {
+fn stage_rollup_with_defaults(allowed: &[&str], rows: &[StageCurrencyRollupRow]) -> Vec<Value> {
     allowed
         .iter()
         .map(|stage| {
-            let row = rows.iter().find(|row| row.stage == *stage);
+            let mut count = 0;
+            let mut total_value = Map::new();
+            for row in rows.iter().filter(|row| row.stage == *stage) {
+                count += row.count;
+                total_value.insert(
+                    row.currency.clone(),
+                    Value::from(minor_to_amount(row.total_minor)),
+                );
+            }
             serde_json::json!({
                 "stage": stage,
-                "count": row.map(|row| row.count).unwrap_or(0),
-                "total_value": row.map(|row| row.total_value).unwrap_or(0.0),
+                "count": count,
+                "total_value": total_value,
             })
         })
         .collect()

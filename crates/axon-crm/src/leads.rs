@@ -1,13 +1,15 @@
-use anyhow::Result;
+﻿use anyhow::Result;
 use chrono::Utc;
 use serde_json::{Map, Value};
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
+use crate::deals::ensure_org_exists;
 use crate::utils::{
-    f64_arg, i64_arg, inject_tags, like, page_args, require_non_empty_str, string_opt,
-    string_patch, tags_json_from_value, validate_choice, validate_currency, validate_email,
-    validate_rfc3339_opt, DEAL_STAGES, LEAD_STATUSES,
+    amount_arg_minor, check_len, i64_arg, inject_tags, like, page_args, parse_rfc3339_utc,
+    require_non_empty_str, string_opt, string_patch, tags_json_from_value, validate_choice,
+    validate_currency, validate_email, DEAL_STAGES, LEAD_STATUSES, MAX_CONTACT_LEN, MAX_NAME_LEN,
+    MAX_TEXT_LEN,
 };
 
 #[derive(sqlx::FromRow)]
@@ -27,7 +29,7 @@ struct LeadRow {
 }
 
 impl LeadRow {
-    fn to_json(self) -> Value {
+    fn into_json(self) -> Value {
         let tags = self.tags.clone();
         inject_tags(
             serde_json::json!({
@@ -48,6 +50,23 @@ impl LeadRow {
     }
 }
 
+fn check_lead_lens(
+    name: &str,
+    email: Option<&str>,
+    phone: Option<&str>,
+    company: Option<&str>,
+    source: Option<&str>,
+    notes: Option<&str>,
+) -> Result<()> {
+    check_len("name", Some(name), MAX_NAME_LEN)?;
+    check_len("email", email, MAX_CONTACT_LEN)?;
+    check_len("phone", phone, MAX_CONTACT_LEN)?;
+    check_len("company", company, MAX_NAME_LEN)?;
+    check_len("source", source, MAX_NAME_LEN)?;
+    check_len("notes", notes, MAX_TEXT_LEN)?;
+    Ok(())
+}
+
 pub async fn create(pool: &SqlitePool, args: &Map<String, Value>) -> Result<Value> {
     let name = require_non_empty_str(args, "name")?;
     let email = string_opt(args, "email")?;
@@ -61,13 +80,22 @@ pub async fn create(pool: &SqlitePool, args: &Map<String, Value>) -> Result<Valu
 
     validate_choice(&status, LEAD_STATUSES, "status")?;
     validate_email("email", email.as_deref())?;
-
-    if let Some(org_id) = org_id.as_deref() {
-        ensure_org_exists(pool, org_id).await?;
-    }
+    check_lead_lens(
+        name,
+        email.as_deref(),
+        phone.as_deref(),
+        company.as_deref(),
+        source.as_deref(),
+        notes.as_deref(),
+    )?;
 
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
+
+    let mut tx = pool.begin().await?;
+    if let Some(org_id) = org_id.as_deref() {
+        ensure_org_exists(&mut tx, org_id).await?;
+    }
 
     sqlx::query(
         "INSERT INTO leads
@@ -86,8 +114,9 @@ pub async fn create(pool: &SqlitePool, args: &Map<String, Value>) -> Result<Valu
     .bind(notes.as_deref())
     .bind(&now)
     .bind(&now)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
 
     Ok(serde_json::json!({ "success": true, "id": id, "name": name }))
 }
@@ -129,7 +158,7 @@ pub async fn list(pool: &SqlitePool, args: &Map<String, Value>) -> Result<Value>
     };
 
     Ok(serde_json::json!({
-        "leads": rows.into_iter().map(LeadRow::to_json).collect::<Vec<_>>(),
+        "leads": rows.into_iter().map(LeadRow::into_json).collect::<Vec<_>>(),
         "total": total,
         "limit": limit,
         "offset": offset,
@@ -141,16 +170,18 @@ pub async fn get(pool: &SqlitePool, id: &str) -> Result<Value> {
         .bind(id)
         .fetch_optional(pool)
         .await?
-        .map(LeadRow::to_json)
+        .map(LeadRow::into_json)
         .ok_or_else(|| anyhow::anyhow!("Lead '{id}' not found."))
 }
 
 pub async fn update(pool: &SqlitePool, args: &Map<String, Value>) -> Result<Value> {
     let id = require_non_empty_str(args, "id")?;
+    let mut tx = pool.begin().await?;
+
     let existing =
         sqlx::query_as::<_, LeadRow>("SELECT * FROM leads WHERE id = ? AND deleted_at IS NULL")
             .bind(id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *tx)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Lead '{id}' not found."))?;
 
@@ -175,9 +206,17 @@ pub async fn update(pool: &SqlitePool, args: &Map<String, Value>) -> Result<Valu
 
     validate_choice(&status, LEAD_STATUSES, "status")?;
     validate_email("email", email.as_deref())?;
+    check_lead_lens(
+        &name,
+        email.as_deref(),
+        phone.as_deref(),
+        company.as_deref(),
+        source.as_deref(),
+        notes.as_deref(),
+    )?;
 
     if let Some(org_id) = org_id.as_deref() {
-        ensure_org_exists(pool, org_id).await?;
+        ensure_org_exists(&mut tx, org_id).await?;
     }
 
     sqlx::query(
@@ -197,23 +236,39 @@ pub async fn update(pool: &SqlitePool, args: &Map<String, Value>) -> Result<Valu
     .bind(notes.as_deref())
     .bind(&now)
     .bind(id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
 
     Ok(serde_json::json!({ "success": true, "id": id }))
 }
 
 pub async fn delete(pool: &SqlitePool, id: &str) -> Result<Value> {
-    let deal_count = sqlx::query_scalar::<_, i64>(
+    let active_deals = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM deals WHERE contact_id = ? AND deleted_at IS NULL",
     )
     .bind(id)
     .fetch_one(pool)
     .await?;
 
-    if deal_count > 0 {
+    if active_deals > 0 {
         return Err(anyhow::anyhow!(
-            "Cannot delete lead '{id}': {deal_count} linked deal(s) exist. Remove them first."
+            "Cannot delete lead '{id}': {active_deals} linked deal(s) exist. Remove them first."
+        ));
+    }
+
+    // Archived deals still hold an ON DELETE RESTRICT reference; surface a
+    // teaching error instead of letting the raw FK failure through.
+    let archived_deals = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM deals WHERE contact_id = ? AND deleted_at IS NOT NULL",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await?;
+
+    if archived_deals > 0 {
+        return Err(anyhow::anyhow!(
+            "Cannot delete lead '{id}': {archived_deals} archived deal(s) still reference it. Restore and delete them first, or archive the lead instead."
         ));
     }
 
@@ -282,7 +337,7 @@ pub async fn search(pool: &SqlitePool, args: &Map<String, Value>) -> Result<Valu
     .await?;
 
     Ok(serde_json::json!({
-        "results": rows.into_iter().map(LeadRow::to_json).collect::<Vec<_>>(),
+        "results": rows.into_iter().map(LeadRow::into_json).collect::<Vec<_>>(),
         "total": total,
         "query": query,
         "limit": limit,
@@ -306,7 +361,7 @@ pub async fn convert_to_deal(pool: &SqlitePool, args: &Map<String, Value>) -> Re
             format!("Opportunity - {}", lead.name)
         }
     });
-    let amount = f64_arg(args, "amount")?.unwrap_or(0.0);
+    let amount_minor = amount_arg_minor(args, "amount")?.unwrap_or(0);
     let currency = string_opt(args, "currency")?.unwrap_or_else(|| "USD".to_owned());
     let stage = string_opt(args, "stage")?.unwrap_or_else(|| "Prospecting".to_owned());
     let probability = i64_arg(args, "probability")?;
@@ -318,9 +373,6 @@ pub async fn convert_to_deal(pool: &SqlitePool, args: &Map<String, Value>) -> Re
         string_opt(args, "lead_status")?.unwrap_or_else(|| "Qualified".to_owned());
     let tags = tags_json_from_value(args.get("tags"))?.unwrap_or(lead.tags.clone());
 
-    if amount < 0.0 {
-        return Err(anyhow::anyhow!("param 'amount' must be >= 0"));
-    }
     if let Some(probability) = probability {
         if !(0..=100).contains(&probability) {
             return Err(anyhow::anyhow!(
@@ -328,27 +380,29 @@ pub async fn convert_to_deal(pool: &SqlitePool, args: &Map<String, Value>) -> Re
             ));
         }
     }
+    check_len("title", Some(&title), MAX_NAME_LEN)?;
+    check_len("notes", notes.as_deref(), MAX_TEXT_LEN)?;
     validate_currency("currency", &currency)?;
     validate_choice(&stage, DEAL_STAGES, "stage")?;
     validate_choice(&mark_lead_status, LEAD_STATUSES, "lead_status")?;
-    validate_rfc3339_opt("expected_close", expected_close.as_deref())?;
-
-    if let Some(org_id) = org_id.as_deref() {
-        ensure_org_exists(pool, org_id).await?;
-    }
+    let expected_close = parse_rfc3339_utc("expected_close", expected_close.as_deref())?;
 
     let deal_id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
     let mut tx = pool.begin().await?;
 
+    if let Some(org_id) = org_id.as_deref() {
+        ensure_org_exists(&mut tx, org_id).await?;
+    }
+
     sqlx::query(
         "INSERT INTO deals
-        (id, title, amount, currency, stage, probability, contact_id, org_id, expected_close, tags, notes, created_at, updated_at)
+        (id, title, amount_minor, currency, stage, probability, contact_id, org_id, expected_close, tags, notes, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&deal_id)
     .bind(&title)
-    .bind(amount)
+    .bind(amount_minor)
     .bind(&currency)
     .bind(&stage)
     .bind(probability)
@@ -378,22 +432,6 @@ pub async fn convert_to_deal(pool: &SqlitePool, args: &Map<String, Value>) -> Re
         "deal_title": title,
         "lead_status": mark_lead_status,
     }))
-}
-
-async fn ensure_org_exists(pool: &SqlitePool, org_id: &str) -> Result<()> {
-    let exists: i64 =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM orgs WHERE id = ? AND deleted_at IS NULL)")
-            .bind(org_id)
-            .fetch_one(pool)
-            .await?;
-
-    if exists == 0 {
-        Err(anyhow::anyhow!(
-            "org_id '{org_id}' does not match any organization."
-        ))
-    } else {
-        Ok(())
-    }
 }
 
 fn patch_or_existing(

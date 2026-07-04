@@ -1,17 +1,32 @@
 use anyhow::{Context, Result};
 use serde::Deserialize;
-use sqlx::{sqlite::SqlitePoolOptions, Row, SqlitePool};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
+use sqlx::SqlitePool;
+use std::time::Duration;
 use std::{fs, path::Path};
 use tracing::{info, warn};
 
 pub async fn open(data_dir: &Path) -> Result<SqlitePool> {
     fs::create_dir_all(data_dir)?;
     let db_path = data_dir.join("crm.db");
-    let url = format!("sqlite:{}?mode=rwc", db_path.display());
+
+    // Connect options apply to every connection the pool opens — a PRAGMA
+    // executed through the pool only reaches one of its 8 connections.
+    // busy_timeout mirrors the agent DB (main.rs): without it, a connection
+    // that finds the DB write-locked errors immediately with SQLITE_BUSY
+    // instead of waiting (WAL still serializes writers).
+    let options = SqliteConnectOptions::new()
+        .filename(&db_path)
+        .create_if_missing(true)
+        .journal_mode(SqliteJournalMode::Wal)
+        .synchronous(SqliteSynchronous::Normal)
+        .foreign_keys(true)
+        .busy_timeout(Duration::from_secs(10))
+        .pragma("temp_store", "MEMORY");
 
     let pool = SqlitePoolOptions::new()
         .max_connections(8)
-        .connect(&url)
+        .connect_with(options)
         .await
         .map_err(|e| {
             anyhow::anyhow!("Failed to open CRM database at {}: {e}", db_path.display())
@@ -22,176 +37,55 @@ pub async fn open(data_dir: &Path) -> Result<SqlitePool> {
     Ok(pool)
 }
 
-async fn migrate(pool: &SqlitePool) -> Result<()> {
-    sqlx::query("PRAGMA journal_mode = WAL")
-        .execute(pool)
-        .await?;
-    sqlx::query("PRAGMA foreign_keys = ON")
-        .execute(pool)
-        .await?;
-    sqlx::query("PRAGMA synchronous = NORMAL")
-        .execute(pool)
-        .await?;
-    sqlx::query("PRAGMA temp_store = MEMORY")
-        .execute(pool)
-        .await?;
-
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS orgs (
-            id         TEXT PRIMARY KEY NOT NULL,
-            name       TEXT NOT NULL,
-            website    TEXT,
-            industry   TEXT,
-            size       TEXT,
-            country    TEXT,
-            phone      TEXT,
-            email      TEXT,
-            tags       TEXT NOT NULL DEFAULT '[]',
-            notes      TEXT,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )",
-    )
-    .execute(pool)
-    .await?;
-
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS leads (
-            id         TEXT PRIMARY KEY NOT NULL,
-            name       TEXT NOT NULL,
-            email      TEXT,
-            phone      TEXT,
-            company    TEXT,
-            org_id     TEXT REFERENCES orgs(id) ON DELETE SET NULL,
-            status     TEXT NOT NULL CHECK(status IN ('Open', 'Contacted', 'Qualified', 'Lost')),
-            source     TEXT,
-            tags       TEXT NOT NULL DEFAULT '[]',
-            notes      TEXT,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )",
-    )
-    .execute(pool)
-    .await?;
-
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS deals (
-            id             TEXT PRIMARY KEY NOT NULL,
-            title          TEXT NOT NULL,
-            amount         REAL NOT NULL DEFAULT 0 CHECK(amount >= 0),
-            currency       TEXT NOT NULL DEFAULT 'USD',
-            stage          TEXT NOT NULL CHECK(stage IN ('Prospecting', 'Qualified', 'Proposal', 'Negotiation', 'Won', 'Lost')),
-            probability    INTEGER CHECK(probability IS NULL OR (probability >= 0 AND probability <= 100)),
-            contact_id     TEXT NOT NULL REFERENCES leads(id) ON DELETE RESTRICT,
-            org_id         TEXT REFERENCES orgs(id) ON DELETE SET NULL,
-            expected_close TEXT,
-            tags           TEXT NOT NULL DEFAULT '[]',
-            notes          TEXT,
-            created_at     TEXT NOT NULL,
-            updated_at     TEXT NOT NULL
-        )",
-    )
-    .execute(pool)
-    .await?;
-
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS activities (
-            id          TEXT PRIMARY KEY NOT NULL,
-            entity_id   TEXT NOT NULL,
-            entity_type TEXT NOT NULL CHECK(entity_type IN ('lead', 'deal', 'org')),
-            kind        TEXT NOT NULL CHECK(kind IN ('note', 'call', 'email', 'meeting', 'task', 'other')),
-            title       TEXT NOT NULL,
-            body        TEXT,
-            occurred_at TEXT NOT NULL,
-            created_at  TEXT NOT NULL
-        )",
-    )
-    .execute(pool)
-    .await?;
-
-    ensure_column(pool, "orgs", "deleted_at", "TEXT").await?;
-    ensure_column(pool, "leads", "deleted_at", "TEXT").await?;
-    ensure_column(pool, "deals", "deleted_at", "TEXT").await?;
-    ensure_column(pool, "activities", "deleted_at", "TEXT").await?;
-
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_orgs_name ON orgs(name COLLATE NOCASE)")
-        .execute(pool)
-        .await?;
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_orgs_industry ON orgs(industry)")
-        .execute(pool)
-        .await?;
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_orgs_updated_at ON orgs(updated_at)")
-        .execute(pool)
-        .await?;
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_orgs_deleted_at ON orgs(deleted_at)")
-        .execute(pool)
-        .await?;
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(status)")
-        .execute(pool)
-        .await?;
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_leads_email ON leads(email COLLATE NOCASE)")
-        .execute(pool)
-        .await?;
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_leads_org_id ON leads(org_id)")
-        .execute(pool)
-        .await?;
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_leads_updated_at ON leads(updated_at)")
-        .execute(pool)
-        .await?;
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_leads_deleted_at ON leads(deleted_at)")
-        .execute(pool)
-        .await?;
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_deals_stage ON deals(stage)")
-        .execute(pool)
-        .await?;
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_deals_contact_id ON deals(contact_id)")
-        .execute(pool)
-        .await?;
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_deals_org_id ON deals(org_id)")
-        .execute(pool)
-        .await?;
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_deals_expected_close ON deals(expected_close)")
-        .execute(pool)
-        .await?;
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_deals_updated_at ON deals(updated_at)")
-        .execute(pool)
-        .await?;
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_deals_deleted_at ON deals(deleted_at)")
-        .execute(pool)
-        .await?;
-    sqlx::query(
-        "CREATE INDEX IF NOT EXISTS idx_activities_entity ON activities(entity_id, entity_type)",
-    )
-    .execute(pool)
-    .await?;
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_activities_kind ON activities(kind)")
-        .execute(pool)
-        .await?;
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_activities_occurred_at ON activities(occurred_at)")
-        .execute(pool)
-        .await?;
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_activities_deleted_at ON activities(deleted_at)")
-        .execute(pool)
-        .await?;
-
-    Ok(())
+struct Migration {
+    version: i64,
+    name: &'static str,
+    sql: &'static str,
 }
 
-async fn ensure_column(
-    pool: &SqlitePool,
-    table: &str,
-    column: &str,
-    column_type: &str,
-) -> Result<()> {
-    let pragma = format!("PRAGMA table_info({table})");
-    let rows = sqlx::query(&pragma).fetch_all(pool).await?;
-    let exists = rows
-        .iter()
-        .any(|row| row.get::<String, _>("name") == column);
+/// Ordered, versioned schema migrations tracked via `PRAGMA user_version`
+/// (same pattern as the agent DB in `crates/axon-agent/src/db/mod.rs`).
+/// v1 is the pre-versioning schema as idempotent statements, so existing
+/// databases (user_version 0) adopt versioning without changes.
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "base_schema",
+        sql: include_str!("migrations/0001_base_schema.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "amount_minor_cents",
+        sql: include_str!("migrations/0002_amount_minor_cents.sql"),
+    },
+    Migration {
+        version: 3,
+        name: "utc_timestamps",
+        sql: include_str!("migrations/0003_utc_timestamps.sql"),
+    },
+];
 
-    if !exists {
-        let alter = format!("ALTER TABLE {table} ADD COLUMN {column} {column_type}");
-        sqlx::query(&alter).execute(pool).await?;
+async fn migrate(pool: &SqlitePool) -> Result<()> {
+    let applied: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(pool)
+        .await
+        .context("read CRM schema version")?;
+
+    for m in MIGRATIONS {
+        if m.version <= applied {
+            continue;
+        }
+        let mut tx = pool.begin().await?;
+        sqlx::raw_sql(m.sql)
+            .execute(&mut *tx)
+            .await
+            .with_context(|| format!("apply CRM migration {} ({})", m.version, m.name))?;
+        sqlx::query(&format!("PRAGMA user_version = {}", m.version))
+            .execute(&mut *tx)
+            .await
+            .with_context(|| format!("record CRM migration {}", m.version))?;
+        tx.commit().await?;
+        info!("CRM DB migration {} ({}) applied", m.version, m.name);
     }
 
     Ok(())

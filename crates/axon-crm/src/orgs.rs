@@ -1,13 +1,35 @@
-use anyhow::Result;
+﻿use anyhow::Result;
 use chrono::Utc;
 use serde_json::{Map, Value};
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use crate::utils::{
-    inject_tags, like, page_args, require_non_empty_str, string_opt, string_patch,
-    tags_json_from_value, validate_email,
+    check_len, inject_tags, like, page_args, require_non_empty_str, string_opt, string_patch,
+    tags_json_from_value, validate_email, MAX_CONTACT_LEN, MAX_NAME_LEN, MAX_TEXT_LEN,
 };
+
+#[allow(clippy::too_many_arguments)]
+fn check_org_lens(
+    name: &str,
+    website: Option<&str>,
+    industry: Option<&str>,
+    size: Option<&str>,
+    country: Option<&str>,
+    phone: Option<&str>,
+    email: Option<&str>,
+    notes: Option<&str>,
+) -> Result<()> {
+    check_len("name", Some(name), MAX_NAME_LEN)?;
+    check_len("website", website, MAX_NAME_LEN)?;
+    check_len("industry", industry, MAX_NAME_LEN)?;
+    check_len("size", size, MAX_NAME_LEN)?;
+    check_len("country", country, MAX_NAME_LEN)?;
+    check_len("phone", phone, MAX_CONTACT_LEN)?;
+    check_len("email", email, MAX_CONTACT_LEN)?;
+    check_len("notes", notes, MAX_TEXT_LEN)?;
+    Ok(())
+}
 
 #[derive(sqlx::FromRow)]
 struct OrgRow {
@@ -26,7 +48,7 @@ struct OrgRow {
 }
 
 impl OrgRow {
-    fn to_json(self) -> Value {
+    fn into_json(self) -> Value {
         let tags = self.tags.clone();
         inject_tags(
             serde_json::json!({
@@ -59,6 +81,16 @@ pub async fn create(pool: &SqlitePool, args: &Map<String, Value>) -> Result<Valu
     let tags = tags_json_from_value(args.get("tags"))?.unwrap_or_else(|| "[]".to_owned());
 
     validate_email("email", email.as_deref())?;
+    check_org_lens(
+        name,
+        website.as_deref(),
+        industry.as_deref(),
+        size.as_deref(),
+        country.as_deref(),
+        phone.as_deref(),
+        email.as_deref(),
+        notes.as_deref(),
+    )?;
 
     let duplicate_exists: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM orgs WHERE deleted_at IS NULL AND lower(name) = lower(?)",
@@ -137,7 +169,7 @@ pub async fn list(pool: &SqlitePool, args: &Map<String, Value>) -> Result<Value>
     };
 
     Ok(serde_json::json!({
-        "organizations": rows.into_iter().map(OrgRow::to_json).collect::<Vec<_>>(),
+        "organizations": rows.into_iter().map(OrgRow::into_json).collect::<Vec<_>>(),
         "total": total,
         "limit": limit,
         "offset": offset,
@@ -149,7 +181,7 @@ pub async fn get(pool: &SqlitePool, id: &str) -> Result<Value> {
         .bind(id)
         .fetch_optional(pool)
         .await?
-        .map(OrgRow::to_json)
+        .map(OrgRow::into_json)
         .ok_or_else(|| anyhow::anyhow!("Organization '{id}' not found."))
 }
 
@@ -178,6 +210,16 @@ pub async fn update(pool: &SqlitePool, args: &Map<String, Value>) -> Result<Valu
     let now = Utc::now().to_rfc3339();
 
     validate_email("email", email.as_deref())?;
+    check_org_lens(
+        &name,
+        website.as_deref(),
+        industry.as_deref(),
+        size.as_deref(),
+        country.as_deref(),
+        phone.as_deref(),
+        email.as_deref(),
+        notes.as_deref(),
+    )?;
 
     sqlx::query(
         "UPDATE orgs
@@ -272,7 +314,7 @@ pub async fn search(pool: &SqlitePool, args: &Map<String, Value>) -> Result<Valu
     .await?;
 
     Ok(serde_json::json!({
-        "results": rows.into_iter().map(OrgRow::to_json).collect::<Vec<_>>(),
+        "results": rows.into_iter().map(OrgRow::into_json).collect::<Vec<_>>(),
         "total": total,
         "query": query,
         "limit": limit,

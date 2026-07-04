@@ -39,10 +39,11 @@ All records support a `deleted_at` column. The preferred removal path is **archi
 ### Field Validation Rules
 - **email**: must contain `@`, non-empty local and domain parts, domain must include a `.`
 - **currency**: exactly 3 uppercase ASCII letters (e.g., `USD`, `EUR`, `GBP`)
-- **timestamps** (`occurred_at`, `expected_close`): ISO 8601 / RFC 3339 format, e.g. `2026-05-01T12:00:00Z`
-- **tags**: array of strings; duplicates are silently deduplicated (case-insensitive); empty strings are dropped
-- **amount**: must be `>= 0`
+- **timestamps** (`occurred_at`, `expected_close`): ISO 8601 / RFC 3339 format, e.g. `2026-05-01T12:00:00Z`. Any offset is accepted on input (`2026-05-01T22:00:00+10:00`), but values are stored normalized to UTC (`2026-05-01T12:00:00.000Z`) so date comparisons and sorting are always correct.
+- **tags**: array of strings; duplicates are silently deduplicated (case-insensitive); empty strings are dropped; at most 50 tags of 100 characters each
+- **amount**: must be `>= 0`. Send decimal amounts (`12500.50`); internally stored as integer cents (`amount_minor`), rounded half-to-even. Responses include both `amount` (decimal) and `amount_minor` (cents).
 - **probability**: integer `0–100` inclusive
+- **field lengths**: names/titles and similar short fields max 500 characters; `email`/`phone` max 200; `notes`/`body` max 64 KB
 
 ---
 
@@ -142,7 +143,7 @@ Updates any field(s) of an existing lead. Only the `id` is required; all other f
 
 ### `crm_lead_delete`
 
-Permanently deletes a lead. **Blocked if the lead has any active (non-archived) deals.** Requires confirmation.
+Permanently deletes a lead. **Blocked if any deals reference the lead** — active deals must be removed first; archived deals must be restored and deleted (or archive the lead instead). Requires confirmation.
 
 **Parameters:**
 
@@ -229,7 +230,7 @@ Creates a new deal. Requires a `title` and a valid `contact_id` (must be an exis
 
 ### `crm_deal_list`
 
-Lists deals, optionally filtered by stage. Returns pipeline totals.
+Lists deals, optionally filtered by stage. Returns pipeline totals **per currency** — amounts in different currencies are never added together.
 
 **Parameters:** `stage` (default `All`), `limit`, `offset`
 
@@ -238,11 +239,13 @@ Lists deals, optionally filtered by stage. Returns pipeline totals.
 {
   "deals": [...],
   "total": 12,
-  "total_value": 145000.0,
+  "total_value": { "USD": 141000.0, "EUR": 4000.0 },
   "limit": 50,
   "offset": 0
 }
 ```
+
+Each deal in `deals` carries both `amount` (decimal, e.g. `12500.5`) and `amount_minor` (integer cents, e.g. `1250050`).
 
 ---
 
@@ -287,7 +290,7 @@ Searches deals by `title`, `notes`, and `tags`.
 
 ### `crm_pipeline_summary`
 
-Returns an aggregate view of the entire deal pipeline, broken down by stage.
+Returns an aggregate view of the entire deal pipeline, broken down by stage. All value fields are per-currency maps.
 
 **Parameters:** None
 
@@ -295,14 +298,14 @@ Returns an aggregate view of the entire deal pipeline, broken down by stage.
 ```json
 {
   "pipeline": [
-    { "stage": "Prospecting", "count": 3, "total_value": 30000 },
-    { "stage": "Proposal", "count": 2, "total_value": 55000 },
-    { "stage": "Won", "count": 1, "total_value": 12500 }
+    { "stage": "Prospecting", "count": 3, "total_value": { "USD": 26000.0, "EUR": 4000.0 } },
+    { "stage": "Proposal", "count": 2, "total_value": { "USD": 55000.0 } },
+    { "stage": "Won", "count": 1, "total_value": { "USD": 12500.0 } }
   ],
   "total_deals": 8,
   "closed_deals": 3,
-  "total_value": 145000.0,
-  "won_value": 12500.0,
+  "total_value": { "USD": 141000.0, "EUR": 4000.0 },
+  "won_value": { "USD": 12500.0 },
   "win_rate_pct": 33.3,
   "won_share_of_all_deals_pct": 12.5
 }
@@ -539,12 +542,12 @@ An operational dashboard snapshot. Useful for a daily sales overview.
     { "key": "Lost", "count": 3 }
   ],
   "deal_stage_rollup": [
-    { "stage": "Prospecting", "count": 2, "total_value": 15000 },
+    { "stage": "Prospecting", "count": 2, "total_value": { "USD": 15000.0 } },
     ...
   ],
   "pipeline": {
-    "active_pipeline_value": 130000.0,
-    "weighted_pipeline_value": 78000.0,
+    "active_pipeline_value": { "USD": 126000.0, "EUR": 4000.0 },
+    "weighted_pipeline_value": { "USD": 75600.0, "EUR": 2400.0 },
     "stale_leads": 4,
     "stale_deals": 2,
     "overdue_deals_count": 1,
@@ -555,9 +558,11 @@ An operational dashboard snapshot. Useful for a daily sales overview.
 }
 ```
 
+All pipeline value fields are per-currency maps (`{ "USD": ... }`).
+
 **Stale leads** = Open or Contacted leads not updated in `stale_days`.  
 **Stale deals** = Active (not Won/Lost) deals not updated in `stale_days`.  
-**Weighted pipeline** = Sum of `amount × probability/100` for active deals.
+**Weighted pipeline** = Sum of `amount × probability/100` for active deals, per currency.
 
 ---
 
@@ -714,10 +719,13 @@ Activities referencing entities that don't exist are skipped with a warning log.
 | `"org_id 'X' does not match any organization"` | Referenced org doesn't exist or is archived |
 | `"lead 'X' does not exist"` | Activity target doesn't exist |
 | `"Cannot delete lead 'X': N linked deal(s) exist"` | Must remove deals before deleting lead |
+| `"Cannot delete lead 'X': N archived deal(s) still reference it"` | Restore + delete the archived deals, or archive the lead instead |
 | `"Cannot archive organization 'X': archive or reassign linked leads/deals first"` | Org has active dependents |
 | `"Permanent delete requires 'confirm_permanent': true"` | Missing delete confirmation |
 | `"params 'entity_type' and 'entity_id' must be provided together"` | Partial activity reassignment |
 | `"Cannot restore record because X 'Y' is missing or archived"` | Restore blocked by archived dependency |
+| `"param 'X' is too long: N characters (max M)"` | Field exceeds its length cap (names/titles 500, email/phone 200, notes/body 64 KB) |
+| `"param 'tags' accepts at most 50 tags"` / `"each tag must be at most 100 characters"` | Tag caps exceeded |
 
 ---
 
@@ -727,4 +735,6 @@ Activities referencing entities that don't exist are skipped with a warning log.
 - Connections are pooled up to **8 concurrent connections**.
 - All entity tables are indexed on `deleted_at`, `updated_at`, and their foreign keys.
 - Tags are stored as a JSON string (`["tag1","tag2"]`) and searched with `LIKE`. For large datasets, tag queries are not index-assisted.
-- Timestamps are stored as RFC 3339 strings (not Unix integers), which allows lexicographic sorting to work correctly for date ordering.
+- Timestamps are stored as RFC 3339 strings (not Unix integers). `expected_close` and `occurred_at` are normalized to a fixed UTC format (`2026-05-01T12:00:00.000Z`) on write, so lexicographic sorting and comparisons are correct regardless of the offset supplied.
+- Deal amounts are stored as integer cents (`amount_minor`), so sums never accumulate floating-point drift. The tool API keeps speaking decimal `amount`.
+- The schema is managed by versioned migrations tracked in `PRAGMA user_version`; existing databases are upgraded in place on startup (REAL amounts backfilled to cents, timestamps normalized to UTC).
