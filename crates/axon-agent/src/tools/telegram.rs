@@ -1966,10 +1966,7 @@ async fn try_download_attachment(config: &Value, msg: &Value, image_size: &str) 
         "https://api.telegram.org/file/bot{}/{}",
         creds.access_token, file_path
     );
-    let http = reqwest::Client::builder()
-        .timeout(Duration::from_secs(60))
-        .build()
-        .ok()?;
+    let http = crate::http::shared_60s();
     let bytes = http
         .get(&download_url)
         .send()
