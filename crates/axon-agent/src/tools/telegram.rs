@@ -67,11 +67,10 @@ struct TelegramClient {
 
 impl TelegramClient {
     fn new(creds: TelegramCredentials) -> Self {
-        let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()
-            .expect("Failed to build Telegram HTTP client");
-        Self { http, creds }
+        Self {
+            http: crate::http::shared_30s(),
+            creds,
+        }
     }
 
     /// POST a JSON body to a Telegram Bot API endpoint.
