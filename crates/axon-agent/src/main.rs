@@ -231,13 +231,23 @@ async fn main() -> anyhow::Result<()> {
         // write-locked (WAL still serializes writers) errors immediately
         // instead of waiting — and callers like agent::loop::finalize()
         // swallow that error, silently leaving a run's status stuck at
-        // 'running' forever.
+        // 'running' forever. cache_size caps each connection's page cache at
+        // 1MB (SQLite default is 2MB) — across the pool that ceiling matters
+        // on the 1GB host.
         .with_init(|c| {
             c.execute_batch(
-                "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=10000;",
+                "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=10000; PRAGMA cache_size=-1024;",
             )
         });
-    let pool = Pool::new(manager).context("create SQLite pool")?;
+    // r2d2's default is 10 connections kept open (min_idle defaults to
+    // max_size), each with its own page cache. WAL serializes writers anyway,
+    // so 5 handles cover this host's concurrency; one stays warm and the rest
+    // open on demand and are reaped after the idle timeout.
+    let pool = Pool::builder()
+        .max_size(5)
+        .min_idle(Some(1))
+        .build(manager)
+        .context("create SQLite pool")?;
     {
         let conn = pool.get().context("get DB connection")?;
         axon::db::init(&conn).context("initialize database")?;
