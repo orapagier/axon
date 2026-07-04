@@ -11,10 +11,11 @@ pub async fn open(data_dir: &Path) -> Result<SqlitePool> {
     let db_path = data_dir.join("crm.db");
 
     // Connect options apply to every connection the pool opens — a PRAGMA
-    // executed through the pool only reaches one of its 8 connections.
+    // executed through the pool only reaches one of its connections.
     // busy_timeout mirrors the agent DB (main.rs): without it, a connection
     // that finds the DB write-locked errors immediately with SQLITE_BUSY
-    // instead of waiting (WAL still serializes writers).
+    // instead of waiting (WAL still serializes writers). cache_size caps the
+    // per-connection page cache at 1MB (default 2MB) for the 1GB host.
     let options = SqliteConnectOptions::new()
         .filename(&db_path)
         .create_if_missing(true)
@@ -22,10 +23,13 @@ pub async fn open(data_dir: &Path) -> Result<SqlitePool> {
         .synchronous(SqliteSynchronous::Normal)
         .foreign_keys(true)
         .busy_timeout(Duration::from_secs(10))
-        .pragma("temp_store", "MEMORY");
+        .pragma("temp_store", "MEMORY")
+        .pragma("cache_size", "-1024");
 
+    // WAL serializes writers and CRM traffic is light; 3 connections cover
+    // reads without keeping idle page caches around.
     let pool = SqlitePoolOptions::new()
-        .max_connections(8)
+        .max_connections(3)
         .connect_with(options)
         .await
         .map_err(|e| {
