@@ -466,7 +466,7 @@ onMounted(loadDashboard)
             <div class="card-header-row no-collapse">
               <div class="card-title-group"><h2>Lead Status Mix</h2></div>
             </div>
-            <div class="kv-list">
+            <div class="card-content kv-list">
               <div v-for="s in dash.lead_status_counts" :key="s.key" class="kv-row">
                 <span><Pill :type="leadStatusType(s.key)" :text="s.key.toUpperCase()" /></span>
                 <strong>{{ s.count }}</strong>
