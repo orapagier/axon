@@ -211,7 +211,7 @@ async fn execute_webhook(client: &reqwest::Client, config: &Value) -> Result<Val
 // ── Public executor ───────────────────────────────────────────────────────────
 
 pub(crate) async fn execute(config: &Value) -> Result<Value, String> {
-    let client = reqwest::Client::new();
+    let client = crate::http::shared();
     let auth_mode = str_val(config, "auth_mode").unwrap_or_else(|| "bot".to_string());
 
     if auth_mode.eq_ignore_ascii_case("webhook") {
