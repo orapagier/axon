@@ -3212,6 +3212,424 @@ async fn check_and_trigger_gmail(
     Ok(true)
 }
 
+// ── CRM Trigger (GHL-style automation) ────────────────────────────────────────
+
+/// Decide which `crm_changes_since` rows fire a CRM trigger, and maintain the
+/// deal_id → stage map used for "Deal Stage Changed" detection. Pure so it's
+/// unit-testable: the caller owns loading/persisting the map.
+///
+/// Stage-change semantics: a deal whose stage differs from the recorded one
+/// fires (with `previous_stage` attached); a deal not in the map yet — brand
+/// new, or pre-existing but first seen by this trigger — is recorded silently
+/// so its NEXT stage change fires. A non-stage edit never fires.
+fn filter_crm_hits(
+    event: &str,
+    changes: &[Value],
+    known_stages: &mut serde_json::Map<String, Value>,
+) -> Vec<Value> {
+    let mut hits = Vec::new();
+    for ch in changes {
+        let change_kind = ch.get("change").and_then(|v| v.as_str()).unwrap_or("");
+        let entity_type = ch.get("entity_type").and_then(|v| v.as_str()).unwrap_or("");
+        match event {
+            "lead_created" => {
+                if entity_type == "lead" && change_kind == "created" {
+                    hits.push(ch.clone());
+                }
+            }
+            "deal_created" => {
+                if entity_type == "deal" && change_kind == "created" {
+                    hits.push(ch.clone());
+                }
+            }
+            "deal_stage_changed" => {
+                if entity_type != "deal" {
+                    continue;
+                }
+                let (Some(id), Some(stage)) = (
+                    ch.get("id").and_then(Value::as_str),
+                    ch.get("stage").and_then(Value::as_str),
+                ) else {
+                    continue;
+                };
+                if let Some(prev) = known_stages.get(id).and_then(Value::as_str) {
+                    if prev != stage {
+                        let mut hit = ch.clone();
+                        if let Value::Object(ref mut map) = hit {
+                            map.insert("previous_stage".to_owned(), Value::from(prev));
+                        }
+                        hits.push(hit);
+                    }
+                }
+                known_stages.insert(id.to_owned(), Value::from(stage));
+            }
+            "any_change" => hits.push(ch.clone()),
+            other => {
+                tracing::warn!("CRM trigger: unknown crm_event '{}', not firing", other);
+            }
+        }
+    }
+    hits
+}
+
+/// CRM watcher: polls the `crm_changes_since` feed against a cursor stored in
+/// `workflows.trigger_config` (`crm_cursor`, plus `crm_known_stages` for stage
+/// detection — same home as `gmail_last_seen_ids`), and triggers the workflow
+/// when matching changes arrive. The hits are staged keyed by the new RUN id
+/// (per-RUN pattern, never workflow-id-keyed) for `execute_crm_trigger`.
+async fn check_and_trigger_crm(
+    workflow_id: &str,
+    workflow_name: &str,
+    trigger_config: &Value,
+    state: &AppState,
+) -> Result<bool, String> {
+    let event = trigger_config
+        .get("crm_event")
+        .and_then(|v| v.as_str())
+        .unwrap_or("lead_created");
+
+    // Trigger state lives in the workflows row — the passed trigger_config may
+    // be the (read-only snapshot of the) Stimulus node config.
+    let (cursor, stages_json): (Option<String>, Option<String>) = {
+        let conn = state.db.get().map_err(|e| e.to_string())?;
+        conn.query_row(
+            "SELECT json_extract(trigger_config, '$.crm_cursor'),
+                    json_extract(trigger_config, '$.crm_known_stages')
+             FROM workflows WHERE id = ?1",
+            rusqlite::params![workflow_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(|e| e.to_string())?
+    };
+    let mut known_stages: serde_json::Map<String, Value> = stages_json
+        .as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_default();
+
+    let persist = |cursor: &str, stages: &serde_json::Map<String, Value>| -> Result<(), String> {
+        let conn = state.db.get().map_err(|e| e.to_string())?;
+        let stages_text =
+            serde_json::to_string(&Value::Object(stages.clone())).map_err(|e| e.to_string())?;
+        conn.execute(
+            "UPDATE workflows SET trigger_config = json_set(COALESCE(trigger_config, '{}'),
+                 '$.crm_cursor', ?1, '$.crm_known_stages', json(?2)) WHERE id = ?3",
+            rusqlite::params![cursor, stages_text, workflow_id],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    };
+
+    let entity_types = match event {
+        "lead_created" => json!(["lead"]),
+        "deal_created" | "deal_stage_changed" => json!(["deal"]),
+        _ => json!(["lead", "deal", "org"]),
+    };
+
+    // First poll: baseline silently (like gmail's seen-ids baseline). Seed the
+    // stage map so pre-existing deals have a known previous stage and their
+    // first REAL change fires — without seeding it would be swallowed as
+    // "unknown deal, record only".
+    let Some(cursor) = cursor else {
+        let now = chrono::Utc::now()
+            .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+            .to_string();
+        if event == "deal_stage_changed" {
+            match state.tools.run("crm_deal_list", json!({ "limit": 200 })).await {
+                Ok(deals) => {
+                    for d in deals
+                        .get("deals")
+                        .and_then(|v| v.as_array())
+                        .into_iter()
+                        .flatten()
+                    {
+                        if let (Some(id), Some(stage)) = (
+                            d.get("id").and_then(Value::as_str),
+                            d.get("stage").and_then(Value::as_str),
+                        ) {
+                            known_stages.insert(id.to_owned(), Value::from(stage));
+                        }
+                    }
+                }
+                Err(e) => tracing::warn!(
+                    "CRM trigger '{}': stage-map seed failed ({}); pre-existing deals fire from their second change",
+                    workflow_name,
+                    e
+                ),
+            }
+        }
+        persist(&now, &known_stages)?;
+        tracing::info!(
+            "CRM trigger '{}': first poll — baseline cursor stored (silent)",
+            workflow_name
+        );
+        return Ok(false);
+    };
+
+    let data = state
+        .tools
+        .run(
+            "crm_changes_since",
+            json!({ "since": cursor, "entity_types": entity_types, "limit": 200 }),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let changes = data
+        .get("changes")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let next_cursor = data
+        .get("cursor")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&cursor)
+        .to_string();
+
+    let hits = filter_crm_hits(event, &changes, &mut known_stages);
+
+    // Bound the stage map so trigger_config can't grow without limit. Won/Lost
+    // deals stop changing, so eviction is rare at single-company scale; an
+    // evicted deal simply re-records on its next edit and fires from the one
+    // after.
+    while known_stages.len() > 1000 {
+        let Some(key) = known_stages.keys().next().cloned() else {
+            break;
+        };
+        known_stages.remove(&key);
+    }
+
+    // Advance the cursor BEFORE firing (same order as gmail's seen-ids commit):
+    // a crash mid-run must not re-fire the same changes forever.
+    persist(&next_cursor, &known_stages)?;
+
+    if hits.is_empty() {
+        return Ok(false);
+    }
+
+    tracing::info!(
+        "CRM trigger '{}': {} matching change(s) for '{}' (out of {} in window)",
+        workflow_name,
+        hits.len(),
+        event,
+        changes.len()
+    );
+
+    // Stage the hits keyed by a pre-generated run id so THIS run's
+    // execute_crm_trigger picks them up; run_inner's cleanup guard discards
+    // them if the run dies before its trigger node.
+    let run_id = uuid::Uuid::new_v4().to_string();
+    trigger_data::stage(
+        &run_id,
+        json!({
+            "trigger": "crm",
+            "event": event,
+            "change_count": hits.len(),
+            "changes": hits,
+        }),
+    );
+
+    // Same slot handling as gmail: the cursor is already committed, so a
+    // queue-full shed would silently drop these changes — run unbounded instead.
+    let _slot = acquire_run_slot(state).await;
+    if _slot.is_none() {
+        tracing::warn!(
+            "CRM trigger '{}': run queue full; running unbounded to avoid dropping {} change(s)",
+            workflow_name,
+            hits.len()
+        );
+    }
+    WorkflowEngine::run_with_trigger(workflow_id, state, "crm", None, false, Some(run_id))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(true)
+}
+
+/// CRM Stimulus executor. Background fires consume the payload staged by
+/// `check_and_trigger_crm`; a manual "Execute Step" live-fetches recent
+/// changes (last 24 h, widening to 30 days when quiet) so the user has real
+/// rows to map fields against — same spirit as the Gmail manual fetch.
+pub(crate) async fn execute_crm_trigger(
+    config: &Value,
+    state: &AppState,
+    workflow_id: &str,
+    run_id: &str,
+) -> Result<Value, String> {
+    if let Some(trigger_data) = trigger_data::take(run_id) {
+        tracing::info!(
+            "CRM trigger: using pre-fetched change data for workflow {}",
+            workflow_id
+        );
+        return Ok(trigger_data);
+    }
+
+    let event = config
+        .get("crm_event")
+        .and_then(|v| v.as_str())
+        .unwrap_or("lead_created");
+    let entity_types = match event {
+        "lead_created" => json!(["lead"]),
+        "deal_created" | "deal_stage_changed" => json!(["deal"]),
+        _ => json!(["lead", "deal", "org"]),
+    };
+
+    let mut changes: Vec<Value> = Vec::new();
+    for hours in [24i64, 720] {
+        let since = (chrono::Utc::now() - chrono::Duration::hours(hours))
+            .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+            .to_string();
+        let data = state
+            .tools
+            .run(
+                "crm_changes_since",
+                json!({ "since": since, "entity_types": entity_types.clone(), "limit": 10 }),
+            )
+            .await
+            .map_err(|e| format!("CRM trigger fetch failed: {}", e))?;
+        changes = data
+            .get("changes")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        if !changes.is_empty() {
+            break;
+        }
+    }
+
+    // Approximate the production shape: creation events prefer freshly created
+    // rows (fall back to whatever changed if none), and stage-change rows carry
+    // an explicit null previous_stage — a manual fetch has no stage history.
+    match event {
+        "lead_created" | "deal_created" => {
+            let created: Vec<Value> = changes
+                .iter()
+                .filter(|c| c.get("change").and_then(|v| v.as_str()) == Some("created"))
+                .cloned()
+                .collect();
+            if !created.is_empty() {
+                changes = created;
+            }
+        }
+        "deal_stage_changed" => {
+            for ch in &mut changes {
+                if let Value::Object(ref mut map) = ch {
+                    map.entry("previous_stage".to_owned())
+                        .or_insert(Value::Null);
+                }
+            }
+        }
+        _ => {}
+    }
+
+    Ok(json!({
+        "trigger": "crm",
+        "event": event,
+        "change_count": changes.len(),
+        "changes": changes,
+    }))
+}
+
+#[cfg(test)]
+mod crm_trigger_tests {
+    use super::filter_crm_hits;
+    use serde_json::{json, Map, Value};
+
+    fn deal(id: &str, stage: &str, change: &str) -> Value {
+        json!({ "entity_type": "deal", "id": id, "stage": stage, "change": change })
+    }
+
+    fn lead(id: &str, change: &str) -> Value {
+        json!({ "entity_type": "lead", "id": id, "change": change })
+    }
+
+    #[test]
+    fn lead_created_fires_only_on_created_leads() {
+        let mut stages = Map::new();
+        let hits = filter_crm_hits(
+            "lead_created",
+            &[
+                lead("l1", "created"),
+                lead("l2", "updated"),
+                deal("d1", "Won", "created"),
+            ],
+            &mut stages,
+        );
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0]["id"], json!("l1"));
+    }
+
+    #[test]
+    fn stage_change_fires_with_previous_stage() {
+        let mut stages = Map::new();
+        stages.insert("d1".into(), json!("Prospecting"));
+        let hits = filter_crm_hits(
+            "deal_stage_changed",
+            &[deal("d1", "Won", "updated")],
+            &mut stages,
+        );
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0]["previous_stage"], json!("Prospecting"));
+        assert_eq!(stages["d1"], json!("Won"), "map advances to the new stage");
+    }
+
+    #[test]
+    fn non_stage_edit_does_not_fire() {
+        let mut stages = Map::new();
+        stages.insert("d1".into(), json!("Won"));
+        // An edit that left the stage alone (e.g. notes) → updated row, same stage.
+        let hits = filter_crm_hits(
+            "deal_stage_changed",
+            &[deal("d1", "Won", "updated")],
+            &mut stages,
+        );
+        assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn unknown_deal_is_recorded_silently_then_fires_on_next_change() {
+        let mut stages = Map::new();
+        // First sighting (pre-existing deal, or a brand-new one): record only.
+        assert!(filter_crm_hits(
+            "deal_stage_changed",
+            &[deal("d2", "Proposal", "updated")],
+            &mut stages,
+        )
+        .is_empty());
+        assert_eq!(stages["d2"], json!("Proposal"));
+        // Its next stage change fires.
+        let hits = filter_crm_hits(
+            "deal_stage_changed",
+            &[deal("d2", "Negotiation", "updated")],
+            &mut stages,
+        );
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0]["previous_stage"], json!("Proposal"));
+    }
+
+    #[test]
+    fn deal_created_batch_keeps_every_new_deal() {
+        let mut stages = Map::new();
+        let hits = filter_crm_hits(
+            "deal_created",
+            &[
+                deal("d1", "Prospecting", "created"),
+                deal("d2", "Qualified", "created"),
+                deal("d3", "Won", "updated"),
+            ],
+            &mut stages,
+        );
+        assert_eq!(hits.len(), 2);
+    }
+
+    #[test]
+    fn any_change_fires_on_everything_and_unknown_event_never_fires() {
+        let mut stages = Map::new();
+        let rows = [lead("l1", "created"), deal("d1", "Won", "updated")];
+        assert_eq!(filter_crm_hits("any_change", &rows, &mut stages).len(), 2);
+        assert!(filter_crm_hits("no_such_event", &rows, &mut stages).is_empty());
+    }
+}
+
 fn should_trigger(wf: &Workflow, utc_offset_hours: i32) -> bool {
     use std::str::FromStr;
 
