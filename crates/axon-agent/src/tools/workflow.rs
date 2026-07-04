@@ -2453,7 +2453,7 @@ impl WorkflowEngine {
 
     fn trigger_priority(trigger_type: &str) -> u8 {
         match trigger_type {
-            "gmail" => 3,
+            "gmail" | "crm" => 3,
             "cron" | "watcher" => 2,
             _ => 1,
         }
