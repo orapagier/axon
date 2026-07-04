@@ -951,7 +951,7 @@ async fn get_chat_details(
 // ── Public executor ───────────────────────────────────────────────────────────
 
 pub(crate) async fn execute(config: &Value) -> Result<Value, String> {
-    let client = reqwest::Client::new();
+    let client = crate::http::shared();
     let token = page_token(config)?;
     let operation = str_val(config, "operation").unwrap_or_else(|| "replyComment".to_string());
 
