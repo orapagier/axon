@@ -65,11 +65,11 @@ Also shipped alongside Phase 2 (operator decision, not in the original plan): **
 
 **2.4 Duplicate guard** — `crm_lead_create`: if an active lead with the same (case-insensitive) email exists, return a teaching error carrying the existing id unless `allow_duplicate: true`. Same for `crm_org_create` on exact name match. Update `lib.rs::tool_list` descriptions so agents learn the flow.
 
-## Phase 3 — Tests & docs (interleaved with Phases 1–2)
+## Phase 3 — Tests & docs ✅ Done (2026-07-04)
 
-- Regression tests in `src/tests.rs`: mixed-currency totals, cents round-trip + migration on a legacy REAL db file, non-UTC timestamp normalization (stale/overdue correctness), archived-deal delete error, duplicate guard, length caps, busy DB smoke (two pools writing).
-- Update `crm-guide.md` for every changed response shape; check `axon-ui` DocsPage for embedded CRM docs drift.
-- `cargo clippy --all-targets -p axon-crm`, `cargo fmt`, `graphify update .` after code changes.
+- Regression tests in `src/tests.rs` (all landed interleaved with Phases 1–2; 14 tests green): mixed-currency totals, cents round-trip + migration on a legacy REAL db file, non-UTC timestamp normalization (stale/overdue correctness), archived-deal delete error, duplicate guard, length caps, busy DB smoke (two pools writing).
+- `crm-guide.md` audited line-by-line against the code (tool count, caps, defaults, error strings, gating, response shapes) — one stale claim fixed: connection pool is 3, not 8 (RAM-trim change). `axon-ui` DocsPage has no embedded CRM docs (only a one-line node-category mention), so no drift there.
+- `cargo clippy --all-targets -p axon-crm -- -D warnings` and `cargo fmt --check` clean.
 
 ## Phase 4 — GHL-style automation: CRM triggers + sample workflows
 
