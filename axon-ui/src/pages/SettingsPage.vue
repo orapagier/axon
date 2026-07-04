@@ -15,6 +15,7 @@ const retentionResult = ref('')
 
 const CATEGORY_META = {
   agent: { title: 'Agent', description: 'Core agent-loop behavior: iteration and correction budgets, run/tool timeouts, tool scope, reasoning effort, temperature, token caps, and the system prompt.' },
+  crm: { title: 'CRM', description: 'Chat-agent access to the built-in CRM. Reads (list/get/search/reports) are always available to the agent; writes are workflow-only unless enabled here.' },
   embedder: { title: 'Embeddings', description: 'OpenAI-compatible embeddings provider powering the semantic tool-routing tier and long-term memory recall.' },
   instagram: { title: 'Instagram Publishing', description: 'Media hosting URLs, bind address, TTL, and image/video processing waits.' },
   memory: { title: 'Memory', description: 'Retention, recall, and knowledge persistence behavior.' },

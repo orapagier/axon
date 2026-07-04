@@ -74,6 +74,38 @@ const WORKFLOW_ONLY_WRITE_TOOLS: &[&str] = &[
     "ig_send_message",
 ];
 
+/// CRM *write* tools (create/update/delete/convert/archive/restore). Follows
+/// the same standing pattern as [`WORKFLOW_ONLY_WRITE_TOOLS`]: mutations flow
+/// through the deliberate workflow path while the agent keeps the read tools
+/// (list/get/search/overview/pipeline/dashboard/export) for answering
+/// questions conversationally. Unlike the social list this gate is *soft* —
+/// the operator can grant the agent full CRM read/write by turning on the
+/// `crm.agent_write_tools` setting (Settings → CRM); callers of
+/// [`ToolRegistry::all_enabled_for_agent`] pass that setting in. Workflow
+/// nodes always reach every CRM tool via [`ToolRegistry::all`] / `run`.
+const CRM_WRITE_TOOLS: &[&str] = &[
+    // Leads
+    "crm_lead_create",
+    "crm_lead_update",
+    "crm_lead_delete",
+    "crm_lead_convert_to_deal",
+    // Deals
+    "crm_deal_create",
+    "crm_deal_update",
+    "crm_deal_delete",
+    // Organizations
+    "crm_org_create",
+    "crm_org_update",
+    "crm_org_delete",
+    // Activities
+    "crm_activity_log",
+    "crm_activity_update",
+    "crm_activity_delete",
+    // Archive lifecycle
+    "crm_record_archive",
+    "crm_record_restore",
+];
+
 fn internal_tools() -> Vec<ToolDefinition> {
     vec![
         {
@@ -754,15 +786,17 @@ impl ToolRegistry {
             .collect()
     }
     /// Enabled tools the agent is allowed to *call*. This is a subset of
-    /// [`all_enabled`] that drops two groups:
+    /// [`all_enabled`] that drops three groups:
     ///   • internal tools that exist only as workflow-builder nodes (e.g. webhook
     ///     triggers) and have no `handle_internal` dispatch arm — offering them
     ///     would let the agent pick a tool that fails with "Unknown internal tool";
     ///   • social-platform outward-facing write actions (Facebook/Instagram —
-    ///     [`WORKFLOW_ONLY_WRITE_TOOLS`]), restricted to the deliberate workflow path.
+    ///     [`WORKFLOW_ONLY_WRITE_TOOLS`]), restricted to the deliberate workflow path;
+    ///   • CRM write tools ([`CRM_WRITE_TOOLS`]) unless the operator granted the
+    ///     agent CRM writes (`crm.agent_write_tools` setting → `allow_crm_writes`).
     /// The full set is still served to the UI via [`all`] and dispatched by name
     /// via [`run`], so the workflow node palette and execution are unaffected.
-    pub async fn all_enabled_for_agent(&self) -> Vec<ToolDefinition> {
+    pub async fn all_enabled_for_agent(&self, allow_crm_writes: bool) -> Vec<ToolDefinition> {
         self.tools
             .read()
             .await
@@ -775,6 +809,7 @@ impl ToolRegistry {
             // Outward-facing Facebook write actions are workflow-only — never
             // exposed to the agent (workflow nodes still reach them via `all`/`run`).
             .filter(|t| !WORKFLOW_ONLY_WRITE_TOOLS.contains(&t.name.as_str()))
+            .filter(|t| allow_crm_writes || !CRM_WRITE_TOOLS.contains(&t.name.as_str()))
             .cloned()
             .collect()
     }
@@ -827,5 +862,56 @@ impl ToolRegistry {
         self.load_dir(dir).await?;
         let count = self.tools.read().await.len();
         Ok(count)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn def(name: &str) -> ToolDefinition {
+        ToolDefinition::internal(name, "test tool", serde_json::json!({}), vec![])
+    }
+
+    #[tokio::test]
+    async fn crm_writes_are_agent_gated_by_flag_and_workflows_unaffected() {
+        let r = ToolRegistry {
+            tools: Arc::new(RwLock::new(HashMap::new())),
+            timeout_sec: 5,
+            mcp_manager: None,
+        };
+        for name in [
+            "crm_lead_create", // CRM write — gated
+            "crm_lead_list",   // CRM read — always agent-callable
+            "fb_create_post",  // social write — always workflow-only
+            "gmail_list",      // unrelated — always agent-callable
+        ] {
+            r.register(def(name)).await;
+        }
+
+        let names =
+            |tools: Vec<ToolDefinition>| tools.into_iter().map(|t| t.name).collect::<Vec<_>>();
+
+        let agent_default = names(r.all_enabled_for_agent(false).await);
+        assert!(agent_default.contains(&"crm_lead_list".to_string()));
+        assert!(agent_default.contains(&"gmail_list".to_string()));
+        assert!(!agent_default.contains(&"crm_lead_create".to_string()));
+        assert!(!agent_default.contains(&"fb_create_post".to_string()));
+
+        let agent_with_writes = names(r.all_enabled_for_agent(true).await);
+        assert!(agent_with_writes.contains(&"crm_lead_create".to_string()));
+        // The toggle grants CRM writes only — social stays workflow-only.
+        assert!(!agent_with_writes.contains(&"fb_create_post".to_string()));
+
+        // The workflow path sees everything regardless of the toggle.
+        let workflow = names(r.all_enabled().await);
+        for name in [
+            "crm_lead_create",
+            "crm_lead_list",
+            "fb_create_post",
+            "gmail_list",
+        ] {
+            assert!(workflow.contains(&name.to_string()), "missing {name}");
+        }
     }
 }

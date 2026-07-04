@@ -127,7 +127,10 @@ pub(crate) async fn build_run_context(
             }
         },
         async {
-            let all_tools = state.tools.all_enabled_for_agent().await;
+            let all_tools = state
+                .tools
+                .all_enabled_for_agent(state.settings.crm_agent_write_tools())
+                .await;
             if let Some(ref allowed) = ctx.allowed_tools {
                 let filtered: Vec<_> = all_tools
                     .into_iter()

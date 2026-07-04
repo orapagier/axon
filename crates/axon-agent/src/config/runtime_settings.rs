@@ -101,6 +101,12 @@ impl RuntimeSettings {
     pub fn allow_tool_writing(&self) -> bool {
         self.get_bool("agent.allow_tool_writing", true)
     }
+    /// CRM access for the chat agent: reads are always available; the write
+    /// tools (create/update/delete/convert/archive) are workflow-only unless
+    /// this is on. Read per call so the toggle applies without a restart.
+    pub fn crm_agent_write_tools(&self) -> bool {
+        self.get_bool("crm.agent_write_tools", false)
+    }
     pub fn temp_tool_max_retries(&self) -> u32 {
         self.get_int("agent.temp_tool_max_retries", 2) as u32
     }

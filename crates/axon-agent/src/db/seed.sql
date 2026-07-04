@@ -107,6 +107,12 @@ INSERT OR IGNORE INTO settings VALUES
     ('embedder.model',    '', 'string', 'Embedding model name (e.g. gemini-embedding-001, all-minilm, voyage-4). Changing it re-embeds stored memories in the background on next start; re-check router.embed_floor after switching.', 'embedder', datetime('now')),
     ('embedder.api_key',  '', 'string', 'API key for the embeddings endpoint; a ${VAR} placeholder resolves from settings then environment (e.g. ${GEMINI_API_KEY}). Leave blank for local Ollama.', 'embedder', datetime('now'));
 
+-- CRM agent access. Read tools are always agent-callable; the write tools
+-- (create/update/delete/convert/archive/restore) are workflow-only unless this
+-- is on. Workflow nodes always have full CRM access either way.
+INSERT OR IGNORE INTO settings VALUES
+    ('crm.agent_write_tools', 'false', 'bool', 'Allow the chat agent to call CRM write tools (create/update/delete/convert/archive). Off = agent reads only; workflows can always read and write.', 'crm', datetime('now'));
+
 -- Web search.
 INSERT OR IGNORE INTO settings VALUES
     ('websearch.enabled',             'false', 'bool',   'Enable Web Search tool (requires Tavily accounts below)',      'websearch', datetime('now')),

@@ -233,7 +233,9 @@ async fn main() -> anyhow::Result<()> {
         // swallow that error, silently leaving a run's status stuck at
         // 'running' forever.
         .with_init(|c| {
-            c.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=10000;")
+            c.execute_batch(
+                "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=10000;",
+            )
         });
     let pool = Pool::new(manager).context("create SQLite pool")?;
     {

@@ -863,7 +863,10 @@ pub(crate) async fn run_inner(
         });
 
         // ── Tool routing ─────────────────────────────────────────────────────
-        let all_tools = state.tools.all_enabled_for_agent().await;
+        let all_tools = state
+            .tools
+            .all_enabled_for_agent(state.settings.crm_agent_write_tools())
+            .await;
 
         let (filtered, _tier, tool_names) = if force_final_answer {
             // Stall guard tripped last iteration: disable tools so the model must
