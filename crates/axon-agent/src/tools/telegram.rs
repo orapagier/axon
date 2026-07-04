@@ -2228,7 +2228,7 @@ async fn download_message_file(client: &TelegramClient, config: &Value) -> Resul
         client.creds.base_url, client.creds.access_token, file_path
     );
 
-    let http = reqwest::Client::new();
+    let http = crate::http::shared();
     let resp = http
         .get(&download_url)
         .send()
