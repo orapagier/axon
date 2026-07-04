@@ -196,6 +196,10 @@ After=network.target
 Type=simple
 User=$CURR_USER
 WorkingDirectory=$DEPLOY_DIR/core
+# glibc malloc tuning: cap arenas and return freed heap promptly — large RSS
+# saving for a multithreaded tokio server on a 1GB box, negligible CPU cost.
+Environment=MALLOC_ARENA_MAX=2
+Environment=MALLOC_TRIM_THRESHOLD_=131072
 ExecStart=$DEPLOY_DIR/core/axon
 Restart=always
 RestartSec=5
