@@ -459,7 +459,7 @@ async fn execute_job_task(
         .map(|s| s.to_string())
         .unwrap_or_else(|| format!("cron:{}", job_id));
 
-    let mut req = reqwest::Client::new().post(format!("http://127.0.0.1:{}/api/run", port));
+    let mut req = crate::http::shared().post(format!("http://127.0.0.1:{}/api/run", port));
 
     if !master_key.is_empty() {
         req = req.bearer_auth(master_key);
