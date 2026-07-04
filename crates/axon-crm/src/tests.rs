@@ -883,11 +883,7 @@ async fn changes_since_tracks_creates_updates_and_cursor() -> Result<()> {
     // A stage change shows up as "updated" with the new stage, and archived
     // records drop out of the feed entirely.
     tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-    deals::update(
-        &pool,
-        &args(json!({ "id": deal_id, "stage": "Qualified" })),
-    )
-    .await?;
+    deals::update(&pool, &args(json!({ "id": deal_id, "stage": "Qualified" }))).await?;
     let after_stage = views::changes_since(
         &pool,
         &args(json!({ "since": cursor2, "entity_types": ["deal"] })),
@@ -897,16 +893,25 @@ async fn changes_since_tracks_creates_updates_and_cursor() -> Result<()> {
     assert_eq!(after_stage["changes"][0]["change"], json!("updated"));
     assert_eq!(after_stage["changes"][0]["stage"], json!("Qualified"));
 
-    records::archive(&pool, &args(json!({ "entity_type": "deal", "id": deal_id }))).await?;
+    records::archive(
+        &pool,
+        &args(json!({ "entity_type": "deal", "id": deal_id })),
+    )
+    .await?;
     let after_archive = views::changes_since(
         &pool,
         &args(json!({ "since": cursor2, "entity_types": ["deal"] })),
     )
     .await?;
-    assert_eq!(after_archive["count"], json!(0), "archived records drop out");
+    assert_eq!(
+        after_archive["count"],
+        json!(0),
+        "archived records drop out"
+    );
 
     // limit + has_more: window cut mid-feed, cursor resumes it.
-    let limited = views::changes_since(&pool, &args(json!({ "since": cursor, "limit": 1 }))).await?;
+    let limited =
+        views::changes_since(&pool, &args(json!({ "since": cursor, "limit": 1 }))).await?;
     assert_eq!(limited["count"], json!(1));
     assert_eq!(limited["has_more"], json!(true));
 

@@ -71,13 +71,14 @@ Also shipped alongside Phase 2 (operator decision, not in the original plan): **
 - `crm-guide.md` audited line-by-line against the code (tool count, caps, defaults, error strings, gating, response shapes) — one stale claim fixed: connection pool is 3, not 8 (RAM-trim change). `axon-ui` DocsPage has no embedded CRM docs (only a one-line node-category mention), so no drift there.
 - `cargo clippy --all-targets -p axon-crm -- -D warnings` and `cargo fmt --check` clean.
 
-## Phase 4 — GHL-style automation: CRM triggers + sample workflows
+## Phase 4 — GHL-style automation: CRM triggers + sample workflows ✅ Done (2026-07-04)
 
-This is what makes the workflow engine behave like GHL. The watcher engine (`crates/axon-agent/src/watcher/engine.rs`) already polls any tool on an interval with `trigger_condition: "on_change"` and tracks `last_seen_ids` — CRM just isn't a preset, so it's not discoverable.
+Implemented as a first-class **CRM Stimulus trigger** (the workflow-scheduler poll-first pattern the Gmail trigger uses, not the notification watcher engine — that's where "run a workflow on CRM change" actually lives):
 
-- **CRM watcher presets** — add `crm` presets alongside gmail/outlook/gcal: "New lead" (`crm_lead_list`), "New deal" (`crm_deal_list`), "Deal stage changed" (needs change detection on `stage`, not just new ids — add a `crm_changes_since(timestamp)` view tool in the crate that returns rows with `updated_at > cursor`; fits the watcher's stored `last_check`). Payload staging follows the existing per-RUN pattern (`run_in_background_with_payload` / `trigger_data.rs`) — do not reintroduce workflow-id-keyed maps.
-- **Surface in WorkflowsPage trigger picker** — wherever gmail/gcal watcher presets appear, add the CRM ones (frontend change is preset metadata only).
-- **Sample workflows in `crm-guide.md` "Common Workflows"** — new lead → welcome email; lead status → Qualified → convert to deal; deal → Won → Telegram notification (via gateway chat, per messaging policy); weekly `crm_dashboard_summary` digest via scheduler.
+- **`crm_changes_since` view tool** (tool #34) — change feed of active leads/deals/orgs with `updated_at > since` cursor, rows tagged `created`/`updated`, exclusive `cursor` + `has_more` for resumption; both comparison sides normalized to fixed UTC (SQLite `strftime` twin of `format_utc`).
+- **Backend trigger** — `check_and_trigger_crm` in `workflow.rs`: events `lead_created` / `deal_created` / `deal_stage_changed` (deal_id→stage map in `trigger_config.crm_known_stages`, seeded at baseline, `previous_stage` in payload) / `any_change`; cursor in `trigger_config.crm_cursor` advances before firing; payload staged per-RUN via `trigger_data.rs`; `execute_crm_trigger` gives manual Execute Step a live 24h→30d test fetch. Pure `filter_crm_hits` covered by 6 unit tests.
+- **Frontend** — Stimulus node Trigger Type gains **CRM** (event picker, poll interval, output-shape notice); UI rebuilt into `axon-agent/static`.
+- **Docs** — `crm-guide.md`: `crm_changes_since` reference, "CRM Triggers" section, and 4 sample automations (new lead → welcome email; Qualified → convert-to-deal with a loop-safe `deal_count == 0` guard; deal Won → Telegram; weekly dashboard digest + backup via Circadian).
 
 ## Phase 5 (optional, defer until wanted) — Dedicated CRM page in axon-ui
 

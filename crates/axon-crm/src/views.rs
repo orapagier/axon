@@ -1,4 +1,4 @@
-﻿use anyhow::Result;
+use anyhow::Result;
 use chrono::{Duration, Utc};
 use serde_json::{Map, Value};
 use sqlx::SqlitePool;
@@ -727,7 +727,10 @@ pub async fn changes_since(pool: &SqlitePool, args: &Map<String, Value>) -> Resu
     let limit = i64_arg(args, "limit")?.unwrap_or(50).clamp(1, 200);
 
     let wanted: Vec<String> = match args.get("entity_types") {
-        None | Some(Value::Null) => ACTIVITY_ENTITY_TYPES.iter().map(|s| s.to_string()).collect(),
+        None | Some(Value::Null) => ACTIVITY_ENTITY_TYPES
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
         Some(Value::Array(arr)) => {
             let mut kinds: Vec<String> = Vec::new();
             for item in arr {
@@ -740,7 +743,10 @@ pub async fn changes_since(pool: &SqlitePool, args: &Map<String, Value>) -> Resu
                 }
             }
             if kinds.is_empty() {
-                ACTIVITY_ENTITY_TYPES.iter().map(|s| s.to_string()).collect()
+                ACTIVITY_ENTITY_TYPES
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect()
             } else {
                 kinds
             }
@@ -821,7 +827,11 @@ pub async fn changes_since(pool: &SqlitePool, args: &Map<String, Value>) -> Resu
     let changes: Vec<Value> = merged
         .into_iter()
         .map(|(created_utc, _, mut record)| {
-            let change = if created_utc > since { "created" } else { "updated" };
+            let change = if created_utc > since {
+                "created"
+            } else {
+                "updated"
+            };
             if let Value::Object(ref mut map) = record {
                 map.insert("change".to_owned(), Value::from(change));
             }
