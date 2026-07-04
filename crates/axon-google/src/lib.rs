@@ -1238,6 +1238,48 @@ fn parse_batch_write_data(data_v: Option<&Value>) -> Vec<(String, Vec<Vec<Value>
         .collect()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn batch_read_ranges_accepts_all_shapes() {
+        // LLM tool call: plain string array
+        let v = json!(["Sheet1!A1:B2", "Sheet2!C1:D2"]);
+        assert_eq!(
+            parse_batch_read_ranges(Some(&v)),
+            vec!["Sheet1!A1:B2", "Sheet2!C1:D2"]
+        );
+
+        // Workflow UI fixedCollection envelope with {range} objects
+        let v = json!({"parameters": [{"range": " Sheet1!A1:B2 "}, {"range": ""}, {"range": "C1:D2"}]});
+        assert_eq!(
+            parse_batch_read_ranges(Some(&v)),
+            vec!["Sheet1!A1:B2", "C1:D2"]
+        );
+
+        // Bare array of {range} objects
+        let v = json!([{"range": "A1:B2"}]);
+        assert_eq!(parse_batch_read_ranges(Some(&v)), vec!["A1:B2"]);
+
+        // JSON-encoded string forms (legacy textarea / serializers)
+        let v = json!("[\"A1:B2\",\"C3:D4\"]");
+        assert_eq!(parse_batch_read_ranges(Some(&v)), vec!["A1:B2", "C3:D4"]);
+        let v = json!("{\"parameters\":[{\"range\":\"A1:B2\"}]}");
+        assert_eq!(parse_batch_read_ranges(Some(&v)), vec!["A1:B2"]);
+
+        // Single bare range string
+        let v = json!("Sheet1!A1:C10");
+        assert_eq!(parse_batch_read_ranges(Some(&v)), vec!["Sheet1!A1:C10"]);
+
+        // Nothing valid
+        assert!(parse_batch_read_ranges(None).is_empty());
+        assert!(parse_batch_read_ranges(Some(&json!(""))).is_empty());
+        assert!(parse_batch_read_ranges(Some(&json!({"parameters": [{"range": ""}]}))).is_empty());
+    }
+}
+
 /// Parse a hex color string like "#FF0000" or "4285F4" into (r, g, b) floats 0.0–1.0.
 fn parse_hex_color(hex: &str) -> Option<(f64, f64, f64)> {
     let hex = hex.trim_start_matches('#');
