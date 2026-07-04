@@ -368,6 +368,15 @@ impl CrmService {
                 description: "Back up the CRM SQLite database to a timestamped .db file in the Files page directory (online backup via VACUUM INTO; safe while the CRM is in use).".into(),
                 input_schema: schema!({}, []),
             },
+            Tool {
+                name: "crm_changes_since".into(),
+                description: "Change feed: active leads/deals/orgs created or updated after the 'since' timestamp, oldest first, each tagged change: 'created' or 'updated'. Returns a 'cursor' to pass as the next 'since' (has_more: true means the window was cut by 'limit' — poll again). Powers the CRM workflow trigger; also handy for \"what changed today\" checks.".into(),
+                input_schema: schema!({
+                    "since":        { "type": "string", "description": "RFC 3339 timestamp; any offset accepted" },
+                    "entity_types": { "type": "array", "items": { "type": "string", "enum": ["lead", "deal", "org"] }, "description": "Default: all three" },
+                    "limit":        { "type": "integer", "default": 50, "maximum": 200 }
+                }, ["since"]),
+            },
         ]
     }
 
