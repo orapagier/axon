@@ -811,9 +811,11 @@ Leads created without an email still fire the trigger — add an If node on `{{ 
 [Stimulus: CRM, event = Any Change]
    → [If: {{ $json.changes[0].entity_type }} == "lead"
          AND {{ $json.changes[0].status }} == "Qualified"]
+   → [CRM: crm_record_overview]  entity_type: "lead", id: {{ $json.changes[0].id }}
+   → [If: {{ $json.summary.deal_count }} == 0]
    → [CRM: crm_lead_convert_to_deal]  lead_id: {{ $json.changes[0].id }}
 ```
-`crm_lead_convert_to_deal` leaves the lead in Qualified status by default, and a conversion edits the *lead*, not a second qualifying event — so this doesn't loop. Add amount/stage params on the convert node as desired.
+The `deal_count == 0` guard is what makes this loop-safe: the conversion itself touches the lead again (still Qualified), so the trigger re-fires once more — but by then the lead has a deal and the second If stops the chain. Add amount/stage params on the convert node as desired.
 
 ### Automation 3: Deal Won → Telegram Notification
 
