@@ -16,6 +16,29 @@ use std::sync::Arc;
 
 use utils::require_str;
 
+/// Operator-configurable default currency for new deals (`crm.default_currency`
+/// setting). The host registers a live provider at startup (main.rs) so setting
+/// changes apply without a restart; unset (tests, standalone use) falls back to
+/// USD. Same global-registration pattern as workflow trigger_data.
+static DEFAULT_CURRENCY_PROVIDER: std::sync::OnceLock<Box<dyn Fn() -> String + Send + Sync>> =
+    std::sync::OnceLock::new();
+
+pub fn set_default_currency_provider(provider: impl Fn() -> String + Send + Sync + 'static) {
+    let _ = DEFAULT_CURRENCY_PROVIDER.set(Box::new(provider));
+}
+
+pub(crate) fn default_currency() -> String {
+    let value = DEFAULT_CURRENCY_PROVIDER
+        .get()
+        .map(|f| f().trim().to_ascii_uppercase())
+        .unwrap_or_default();
+    if utils::validate_currency("crm.default_currency", &value).is_ok() {
+        value
+    } else {
+        "USD".to_owned()
+    }
+}
+
 pub struct CrmService {
     _state: Arc<AppState>,
     pool: SqlitePool,
@@ -32,10 +55,10 @@ impl CrmService {
 
     pub fn tool_list() -> Vec<Tool> {
         vec![
-            // ── Leads (6) ────────────────────────────────────────────────
+            // ── Leads (7) ────────────────────────────────────────────────
             Tool {
                 name: "crm_lead_create".into(),
-                description: "Create a new CRM lead. Status options: Open, Contacted, Qualified, Lost. Rejects a duplicate active email with the existing lead's id — update that lead instead, or pass allow_duplicate: true.".into(),
+                description: "Create a new CRM lead. Status options: Open, Contacted, Qualified, Lost. Rejects a duplicate active email or phone with the existing lead's id — update that lead instead, or pass allow_duplicate: true.".into(),
                 input_schema: schema!({
                     "name":    { "type": "string" },
                     "email":   { "type": "string" },
@@ -46,7 +69,7 @@ impl CrmService {
                     "source":  { "type": "string", "description": "Lead source, e.g. Website, Referral, Cold Outreach" },
                     "tags":    { "type": "array", "items": { "type": "string" } },
                     "notes":   { "type": "string" },
-                    "allow_duplicate": { "type": "boolean", "default": false, "description": "Create even if an active lead with the same email exists" }
+                    "allow_duplicate": { "type": "boolean", "default": false, "description": "Create even if an active lead with the same email or phone exists" }
                 }, ["name"]),
             },
             Tool {
@@ -65,7 +88,7 @@ impl CrmService {
             },
             Tool {
                 name: "crm_lead_update".into(),
-                description: "Update any field(s) of an existing CRM lead.".into(),
+                description: "Update any field(s) of an existing CRM lead. Changing email or phone to one another active lead already uses is rejected with that lead's id unless allow_duplicate: true.".into(),
                 input_schema: schema!({
                     "id":      { "type": "string" },
                     "name":    { "type": "string" },
@@ -76,7 +99,8 @@ impl CrmService {
                     "status":  { "type": "string", "enum": ["Open", "Contacted", "Qualified", "Lost"] },
                     "source":  { "type": "string" },
                     "tags":    { "type": "array", "items": { "type": "string" } },
-                    "notes":   { "type": "string" }
+                    "notes":   { "type": "string" },
+                    "allow_duplicate": { "type": "boolean", "default": false, "description": "Apply even if the new email/phone collides with another active lead" }
                 }, ["id"]),
             },
             Tool {
@@ -89,7 +113,7 @@ impl CrmService {
             },
             Tool {
                 name: "crm_lead_search".into(),
-                description: "Full-text search across lead names, emails, companies, notes, and tags.".into(),
+                description: "Full-text search across lead names, emails, phone numbers, companies, notes, and tags.".into(),
                 input_schema: schema!({
                     "query":  { "type": "string" },
                     "limit":  { "type": "integer", "default": 50 },

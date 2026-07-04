@@ -265,17 +265,30 @@ pub fn format_utc(dt: DateTime<Utc>) -> String {
     dt.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
 }
 
-/// Parse any RFC 3339 offset and rewrite it as fixed-format UTC. Timestamps
-/// were previously stored verbatim, which made lexicographic comparisons wrong
+/// Parse any RFC 3339 offset — or a bare `YYYY-MM-DD` date, normalized to
+/// midnight UTC — and rewrite it as fixed-format UTC. Timestamps were
+/// previously stored verbatim, which made lexicographic comparisons wrong
 /// for non-UTC offsets (e.g. `+10:00` sorts after the same instant in UTC).
 pub fn parse_rfc3339_utc(field: &str, value: Option<&str>) -> Result<Option<String>> {
     let Some(value) = value else {
         return Ok(None);
     };
 
-    DateTime::parse_from_rfc3339(value)
-        .map(|dt| Some(format_utc(dt.with_timezone(&Utc))))
-        .map_err(|_| anyhow::anyhow!("param '{field}' must be an ISO 8601 / RFC 3339 timestamp"))
+    if let Ok(dt) = DateTime::parse_from_rfc3339(value) {
+        return Ok(Some(format_utc(dt.with_timezone(&Utc))));
+    }
+    // Agents and humans write plain dates constantly; midnight UTC keeps the
+    // fixed-format lexicographic ordering intact.
+    if let Ok(date) = chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d") {
+        let dt = date
+            .and_hms_opt(0, 0, 0)
+            .expect("midnight is always valid")
+            .and_utc();
+        return Ok(Some(format_utc(dt)));
+    }
+    Err(anyhow::anyhow!(
+        "param '{field}' must be an ISO 8601 / RFC 3339 timestamp or a YYYY-MM-DD date"
+    ))
 }
 
 /// Dollars (or any major unit) → integer minor units, round-half-even.
