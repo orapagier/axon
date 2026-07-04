@@ -2,7 +2,11 @@
 
 ## Overview
 
-This CRM is a SQLite-backed, MCP (Model Context Protocol) tool server built in Rust. It exposes **32 tools** organized into five domains: **Leads**, **Deals**, **Organizations**, **Activities**, and **Insights/Workflows**. All data is stored in a single `crm.db` file in the configured data directory.
+This CRM is a SQLite-backed, MCP (Model Context Protocol) tool server built in Rust. It exposes **33 tools** organized into five domains: **Leads**, **Deals**, **Organizations**, **Activities**, and **Insights/Workflows**. All data is stored in a single `crm.db` file in the configured data directory.
+
+### Agent vs. Workflow Access
+
+Workflow nodes can always call **every** CRM tool. The chat agent gets the **read** tools (list/get/search/overview/pipeline/dashboard/export/backup) by default; the **write** tools (create/update/delete/convert/archive/restore) are workflow-only unless the operator enables **Settings → CRM → "Allow the chat agent to call CRM write tools"** (`crm.agent_write_tools`). The toggle applies immediately, no restart needed. This mirrors the Facebook/Instagram pattern: mutations flow through deliberate, reviewable workflows; conversation stays read-only by default.
 
 ### Data Model
 
@@ -67,6 +71,8 @@ Leads represent individual people or contacts — potential customers at any sta
 
 Creates a new lead. Only `name` is required.
 
+**Duplicate guard:** if an active lead with the same email (case-insensitive) already exists, the call is rejected with an error carrying the existing lead's id — update that lead instead, or pass `"allow_duplicate": true` to create a second lead deliberately.
+
 **Parameters:**
 
 | Param | Type | Required | Notes |
@@ -80,6 +86,7 @@ Creates a new lead. Only `name` is required.
 | `source` | string | ❌ | e.g. `Website`, `Referral`, `Cold Outreach` |
 | `tags` | array[string] | ❌ | e.g. `["inbound", "priority"]` |
 | `notes` | string | ❌ | Free-form notes |
+| `allow_duplicate` | boolean | ❌ | Default `false`: reject if an active lead with the same email exists |
 
 **Returns:** `{ "success": true, "id": "uuid", "name": "..." }`
 
@@ -336,8 +343,9 @@ Creates a new organization. Only `name` is required.
 | `email` | string | Must be valid email |
 | `tags` | array[string] | |
 | `notes` | string | |
+| `allow_duplicate` | boolean | Default `false`: reject if an active org with the same name exists |
 
-**Duplicate warning:** If another org with the same name (case-insensitive) already exists, the record is still created but the response includes a `"warning"` field.
+**Duplicate guard:** if another active org with the same name (case-insensitive) exists, the call is rejected with an error carrying the existing org's id. Pass `"allow_duplicate": true` to create it anyway — the response then includes a `"warning"` field naming the existing record.
 
 ---
 
@@ -615,9 +623,14 @@ Lists archived records. Can be filtered to a single entity type or show all type
 
 Exports the entire CRM as a JSON snapshot for backup, migration, or audit.
 
-**Parameters:** `include_archived` (boolean, default `true`)
+**Parameters:**
 
-**Returns:**
+| Param | Type | Default | Notes |
+|---|---|---|---|
+| `include_archived` | boolean | `true` | Include soft-deleted records |
+| `to_file` | boolean | auto | Write to a file instead of returning inline. Defaults to `true` when the dataset exceeds **200 records** (an inline dump of a real dataset would blow the agent's context) |
+
+**Inline mode** (small datasets, or explicit `"to_file": false`):
 ```json
 {
   "exported_at": "2026-04-26T...",
@@ -630,7 +643,42 @@ Exports the entire CRM as a JSON snapshot for backup, migration, or audit.
 }
 ```
 
+**File mode** (default over 200 records, or explicit `"to_file": true`) writes a timestamped `crm-export-YYYYMMDD-HHMMSS.json` into the data files directory — it appears in the **Files page** and is fetchable by workflow nodes — and returns only:
+```json
+{
+  "success": true,
+  "exported_at": "2026-04-26T...",
+  "include_archived": true,
+  "counts": { "organizations": 5, "leads": 23, "deals": 11, "activities": 47 },
+  "total_records": 86,
+  "file": "/path/to/data/files/crm-export-20260426-093000.json",
+  "file_name": "crm-export-20260426-093000.json"
+}
+```
+
 Archived records include a non-null `deleted_at` field in the export.
+
+---
+
+### `crm_backup_db`
+
+Backs up the CRM SQLite database itself to a timestamped `crm-backup-YYYYMMDD-HHMMSS.db` file in the data files directory (Files page). Uses SQLite's `VACUUM INTO` — an online backup that is safe while the CRM is in use and produces a compacted copy.
+
+**Parameters:** none
+
+**Returns:**
+```json
+{
+  "success": true,
+  "file": "/path/to/data/files/crm-backup-20260426-093000.db",
+  "file_name": "crm-backup-20260426-093000.db",
+  "size_bytes": 122880
+}
+```
+
+**Restore:** stop the agent, replace `crm.db` in the data directory with the backup file (renamed to `crm.db`), start the agent.
+
+**Automation:** pair with the scheduler for a weekly backup — a one-node workflow that calls `crm_backup_db` (or `crm_export_snapshot` for a portable JSON copy) on a cron schedule. Old backups are plain files in the Files page; prune them whenever you like.
 
 ---
 
@@ -726,11 +774,15 @@ Activities referencing entities that don't exist are skipped with a warning log.
 | `"Cannot restore record because X 'Y' is missing or archived"` | Restore blocked by archived dependency |
 | `"param 'X' is too long: N characters (max M)"` | Field exceeds its length cap (names/titles 500, email/phone 200, notes/body 64 KB) |
 | `"param 'tags' accepts at most 50 tags"` / `"each tag must be at most 100 characters"` | Tag caps exceeded |
+| `"A lead with email 'X' already exists: 'Name' (id: ...)"` | Duplicate-email guard — update the existing lead or pass `allow_duplicate: true` |
+| `"An organization named 'X' already exists (id: ...)"` | Duplicate-name guard — use the existing org or pass `allow_duplicate: true` |
 
 ---
 
 ## Database & Performance Notes
 
+- **Location:** `crm.db` lives in the app-data directory — the platform local-data dir (`~/.local/share/axon-mcp` on Linux, `%LOCALAPPDATA%\axon-mcp` on Windows) by default, or `$AXON_DATA_DIR` when that env var is set (same convention as the `data/files` staging dir; a value ending in `/files` means the app-data base is its parent). Point `AXON_DATA_DIR` at a mounted/backed-up volume on servers. On first start after setting it, existing app-data files (including `crm.db`) are copied over from the legacy location automatically.
+- **Backups:** `crm_backup_db` runs an online `VACUUM INTO` copy into the Files page directory — safe under WAL while the CRM is in use. Schedule it weekly via a one-node workflow on the scheduler, or use `crm_export_snapshot` for a portable JSON export. Restore = stop agent, swap the backup in as `crm.db`, start agent.
 - The database runs in **WAL mode** with `synchronous = NORMAL`, balancing durability and write performance.
 - Connections are pooled up to **8 concurrent connections**.
 - All entity tables are indexed on `deleted_at`, `updated_at`, and their foreign keys.

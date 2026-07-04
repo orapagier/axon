@@ -89,6 +89,27 @@ pub async fn create(pool: &SqlitePool, args: &Map<String, Value>) -> Result<Valu
         notes.as_deref(),
     )?;
 
+    // Duplicate guard: agents in a loop will happily re-create the same
+    // contact. A teaching error carrying the existing id steers them to
+    // crm_lead_update instead; 'allow_duplicate': true overrides deliberately.
+    let allow_duplicate = crate::utils::bool_arg(args, "allow_duplicate")?.unwrap_or(false);
+    if !allow_duplicate {
+        if let Some(email) = email.as_deref() {
+            if let Some((dup_id, dup_name)) = sqlx::query_as::<_, (String, String)>(
+                "SELECT id, name FROM leads WHERE deleted_at IS NULL AND lower(email) = lower(?) LIMIT 1",
+            )
+            .bind(email)
+            .fetch_optional(pool)
+            .await?
+            {
+                return Err(anyhow::anyhow!(
+                    "A lead with email '{email}' already exists: '{dup_name}' (id: {dup_id}). \
+                     Update it with crm_lead_update, or pass 'allow_duplicate': true to create a second lead anyway."
+                ));
+            }
+        }
+    }
+
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
 

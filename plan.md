@@ -53,7 +53,9 @@ All 5 tests pass (`cargo test -p axon-crm`). Gaps, ordered by severity:
 
 **1.8 Transactional existence checks** — while touching create/update in `leads.rs`/`deals.rs`, move the `ensure_*_exists` + INSERT/UPDATE into one transaction.
 
-## Phase 2 — Operational readiness
+## Phase 2 — Operational readiness ✅ Done (2026-07-04)
+
+Also shipped alongside Phase 2 (operator decision, not in the original plan): **agent CRM access is read-only by default** — the 15 `crm_*` write tools (create/update/delete/convert/archive/restore) follow the Facebook/Instagram workflow-only pattern (`CRM_WRITE_TOOLS` in `registry.rs`), with a **Settings → CRM toggle** (`crm.agent_write_tools`, seeded off) that grants the agent full read/write without a restart. Workflow nodes keep full access via `all`/`run` regardless. A new `crm_backup_db` tool (VACUUM INTO → Files page) brings the tool count to 33.
 
 **2.1 Configurable data dir** — make `axon_core::storage::data_dir()` honor `AXON_DATA_DIR` (opt-in env override, same convention as `data_files_dir()`; default unchanged so existing deployments are unaffected). Document that `crm.db` lives there.
 

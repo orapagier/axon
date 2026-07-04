@@ -12,10 +12,109 @@ pub fn config_dir() -> PathBuf {
         .join("axon-mcp")
 }
 
+/// Resolve the app-data directory: `crm.db`, `credentials.json`, `tokens.json`,
+/// and the axon-business JSON stores (`contacts.json`, `notes.json`,
+/// `tasks.json`) live here.
+///
+/// Honors `AXON_DATA_DIR` when set (opt-in, same convention as
+/// [`data_files_dir`]: a value already pointing at the `files` staging dir
+/// means the app-data base is its parent). Unset keeps the platform local-data
+/// dir, so deployments without the env var are unaffected. Deployments that
+/// already set `AXON_DATA_DIR` for file staging get a one-time carry-over of
+/// existing app-data files so the CRM and business stores don't silently
+/// restart empty at the new location.
 pub fn data_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("AXON_DATA_DIR") {
+        let dir = dir.trim();
+        if !dir.is_empty() {
+            let mut base = PathBuf::from(dir);
+            if base.file_name().and_then(|n| n.to_str()) == Some("files") {
+                base = match base.parent() {
+                    Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+                    _ => PathBuf::from("."),
+                };
+            }
+            migrate_legacy_app_data(&base);
+            return base;
+        }
+    }
+    default_data_dir()
+}
+
+/// The pre-`AXON_DATA_DIR` default app-data location.
+fn default_data_dir() -> PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("axon-mcp")
+}
+
+/// One-time (per process) carry-over of app-data files from the legacy
+/// platform dir into an `AXON_DATA_DIR`-configured dir. Copy, never move —
+/// non-destructive, and only files missing at the target are brought over.
+fn migrate_legacy_app_data(target: &std::path::Path) {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        let legacy = default_data_dir();
+        if legacy == target {
+            return;
+        }
+
+        // crm.db moves as a unit with its WAL sidecars — a `-wal` copied next
+        // to a *different* db file would be garbage. Sidecars are copied only
+        // together with the main db file.
+        let src_db = legacy.join("crm.db");
+        if src_db.exists() && !target.join("crm.db").exists() && copy_into(&src_db, target) {
+            for sidecar in ["crm.db-wal", "crm.db-shm"] {
+                let src = legacy.join(sidecar);
+                if src.exists() {
+                    copy_into(&src, target);
+                }
+            }
+        }
+
+        for name in [
+            "contacts.json",
+            "notes.json",
+            "tasks.json",
+            "credentials.json",
+            "tokens.json",
+        ] {
+            let src = legacy.join(name);
+            if src.exists() && !target.join(name).exists() {
+                copy_into(&src, target);
+            }
+        }
+    });
+}
+
+fn copy_into(src: &std::path::Path, target_dir: &std::path::Path) -> bool {
+    let dst = target_dir.join(src.file_name().unwrap_or_default());
+    if let Err(e) = fs::create_dir_all(target_dir) {
+        tracing::warn!(
+            "AXON_DATA_DIR migration: cannot create {}: {e}",
+            target_dir.display()
+        );
+        return false;
+    }
+    match fs::copy(src, &dst) {
+        Ok(_) => {
+            tracing::info!(
+                "AXON_DATA_DIR migration: copied {} → {}",
+                src.display(),
+                dst.display()
+            );
+            true
+        }
+        Err(e) => {
+            tracing::warn!(
+                "AXON_DATA_DIR migration: failed to copy {} → {}: {e}",
+                src.display(),
+                dst.display()
+            );
+            false
+        }
+    }
 }
 
 /// Resolve the app's `data/files` staging/download directory.

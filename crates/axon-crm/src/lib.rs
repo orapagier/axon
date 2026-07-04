@@ -35,7 +35,7 @@ impl CrmService {
             // ── Leads (6) ────────────────────────────────────────────────
             Tool {
                 name: "crm_lead_create".into(),
-                description: "Create a new CRM lead. Status options: Open, Contacted, Qualified, Lost.".into(),
+                description: "Create a new CRM lead. Status options: Open, Contacted, Qualified, Lost. Rejects a duplicate active email with the existing lead's id — update that lead instead, or pass allow_duplicate: true.".into(),
                 input_schema: schema!({
                     "name":    { "type": "string" },
                     "email":   { "type": "string" },
@@ -45,7 +45,8 @@ impl CrmService {
                     "status":  { "type": "string", "enum": ["Open", "Contacted", "Qualified", "Lost"], "default": "Open" },
                     "source":  { "type": "string", "description": "Lead source, e.g. Website, Referral, Cold Outreach" },
                     "tags":    { "type": "array", "items": { "type": "string" } },
-                    "notes":   { "type": "string" }
+                    "notes":   { "type": "string" },
+                    "allow_duplicate": { "type": "boolean", "default": false, "description": "Create even if an active lead with the same email exists" }
                 }, ["name"]),
             },
             Tool {
@@ -187,7 +188,7 @@ impl CrmService {
             // ── Organizations (6) ────────────────────────────────────────
             Tool {
                 name: "crm_org_create".into(),
-                description: "Create a new organization/company in the CRM.".into(),
+                description: "Create a new organization/company in the CRM. Rejects a duplicate active name (case-insensitive) with the existing org's id — use that record instead, or pass allow_duplicate: true.".into(),
                 input_schema: schema!({
                     "name":     { "type": "string" },
                     "website":  { "type": "string" },
@@ -197,7 +198,8 @@ impl CrmService {
                     "phone":    { "type": "string" },
                     "email":    { "type": "string" },
                     "tags":     { "type": "array", "items": { "type": "string" } },
-                    "notes":    { "type": "string" }
+                    "notes":    { "type": "string" },
+                    "allow_duplicate": { "type": "boolean", "default": false, "description": "Create even if an active org with the same name exists" }
                 }, ["name"]),
             },
             Tool {
@@ -355,10 +357,16 @@ impl CrmService {
             },
             Tool {
                 name: "crm_export_snapshot".into(),
-                description: "Export a full CRM snapshot for backup, migration, or audit.".into(),
+                description: "Export a full CRM snapshot for backup, migration, or audit. Datasets over 200 records are written to a JSON file in the Files page by default (returns path + counts); pass to_file: false to force an inline dump.".into(),
                 input_schema: schema!({
-                    "include_archived": { "type": "boolean", "default": true }
+                    "include_archived": { "type": "boolean", "default": true },
+                    "to_file": { "type": "boolean", "description": "Write the snapshot to a timestamped JSON file instead of returning it inline. Defaults to true when the dataset exceeds 200 records." }
                 }, []),
+            },
+            Tool {
+                name: "crm_backup_db".into(),
+                description: "Back up the CRM SQLite database to a timestamped .db file in the Files page directory (online backup via VACUUM INTO; safe while the CRM is in use).".into(),
+                input_schema: schema!({}, []),
             },
         ]
     }
@@ -421,6 +429,7 @@ impl CrmService {
             "crm_record_overview" => views::record_overview(pool, a).await,
             "crm_dashboard_summary" => views::dashboard_summary(pool, a).await,
             "crm_export_snapshot" => records::export_snapshot(pool, a).await,
+            "crm_backup_db" => records::backup_db(pool).await,
 
             other => Err(anyhow::anyhow!("Unknown CRM tool: {other}")),
         };

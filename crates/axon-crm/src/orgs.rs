@@ -92,12 +92,23 @@ pub async fn create(pool: &SqlitePool, args: &Map<String, Value>) -> Result<Valu
         notes.as_deref(),
     )?;
 
-    let duplicate_exists: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM orgs WHERE deleted_at IS NULL AND lower(name) = lower(?)",
+    // Duplicate guard: same pattern as crm_lead_create — a teaching error with
+    // the existing id unless the caller explicitly allows the duplicate.
+    let allow_duplicate = crate::utils::bool_arg(args, "allow_duplicate")?.unwrap_or(false);
+    let existing: Option<(String,)> = sqlx::query_as(
+        "SELECT id FROM orgs WHERE deleted_at IS NULL AND lower(name) = lower(?) LIMIT 1",
     )
     .bind(name)
-    .fetch_one(pool)
+    .fetch_optional(pool)
     .await?;
+    if let Some((dup_id,)) = &existing {
+        if !allow_duplicate {
+            return Err(anyhow::anyhow!(
+                "An organization named '{name}' already exists (id: {dup_id}). \
+                 Use the existing record or crm_org_update, or pass 'allow_duplicate': true to create a second one anyway."
+            ));
+        }
+    }
 
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
@@ -123,9 +134,10 @@ pub async fn create(pool: &SqlitePool, args: &Map<String, Value>) -> Result<Valu
     .await?;
 
     let mut result = serde_json::json!({ "success": true, "id": id, "name": name });
-    if duplicate_exists > 0 {
-        result["warning"] =
-            Value::String(format!("An organization named '{name}' already exists."));
+    if let Some((dup_id,)) = &existing {
+        result["warning"] = Value::String(format!(
+            "Created as an allowed duplicate: another organization named '{name}' exists (id: {dup_id})."
+        ));
     }
     Ok(result)
 }

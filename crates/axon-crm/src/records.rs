@@ -191,6 +191,10 @@ pub async fn archived_list(pool: &SqlitePool, args: &Map<String, Value>) -> Resu
     }))
 }
 
+/// Above this many total records the export defaults to a file — returning the
+/// whole DB inline as one tool result would blow the agent's context.
+const EXPORT_INLINE_MAX_RECORDS: usize = 200;
+
 pub async fn export_snapshot(pool: &SqlitePool, args: &Map<String, Value>) -> Result<Value> {
     let include_archived = bool_arg(args, "include_archived")?.unwrap_or(true);
 
@@ -199,19 +203,73 @@ pub async fn export_snapshot(pool: &SqlitePool, args: &Map<String, Value>) -> Re
     let deals = export_deals(pool, include_archived).await?;
     let activities = export_activities(pool, include_archived).await?;
 
-    Ok(serde_json::json!({
-        "exported_at": Utc::now().to_rfc3339(),
+    let total = orgs.len() + leads.len() + deals.len() + activities.len();
+    let to_file = bool_arg(args, "to_file")?.unwrap_or(total > EXPORT_INLINE_MAX_RECORDS);
+
+    let exported_at = Utc::now();
+    let counts = serde_json::json!({
+        "organizations": orgs.len(),
+        "leads": leads.len(),
+        "deals": deals.len(),
+        "activities": activities.len(),
+    });
+
+    let snapshot = serde_json::json!({
+        "exported_at": exported_at.to_rfc3339(),
         "include_archived": include_archived,
-        "counts": {
-            "organizations": orgs.len(),
-            "leads": leads.len(),
-            "deals": deals.len(),
-            "activities": activities.len(),
-        },
+        "counts": counts,
         "organizations": orgs,
         "leads": leads,
         "deals": deals,
         "activities": activities,
+    });
+
+    if !to_file {
+        return Ok(snapshot);
+    }
+
+    // Lands in data_files_dir() so the Files page indexes it and workflow
+    // nodes can fetch it by path.
+    let dir = axon_core::data_files_dir();
+    std::fs::create_dir_all(&dir)?;
+    let file_name = format!("crm-export-{}.json", exported_at.format("%Y%m%d-%H%M%S"));
+    let path = dir.join(&file_name);
+    std::fs::write(&path, serde_json::to_vec_pretty(&snapshot)?)?;
+
+    Ok(serde_json::json!({
+        "success": true,
+        "exported_at": exported_at.to_rfc3339(),
+        "include_archived": include_archived,
+        "counts": counts,
+        "total_records": total,
+        "file": path.display().to_string(),
+        "file_name": file_name,
+        "note": "Snapshot written to file (visible in the Files page). Pass 'to_file': false for an inline dump.",
+    }))
+}
+
+/// Online backup of the CRM database via `VACUUM INTO` — safe under WAL while
+/// other connections read/write, and the copy is compacted.
+pub async fn backup_db(pool: &SqlitePool) -> Result<Value> {
+    let dir = axon_core::data_files_dir();
+    std::fs::create_dir_all(&dir)?;
+    let file_name = format!("crm-backup-{}.db", Utc::now().format("%Y%m%d-%H%M%S"));
+    let path = dir.join(&file_name);
+
+    // VACUUM INTO takes a filename literal, not a bind parameter; single
+    // quotes in the path are SQL-escaped by doubling.
+    let path_sql = path.display().to_string().replace('\'', "''");
+    sqlx::query(&format!("VACUUM INTO '{path_sql}'"))
+        .execute(pool)
+        .await?;
+
+    let size_bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+    Ok(serde_json::json!({
+        "success": true,
+        "file": path.display().to_string(),
+        "file_name": file_name,
+        "size_bytes": size_bytes,
+        "note": "Backup written to the Files page directory. Restore by replacing crm.db with this file while the agent is stopped.",
     }))
 }
 

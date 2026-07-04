@@ -709,6 +709,108 @@ async fn length_caps_reject_oversized_fields() -> Result<()> {
 }
 
 #[tokio::test]
+async fn duplicate_guards_teach_and_allow_override() -> Result<()> {
+    let (_dir, pool) = test_pool().await?;
+
+    let first = leads::create(
+        &pool,
+        &args(json!({ "name": "Dana First", "email": "dana@dup.test" })),
+    )
+    .await?;
+
+    // Case-insensitive email match, and the teaching error carries the id.
+    let dup_err = leads::create(
+        &pool,
+        &args(json!({ "name": "Dana Second", "email": "DANA@dup.test" })),
+    )
+    .await
+    .expect_err("expected duplicate-email guard");
+    assert!(
+        dup_err.to_string().contains(string_field(&first, "id")),
+        "got: {dup_err}"
+    );
+
+    leads::create(
+        &pool,
+        &args(json!({ "name": "Dana Second", "email": "dana@dup.test", "allow_duplicate": true })),
+    )
+    .await?;
+
+    let org = orgs::create(&pool, &args(json!({ "name": "Dup Org" }))).await?;
+    let org_err = orgs::create(&pool, &args(json!({ "name": "dup org" })))
+        .await
+        .expect_err("expected duplicate-name guard");
+    assert!(
+        org_err.to_string().contains(string_field(&org, "id")),
+        "got: {org_err}"
+    );
+
+    let second = orgs::create(
+        &pool,
+        &args(json!({ "name": "Dup Org", "allow_duplicate": true })),
+    )
+    .await?;
+    assert!(
+        second.get("warning").is_some(),
+        "allowed duplicate should carry a warning"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn export_to_file_and_backup_land_in_files_dir() -> Result<()> {
+    let (_dir, pool) = test_pool().await?;
+    let files_base = TestDir::new();
+    // Only this test reads AXON_DATA_DIR in this binary (db::open takes an
+    // explicit dir), so the process-global env var is safe to set here.
+    std::env::set_var("AXON_DATA_DIR", files_base.path());
+
+    leads::create(&pool, &args(json!({ "name": "Solo Lead" }))).await?;
+
+    // Small dataset → inline by default.
+    let inline = records::export_snapshot(&pool, &args(json!({}))).await?;
+    assert!(inline.get("leads").is_some(), "small export should inline");
+
+    // Explicit to_file → JSON lands under <AXON_DATA_DIR>/files, result is slim.
+    let filed = records::export_snapshot(&pool, &args(json!({ "to_file": true }))).await?;
+    assert!(
+        filed.get("leads").is_none(),
+        "file export must not inline records"
+    );
+    let path = PathBuf::from(string_field(&filed, "file"));
+    assert!(path.starts_with(files_base.path().join("files")));
+    let content: Value = serde_json::from_str(&fs::read_to_string(&path)?)?;
+    assert_eq!(content["counts"]["leads"], json!(1));
+
+    // Over the inline cap → defaults to file without being asked.
+    for i in 0..205 {
+        leads::create(&pool, &args(json!({ "name": format!("Bulk {i}") }))).await?;
+    }
+    let auto = records::export_snapshot(&pool, &args(json!({}))).await?;
+    assert!(
+        auto.get("file").is_some(),
+        ">200 records should default to a file export"
+    );
+
+    // Backup is a real, openable SQLite database.
+    let backup = records::backup_db(&pool).await?;
+    let backup_path = PathBuf::from(string_field(&backup, "file"));
+    let bpool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(SqliteConnectOptions::new().filename(&backup_path))
+        .await?;
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM leads")
+        .fetch_one(&bpool)
+        .await?;
+    assert_eq!(count, 206);
+    bpool.close().await;
+
+    std::env::remove_var("AXON_DATA_DIR");
+    Ok(())
+}
+
+#[tokio::test]
 async fn concurrent_pools_write_without_sqlite_busy() -> Result<()> {
     let (dir, pool_a) = test_pool().await?;
     let pool_b = db::open(dir.path()).await?;
