@@ -16,7 +16,7 @@ impl DiscordGateway {
         DiscordGateway {
             token,
             connected: Arc::new(AtomicBool::new(ok)),
-            client: reqwest::Client::new(),
+            client: crate::http::shared(),
         }
     }
     fn auth(&self) -> String {
