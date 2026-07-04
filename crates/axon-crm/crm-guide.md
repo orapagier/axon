@@ -682,6 +682,76 @@ Backs up the CRM SQLite database itself to a timestamped `crm-backup-YYYYMMDD-HH
 
 ---
 
+### `crm_changes_since`
+
+Change feed for automation and "what changed today" checks: every active lead, deal, and org created or updated **after** the `since` timestamp, oldest first.
+
+**Parameters:**
+
+| Param | Type | Default | Notes |
+|---|---|---|---|
+| `since` | string | ✅ required | RFC 3339 timestamp; any offset accepted (normalized to UTC) |
+| `entity_types` | array[string] | all three | Any of `lead`, `deal`, `org` |
+| `limit` | integer | 50 (max 200) | Rows per call |
+
+**Returns:**
+```json
+{
+  "since": "2026-07-04T08:00:00.000Z",
+  "cursor": "2026-07-04T09:12:44.512Z",
+  "count": 2,
+  "has_more": false,
+  "changes": [
+    { "entity_type": "lead", "change": "created", "id": "...", "name": "...", "status": "Open", "...": "..." },
+    { "entity_type": "deal", "change": "updated", "id": "...", "title": "...", "stage": "Won", "...": "..." }
+  ]
+}
+```
+
+- Each change carries the **full record** (same fields as the entity's `get` tool) plus `change: "created"` (created after `since`) or `"updated"`, and `updated_at_utc` (the normalized comparison value).
+- `cursor` is the last row's normalized `updated_at` — pass it back as the next `since` to resume exactly where you left off. The cursor is **exclusive**: replaying it returns nothing new.
+- `has_more: true` means the window was cut by `limit`; call again immediately with the new cursor.
+- Archived records never appear in the feed.
+
+This tool powers the **CRM workflow trigger** (below); it's also useful in chat ("what changed in the CRM today?") and in scheduled digest workflows.
+
+---
+
+## CRM Triggers (Workflow Automation)
+
+The WorkflowsPage **Stimulus** node has a **CRM** trigger type — the GHL-style "when something happens in the CRM, run this workflow" entry point. The background scheduler polls `crm_changes_since` on the configured interval and fires the workflow when matching changes arrive.
+
+**Configuration (Stimulus node → Trigger Type: CRM):**
+
+| Field | Values | Notes |
+|---|---|---|
+| CRM Event | New Lead / New Deal / Deal Stage Changed / Any Change | What fires the trigger |
+| Poll Interval | minutes (default 5) | How often the CRM is checked |
+
+**Trigger output** (one run per poll batch, like the Gmail trigger):
+```json
+{
+  "trigger": "crm",
+  "event": "deal_stage_changed",
+  "change_count": 1,
+  "changes": [
+    { "entity_type": "deal", "change": "updated", "id": "...", "title": "...",
+      "stage": "Won", "previous_stage": "Negotiation", "amount": 12500.0, "...": "..." }
+  ]
+}
+```
+
+Reference fields in downstream nodes with expressions, e.g. `{{ $json.changes[0].name }}` or `{{ $json.changes[0].previous_stage }}`.
+
+**Semantics worth knowing:**
+
+- **First poll is a silent baseline** — the trigger stores its cursor (and, for stage watching, the current stage of every active deal) without firing. Changes from then on fire.
+- **Deal Stage Changed** fires only when a deal's `stage` actually moves (payload carries `previous_stage`); editing notes/amount does not fire it. A deal the trigger has never seen is recorded silently and fires from its next stage change.
+- **"Execute Step"** on the node test-fetches real changes from the last 24 hours (widening to 30 days) so you have live rows to map fields against — create or edit a record first if it comes back empty.
+- Trigger state (`crm_cursor`, `crm_known_stages`) lives in the workflow row and survives restarts; the cursor advances before the run fires, so a crash can't re-fire the same changes forever.
+
+---
+
 ## Common Workflows
 
 ### Workflow 1: New Lead → Deal → Close
