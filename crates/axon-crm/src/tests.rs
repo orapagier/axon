@@ -811,6 +811,109 @@ async fn export_to_file_and_backup_land_in_files_dir() -> Result<()> {
 }
 
 #[tokio::test]
+async fn changes_since_tracks_creates_updates_and_cursor() -> Result<()> {
+    let (_dir, pool) = test_pool().await?;
+
+    // Records that exist BEFORE the cursor must not appear.
+    let old_lead = leads::create(&pool, &args(json!({ "name": "Pre-cursor Lead" }))).await?;
+    let old_lead_id = string_field(&old_lead, "id").to_owned();
+
+    // Cursor written with a non-UTC offset — must still compare correctly
+    // against the stored to_rfc3339 timestamps.
+    let cursor = Utc::now()
+        .with_timezone(&FixedOffset::east_opt(10 * 3600).unwrap())
+        .to_rfc3339();
+    // to_rfc3339 keeps sub-millisecond precision but the feed compares at
+    // milliseconds; wait one tick so post-cursor writes land after it.
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+
+    let new_lead = leads::create(&pool, &args(json!({ "name": "Post-cursor Lead" }))).await?;
+    let new_lead_id = string_field(&new_lead, "id").to_owned();
+    let deal = deals::create(
+        &pool,
+        &args(json!({
+            "title": "Fresh Deal",
+            "contact_id": new_lead_id,
+            "amount": 42.0
+        })),
+    )
+    .await?;
+    let deal_id = string_field(&deal, "id").to_owned();
+
+    // An UPDATE to a pre-cursor record surfaces as change: "updated".
+    leads::update(
+        &pool,
+        &args(json!({ "id": old_lead_id, "status": "Contacted" })),
+    )
+    .await?;
+
+    let feed = views::changes_since(&pool, &args(json!({ "since": cursor }))).await?;
+    assert_eq!(feed["count"], json!(3), "got: {feed}");
+    assert_eq!(feed["has_more"], json!(false));
+
+    let changes = feed["changes"].as_array().unwrap();
+    let find = |id: &str| {
+        changes
+            .iter()
+            .find(|c| c["id"] == json!(id))
+            .unwrap_or_else(|| panic!("missing change for {id}"))
+    };
+    assert_eq!(find(&new_lead_id)["change"], json!("created"));
+    assert_eq!(find(&new_lead_id)["entity_type"], json!("lead"));
+    assert_eq!(find(&deal_id)["change"], json!("created"));
+    assert_eq!(find(&deal_id)["amount"], json!(42.0));
+    assert_eq!(find(&old_lead_id)["change"], json!("updated"));
+    assert_eq!(find(&old_lead_id)["status"], json!("Contacted"));
+
+    // The returned cursor is exclusive: replaying it yields nothing new.
+    let cursor2 = string_field(&feed, "cursor").to_owned();
+    let replay = views::changes_since(&pool, &args(json!({ "since": cursor2 }))).await?;
+    assert_eq!(replay["count"], json!(0), "got: {replay}");
+    assert_eq!(replay["cursor"], json!(cursor2), "empty feed echoes cursor");
+
+    // Entity filter: deals only.
+    let deals_only = views::changes_since(
+        &pool,
+        &args(json!({ "since": cursor, "entity_types": ["deal"] })),
+    )
+    .await?;
+    assert_eq!(deals_only["count"], json!(1));
+    assert_eq!(deals_only["changes"][0]["id"], json!(deal_id));
+
+    // A stage change shows up as "updated" with the new stage, and archived
+    // records drop out of the feed entirely.
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    deals::update(
+        &pool,
+        &args(json!({ "id": deal_id, "stage": "Qualified" })),
+    )
+    .await?;
+    let after_stage = views::changes_since(
+        &pool,
+        &args(json!({ "since": cursor2, "entity_types": ["deal"] })),
+    )
+    .await?;
+    assert_eq!(after_stage["count"], json!(1));
+    assert_eq!(after_stage["changes"][0]["change"], json!("updated"));
+    assert_eq!(after_stage["changes"][0]["stage"], json!("Qualified"));
+
+    records::archive(&pool, &args(json!({ "entity_type": "deal", "id": deal_id }))).await?;
+    let after_archive = views::changes_since(
+        &pool,
+        &args(json!({ "since": cursor2, "entity_types": ["deal"] })),
+    )
+    .await?;
+    assert_eq!(after_archive["count"], json!(0), "archived records drop out");
+
+    // limit + has_more: window cut mid-feed, cursor resumes it.
+    let limited = views::changes_since(&pool, &args(json!({ "since": cursor, "limit": 1 }))).await?;
+    assert_eq!(limited["count"], json!(1));
+    assert_eq!(limited["has_more"], json!(true));
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn concurrent_pools_write_without_sqlite_busy() -> Result<()> {
     let (dir, pool_a) = test_pool().await?;
     let pool_b = db::open(dir.path()).await?;
