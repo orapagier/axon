@@ -491,8 +491,8 @@ onMounted(loadDashboard)
               <div class="card-title-group"><h2>Closing Soon</h2></div>
               <span class="card-summary">{{ dash.closing_soon_deals.length }}</span>
             </div>
-            <div v-if="!dash.closing_soon_deals.length" class="empty-state">Nothing closing soon.</div>
-            <div v-else class="mini-list">
+            <div v-if="!dash.closing_soon_deals.length" class="card-content empty-state">Nothing closing soon.</div>
+            <div v-else class="card-content mini-list">
               <button v-for="d in dash.closing_soon_deals" :key="d.id" class="mini-row" @click="openDrawer('deal', d.id)">
                 <span class="mini-title">{{ d.title }}</span>
                 <span class="mini-meta">{{ fmtMoney(d.amount, d.currency) }} · {{ fmtDate(d.expected_close) }}</span>
