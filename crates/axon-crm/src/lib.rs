@@ -439,6 +439,7 @@ impl CrmService {
             "crm_dashboard_summary" => views::dashboard_summary(pool, a).await,
             "crm_export_snapshot" => records::export_snapshot(pool, a).await,
             "crm_backup_db" => records::backup_db(pool).await,
+            "crm_changes_since" => views::changes_since(pool, a).await,
 
             other => Err(anyhow::anyhow!("Unknown CRM tool: {other}")),
         };
