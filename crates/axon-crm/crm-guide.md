@@ -2,7 +2,7 @@
 
 ## Overview
 
-This CRM is a SQLite-backed, MCP (Model Context Protocol) tool server built in Rust. It exposes **33 tools** organized into five domains: **Leads**, **Deals**, **Organizations**, **Activities**, and **Insights/Workflows**. All data is stored in a single `crm.db` file in the configured data directory.
+This CRM is a SQLite-backed, MCP (Model Context Protocol) tool server built in Rust. It exposes **34 tools** organized into five domains: **Leads**, **Deals**, **Organizations**, **Activities**, and **Insights/Workflows**. All data is stored in a single `crm.db` file in the configured data directory.
 
 ### Agent vs. Workflow Access
 
