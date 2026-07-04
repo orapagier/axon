@@ -363,6 +363,36 @@ export const NODE_TYPES = {
                 displayOptions: { show: { type: ['gmail'] } },
                 hint: 'Save every attachment & inline image to data/files and attach their paths (email.files[]). The full decoded body, signature/quote split, parsed sender, links and contacts are always included on each email.',
             },
+            // ── CRM Trigger Fields ──
+            {
+                displayName: 'CRM Event',
+                name: 'crm_event',
+                type: 'options',
+                options: [
+                    { name: 'New Lead', value: 'lead_created' },
+                    { name: 'New Deal', value: 'deal_created' },
+                    { name: 'Deal Stage Changed', value: 'deal_stage_changed' },
+                    { name: 'Any Change (lead/deal/org)', value: 'any_change' },
+                ],
+                default: 'lead_created',
+                displayOptions: { show: { type: ['crm'] } },
+                hint: 'Which CRM change fires this trigger. "Deal Stage Changed" fires when a deal moves pipeline stage (the payload carries previous_stage); other edits to the deal do not fire it.',
+            },
+            {
+                displayName: 'Poll Interval (minutes)',
+                name: 'poll_interval',
+                type: 'number',
+                default: 5,
+                displayOptions: { show: { type: ['crm'] } },
+                hint: 'How often to check the CRM for changes (in minutes). Minimum: 1.',
+            },
+            {
+                displayName: 'CRM Trigger Output',
+                name: 'crm_trigger_hint',
+                type: 'notice',
+                default: 'Fires with { trigger: "crm", event, change_count, changes: [...] } — each change carries the full record (id, name/title, status/stage, tags, ...) plus change: "created"/"updated" and, for stage changes, previous_stage. The first poll is a silent baseline. "Execute Step" test-fetches real changes from the last 24 hours (widening to 30 days), so create or edit a CRM record first if it comes back empty.',
+                displayOptions: { show: { type: ['crm'] } },
+            },
         ],
     },
     synapse: {
