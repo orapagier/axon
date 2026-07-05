@@ -124,8 +124,8 @@ impl GoogleService {
                 input_schema: schema!({
                     "event_id":    { "type": "string", "description": "ID of the event to update." },
                     "summary":     { "type": "string", "description": "New event title / name (SUMMARY)." },
-                    "start":       { "type": "string", "description": "New start time in ISO 8601 format, e.g. '2025-06-15T09:00:00'. A date alone ('2025-06-15') switches the event to all-day." },
-                    "end":         { "type": "string", "description": "New end time in ISO 8601 format, e.g. '2025-06-15T10:00:00'. For all-day events use a date." },
+                    "start":       { "type": "string", "description": "New start time, e.g. '2025-06-15T09:00:00'. Any common datetime format or a Unix timestamp works. A date alone ('2025-06-15') switches the event to all-day." },
+                    "end":         { "type": "string", "description": "New end time, e.g. '2025-06-15T10:00:00'. Accepts the same flexible formats as start. For all-day events use a date." },
                     "description": { "type": "string", "description": "New event notes / agenda (DESCRIPTION)." },
                     "location":    { "type": "string", "description": "New event location (LOCATION)." },
                     "attendees":   { "type": "array",  "description": "Updated attendee list. Each item is an attendee with their email.", "items": { "type": "object", "properties": { "email": { "type": "string", "description": "Attendee email address" } } } },
