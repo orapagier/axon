@@ -2419,17 +2419,17 @@ onUnmounted(() => {
                                     placeholder="Expression returning a date/time…"
                                     @revert="exitExprMode('p:'+subProp.name, () => node.data.config[subProp.name] = '')"
                                   />
-                                  <div v-else-if="subProp.type === 'dateTime'" class="field-with-fx" @drop.prevent="dropToExpr($event, 'p:'+subProp.name, v => node.data.config[subProp.name] = v)" @dragover.prevent>
-                                    <div class="datetime-field">
+                                  <div v-else-if="subProp.type === 'dateTime'" class="datetime-field" @drop.prevent="dropToExpr($event, 'p:'+subProp.name, v => node.data.config[subProp.name] = v)" @dragover.prevent>
+                                    <div class="field-with-fx">
                                       <input
                                         type="datetime-local"
                                         step="1"
                                         :value="isoToLocal(node.data.config[subProp.name])"
                                         @change="e => node.data.config[subProp.name] = localToIso(e.target.value)"
                                       />
-                                      <span v-if="node.data.config[subProp.name]" class="datetime-iso-hint">{{ node.data.config[subProp.name] }}</span>
+                                      <button type="button" class="btn-fx-toggle" title="Use an expression" @click="enterExprMode('p:'+subProp.name, () => node.data.config[subProp.name] = '')">ƒx</button>
                                     </div>
-                                    <button type="button" class="btn-fx-toggle" title="Use an expression" @click="enterExprMode('p:'+subProp.name, () => node.data.config[subProp.name] = '')">ƒx</button>
+                                    <span v-if="node.data.config[subProp.name]" class="datetime-iso-hint">{{ node.data.config[subProp.name] }}</span>
                                   </div>
                                   <input
                                     v-else
