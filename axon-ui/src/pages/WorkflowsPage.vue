@@ -342,7 +342,8 @@ function schemaToProperties(tool, nodeConfig = {}) {
     } else if (schema.type === 'number' || schema.type === 'integer') {
       prop.type = 'number'
     } else if (schema.type === 'array') {
-      if (schema.items?.type === 'object' && schema.items?.properties) {
+      const itemType = schema.items?.type
+      if (itemType === 'object' && schema.items?.properties) {
         prop.type = 'fixedCollection'
         prop.options = Object.entries(schema.items.properties).map(([subKey, subSchema]) => ({
           name: subKey,
@@ -355,13 +356,25 @@ function schemaToProperties(tool, nodeConfig = {}) {
         prop.options.forEach(o => defaultParam[o.name] = o.default)
         prop.default = { parameters: [defaultParam] }
         prop.hint = schema.description || 'Add items below'
-      } else {
+      } else if (itemType === 'object' || itemType === 'array') {
+        // Arrays of free-form objects (no declared shape): keep the JSON textarea.
         prop.type = 'string'
         prop.typeOptions = { rows: 4 }
         const desc = schema.description ? schema.description + ' ' : ''
-        prop.hint = `${desc}Enter one value, or a JSON array for multiple (e.g. ["a","b"]).`
-        prop.placeholder = '["id1","id2"] or a single value'
+        prop.hint = `${desc}Enter a JSON array (e.g. [{ ... }]).`
+        prop.placeholder = '[ ... ]'
         prop.default = ''
+      } else {
+        // Array of primitives (e.g. calendar_ids): render as a repeatable list
+        // where each entry is its own input with an Add button — friendlier than
+        // asking for a hand-written JSON array in a single box. Stored as a
+        // native array; the backend coerces arrays and strings alike.
+        prop.type = 'stringList'
+        prop.itemType = (itemType === 'number' || itemType === 'integer') ? 'number' : 'string'
+        prop.placeholder = schema.items?.description || schema.description || 'Enter a value'
+        const singular = prop.displayName.replace(/ies$/i, 'y').replace(/s$/i, '')
+        prop.addLabel = 'Add ' + singular
+        prop.default = []
       }
     } else if (schema.type === 'object') {
       prop.type = 'string'

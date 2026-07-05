@@ -851,6 +851,37 @@ function removeCollectionItem(propName, index) {
   }
 }
 
+// ── Primitive-array fields (stringList) ─────────────────────────────────────
+// A schema `array` of strings/numbers renders as a list of individual inputs
+// with an Add button (see schemaToProperties). The value lives as a native
+// array in config[propName]; each row is one element.
+function addStringListItem(propName) {
+  let arr = props.node.data.config[propName]
+  if (!Array.isArray(arr)) {
+    arr = (arr === undefined || arr === null || arr === '') ? [] : [String(arr)]
+    props.node.data.config[propName] = arr
+  }
+  arr.push('')
+}
+function removeStringListItem(propName, index) {
+  const arr = props.node.data.config[propName]
+  if (Array.isArray(arr)) arr.splice(index, 1)
+}
+function onDropStringList(event, propName, index) {
+  const token = event.dataTransfer.getData('variable')
+  if (!token) return
+  const arr = props.node.data.config[propName]
+  if (!Array.isArray(arr)) return
+  const currentVal = arr[index] || ''
+  const el = event.target || event.srcElement
+  if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') && typeof el.selectionStart === 'number') {
+    const pos = el.selectionStart
+    arr[index] = currentVal.substring(0, pos) + token + currentVal.substring(pos)
+  } else {
+    arr[index] = currentVal + token
+  }
+}
+
 // Drag-to-reorder for fixedCollection items (e.g. Circadian's Schedules list).
 // `draggable` is only turned on while the mouse is held on the item's own grip
 // handle, so dragging text inside its inputs still works normally. Disabled for
@@ -1475,6 +1506,8 @@ function normalizeConfig() {
         props.node.data.config[p.name] = { parameters: [] }
       } else if (p.type === 'multiOptions') {
         props.node.data.config[p.name] = p.default || []
+      } else if (p.type === 'stringList') {
+        props.node.data.config[p.name] = Array.isArray(p.default) ? [...p.default] : []
       } else {
         props.node.data.config[p.name] = p.default
       }
@@ -1506,6 +1539,33 @@ function normalizeConfig() {
         .filter(x => x !== null && x !== undefined && x !== '')
         .map(x => (x && typeof x === 'object') ? x : (key ? { [key]: String(x) } : {})),
     }
+  })
+
+  // stringList migration: a field that is now a repeatable list may have been
+  // saved earlier as a single JSON-array textarea (a string). Split it into a
+  // real array so each entry gets its own row. A JSON-array literal is parsed
+  // and spread; any other non-empty value becomes a single row.
+  nodeDefinition.value.properties.forEach(p => {
+    if (p.type !== 'stringList') return
+    const v = props.node.data.config[p.name]
+    if (Array.isArray(v)) return
+    let items = []
+    if (typeof v === 'string' && v.trim()) {
+      const t = v.trim()
+      if (t.startsWith('[')) {
+        try {
+          const parsed = JSON.parse(t)
+          items = Array.isArray(parsed) ? parsed : [t]
+        } catch { items = [t] }
+      } else {
+        items = [t]
+      }
+    } else if (v !== undefined && v !== null && v !== '') {
+      items = [v]
+    }
+    props.node.data.config[p.name] = items.map(x =>
+      (x === null || x === undefined) ? '' : (typeof x === 'object' ? JSON.stringify(x) : String(x))
+    )
   })
 
   // Backward compatibility for Circadian/Stimulus nodes using legacy cron_nl
@@ -2427,6 +2487,36 @@ onUnmounted(() => {
                         <span v-if="node.data.config[prop.name]" class="datetime-iso-hint">{{ node.data.config[prop.name] }}</span>
                       </div>
                       <button type="button" class="btn-fx-toggle" title="Use an expression" @click="enterExprMode('p:'+prop.name, () => node.data.config[prop.name] = '')">ƒx</button>
+                    </div>
+                  </template>
+                  <template v-else-if="prop.type === 'stringList'">
+                    <label>{{ prop.displayName }}</label>
+                    <div class="string-list">
+                      <div
+                        v-for="(item, idx) in (Array.isArray(node.data.config[prop.name]) ? node.data.config[prop.name] : [])"
+                        :key="idx"
+                        class="string-list-row"
+                      >
+                        <div class="input-with-preview">
+                          <input
+                            type="text"
+                            v-model="node.data.config[prop.name][idx]"
+                            :class="{ 'has-expression': hasExpression(node.data.config[prop.name][idx]) }"
+                            :placeholder="prop.placeholder || 'Enter a value'"
+                            @drop.prevent="onDropStringList($event, prop.name, idx)"
+                            @dragover.prevent
+                          />
+                          <div
+                            v-if="hasExpression(node.data.config[prop.name][idx])"
+                            class="exp-resolved"
+                          >
+                            <span class="exp-resolved-icon">=</span>
+                            <span class="exp-resolved-val">{{ inlineResolved(node.data.config[prop.name][idx]) ?? '(run previous node to preview)' }}</span>
+                          </div>
+                        </div>
+                        <button class="btn-fc-remove" type="button" @click="removeStringListItem(prop.name, idx)" title="Remove">✕</button>
+                      </div>
+                      <button class="btn-fc-add" type="button" @click="addStringListItem(prop.name)">+ {{ prop.addLabel || 'Add' }}</button>
                     </div>
                   </template>
                   <template v-else-if="prop.type === 'string' || prop.type === 'number'">
@@ -3368,6 +3458,11 @@ small.form-desc {
 /* FC items */
 .fc-items { display: flex; flex-direction: column; gap: 6px; }
 .fc-item { display: flex; gap: 8px; align-items: flex-start; }
+
+/* Primitive-array field: one input per entry + Add button (e.g. calendar_ids). */
+.string-list { display: flex; flex-direction: column; gap: 6px; }
+.string-list-row { display: flex; gap: 8px; align-items: flex-start; }
+.string-list-row .input-with-preview { flex: 1; }
 .fc-item-fields { flex: 1; display: flex; gap: 8px; }
 .fc-sub-field { flex: 1; display: flex; flex-direction: column; }
 /* A label-less field (e.g. Switch's "Output Name") sits beside fields that DO
