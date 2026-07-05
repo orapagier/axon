@@ -33,7 +33,15 @@ macro_rules! str {
 macro_rules! num {
     ($args:expr) => {
         |key: &str, default: f64| -> f64 {
-            $args.get(key).and_then(|v| v.as_f64()).unwrap_or(default)
+            $args
+                .get(key)
+                .and_then(|v| {
+                    // Expressions and workflow serializers often deliver
+                    // numbers as strings ("50"); accept those too.
+                    v.as_f64()
+                        .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+                })
+                .unwrap_or(default)
         }
     };
 }
