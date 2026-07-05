@@ -72,9 +72,10 @@ pub async fn get_google_sheet_tabs(
 
 pub async fn get_google_calendars(State(state): State<AppState>) -> Json<Value> {
     if let Ok(res) = state.tools.run("gcal_list_calendars", json!({})).await {
-        // gcal_list_calendars returns { calendars: [ { id, summary, primary, ... }, ... ] }
+        // gcal_list_calendars returns Google's raw calendarList response:
+        // { kind: "calendar#calendarList", items: [ { id, summary, primary, ... } ] }
         let calendars: Vec<Value> = res
-            .get("calendars")
+            .get("items")
             .and_then(|v| v.as_array())
             .map(|arr| {
                 arr.iter()
