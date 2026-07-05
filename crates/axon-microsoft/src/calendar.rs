@@ -1,11 +1,45 @@
 // calendar.rs
 use crate::auth::access_token;
 use anyhow::{bail, Result};
+use axon_core::flexidate::{
+    date_only, default_tz, fix_all_day_end, normalize_rfc3339, parse_flexible, FlexiDateTime,
+};
 use axon_core::{AppState, EnsureOk};
 use chrono::Utc;
 use serde_json::{json, Value};
 
 const BASE: &str = "https://graph.microsoft.com/v1.0";
+
+// ── Time handling ─────────────────────────────────────────────────────────────
+// Mirrors the Google Calendar adapter: every user/expression-supplied time
+// goes through axon_core::flexidate so any common datetime shape works.
+
+/// Build a Graph `dateTimeTimeZone` from any [`parse_flexible`] shape. Graph's
+/// `dateTime` must be a naive local time — the zone lives in the separate
+/// `timeZone` field — so:
+///   - date-only values ("2026-07-05", "July 5, 2026") become that day's
+///     midnight; the caller marks the event `isAllDay`
+///   - naive datetimes pass through as wall clock in `tz` — the operator-local
+///     reading, matching the Google adapter
+///   - offset-aware values (including Unix timestamps) are converted to UTC
+///     and tagged "UTC", preserving their absolute instant
+/// Unparseable values pass through so Graph reports them in its own words.
+fn graph_time(value: &str, tz: &str) -> Value {
+    let v = value.trim();
+    match parse_flexible(v) {
+        Some(FlexiDateTime::DateOnly(d)) => {
+            json!({ "dateTime": format!("{}T00:00:00", d.format("%Y-%m-%d")), "timeZone": tz })
+        }
+        Some(FlexiDateTime::Naive(dt)) => {
+            json!({ "dateTime": dt.format("%Y-%m-%dT%H:%M:%S").to_string(), "timeZone": tz })
+        }
+        Some(FlexiDateTime::Zoned(dt)) => json!({
+            "dateTime": dt.with_timezone(&Utc).format("%Y-%m-%dT%H:%M:%S").to_string(),
+            "timeZone": "UTC"
+        }),
+        None => json!({ "dateTime": v, "timeZone": tz }),
+    }
+}
 
 // ── Calendars ─────────────────────────────────────────────────────────────────
 
