@@ -162,23 +162,34 @@ pub async fn get_event(state: &AppState, event_id: &str) -> Result<Value> {
 }
 
 /// Create a new event.
+///
+/// Date-only start/end values ("2026-07-05") create an all-day event; Graph's
+/// exclusive all-day end is bumped forward automatically when start == end,
+/// mirroring the Google adapter.
 pub async fn create_event(
     state: &AppState,
     subject: &str,
     start: &str,
     end: &str,
-    time_zone: &str,
+    time_zone: Option<&str>,
     body: Option<&str>,
     location: Option<&str>,
     attendees: Option<Vec<&str>>,
     is_online: bool,
 ) -> Result<Value> {
     let tok = access_token(state).await?;
+    let default_tz = default_tz();
+    let tz = time_zone.unwrap_or(&default_tz);
+    let end = fix_all_day_end(start, end).unwrap_or_else(|| end.to_owned());
+    // Graph's all-day flag is event-level and demands midnight bounds, which
+    // graph_time produces for date-only values.
+    let all_day = date_only(start).is_some() && date_only(&end).is_some();
     let mut ev = json!({
         "subject":          subject,
         "isOnlineMeeting":  is_online,
-        "start":  { "dateTime": start, "timeZone": time_zone },
-        "end":    { "dateTime": end,   "timeZone": time_zone },
+        "isAllDay":         all_day,
+        "start":  graph_time(start, tz),
+        "end":    graph_time(&end, tz),
     });
     if let Some(b) = body {
         ev["body"] = json!({"contentType": "Text", "content": b});
