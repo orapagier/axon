@@ -283,102 +283,111 @@ impl MicrosoftService {
             }
             "outlook_list_folders" => outlook::list_folders(&self.0).await,
 
+            // Calendar. Optional params go through opt_str/opt_bool so the
+            // blank strings workflow nodes send for untouched fields read as
+            // "not provided" instead of empty values; datetime params go
+            // through opt_dt/req_dt so bare Unix-timestamp numbers work too.
             "mscal_list_calendars" => calendar::list_calendars(&self.0).await,
             "mscal_list_events" => {
+                let start = opt_dt(a, "start_datetime");
+                let end = opt_dt(a, "end_datetime");
                 calendar::list_events(
                     &self.0,
-                    n("max_count", 10.0).min(50.0) as u32,
-                    a.get("start_datetime").and_then(|v| v.as_str()),
-                    a.get("end_datetime").and_then(|v| v.as_str()),
-                    a.get("query").and_then(|v| v.as_str()),
-                    a.get("calendar_id").and_then(|v| v.as_str()),
+                    n("max_count", 10.0).clamp(1.0, 50.0) as u32,
+                    start.as_deref(),
+                    end.as_deref(),
+                    opt_str(a, "query"),
+                    opt_str(a, "calendar_id"),
                 )
                 .await
             }
-            "mscal_get_event" => calendar::get_event(&self.0, s("event_id")?).await,
+            "mscal_get_event" => calendar::get_event(&self.0, req_str(a, "event_id")?).await,
             "mscal_create_event" => {
+                let start = req_dt(a, "start")?;
+                let end = req_dt(a, "end")?;
                 calendar::create_event(
                     &self.0,
-                    s("subject")?,
-                    s("start")?,
-                    s("end")?,
-                    a.get("time_zone")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("Asia/Manila"),
-                    a.get("body").and_then(|v| v.as_str()),
-                    a.get("location").and_then(|v| v.as_str()),
-                    json_arr_opt(a, "attendees"),
-                    b("is_online_meeting", false),
+                    req_str(a, "subject")?,
+                    &start,
+                    &end,
+                    opt_str(a, "time_zone"),
+                    opt_str(a, "body"),
+                    opt_str(a, "location"),
+                    extract_attendees(a, "attendees"),
+                    opt_bool(a, "is_online_meeting").unwrap_or(false),
                 )
                 .await
             }
             "mscal_update_event" => {
+                let start = opt_dt(a, "start");
+                let end = opt_dt(a, "end");
                 calendar::update_event(
                     &self.0,
-                    s("event_id")?,
-                    a.get("subject").and_then(|v| v.as_str()),
-                    a.get("start").and_then(|v| v.as_str()),
-                    a.get("end").and_then(|v| v.as_str()),
-                    a.get("body").and_then(|v| v.as_str()),
-                    a.get("location").and_then(|v| v.as_str()),
-                    a.get("time_zone").and_then(|v| v.as_str()),
+                    req_str(a, "event_id")?,
+                    opt_str(a, "subject"),
+                    start.as_deref(),
+                    end.as_deref(),
+                    opt_str(a, "body"),
+                    opt_str(a, "location"),
+                    opt_str(a, "time_zone"),
+                    extract_attendees(a, "attendees"),
                 )
                 .await
             }
-            "mscal_delete_event" => calendar::delete_event(&self.0, s("event_id")?).await,
+            "mscal_delete_event" => calendar::delete_event(&self.0, req_str(a, "event_id")?).await,
             "mscal_cancel_event" => {
-                calendar::cancel_event(
-                    &self.0,
-                    s("event_id")?,
-                    a.get("comment").and_then(|v| v.as_str()),
-                )
-                .await
+                calendar::cancel_event(&self.0, req_str(a, "event_id")?, opt_str(a, "comment"))
+                    .await
             }
             "mscal_accept_event" => {
                 calendar::respond_event(
                     &self.0,
-                    s("event_id")?,
+                    req_str(a, "event_id")?,
                     "accept",
-                    a.get("comment").and_then(|v| v.as_str()),
+                    opt_str(a, "comment"),
                 )
                 .await
             }
             "mscal_decline_event" => {
                 calendar::respond_event(
                     &self.0,
-                    s("event_id")?,
+                    req_str(a, "event_id")?,
                     "decline",
-                    a.get("comment").and_then(|v| v.as_str()),
+                    opt_str(a, "comment"),
                 )
                 .await
             }
             "mscal_tentatively_accept_event" => {
                 calendar::respond_event(
                     &self.0,
-                    s("event_id")?,
+                    req_str(a, "event_id")?,
                     "tentativelyAccept",
-                    a.get("comment").and_then(|v| v.as_str()),
+                    opt_str(a, "comment"),
                 )
                 .await
             }
             "mscal_get_schedule" => {
+                let start = req_dt(a, "start")?;
+                let end = req_dt(a, "end")?;
                 calendar::get_schedule(
                     &self.0,
-                    json_arr_opt(a, "emails").unwrap_or_default(),
-                    s("start")?,
-                    s("end")?,
-                    a.get("time_zone").and_then(|v| v.as_str()),
+                    extract_attendees(a, "emails").unwrap_or_default(),
+                    &start,
+                    &end,
+                    opt_str(a, "time_zone"),
                 )
                 .await
             }
             "mscal_find_meeting_times" => {
+                let time_min = req_dt(a, "time_min")?;
+                let time_max = req_dt(a, "time_max")?;
                 calendar::find_meeting_times(
                     &self.0,
-                    json_arr_opt(a, "attendees").unwrap_or_default(),
+                    extract_attendees(a, "attendees").unwrap_or_default(),
                     n("duration_minutes", 30.0) as u32,
-                    s("time_min")?,
-                    s("time_max")?,
-                    a.get("time_zone").and_then(|v| v.as_str()),
+                    &time_min,
+                    &time_max,
+                    opt_str(a, "time_zone"),
                 )
                 .await
             }
