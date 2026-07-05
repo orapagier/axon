@@ -433,12 +433,14 @@ impl GoogleService {
                 .await
             }
             "gcal_update_event" => {
+                let start = opt_dt(a, "start");
+                let end = opt_dt(a, "end");
                 calendar::update_event(
                     &self.0,
                     req_str(a, "event_id")?,
                     opt_str(a, "summary"),
-                    opt_str(a, "start"),
-                    opt_str(a, "end"),
+                    start.as_deref(),
+                    end.as_deref(),
                     opt_str(a, "description"),
                     opt_str(a, "location"),
                     opt_str(a, "time_zone"),
