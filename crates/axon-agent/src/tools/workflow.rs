@@ -530,13 +530,6 @@ async fn execute_node_dispatch(
         }
         "cortex" => nodes::cortex::execute_cortex_node(config, state, workflow_id, &node.id).await,
         "classifier" => nodes::classifier::execute(config, state, workflow_id, &node.id).await,
-        "nociceptor" => {
-            // Sort by position so the failure report is deterministic; HashMap
-            // iteration order is random (same hazard the JS node guards against above).
-            let mut vec: Vec<_> = node_results.values().cloned().collect();
-            vec.sort_by_key(|r| r.position);
-            nodes::nociceptor::execute_nociceptor_node(state, &vec).await
-        }
         "fovea" => nodes::fovea::execute(config, state).await,
         t if t == "mcp" || t.starts_with("mcp_") => nodes::mcp::execute(config, state).await,
         "wait" => nodes::wait::execute(config, state, workflow_id, run_id, durable_allowed).await,

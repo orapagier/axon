@@ -1704,13 +1704,6 @@ export const NODE_TYPES = {
             },
         ],
     },
-    nociceptor: {
-        displayName: 'Nociceptor',
-        name: 'nociceptor',
-        icon: '/icons/nociceptor.png',
-        description: 'Optional manual error report node; workflow failures are now auto-reported globally',
-        properties: [],
-    },
     telegram: {
         displayName: 'Telegram',
         name: 'telegram',

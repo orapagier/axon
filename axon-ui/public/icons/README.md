@@ -14,7 +14,6 @@ Place your icon files here. Each file is named after the node's internal `name` 
 | `wait.png` | Wait |
 | `javascript.png` | JavaScript |
 | `axon.png` | Axon (AI Agent) |
-| `nociceptor.png` | Nociceptor (Error) |
 | `telegram.png` | Telegram |
 | `whatsapp.png` | WhatsApp |
 | `myelin.png` | Myelin (Storage) |
