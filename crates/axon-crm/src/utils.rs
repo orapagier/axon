@@ -131,14 +131,30 @@ pub fn tags_json_from_value(value: Option<&Value>) -> Result<Option<String>> {
         return Ok(None);
     };
 
-    let arr = value
-        .as_array()
-        .ok_or_else(|| anyhow::anyhow!("param 'tags' must be an array of strings"))?;
+    // Workflow nodes render any array-of-strings field (e.g. `tags`) as a plain
+    // text box defaulting to "", with a hint that says "enter one value, or a
+    // JSON array for multiple" — so a bare string (including the empty
+    // default) must be accepted here rather than hard-failing.
+    let arr: Vec<Value> = match value {
+        Value::Null => return Ok(None),
+        Value::Array(items) => items.clone(),
+        Value::String(s) => {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                return Ok(None);
+            }
+            match serde_json::from_str::<Value>(trimmed) {
+                Ok(Value::Array(items)) => items,
+                _ => vec![Value::String(trimmed.to_owned())],
+            }
+        }
+        _ => return Err(anyhow::anyhow!("param 'tags' must be an array of strings")),
+    };
 
     let mut seen = HashSet::new();
     let mut tags = Vec::new();
 
-    for item in arr {
+    for item in &arr {
         let raw = item
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("param 'tags' must contain only strings"))?;
