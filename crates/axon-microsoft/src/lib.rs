@@ -491,8 +491,101 @@ use boo;
 use num;
 use str;
 
-fn json_arr_opt<'a>(args: &'a Map<String, Value>, key: &str) -> Option<Vec<&'a str>> {
-    args.get(key)?
-        .as_array()
-        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+// ── Workflow-tolerant param helpers ───────────────────────────────────────────
+// Same semantics as the Google service crate: workflow nodes send "" for
+// every untouched field and preserve JSON types for bare expression
+// references, so blanks read as "not provided" and numbers are accepted
+// where datetimes are expected.
+
+/// Optional string param. Workflow nodes send `""` for every untouched field
+/// (the UI initializes all config keys), so blank must read as "not provided" —
+/// treating it as a value would PATCH empty subjects and `dateTime: ""` into
+/// Graph 400s.
+fn opt_str<'a>(args: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
+    let s = args.get(key)?.as_str()?.trim();
+    (!s.is_empty()).then_some(s)
+}
+
+/// Required string param: present and non-empty after trimming, for the same
+/// workflow-sends-"" reason as [`opt_str`].
+fn req_str<'a>(args: &'a Map<String, Value>, key: &str) -> Result<&'a str> {
+    opt_str(args, key).ok_or_else(|| anyhow::anyhow!("missing required param '{key}'"))
+}
+
+/// Datetime param: like [`opt_str`] but also accepts bare JSON numbers —
+/// an expression that is a single reference to a Unix timestamp (e.g.
+/// Telegram's message.date) resolves with its source type preserved, so the
+/// value arrives as a number, not a string.
+fn opt_dt(args: &Map<String, Value>, key: &str) -> Option<String> {
+    match args.get(key)? {
+        Value::String(s) if !s.trim().is_empty() => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
+/// Required datetime param, same number tolerance as [`opt_dt`].
+fn req_dt(args: &Map<String, Value>, key: &str) -> Result<String> {
+    opt_dt(args, key).ok_or_else(|| anyhow::anyhow!("missing required param '{key}'"))
+}
+
+/// Interpret a config toggle that the UI/LLM may send as a real bool, or as a
+/// string/number ("true"/"1"/"yes"/"on") — workflow nodes and serializers are
+/// inconsistent about boolean encoding.
+fn truthy(v: &Value) -> bool {
+    match v {
+        Value::Bool(b) => *b,
+        Value::Number(n) => n.as_f64().is_some_and(|f| f != 0.0),
+        Value::String(s) => matches!(
+            s.trim().to_ascii_lowercase().as_str(),
+            "true" | "1" | "yes" | "on"
+        ),
+        _ => false,
+    }
+}
+
+/// Optional boolean that tolerates the string/number encodings workflow
+/// serializers produce (see [`truthy`]); null and blank strings read as unset
+/// so schema defaults still apply.
+fn opt_bool(args: &Map<String, Value>, key: &str) -> Option<bool> {
+    match args.get(key)? {
+        Value::Null => None,
+        Value::String(s) if s.trim().is_empty() => None,
+        v => Some(truthy(v)),
+    }
+}
+
+/// Extract email addresses from either:
+///   - Old plain format: ["email@a.com", "email@b.com"]
+///   - New fixedCollection format: [{"email": "email@a.com"}, ...] or {"parameters": [{"email": "..."}]}
+fn extract_attendees<'a>(args: &'a Map<String, Value>, key: &str) -> Option<Vec<&'a str>> {
+    let raw = args.get(key)?;
+
+    // Unwrap fixedCollection envelope: { "parameters": [...] }
+    let arr = if let Some(obj) = raw.as_object() {
+        obj.get("parameters").and_then(|v| v.as_array())?
+    } else {
+        raw.as_array()?
+    };
+
+    if arr.is_empty() {
+        return None;
+    }
+
+    let result: Vec<&str> = arr
+        .iter()
+        .filter_map(|item| {
+            if let Some(s) = item.as_str() {
+                (!s.is_empty()).then_some(s)
+            } else if let Some(obj) = item.as_object() {
+                obj.get("email")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    (!result.is_empty()).then_some(result)
 }
