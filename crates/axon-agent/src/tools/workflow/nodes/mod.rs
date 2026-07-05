@@ -14,6 +14,7 @@
 pub(crate) mod classifier;
 pub(crate) mod condition;
 pub(crate) mod cortex;
+pub(crate) mod database;
 pub(crate) mod discord;
 pub(crate) mod engram;
 pub(crate) mod facebook;
