@@ -52,6 +52,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/tools", get(api::get_tools))
         .route("/api/fonts", get(api::get_fonts))
         .route("/api/fovea/folders", get(api::get_fovea_folders))
+        .route("/api/database/list", get(api::get_database_list))
         .route("/api/google/calendars", get(api::get_google_calendars))
         .route("/api/google/sheets", get(api::get_google_sheets))
         .route(

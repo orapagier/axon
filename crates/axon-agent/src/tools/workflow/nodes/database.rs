@@ -22,6 +22,7 @@ use serde_json::{json, Map, Value};
 use sqlx::any::{AnyArguments, AnyPoolOptions, AnyRow};
 use sqlx::query::Query;
 use sqlx::{Any, AnyPool, Column, Row, ValueRef};
+use std::path::PathBuf;
 use std::time::Duration;
 
 // ── Dialect ──────────────────────────────────────────────────────────────────
@@ -91,6 +92,92 @@ fn confirm_no_where(cfg: &Value) -> bool {
             .unwrap_or(false)
 }
 
+// ── SQLite database files ──────────────────────────────────────────────────────
+//
+// A SQLite "database" is just a file. To keep them predictable and listable we
+// store bare-named databases in a managed `databases/` folder under the app data
+// dir (honoring AXON_DATA_DIR). Advanced users can still pass an explicit path.
+
+/// Managed directory holding user SQLite database files. Created on demand.
+pub(crate) fn sqlite_dir() -> PathBuf {
+    let dir = axon_core::data_dir().join("databases");
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
+/// Resolve a user-supplied SQLite database name/path to a filesystem path.
+/// A bare name (`sales`, `sales.db`) lands in the managed dir; anything that
+/// looks like a path (contains a separator or a drive letter) is honored as-is.
+fn resolve_sqlite_path(name: &str) -> Result<PathBuf, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("SQLite: database name is empty".into());
+    }
+    // Reject path traversal outright, before the explicit-path escape hatch.
+    if name.contains("..") {
+        return Err("Invalid database name (path traversal not allowed)".into());
+    }
+    let looks_pathy = name.contains('/')
+        || name.contains('\\')
+        || (name.len() > 1 && name.as_bytes()[1] == b':');
+    if looks_pathy {
+        return Ok(PathBuf::from(name));
+    }
+    let mut fname = name.to_string();
+    if !(fname.ends_with(".db") || fname.ends_with(".sqlite") || fname.ends_with(".sqlite3")) {
+        fname.push_str(".db");
+    }
+    if !fname
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+    {
+        return Err(
+            "Database name may contain only letters, digits, underscores and hyphens".into(),
+        );
+    }
+    Ok(sqlite_dir().join(fname))
+}
+
+/// List the SQLite database files in the managed directory (for the picker and
+/// the List Databases action).
+pub(crate) fn list_sqlite_databases() -> Value {
+    let dir = sqlite_dir();
+    let mut rows: Vec<(String, u64)> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            let is_db = p
+                .extension()
+                .and_then(|x| x.to_str())
+                .map(|x| matches!(x, "db" | "sqlite" | "sqlite3"))
+                .unwrap_or(false);
+            if is_db {
+                if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
+                    let size = e.metadata().map(|m| m.len()).unwrap_or(0);
+                    rows.push((name.to_string(), size));
+                }
+            }
+        }
+    }
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+    let databases: Vec<Value> = rows
+        .into_iter()
+        .map(|(name, size)| json!({ "name": name, "size_bytes": size }))
+        .collect();
+    json!({ "databases": databases, "directory": dir.to_string_lossy() })
+}
+
+/// Delete a SQLite database file.
+fn drop_sqlite_database(cfg: &Value) -> Result<Value, String> {
+    let name = require(cfg, "database")?;
+    let path = resolve_sqlite_path(&name)?;
+    if !path.exists() {
+        return Err(format!("Database '{name}' does not exist"));
+    }
+    std::fs::remove_file(&path).map_err(|e| format!("Failed to delete database '{name}': {e}"))?;
+    Ok(json!({ "dropped": true, "database": name }))
+}
+
 // ── Identifier validation & quoting ───────────────────────────────────────────
 
 /// A single identifier segment: starts with a letter/underscore, then letters,
@@ -137,19 +224,19 @@ fn build_url(dialect: Dialect, cfg: &Value) -> Result<String, String> {
 
     match dialect {
         Dialect::Sqlite => {
-            let raw = require(cfg, "database").map_err(|_| {
-                "SQLite needs a 'database' field (a file path) on the credential".to_string()
-            })?;
+            let raw = require(cfg, "database")
+                .map_err(|_| "SQLite: choose or name a database first".to_string())?;
             if raw.starts_with("sqlite:") {
                 return Ok(raw);
             }
+            let path = resolve_sqlite_path(&raw)?;
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
             // Opaque `sqlite:` form (no `//`) avoids URL authority parsing, which is
             // what mangles Windows drive letters. `mode=rwc` opens-or-creates.
-            if raw.contains('?') {
-                Ok(format!("sqlite:{raw}"))
-            } else {
-                Ok(format!("sqlite:{raw}?mode=rwc"))
-            }
+            let p = path.to_string_lossy().replace('\\', "/");
+            Ok(format!("sqlite:{p}?mode=rwc"))
         }
         Dialect::Postgres | Dialect::MySql => {
             let (scheme, default_port) = match dialect {
@@ -430,6 +517,72 @@ async fn op_delete(pool: &AnyPool, dialect: Dialect, cfg: &Value) -> Result<Valu
     run_exec(pool, &sql, vec![]).await
 }
 
+// ── Database & schema management ──────────────────────────────────────────────
+
+async fn op_create_database(pool: &AnyPool, dialect: Dialect, cfg: &Value) -> Result<Value, String> {
+    match dialect {
+        // For SQLite the file is created by connecting with mode=rwc (build_url),
+        // so by the time we get here it already exists — just report it.
+        Dialect::Sqlite => {
+            let name = require(cfg, "database")?;
+            Ok(json!({ "created": true, "database": name }))
+        }
+        _ => {
+            let name = require(cfg, "new_database")?;
+            let ident = quote_ident(dialect, &name)?;
+            run_exec(pool, &format!("CREATE DATABASE {ident}"), vec![]).await?;
+            Ok(json!({ "created": true, "database": name }))
+        }
+    }
+}
+
+async fn op_drop_database_server(
+    pool: &AnyPool,
+    dialect: Dialect,
+    cfg: &Value,
+) -> Result<Value, String> {
+    let name = require(cfg, "new_database").or_else(|_| require(cfg, "database"))?;
+    let ident = quote_ident(dialect, &name)?;
+    run_exec(pool, &format!("DROP DATABASE {ident}"), vec![]).await?;
+    Ok(json!({ "dropped": true, "database": name }))
+}
+
+async fn op_list_databases_server(pool: &AnyPool, dialect: Dialect) -> Result<Value, String> {
+    let sql = match dialect {
+        Dialect::Postgres => {
+            "SELECT datname AS name FROM pg_database WHERE datistemplate = false ORDER BY datname"
+        }
+        Dialect::MySql => "SHOW DATABASES",
+        Dialect::Sqlite => unreachable!("SQLite listDatabases handled before connect"),
+    };
+    let rows = bind_all(sqlx::query(sql), vec![])
+        .fetch_all(pool)
+        .await
+        .map_err(fmt_err)?;
+    let databases: Vec<Value> = rows.iter().map(|r| decode_col(r, 0)).collect();
+    let n = databases.len();
+    Ok(json!({ "databases": databases, "database_count": n }))
+}
+
+async fn op_list_tables(pool: &AnyPool, dialect: Dialect) -> Result<Value, String> {
+    let sql = match dialect {
+        Dialect::Sqlite => {
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+        }
+        Dialect::Postgres => {
+            "SELECT tablename AS name FROM pg_tables WHERE schemaname NOT IN ('pg_catalog','information_schema') ORDER BY tablename"
+        }
+        Dialect::MySql => "SHOW TABLES",
+    };
+    let rows = bind_all(sqlx::query(sql), vec![])
+        .fetch_all(pool)
+        .await
+        .map_err(fmt_err)?;
+    let tables: Vec<Value> = rows.iter().map(|r| decode_col(r, 0)).collect();
+    let n = tables.len();
+    Ok(json!({ "tables": tables, "table_count": n }))
+}
+
 // ── Public executor ────────────────────────────────────────────────────────────
 
 /// Register sqlx's default drivers (postgres/mysql/sqlite) with the `Any` URL
@@ -442,8 +595,20 @@ fn ensure_drivers() {
 pub(crate) async fn execute(config: &Value) -> Result<Value, String> {
     ensure_drivers();
     let dialect = Dialect::parse(&str_val(config, "db_type").unwrap_or_else(|| "postgres".into()))?;
-    let url = build_url(dialect, config)?;
+    let operation = str_val(config, "operation").unwrap_or_else(|| "executeQuery".to_string());
 
+    // SQLite database management is pure filesystem work — no connection to a
+    // target file (dropDatabase must not open the file, and listDatabases just
+    // reads the folder).
+    if dialect == Dialect::Sqlite {
+        match operation.as_str() {
+            "listDatabases" => return Ok(list_sqlite_databases()),
+            "dropDatabase" => return drop_sqlite_database(config),
+            _ => {}
+        }
+    }
+
+    let url = build_url(dialect, config)?;
     let pool = AnyPoolOptions::new()
         .max_connections(1)
         .acquire_timeout(Duration::from_secs(10))
@@ -451,13 +616,16 @@ pub(crate) async fn execute(config: &Value) -> Result<Value, String> {
         .await
         .map_err(|e| format!("Database connection failed: {e}"))?;
 
-    let operation = str_val(config, "operation").unwrap_or_else(|| "executeQuery".to_string());
     let result = match operation.as_str() {
         "executeQuery" => op_execute_query(&pool, config).await,
         "select" => op_select(&pool, dialect, config).await,
         "insert" => op_insert(&pool, dialect, config).await,
         "update" => op_update(&pool, dialect, config).await,
         "delete" => op_delete(&pool, dialect, config).await,
+        "createDatabase" => op_create_database(&pool, dialect, config).await,
+        "dropDatabase" => op_drop_database_server(&pool, dialect, config).await,
+        "listDatabases" => op_list_databases_server(&pool, dialect).await,
+        "listTables" => op_list_tables(&pool, dialect).await,
         other => Err(format!("Unsupported database operation '{other}'")),
     };
 
@@ -594,5 +762,60 @@ mod tests {
         assert_eq!(del["rows_affected"], 1);
 
         let _ = std::fs::remove_file(path.replace('/', std::path::MAIN_SEPARATOR_STR));
+    }
+
+    #[test]
+    fn resolve_sqlite_path_rules() {
+        // Bare name → managed dir, .db appended.
+        let p = resolve_sqlite_path("sales").unwrap();
+        assert_eq!(p.file_name().unwrap(), "sales.db");
+        assert_eq!(p.parent().unwrap(), sqlite_dir());
+        // Existing extension kept.
+        assert_eq!(resolve_sqlite_path("x.sqlite").unwrap().file_name().unwrap(), "x.sqlite");
+        // Explicit path honored as-is.
+        assert_eq!(resolve_sqlite_path("/tmp/a.db").unwrap(), PathBuf::from("/tmp/a.db"));
+        // Traversal / bad chars rejected.
+        assert!(resolve_sqlite_path("../secret").is_err());
+        assert!(resolve_sqlite_path("bad name!").is_err());
+    }
+
+    /// Full lifecycle in the MANAGED dir: create a named database, see it in the
+    /// list, create a table, list tables, then drop the database.
+    #[tokio::test]
+    async fn sqlite_managed_lifecycle() {
+        let name = format!("axon_life_{}", uuid::Uuid::new_v4().simple());
+        let base = |op: &str| json!({ "db_type": "sqlite", "database": name.clone(), "operation": op });
+
+        // Create the database (file in the managed dir).
+        let created = execute(&base("createDatabase")).await.expect("createDatabase");
+        assert_eq!(created["created"], true);
+        assert!(resolve_sqlite_path(&name).unwrap().exists());
+
+        // It shows up in listDatabases.
+        let list = execute(&base("listDatabases")).await.expect("listDatabases");
+        let names: Vec<String> = list["databases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| d["name"].as_str().unwrap().to_string())
+            .collect();
+        assert!(names.contains(&format!("{name}.db")), "listing missing new db: {names:?}");
+
+        // Empty database → no tables.
+        let t0 = execute(&base("listTables")).await.expect("listTables empty");
+        assert_eq!(t0["table_count"], 0);
+
+        // Create a table, then it appears in listTables.
+        let mut c = base("executeQuery");
+        c["query"] = json!("CREATE TABLE orders (id INTEGER PRIMARY KEY, total REAL)");
+        execute(&c).await.expect("create table");
+        let t1 = execute(&base("listTables")).await.expect("listTables");
+        assert_eq!(t1["table_count"], 1);
+        assert_eq!(t1["tables"][0], "orders");
+
+        // Drop the database file.
+        let dropped = execute(&base("dropDatabase")).await.expect("dropDatabase");
+        assert_eq!(dropped["dropped"], true);
+        assert!(!resolve_sqlite_path(&name).unwrap().exists());
     }
 }

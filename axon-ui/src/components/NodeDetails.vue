@@ -55,6 +55,20 @@ const foveaFolderOptions = ref([
     description: 'Use all images under the root data/files folder.',
   },
 ])
+// SQLite database files (for the Database node's file picker).
+const sqliteDatabaseOptions = ref([])
+async function loadSqliteDatabases() {
+  try {
+    const d = await get('/database/list')
+    sqliteDatabaseOptions.value = (d.databases || []).map((db) => ({
+      name: db.name,
+      value: db.name,
+      description: db.size_bytes != null ? `${db.size_bytes} bytes` : undefined,
+    }))
+  } catch (e) {
+    console.error('Failed to load SQLite databases', e)
+  }
+}
 
 onMounted(async () => {
   const saved = localStorage.getItem('ndv-panel-widths')
@@ -106,6 +120,13 @@ onMounted(async () => {
   } catch (e) {
     console.error('Failed to load Fovea image folders', e)
   }
+  await loadSqliteDatabases()
+})
+
+// Refresh the SQLite file list whenever a Database node is opened, so a database
+// just created by another node shows up in the picker.
+watch(() => props.node?.id, () => {
+  if (props.node?.data?.node_type === 'database') loadSqliteDatabases()
 })
 
 function getCredentialsForService(service) {
@@ -1046,6 +1067,20 @@ const nodeDefinition = computed(() => {
       }
     }
     return base
+  }
+
+  // For the Database node, turn the SQLite 'database' field into a searchable
+  // picker of existing .db files (allowCustomValue lets you type a new name to
+  // create). Only relevant for SQLite; server engines use a credential.
+  if (type === 'database' && base.properties) {
+    return {
+      ...base,
+      properties: base.properties.map(p =>
+        p.name === 'database'
+          ? { ...p, type: 'options', searchable: true, allowCustomValue: true, options: sqliteDatabaseOptions.value }
+          : p
+      ),
+    }
   }
 
   // For MCP nodes, merge dynamic properties from the selected tool's schema

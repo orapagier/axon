@@ -24,6 +24,12 @@ pub async fn get_fovea_folders() -> Json<Value> {
     Json(json!({ "folders": folders }))
 }
 
+/// SQLite database files in the managed `databases/` folder — powers the
+/// Database node's file picker.
+pub async fn get_database_list() -> Json<Value> {
+    Json(crate::tools::workflow::nodes::database::list_sqlite_databases())
+}
+
 pub async fn toggle_tool(
     State(state): State<AppState>,
     Path(name): Path<String>,
