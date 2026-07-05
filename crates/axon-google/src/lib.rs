@@ -131,15 +131,15 @@ impl GoogleService {
             },
             Tool {
                 name: "gcal_delete_event".into(),
-                description: "Delete a Google Calendar event. Attendees are notified. Set 'all_events' to true to delete all instances of a recurring event.".into(),
-                input_schema: schema!({"event_id":{"type":"string"},"calendar_id":{"type":"string","default":"primary"},"all_events":{"type":"boolean","default":false}}, ["event_id"]),
+                description: "Delete a Google Calendar event. Attendees are notified unless 'send_updates' says otherwise. Set 'all_events' to true to delete all instances of a recurring event.".into(),
+                input_schema: schema!({"event_id":{"type":"string"},"calendar_id":{"type":"string","default":"primary"},"all_events":{"type":"boolean","default":false},"send_updates":{"type":"string","description":"Who receives cancellation emails: 'all', 'externalOnly', or 'none'.","enum":["all","externalOnly","none"],"default":"all"}}, ["event_id"]),
             },
             Tool {
                 name: "gcal_move_event".into(),
                 description: "Move an event from one Google calendar to another.".into(),
-                input_schema: schema!({"event_id":{"type":"string"},"source_calendar_id":{"type":"string","default":"primary"},"destination_calendar_id":{"type":"string"}}, ["event_id","destination_calendar_id"]),
+                input_schema: schema!({"event_id":{"type":"string"},"source_calendar_id":{"type":"string","default":"primary"},"destination_calendar_id":{"type":"string"},"send_updates":{"type":"string","description":"Who receives notification emails: 'all', 'externalOnly', or 'none'.","enum":["all","externalOnly","none"],"default":"all"}}, ["event_id","destination_calendar_id"]),
             },
-            Tool { name: "gcal_quick_add".into(),    description: "Quick-add a calendar event from natural language, e.g. 'Team standup tomorrow 10am'.".into(), input_schema: schema!({"text":{"type":"string"},"calendar_id":{"type":"string","default":"primary"}}, ["text"]) },
+            Tool { name: "gcal_quick_add".into(),    description: "Quick-add a calendar event from natural language, e.g. 'Team standup tomorrow 10am'.".into(), input_schema: schema!({"text":{"type":"string"},"calendar_id":{"type":"string","default":"primary"},"send_updates":{"type":"string","description":"Who receives notification emails: 'all', 'externalOnly', or 'none'.","enum":["all","externalOnly","none"],"default":"all"}}, ["text"]) },
             Tool { name: "gcal_get_freebusy".into(), description: "Check free/busy time for a list of calendars.".into(),                          input_schema: schema!({"calendar_ids":{"type":"array","items":{"type":"string"}},"time_min":{"type":"string","description":"ISO 8601"},"time_max":{"type":"string","description":"ISO 8601"}}, ["calendar_ids","time_min","time_max"]) },
 
             // Drive
