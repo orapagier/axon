@@ -481,13 +481,10 @@ impl GoogleService {
                 .await
             }
             "gcal_get_freebusy" => {
-                calendar::get_freebusy(
-                    &self.0,
-                    json_arr(a, "calendar_ids")?,
-                    req_str(a, "time_min")?,
-                    req_str(a, "time_max")?,
-                )
-                .await
+                let time_min = req_dt(a, "time_min")?;
+                let time_max = req_dt(a, "time_max")?;
+                calendar::get_freebusy(&self.0, json_arr(a, "calendar_ids")?, &time_min, &time_max)
+                    .await
             }
 
             // Contacts
