@@ -334,7 +334,7 @@ pub async fn respond_event(
     let tok = access_token(state).await?;
     state
         .client
-        .post(format!("{BASE}/me/events/{event_id}/{action}"))
+        .post(format!("{BASE}/me/events/{}/{action}", urlenc(event_id)))
         .bearer_auth(&tok)
         .json(&json!({"comment": comment.unwrap_or(""), "sendResponse": true}))
         .send()
