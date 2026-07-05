@@ -449,8 +449,8 @@ pub async fn get_freebusy(
 ) -> Result<Value> {
     let tok = access_token(state).await?;
     let body = json!({
-        "timeMin": time_min,
-        "timeMax": time_max,
+        "timeMin": normalize_rfc3339(time_min),
+        "timeMax": normalize_rfc3339(time_max),
         "items":   calendar_ids.iter().map(|id| json!({"id": id})).collect::<Vec<_>>(),
     });
     let resp: Value = state
