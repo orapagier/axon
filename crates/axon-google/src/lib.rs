@@ -1021,6 +1021,32 @@ fn truthy(v: &Value) -> bool {
     }
 }
 
+/// Optional string param. Workflow nodes send `""` for every untouched field
+/// (the UI initializes all config keys), so blank must read as "not provided" —
+/// treating it as a value made gcal_update_event blank out summaries and PATCH
+/// `start.dateTime: ""` into a 400.
+fn opt_str<'a>(args: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
+    let s = args.get(key)?.as_str()?.trim();
+    (!s.is_empty()).then_some(s)
+}
+
+/// Required string param: present and non-empty after trimming, for the same
+/// workflow-sends-"" reason as [`opt_str`].
+fn req_str<'a>(args: &'a Map<String, Value>, key: &str) -> Result<&'a str> {
+    opt_str(args, key).ok_or_else(|| anyhow::anyhow!("missing required param '{key}'"))
+}
+
+/// Optional boolean that tolerates the string/number encodings workflow
+/// serializers produce (see [`truthy`]); null and blank strings read as unset
+/// so schema defaults still apply.
+fn opt_bool(args: &Map<String, Value>, key: &str) -> Option<bool> {
+    match args.get(key)? {
+        Value::Null => None,
+        Value::String(s) if s.trim().is_empty() => None,
+        v => Some(truthy(v)),
+    }
+}
+
 fn json_arr(args: &Map<String, Value>, key: &str) -> Result<Vec<String>> {
     let items = args.get(key).map(coerce_str_vec).unwrap_or_default();
     if items.is_empty() {
