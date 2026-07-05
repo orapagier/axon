@@ -1,3 +1,4 @@
+pub mod flexidate;
 pub mod oauth;
 pub mod storage;
 
