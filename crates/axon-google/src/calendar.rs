@@ -322,7 +322,7 @@ pub async fn update_event(
     Ok(resp)
 }
 
-/// Delete an event. Attendees are notified.
+/// Delete an event. `send_updates` controls attendee notification emails.
 /// Set `all_events` to true when deleting a recurring event to remove ALL instances at once.
 ///
 /// How it works: the Google Calendar API does not accept any special query param to bulk-delete
