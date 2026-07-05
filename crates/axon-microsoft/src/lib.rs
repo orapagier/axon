@@ -160,12 +160,12 @@ impl MicrosoftService {
             Tool {
                 name: "mscal_get_schedule".into(),
                 description: "Check free/busy availability for one or more users or calendars over a time range. Returns busy blocks and a 30-minute-slot availability view.".into(),
-                input_schema: schema!({"emails":{"type":"array","items":{"type":"string"},"description":"List of email addresses to check"},"start":{"type":"string","description":"ISO 8601 range start"},"end":{"type":"string","description":"ISO 8601 range end"},"time_zone":{"type":"string","default":"Asia/Manila"}}, ["emails","start","end"]),
+                input_schema: schema!({"emails":{"type":"array","description":"List of people to check. Each item is a person with their email address.","items":{"type":"object","properties":{"email":{"type":"string","description":"Email address to check, e.g. john@example.com"}}}},"start":{"type":"string","description":"Window start; any common datetime format or Unix timestamp","displayOptions":{"inlineGroup":"time_window"}},"end":{"type":"string","description":"Window end; same flexible formats as start","displayOptions":{"inlineGroup":"time_window"}},"time_zone":{"type":"string","default":"Asia/Manila"}}, ["emails","start","end"]),
             },
             Tool {
                 name: "mscal_find_meeting_times".into(),
                 description: "Find available meeting times where all required attendees are free. Returns ranked suggestions within the given time window.".into(),
-                input_schema: schema!({"attendees":{"type":"array","items":{"type":"string"},"description":"List of attendee email addresses"},"duration_minutes":{"type":"integer","description":"Required meeting duration in minutes"},"time_min":{"type":"string","description":"ISO 8601 window start"},"time_max":{"type":"string","description":"ISO 8601 window end"},"time_zone":{"type":"string","default":"Asia/Manila"}}, ["attendees","duration_minutes","time_min","time_max"]),
+                input_schema: schema!({"attendees":{"type":"array","description":"List of required attendees. Each item is an attendee with their email address.","items":{"type":"object","properties":{"email":{"type":"string","description":"Attendee email address, e.g. john@example.com"}}}},"duration_minutes":{"type":"integer","description":"Required meeting duration in minutes"},"time_min":{"type":"string","description":"Window start; any common datetime format or Unix timestamp","displayOptions":{"inlineGroup":"time_window"}},"time_max":{"type":"string","description":"Window end; same flexible formats as time_min","displayOptions":{"inlineGroup":"time_window"}},"time_zone":{"type":"string","default":"Asia/Manila"}}, ["attendees","duration_minutes","time_min","time_max"]),
             },
             // OneDrive
             Tool {
