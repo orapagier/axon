@@ -286,12 +286,12 @@ mod tests {
 
     #[test]
     fn unix_timestamps_seconds_and_millis() {
-        // 2026-07-05T09:00:00+08:00 == 1783299600 UTC seconds
-        let secs = parse_flexible("1783299600").unwrap();
+        // 2026-07-05T09:00:00+08:00 == 1783213200 UTC seconds
+        let secs = parse_flexible("1783213200").unwrap();
         assert_eq!(secs.to_rfc3339("+08:00"), "2026-07-05T01:00:00Z");
-        let millis = parse_flexible("1783299600000").unwrap();
+        let millis = parse_flexible("1783213200000").unwrap();
         assert_eq!(millis, secs);
-        let num = parse_flexible_value(&serde_json::json!(1783299600)).unwrap();
+        let num = parse_flexible_value(&serde_json::json!(1783213200)).unwrap();
         assert_eq!(num, secs);
     }
 
