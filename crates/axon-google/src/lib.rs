@@ -1032,6 +1032,23 @@ fn req_str<'a>(args: &'a Map<String, Value>, key: &str) -> Result<&'a str> {
     opt_str(args, key).ok_or_else(|| anyhow::anyhow!("missing required param '{key}'"))
 }
 
+/// Datetime param: like [`opt_str`] but also accepts bare JSON numbers —
+/// an expression that is a single reference to a Unix timestamp (e.g.
+/// Telegram's message.date) resolves with its source type preserved, so the
+/// value arrives as a number, not a string.
+fn opt_dt(args: &Map<String, Value>, key: &str) -> Option<String> {
+    match args.get(key)? {
+        Value::String(s) if !s.trim().is_empty() => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
+/// Required datetime param, same number tolerance as [`opt_dt`].
+fn req_dt(args: &Map<String, Value>, key: &str) -> Result<String> {
+    opt_dt(args, key).ok_or_else(|| anyhow::anyhow!("missing required param '{key}'"))
+}
+
 /// Optional boolean that tolerates the string/number encodings workflow
 /// serializers produce (see [`truthy`]); null and blank strings read as unset
 /// so schema defaults still apply.
