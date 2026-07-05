@@ -2386,7 +2386,7 @@ onUnmounted(() => {
                     <option :value="null">— Global default —</option>
                     <option v-for="w in errorHandlerOptions" :key="w.id" :value="w.id">{{ w.name }}</option>
                   </select>
-                  <div class="wf-settings-hint">Runs the chosen workflow's Error trigger when this one errors. Build a handler by adding a Stimulus neuron with trigger type “On Error”.</div>
+                  <div class="wf-settings-hint">Runs the chosen workflow's Nociceptor trigger when this one errors. Build a handler by adding a Stimulus neuron with trigger type “Nociceptor”.</div>
                   <div class="wf-settings-divider"></div>
                   <label class="wf-settings-label">Backup &amp; share</label>
                   <div class="wf-settings-actions">
