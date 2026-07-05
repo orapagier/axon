@@ -154,6 +154,66 @@ pub fn parse_flexible(input: &str) -> Option<FlexiDateTime> {
     None
 }
 
+// ── Shared time defaults & normalizers ───────────────────────────────────────
+// Used by every calendar-shaped adapter (Google, Microsoft) so datetime
+// behavior stays identical across services.
+
+/// IANA timezone applied when a caller doesn't specify one.
+/// Override with AXON_DEFAULT_TZ (keep AXON_DEFAULT_TZ_OFFSET in sync).
+pub fn default_tz() -> String {
+    std::env::var("AXON_DEFAULT_TZ").unwrap_or_else(|_| "Asia/Manila".into())
+}
+
+/// Fixed UTC offset matching [`default_tz`], used to make naive datetimes
+/// unambiguous where an API demands an offset. Override with
+/// AXON_DEFAULT_TZ_OFFSET, e.g. "+02:00".
+pub fn default_tz_offset() -> String {
+    std::env::var("AXON_DEFAULT_TZ_OFFSET").unwrap_or_else(|_| "+08:00".into())
+}
+
+/// Normalize a user/expression-supplied time into RFC 3339 for API params
+/// that need an absolute instant (Google timeMin/timeMax, Graph calendarView
+/// startDateTime/endDateTime):
+///   - offset-aware strings ("...Z", "...+08:00") pass through untouched
+///   - everything else goes through [`parse_flexible`], which accepts any
+///     common datetime shape (Sheets-style, slash dates, month names, 12-hour
+///     clocks, Unix timestamps); naive results get the default offset appended
+///     — NOT "Z", because a naive time means operator-local wall clock, not UTC
+/// Unrecognized shapes pass through so the API reports them in its own words.
+pub fn normalize_rfc3339(t: &str) -> String {
+    let t = t.trim();
+    if DateTime::parse_from_rfc3339(t).is_ok() {
+        return t.to_owned();
+    }
+    match parse_flexible(t) {
+        Some(f) => f.to_rfc3339(&default_tz_offset()),
+        None => t.to_owned(),
+    }
+}
+
+/// The date when a value parses as date-only (all-day semantics), in any
+/// format parse_flexible understands.
+pub fn date_only(v: &str) -> Option<NaiveDate> {
+    match parse_flexible(v) {
+        Some(FlexiDateTime::DateOnly(d)) => Some(d),
+        _ => None,
+    }
+}
+
+/// All-day ends are exclusive in both Google Calendar and Microsoft Graph: a
+/// one-day event on the 5th needs end = the 6th, and end == start is rejected
+/// as an empty range. Callers naturally pass start == end for a single day,
+/// so bump the end forward when both are dates and end doesn't already clear
+/// start.
+pub fn fix_all_day_end(start: &str, end: &str) -> Option<String> {
+    let s = date_only(start)?;
+    let e = date_only(end)?;
+    if e > s {
+        return None; // already a valid exclusive end
+    }
+    Some(s.succ_opt()?.to_string())
+}
+
 /// Like [`parse_flexible`] but for raw JSON values: expressions that are a
 /// single bare reference preserve the source's JSON type, so a Unix timestamp
 /// arrives as a number, not a string.
