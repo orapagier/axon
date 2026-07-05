@@ -469,6 +469,92 @@ pub async fn get_freebusy(
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/// Percent-encode a URL *path* segment. form_urlencoded emits "+" for spaces,
+/// which is only a space in query strings — in a path it's a literal plus, so
+/// rewrite it to %20.
 fn urlenc(s: &str) -> String {
-    url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
+    url::form_urlencoded::byte_serialize(s.as_bytes())
+        .collect::<String>()
+        .replace('+', "%20")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The offset helpers read env vars; tests assume the defaults (+08:00).
+
+    #[test]
+    fn offset_aware_times_pass_through() {
+        assert_eq!(normalize_rfc3339("2026-07-05T09:00:00Z"), "2026-07-05T09:00:00Z");
+        assert_eq!(
+            normalize_rfc3339("2026-07-05T09:00:00+08:00"),
+            "2026-07-05T09:00:00+08:00"
+        );
+        assert_eq!(
+            normalize_rfc3339("2026-07-05T09:00:00-05:00"),
+            "2026-07-05T09:00:00-05:00"
+        );
+    }
+
+    #[test]
+    fn naive_times_get_local_offset_not_utc() {
+        assert_eq!(
+            normalize_rfc3339("2026-07-05T09:00:00"),
+            "2026-07-05T09:00:00+08:00"
+        );
+        // datetime-local without seconds
+        assert_eq!(normalize_rfc3339("2026-07-05T09:00"), "2026-07-05T09:00:00+08:00");
+    }
+
+    #[test]
+    fn date_only_expands_to_local_midnight() {
+        assert_eq!(normalize_rfc3339("2026-07-05"), "2026-07-05T00:00:00+08:00");
+    }
+
+    #[test]
+    fn unrecognized_shapes_pass_through_for_google_to_report() {
+        assert_eq!(normalize_rfc3339("not a date"), "not a date");
+        assert_eq!(normalize_rfc3339(""), "");
+    }
+
+    #[test]
+    fn date_only_values_become_all_day_events() {
+        assert_eq!(event_time("2026-07-05", "Asia/Manila"), json!({"date": "2026-07-05"}));
+        assert_eq!(
+            event_time("2026-07-05T09:00:00", "Asia/Manila"),
+            json!({"dateTime": "2026-07-05T09:00:00", "timeZone": "Asia/Manila"})
+        );
+    }
+
+    #[test]
+    fn all_day_end_bumps_to_exclusive_next_day() {
+        // start == end → one-day event needs end = next day
+        assert_eq!(
+            fix_all_day_end("2026-07-05", "2026-07-05"),
+            Some("2026-07-06".into())
+        );
+        // valid exclusive end left alone
+        assert_eq!(fix_all_day_end("2026-07-05", "2026-07-06"), None);
+        // timed events are untouched
+        assert_eq!(fix_all_day_end("2026-07-05T09:00:00", "2026-07-05T09:00:00"), None);
+    }
+
+    #[test]
+    fn send_updates_validates_with_all_fallback() {
+        assert_eq!(send_updates_or_all(Some("none")), "none");
+        assert_eq!(send_updates_or_all(Some("externalOnly")), "externalOnly");
+        assert_eq!(send_updates_or_all(Some("bogus")), "all");
+        assert_eq!(send_updates_or_all(None), "all");
+    }
+
+    #[test]
+    fn path_encoding_handles_calendar_ids() {
+        assert_eq!(urlenc("user@gmail.com"), "user%40gmail.com");
+        assert_eq!(
+            urlenc("en.philippines#holiday@group.v.calendar.google.com"),
+            "en.philippines%23holiday%40group.v.calendar.google.com"
+        );
+        assert_eq!(urlenc("has space"), "has%20space");
+    }
 }
