@@ -1,11 +1,84 @@
 use crate::auth::access_token;
 use anyhow::Result;
 use axon_core::{AppState, EnsureOk};
-use chrono::Utc;
+use chrono::{NaiveDate, NaiveDateTime, Utc};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
 const BASE: &str = "https://www.googleapis.com/calendar/v3";
+
+// ── Time handling ─────────────────────────────────────────────────────────────
+
+/// IANA timezone applied when a caller doesn't specify one.
+/// Override with AXON_DEFAULT_TZ (keep AXON_DEFAULT_TZ_OFFSET in sync).
+pub(crate) fn default_tz() -> String {
+    std::env::var("AXON_DEFAULT_TZ").unwrap_or_else(|_| "Asia/Manila".into())
+}
+
+/// Fixed UTC offset matching [`default_tz`], used to make naive datetimes
+/// unambiguous where the API demands an offset (timeMin/timeMax, freeBusy).
+/// Override with AXON_DEFAULT_TZ_OFFSET, e.g. "+02:00".
+fn default_tz_offset() -> String {
+    std::env::var("AXON_DEFAULT_TZ_OFFSET").unwrap_or_else(|_| "+08:00".into())
+}
+
+/// Normalize a user/expression-supplied time into the RFC 3339 form Google
+/// requires for timeMin/timeMax:
+///   - offset-aware strings ("...Z", "...+08:00") pass through untouched
+///   - date-only "YYYY-MM-DD" expands to local midnight with the default offset
+///   - naive datetimes get the default offset appended — NOT "Z", because a
+///     naive time means operator-local wall clock, not UTC
+/// Unrecognized shapes pass through so Google reports them in its own words.
+fn normalize_rfc3339(t: &str) -> String {
+    let t = t.trim();
+    if chrono::DateTime::parse_from_rfc3339(t).is_ok() {
+        return t.to_owned();
+    }
+    if NaiveDate::parse_from_str(t, "%Y-%m-%d").is_ok() {
+        return format!("{t}T00:00:00{}", default_tz_offset());
+    }
+    if NaiveDateTime::parse_from_str(t, "%Y-%m-%dT%H:%M:%S%.f").is_ok() {
+        return format!("{t}{}", default_tz_offset());
+    }
+    // datetime-local without seconds ("2026-07-05T09:00")
+    if NaiveDateTime::parse_from_str(t, "%Y-%m-%dT%H:%M").is_ok() {
+        return format!("{t}:00{}", default_tz_offset());
+    }
+    t.to_owned()
+}
+
+/// Build an event start/end object. A date-only value ("2026-07-05") produces
+/// an all-day `{date}`; anything else a timed `{dateTime, timeZone}`. A naive
+/// dateTime plus timeZone is Google's preferred wall-clock form, so timed
+/// values are passed through as given.
+fn event_time(value: &str, tz: &str) -> Value {
+    let v = value.trim();
+    if NaiveDate::parse_from_str(v, "%Y-%m-%d").is_ok() {
+        json!({ "date": v })
+    } else {
+        json!({ "dateTime": v, "timeZone": tz })
+    }
+}
+
+/// Google's all-day `end.date` is exclusive: a one-day event on the 5th needs
+/// end = the 6th, and end == start is rejected as an empty range. Callers
+/// naturally pass start == end for a single day, so bump the end forward when
+/// both are dates and end doesn't already clear start.
+fn fix_all_day_end(start: &str, end: &str) -> Option<String> {
+    let s = NaiveDate::parse_from_str(start.trim(), "%Y-%m-%d").ok()?;
+    let e = NaiveDate::parse_from_str(end.trim(), "%Y-%m-%d").ok()?;
+    (e <= s).then(|| s.succ_opt().map(|d| d.to_string()))?
+}
+
+/// Validated sendUpdates value; anything unrecognized falls back to "all",
+/// which matches the node's historical behavior.
+pub(crate) fn send_updates_or_all(v: Option<&str>) -> &'static str {
+    match v {
+        Some("none") => "none",
+        Some("externalOnly") => "externalOnly",
+        _ => "all",
+    }
+}
 
 // ── Calendars ─────────────────────────────────────────────────────────────────
 
