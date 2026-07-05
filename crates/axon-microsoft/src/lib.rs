@@ -96,8 +96,8 @@ impl MicrosoftService {
             },
             Tool {
                 name: "mscal_list_events".into(),
-                description: "List Microsoft Calendar events. Use this when asked about the Outlook/Microsoft calendar or schedule. Supports free-text search via 'query'. Note: 'calendar_id' and 'query' cannot be used together — if both are supplied an error is returned.".into(),
-                input_schema: schema!({"max_count":{"type":"integer","default":10,"description":"Max events to return (up to 50)"},"start_datetime":{"type":"string","description":"ISO 8601 start filter"},"end_datetime":{"type":"string"},"query":{"type":"string","description":"Free-text search. Cannot be combined with calendar_id."},"calendar_id":{"type":"string","description":"Specific calendar ID. Cannot be combined with query."}}, []),
+                description: "List Microsoft Calendar events. Use this when asked about the Outlook/Microsoft calendar or schedule. Supports free-text search via 'query'. When no time window is given, listing covers now through the next 30 days. Note: 'calendar_id' and 'query' cannot be used together — if both are supplied an error is returned.".into(),
+                input_schema: schema!({"max_count":{"type":"integer","default":10,"description":"Max events to return (up to 50)"},"start_datetime":{"type":"string","description":"Window start. Any common datetime format works: ISO 8601, '2026-07-05 09:00', 'July 5, 2026 3pm', or a Unix timestamp.","displayOptions":{"inlineGroup":"time_window"}},"end_datetime":{"type":"string","description":"Window end. Accepts the same flexible formats as start_datetime.","displayOptions":{"inlineGroup":"time_window"}},"query":{"type":"string","description":"Free-text search. Cannot be combined with calendar_id."},"calendar_id":{"type":"string","description":"Specific calendar ID. Cannot be combined with query."}}, []),
             },
             Tool {
                 name: "mscal_get_event".into(),
