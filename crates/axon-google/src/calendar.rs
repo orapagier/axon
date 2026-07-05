@@ -175,7 +175,10 @@ pub async fn get_event(state: &AppState, event_id: &str, calendar_id: &str) -> R
     Ok(resp)
 }
 
-/// Create a new event. Sends notifications to all attendees.
+/// Create a new event. `send_updates` controls attendee notification emails.
+///
+/// Date-only start/end values ("2026-07-05") create an all-day event; the
+/// exclusive all-day end is bumped forward automatically when start == end.
 ///
 /// The `recurrence` parameter accepts a list of RRULE/EXRULE/RDATE/EXDATE strings
 /// as defined in RFC 5545. Common examples:
@@ -184,6 +187,7 @@ pub async fn get_event(state: &AppState, event_id: &str, calendar_id: &str) -> R
 ///   - Every Friday, 10 times:        `["RRULE:FREQ=WEEKLY;BYDAY=FR;COUNT=10"]`
 ///   - Every Friday until Dec 31:     `["RRULE:FREQ=WEEKLY;BYDAY=FR;UNTIL=20261231T000000Z"]`
 ///   - Every month on the 1st:        `["RRULE:FREQ=MONTHLY;BYMONTHDAY=1"]`
+#[allow(clippy::too_many_arguments)]
 pub async fn create_event(
     state: &AppState,
     summary: &str,
@@ -196,15 +200,18 @@ pub async fn create_event(
     create_meet_link: bool,
     calendar_id: &str,
     recurrence: Option<Vec<String>>,
+    send_updates: &str,
 ) -> Result<Value> {
     let tok = access_token(state).await?;
     let cal = urlenc(calendar_id);
 
-    let tz = time_zone.unwrap_or("Asia/Manila");
+    let default_tz = default_tz();
+    let tz = time_zone.unwrap_or(&default_tz);
+    let end = fix_all_day_end(start, end).unwrap_or_else(|| end.to_owned());
     let mut body = json!({
         "summary": summary,
-        "start":   { "dateTime": start, "timeZone": tz },
-        "end":     { "dateTime": end,   "timeZone": tz },
+        "start":   event_time(start, tz),
+        "end":     event_time(&end, tz),
     });
     if let Some(d) = description {
         body["description"] = json!(d);
@@ -227,16 +234,17 @@ pub async fn create_event(
         });
     }
 
-    // sendUpdates=all notifies attendees. conferenceDataVersion=1 is required for Meet links.
-    let mut url = format!("{BASE}/calendars/{cal}/events?sendUpdates=all");
+    // conferenceDataVersion=1 is required for Meet links.
+    let mut params = vec![("sendUpdates", send_updates)];
     if create_meet_link {
-        url.push_str("&conferenceDataVersion=1");
+        params.push(("conferenceDataVersion", "1"));
     }
 
     let resp: Value = state
         .client
-        .post(url)
+        .post(format!("{BASE}/calendars/{cal}/events"))
         .bearer_auth(&tok)
+        .query(&params)
         .json(&body)
         .send()
         .await?
