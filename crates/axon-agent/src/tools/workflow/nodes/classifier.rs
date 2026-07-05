@@ -72,7 +72,7 @@ pub(crate) fn execute<'a>(
             None,
             Some(system.as_str()),
         );
-        ctx.preferred_model = selected_model;
+        ctx.preferred_model = selected_model.clone();
         ctx.memory_enabled = false;
         ctx.isolated_memory = true;
         // Empty allow-list => the agent loop filters down to zero tools, so this
@@ -84,12 +84,44 @@ pub(crate) fn execute<'a>(
             .await
             .map_err(|e| format!("Classifier agent error: {}", e))?;
 
-        let parsed = extract_json(&raw).ok_or_else(|| {
-            format!(
-                "Classifier: model did not return JSON. Got: {}",
-                truncate(&raw, 300)
-            )
-        })?;
+        // Some models ignore the "JSON only" instruction on the first pass
+        // (e.g. answering in prose) but self-correct when told exactly what
+        // was wrong with their reply, so give it one corrective retry before
+        // failing the node.
+        let parsed = match extract_json(&raw) {
+            Some(p) => p,
+            None => {
+                let retry_stimulus = format!(
+                    "Your previous reply was not a JSON object. You replied:\n{}\n\n\
+                     Respond again with ONLY the JSON object — no markdown, no prose.",
+                    truncate(&raw, 300)
+                );
+                let mut retry_ctx = crate::agent::RunContext::new(
+                    &retry_stimulus,
+                    "workflow",
+                    Some(&format!("{session}:retry")),
+                    None,
+                    None,
+                    None,
+                    Some(system.as_str()),
+                );
+                retry_ctx.preferred_model = selected_model;
+                retry_ctx.memory_enabled = false;
+                retry_ctx.isolated_memory = true;
+                retry_ctx.allowed_tools = Some(vec![]);
+
+                let raw2 = crate::agent::run_task(&retry_stimulus, state, retry_ctx)
+                    .await
+                    .map_err(|e| format!("Classifier agent error (retry): {}", e))?;
+
+                extract_json(&raw2).ok_or_else(|| {
+                    format!(
+                        "Classifier: model did not return JSON after retry. Got: {}",
+                        truncate(&raw2, 300)
+                    )
+                })?
+            }
+        };
 
         // Constrain each axis to its configured enum so downstream Switch/IF
         // nodes can match on a known set of values.
