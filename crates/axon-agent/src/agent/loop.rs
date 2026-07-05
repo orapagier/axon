@@ -389,6 +389,7 @@ async fn validate_response(
     qc_enabled: bool,
     is_subtask: bool,
     run_id: &str,
+    expects_structured_output: bool,
 ) -> ValidationDecision {
     // 1. Claim guard (deterministic, zero cost)
     if let Some(correction) = deterministic_tool_claim_guard(text, tool_names, tool_receipts) {
