@@ -530,11 +530,44 @@ mod tests {
     }
 
     #[test]
+    fn foreign_formats_normalize_for_time_windows() {
+        assert_eq!(normalize_rfc3339("2026-07-05 09:00:00"), "2026-07-05T09:00:00+08:00");
+        assert_eq!(normalize_rfc3339("07/05/2026 3:00 PM"), "2026-07-05T15:00:00+08:00");
+        assert_eq!(normalize_rfc3339("July 5, 2026"), "2026-07-05T00:00:00+08:00");
+        // Unix seconds resolve to an absolute UTC instant
+        assert_eq!(normalize_rfc3339("1783299600"), "2026-07-05T01:00:00Z");
+    }
+
+    #[test]
     fn date_only_values_become_all_day_events() {
         assert_eq!(event_time("2026-07-05", "Asia/Manila"), json!({"date": "2026-07-05"}));
+        assert_eq!(event_time("July 5, 2026", "Asia/Manila"), json!({"date": "2026-07-05"}));
+        assert_eq!(event_time("07/05/2026", "Asia/Manila"), json!({"date": "2026-07-05"}));
         assert_eq!(
             event_time("2026-07-05T09:00:00", "Asia/Manila"),
             json!({"dateTime": "2026-07-05T09:00:00", "timeZone": "Asia/Manila"})
+        );
+    }
+
+    #[test]
+    fn foreign_formats_become_wall_clock_event_times() {
+        assert_eq!(
+            event_time("2026-07-05 09:00", "Asia/Manila"),
+            json!({"dateTime": "2026-07-05T09:00:00", "timeZone": "Asia/Manila"})
+        );
+        assert_eq!(
+            event_time("July 5, 2026 at 3pm", "Asia/Manila"),
+            json!({"dateTime": "2026-07-05T15:00:00", "timeZone": "Asia/Manila"})
+        );
+        // Offset-aware inputs keep their absolute instant
+        assert_eq!(
+            event_time("1783299600", "Asia/Manila"),
+            json!({"dateTime": "2026-07-05T01:00:00Z", "timeZone": "Asia/Manila"})
+        );
+        // Garbage still passes through for Google to report
+        assert_eq!(
+            event_time("banana", "Asia/Manila"),
+            json!({"dateTime": "banana", "timeZone": "Asia/Manila"})
         );
     }
 
@@ -549,6 +582,11 @@ mod tests {
         assert_eq!(fix_all_day_end("2026-07-05", "2026-07-06"), None);
         // timed events are untouched
         assert_eq!(fix_all_day_end("2026-07-05T09:00:00", "2026-07-05T09:00:00"), None);
+        // date-only in a foreign format still gets the bump
+        assert_eq!(
+            fix_all_day_end("July 5, 2026", "July 5, 2026"),
+            Some("2026-07-06".into())
+        );
     }
 
     #[test]
