@@ -420,3 +420,102 @@ pub async fn find_meeting_times(
         .await?;
     Ok(resp)
 }
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Percent-encode a URL *path* segment. form_urlencoded emits "+" for spaces,
+/// which is only a space in query strings — in a path it's a literal plus, so
+/// rewrite it to %20. Graph event IDs can carry "=" and "+".
+fn urlenc(s: &str) -> String {
+    url::form_urlencoded::byte_serialize(s.as_bytes())
+        .collect::<String>()
+        .replace('+', "%20")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // graph_time's default-offset path isn't exercised here (the tz argument
+    // is explicit), but normalize_rfc3339 reads AXON_DEFAULT_TZ_OFFSET; tests
+    // assume the default (+08:00).
+
+    #[test]
+    fn naive_and_foreign_formats_become_wall_clock_graph_times() {
+        for input in [
+            "2026-07-05T09:00:00",
+            "2026-07-05T09:00",
+            "2026-07-05 09:00:00",
+            "2026-07-05 09:00",
+        ] {
+            assert_eq!(
+                graph_time(input, "Asia/Manila"),
+                json!({"dateTime": "2026-07-05T09:00:00", "timeZone": "Asia/Manila"}),
+                "failed: {input}"
+            );
+        }
+        assert_eq!(
+            graph_time("July 5, 2026 at 3pm", "Asia/Manila"),
+            json!({"dateTime": "2026-07-05T15:00:00", "timeZone": "Asia/Manila"})
+        );
+        assert_eq!(
+            graph_time("07/05/2026 3:00 PM", "Asia/Manila"),
+            json!({"dateTime": "2026-07-05T15:00:00", "timeZone": "Asia/Manila"})
+        );
+    }
+
+    #[test]
+    fn offset_aware_values_keep_their_instant_as_utc() {
+        assert_eq!(
+            graph_time("2026-07-05T09:00:00+08:00", "Asia/Manila"),
+            json!({"dateTime": "2026-07-05T01:00:00", "timeZone": "UTC"})
+        );
+        assert_eq!(
+            graph_time("2026-07-05T09:00:00Z", "Asia/Manila"),
+            json!({"dateTime": "2026-07-05T09:00:00", "timeZone": "UTC"})
+        );
+        // Unix seconds resolve to an absolute UTC instant
+        assert_eq!(
+            graph_time("1783213200", "Asia/Manila"),
+            json!({"dateTime": "2026-07-05T01:00:00", "timeZone": "UTC"})
+        );
+    }
+
+    #[test]
+    fn date_only_values_become_midnight_for_all_day() {
+        for input in ["2026-07-05", "July 5, 2026", "07/05/2026"] {
+            assert_eq!(
+                graph_time(input, "Asia/Manila"),
+                json!({"dateTime": "2026-07-05T00:00:00", "timeZone": "Asia/Manila"}),
+                "failed: {input}"
+            );
+        }
+    }
+
+    #[test]
+    fn garbage_passes_through_for_graph_to_report() {
+        assert_eq!(
+            graph_time("banana", "Asia/Manila"),
+            json!({"dateTime": "banana", "timeZone": "Asia/Manila"})
+        );
+    }
+
+    #[test]
+    fn all_day_end_bumps_to_exclusive_next_day() {
+        // start == end → one-day event needs end = next day (same rule as Google)
+        assert_eq!(fix_all_day_end("2026-07-05", "2026-07-05"), Some("2026-07-06".into()));
+        assert_eq!(fix_all_day_end("2026-07-05", "2026-07-06"), None);
+        assert_eq!(fix_all_day_end("2026-07-05T09:00:00", "2026-07-05T09:00:00"), None);
+        assert_eq!(
+            fix_all_day_end("July 5, 2026", "July 5, 2026"),
+            Some("2026-07-06".into())
+        );
+    }
+
+    #[test]
+    fn path_encoding_handles_graph_event_ids() {
+        assert_eq!(urlenc("AAMkADg1OWUwLTk4M2E="), "AAMkADg1OWUwLTk4M2E%3D");
+        assert_eq!(urlenc("abc+def/ghi"), "abc%2Bdef%2Fghi");
+        assert_eq!(urlenc("has space"), "has%20space");
+    }
+}
