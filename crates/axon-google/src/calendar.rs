@@ -373,10 +373,9 @@ pub async fn delete_event(
     let enc_target = urlenc(&target_id);
     state
         .client
-        .delete(format!(
-            "{BASE}/calendars/{cal}/events/{enc_target}?sendUpdates=all"
-        ))
+        .delete(format!("{BASE}/calendars/{cal}/events/{enc_target}"))
         .bearer_auth(&tok)
+        .query(&[("sendUpdates", send_updates)])
         .send()
         .await?
         .ensure_ok()
