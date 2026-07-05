@@ -103,7 +103,9 @@ pub async fn list_calendars(state: &AppState) -> Result<Value> {
 
 // ── Events ────────────────────────────────────────────────────────────────────
 
-/// List events in a calendar.
+/// List events in a calendar. The response's `nextPageToken` (when present)
+/// can be fed back via `page_token` to fetch the following page.
+#[allow(clippy::too_many_arguments)]
 pub async fn list_events(
     state: &AppState,
     max_results: u32,
@@ -112,6 +114,7 @@ pub async fn list_events(
     query: Option<&str>,
     calendar_id: &str,
     single_events: Option<bool>,
+    page_token: Option<&str>,
 ) -> Result<Value> {
     let tok = access_token(state).await?;
     let now = Utc::now().to_rfc3339();
@@ -124,32 +127,20 @@ pub async fn list_events(
 
     if single_events.unwrap_or(true) {
         params.push(("orderBy", "startTime".into()));
-    }
-
-    // Helper to ensure an offset is provided for query parameters,
-    // as Google Calendar requires RFC3339 format for timeMin/timeMax.
-    let ensure_rfc3339 = |t: &str| -> String {
-        if t.ends_with('Z')
-            || t.contains('+')
-            || (t.contains('-') && t.rfind('-').unwrap_or(0) > 10)
-        {
-            t.to_owned()
-        } else {
-            format!("{}Z", t)
-        }
-    };
-
-    if single_events.unwrap_or(true) {
-        let tmin = time_min.map(ensure_rfc3339).unwrap_or(now.clone());
+        // Default to "upcoming events" when no window is given.
+        let tmin = time_min.map(normalize_rfc3339).unwrap_or(now.clone());
         params.push(("timeMin", tmin));
     } else if let Some(tmin) = time_min {
-        params.push(("timeMin", ensure_rfc3339(tmin)));
+        params.push(("timeMin", normalize_rfc3339(tmin)));
     }
     if let Some(q) = query {
         params.push(("q", q.to_owned()));
     }
     if let Some(tmax) = time_max {
-        params.push(("timeMax", ensure_rfc3339(tmax)));
+        params.push(("timeMax", normalize_rfc3339(tmax)));
+    }
+    if let Some(pt) = page_token {
+        params.push(("pageToken", pt.to_owned()));
     }
 
     let resp: Value = state
