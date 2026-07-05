@@ -73,6 +73,7 @@ impl RunContext {
             memory_enabled: true,
             memory_window: None,
             isolated_memory: false,
+            expects_structured_output: false,
         }
     }
 }
