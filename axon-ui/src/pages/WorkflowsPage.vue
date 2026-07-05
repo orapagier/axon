@@ -273,7 +273,18 @@ function schemaToProperties(tool, nodeConfig = {}) {
 
   const isCalendarEvent = ['gcal_create_event', 'gcal_update_event'].includes(tool.name || tool.tool_name || '')
 
-  for (const [key, schema] of Object.entries(params)) {
+  // The backend serializes schema keys alphabetically, which inverts natural
+  // pairs (time_max before time_min, end before start). Pin them back.
+  const paramEntries = Object.entries(params)
+  for (const [first, second] of [['time_min', 'time_max'], ['start', 'end']]) {
+    const fi = paramEntries.findIndex(([k]) => k === first)
+    const si = paramEntries.findIndex(([k]) => k === second)
+    if (fi > -1 && si > -1 && si < fi) {
+      paramEntries.splice(si, 0, ...paramEntries.splice(fi, 1))
+    }
+  }
+
+  for (const [key, schema] of paramEntries) {
     const schemaEnum = Array.isArray(schema.enum) ? schema.enum : []
     const isSpreadsheetIdKey = spreadsheetIdKeys.has(key)
 
