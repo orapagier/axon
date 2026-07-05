@@ -1,7 +1,7 @@
 use crate::auth::access_token;
 use anyhow::Result;
 use axon_core::flexidate::{
-    date_only, default_tz, fix_all_day_end, normalize_rfc3339, parse_flexible, FlexiDateTime,
+    default_tz, fix_all_day_end, normalize_rfc3339, parse_flexible, FlexiDateTime,
 };
 use axon_core::{AppState, EnsureOk};
 use chrono::{SecondsFormat, Utc};
