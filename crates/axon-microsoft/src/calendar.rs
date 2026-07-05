@@ -102,17 +102,19 @@ pub async fn list_events(
             ],
         )
     } else {
-        let start = start_dt.unwrap_or(&now);
-        let end = end_dt.unwrap_or(&default_end);
+        // Window bounds accept any flexible format; normalized to RFC 3339
+        // with the default offset, matching the Google adapter's timeMin/Max.
+        let start = start_dt.map(normalize_rfc3339).unwrap_or(now);
+        let end = end_dt.map(normalize_rfc3339).unwrap_or(default_end);
         let base = match calendar_id {
-            Some(c) => format!("{BASE}/me/calendars/{c}/calendarView"),
+            Some(c) => format!("{BASE}/me/calendars/{}/calendarView", urlenc(c)),
             None => format!("{BASE}/me/calendarView"),
         };
         (
             base,
             vec![
-                ("startDateTime", start.to_string()),
-                ("endDateTime", end.to_string()),
+                ("startDateTime", start),
+                ("endDateTime", end),
                 ("$top", max_count.to_string()),
                 ("$orderby", "start/dateTime asc".to_owned()),
                 (
