@@ -340,6 +340,7 @@ pub async fn delete_event(
     event_id: &str,
     calendar_id: &str,
     all_events: bool,
+    send_updates: &str,
 ) -> Result<Value> {
     let tok = access_token(state).await?;
     let cal = urlenc(calendar_id);
