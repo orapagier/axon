@@ -539,8 +539,11 @@ async fn validate_response(
     // guard, plan check, structural checks) carry the load; with a capable
     // model on complex turns, repeated LLM re-judging mostly burned tokens
     // and oscillated between phrasings.
+    // Structured runs skip the LLM gate too — its RAW DUMP rule would flag
+    // the intended JSON output just like the structural check above.
     let should_qc = qc_enabled
         && qc_scope_ok
+        && !expects_structured_output
         && (!tools_used.is_empty() || is_blank || tools_routed_but_unused)
         && !is_subtask
         && !is_completion_confirm
