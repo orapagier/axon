@@ -389,7 +389,8 @@ pub async fn find_meeting_times(
     time_zone: Option<&str>,
 ) -> Result<Value> {
     let tok = access_token(state).await?;
-    let tz = time_zone.unwrap_or("Asia/Manila");
+    let default_tz = default_tz();
+    let tz = time_zone.unwrap_or(&default_tz);
     let body = json!({
         "attendees": attendees
             .iter()
@@ -398,8 +399,8 @@ pub async fn find_meeting_times(
         "timeConstraint": {
             "activityDomain": "work",
             "timeslots": [{
-                "start": { "dateTime": time_min, "timeZone": tz },
-                "end":   { "dateTime": time_max, "timeZone": tz },
+                "start": graph_time(time_min, tz),
+                "end":   graph_time(time_max, tz),
             }],
         },
         "meetingDuration":             format!("PT{}M", duration_minutes),
