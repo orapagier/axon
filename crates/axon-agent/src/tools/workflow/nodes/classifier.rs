@@ -72,7 +72,7 @@ pub(crate) fn execute<'a>(
             None,
             Some(system.as_str()),
         );
-        ctx.preferred_model = selected_model.clone();
+        ctx.preferred_model = selected_model;
         ctx.memory_enabled = false;
         ctx.isolated_memory = true;
         // Empty allow-list => the agent loop filters down to zero tools, so this
@@ -84,59 +84,36 @@ pub(crate) fn execute<'a>(
             .await
             .map_err(|e| format!("Classifier agent error: {}", e))?;
 
-        // Some models ignore the "JSON only" instruction on the first pass
-        // (e.g. answering in prose) but self-correct when told exactly what
-        // was wrong with their reply, so give it one corrective retry before
-        // failing the node.
-        let parsed = match extract_json(&raw) {
-            Some(p) => p,
+        // Constrain each axis to its configured enum so downstream Switch/IF
+        // nodes can match on a known set of values. Models occasionally ignore
+        // the "JSON only" instruction and answer in prose instead — rather
+        // than trust a retry to fix that, fall back to scanning the raw text
+        // itself for whichever configured option it mentions, so the node
+        // always produces a structured result from a single model call.
+        let (category, priority, intent, confidence, reasoning) = match extract_json(&raw) {
+            Some(parsed) => {
+                let category = coerce_enum(&parsed, "category", &categories);
+                let priority = coerce_enum(&parsed, "priority", &priorities);
+                let intent = coerce_enum(&parsed, "intent", &intents);
+                let confidence = parsed
+                    .get("confidence")
+                    .and_then(|v| v.as_f64())
+                    .map(|f| f.clamp(0.0, 1.0));
+                let reasoning = parsed
+                    .get("reasoning")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                (category, priority, intent, confidence, reasoning)
+            }
             None => {
-                let retry_stimulus = format!(
-                    "Your previous reply was not a JSON object. You replied:\n{}\n\n\
-                     Respond again with ONLY the JSON object — no markdown, no prose.",
-                    truncate(&raw, 300)
-                );
-                let mut retry_ctx = crate::agent::RunContext::new(
-                    &retry_stimulus,
-                    "workflow",
-                    Some(&format!("{session}:retry")),
-                    None,
-                    None,
-                    None,
-                    Some(system.as_str()),
-                );
-                retry_ctx.preferred_model = selected_model;
-                retry_ctx.memory_enabled = false;
-                retry_ctx.isolated_memory = true;
-                retry_ctx.allowed_tools = Some(vec![]);
-
-                let raw2 = crate::agent::run_task(&retry_stimulus, state, retry_ctx)
-                    .await
-                    .map_err(|e| format!("Classifier agent error (retry): {}", e))?;
-
-                extract_json(&raw2).ok_or_else(|| {
-                    format!(
-                        "Classifier: model did not return JSON after retry. Got: {}",
-                        truncate(&raw2, 300)
-                    )
-                })?
+                let text_lc = raw.to_ascii_lowercase();
+                let category = coerce_enum_from_text(&text_lc, &categories);
+                let priority = coerce_enum_from_text(&text_lc, &priorities);
+                let intent = coerce_enum_from_text(&text_lc, &intents);
+                (category, priority, intent, None, truncate(raw.trim(), 500))
             }
         };
-
-        // Constrain each axis to its configured enum so downstream Switch/IF
-        // nodes can match on a known set of values.
-        let category = coerce_enum(&parsed, "category", &categories);
-        let priority = coerce_enum(&parsed, "priority", &priorities);
-        let intent = coerce_enum(&parsed, "intent", &intents);
-        let confidence = parsed
-            .get("confidence")
-            .and_then(|v| v.as_f64())
-            .map(|f| f.clamp(0.0, 1.0));
-        let reasoning = parsed
-            .get("reasoning")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
 
         Ok(json!({
             "category": category,
@@ -252,6 +229,24 @@ fn coerce_enum(parsed: &serde_json::Map<String, Value>, key: &str, allowed: &[St
     allowed.last().cloned().unwrap_or_default()
 }
 
+/// Same last-resort intent as `coerce_enum`, but for when the model didn't
+/// return JSON at all: find the first configured option that appears
+/// anywhere in the (already-lowercased) free-form text, so a plain-prose
+/// reply like "this is a sales question, normal priority" still yields a
+/// usable classification instead of failing the node.
+fn coerce_enum_from_text(text_lc: &str, allowed: &[String]) -> String {
+    allowed
+        .iter()
+        .find(|a| {
+            let a_lc = a.to_ascii_lowercase();
+            // Same >=3 char guard as coerce_enum: skip short options like "a"
+            // that would match almost any text.
+            a_lc.len() >= 3 && text_lc.contains(&a_lc)
+        })
+        .cloned()
+        .unwrap_or_else(|| allowed.last().cloned().unwrap_or_default())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -294,6 +289,25 @@ mod tests {
     #[test]
     fn extract_json_none_when_absent() {
         assert!(extract_json("no json here").is_none());
+    }
+
+    #[test]
+    fn coerce_enum_from_text_finds_each_axis_in_prose() {
+        let categories = vec!["support".to_string(), "sales".to_string(), "other".to_string()];
+        let priorities = vec!["urgent".to_string(), "normal".to_string(), "low".to_string()];
+        let intents = vec!["question".to_string(), "complaint".to_string(), "other".to_string()];
+        let text = "the text was classified as a sales-related question with normal priority."
+            .to_ascii_lowercase();
+        assert_eq!(coerce_enum_from_text(&text, &categories), "sales");
+        assert_eq!(coerce_enum_from_text(&text, &priorities), "normal");
+        assert_eq!(coerce_enum_from_text(&text, &intents), "question");
+    }
+
+    #[test]
+    fn coerce_enum_from_text_falls_back_to_last_option() {
+        let allowed = vec!["a".to_string(), "b".to_string(), "other".to_string()];
+        let text = "totally unrelated text with no matching option".to_ascii_lowercase();
+        assert_eq!(coerce_enum_from_text(&text, &allowed), "other");
     }
 
     #[test]
