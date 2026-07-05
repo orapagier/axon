@@ -391,11 +391,13 @@ impl GoogleService {
             // "not provided" instead of empty values.
             "gcal_list_calendars" => calendar::list_calendars(&self.0).await,
             "gcal_list_events" => {
+                let time_min = opt_dt(a, "time_min");
+                let time_max = opt_dt(a, "time_max");
                 calendar::list_events(
                     &self.0,
                     n("max_results", 10.0).clamp(1.0, 2500.0) as u32,
-                    opt_str(a, "time_min"),
-                    opt_str(a, "time_max"),
+                    time_min.as_deref(),
+                    time_max.as_deref(),
                     opt_str(a, "query"),
                     opt_str(a, "calendar_id").unwrap_or("primary"),
                     opt_bool(a, "single_events"),
