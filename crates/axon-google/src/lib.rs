@@ -125,9 +125,8 @@ impl GoogleService {
                         "enum": ["Asia/Manila","Asia/Singapore","Asia/Tokyo","Asia/Hong_Kong","Asia/Seoul","Asia/Bangkok","Asia/Kolkata","Asia/Dubai","Asia/Karachi","Asia/Jakarta","Asia/Shanghai","Australia/Sydney","Australia/Melbourne","Europe/London","Europe/Paris","Europe/Berlin","Europe/Rome","Europe/Madrid","Europe/Amsterdam","Europe/Moscow","America/New_York","America/Chicago","America/Denver","America/Los_Angeles","America/Toronto","America/Vancouver","America/Sao_Paulo","America/Buenos_Aires","America/Mexico_City","America/Bogota","Africa/Cairo","Africa/Lagos","Africa/Nairobi","Pacific/Auckland","Pacific/Honolulu","UTC"]
                     },
                     "calendar_id": { "type": "string", "description": "Calendar containing the event.", "default": "primary" },
-                    "recurrence":  { "type": "array",  "description": "Updated recurrence rules in RRULE format.", "items": { "type": "string" },
-                        "enum": ["","RRULE:FREQ=DAILY","RRULE:FREQ=WEEKLY","RRULE:FREQ=MONTHLY","RRULE:FREQ=YEARLY","RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR","RRULE:FREQ=WEEKLY;BYDAY=MO","RRULE:FREQ=WEEKLY;BYDAY=TU","RRULE:FREQ=WEEKLY;BYDAY=WE","RRULE:FREQ=WEEKLY;BYDAY=TH","RRULE:FREQ=WEEKLY;BYDAY=FR","RRULE:FREQ=WEEKLY;BYDAY=SA","RRULE:FREQ=WEEKLY;BYDAY=SU"]
-                    }
+                    "recurrence":  { "type": "array",  "description": "Updated recurrence rules as RFC 5545 RRULE strings, e.g. 'RRULE:FREQ=WEEKLY;BYDAY=FR' or 'RRULE:FREQ=WEEKLY;BYDAY=FR;COUNT=10'.", "items": { "type": "string" } },
+                    "send_updates": { "type": "string", "description": "Who receives notification emails: 'all' attendees, 'externalOnly' (only attendees outside your Google Workspace), or 'none'.", "enum": ["all","externalOnly","none"], "default": "all" }
                 }, ["event_id"])
             },
             Tool {
