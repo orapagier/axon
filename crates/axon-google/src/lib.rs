@@ -108,9 +108,8 @@ impl GoogleService {
                     },
                     "create_meet_link": { "type": "boolean", "description": "Set to true to automatically generate a Google Meet video conference link for this event.", "default": false },
                     "calendar_id":     { "type": "string",  "description": "Which calendar to add this event to. Use 'primary' for your main calendar, or select from your available calendars.", "default": "primary" },
-                    "recurrence":      { "type": "array",   "description": "Recurrence rules in RRULE format. Controls how often the event repeats.", "items": { "type": "string" },
-                        "enum": ["","RRULE:FREQ=DAILY","RRULE:FREQ=WEEKLY","RRULE:FREQ=MONTHLY","RRULE:FREQ=YEARLY","RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR","RRULE:FREQ=WEEKLY;BYDAY=MO","RRULE:FREQ=WEEKLY;BYDAY=TU","RRULE:FREQ=WEEKLY;BYDAY=WE","RRULE:FREQ=WEEKLY;BYDAY=TH","RRULE:FREQ=WEEKLY;BYDAY=FR","RRULE:FREQ=WEEKLY;BYDAY=SA","RRULE:FREQ=WEEKLY;BYDAY=SU"]
-                    }
+                    "recurrence":      { "type": "array",   "description": "Recurrence rules as RFC 5545 RRULE strings, e.g. 'RRULE:FREQ=WEEKLY;BYDAY=FR' (every Friday), 'RRULE:FREQ=WEEKLY;BYDAY=FR;COUNT=10' (10 occurrences), 'RRULE:FREQ=WEEKLY;BYDAY=FR;UNTIL=20261231T000000Z' (until a date), 'RRULE:FREQ=MONTHLY;BYMONTHDAY=1' (1st of each month).", "items": { "type": "string" } },
+                    "send_updates":    { "type": "string",  "description": "Who receives notification emails: 'all' attendees, 'externalOnly' (only attendees outside your Google Workspace), or 'none'.", "enum": ["all","externalOnly","none"], "default": "all" }
                 }, ["summary","start","end"])
             },
             Tool { name: "gcal_update_event".into(), description: "Update a Google Calendar event. Defaults to 'Asia/Manila' timezone. To edit an entire recurring series, provide the master ID (found via 'gcal_list_events' with single_events=false). You can also update the 'recurrence' rules for a series.".into(),
