@@ -104,15 +104,33 @@ impl MicrosoftService {
                 description: "Get a single Microsoft Calendar event by ID, including full body, attendees, and online meeting details.".into(),
                 input_schema: schema!({"event_id":{"type":"string"}}, ["event_id"]),
             },
-            Tool {
-                name: "mscal_create_event".into(),
-                description: "Create a Microsoft Calendar event. Defaults to 'Asia/Manila' timezone.".into(),
-                input_schema: schema!({"subject":{"type":"string"},"start":{"type":"string","description":"ISO 8601 datetime"},"end":{"type":"string"},"time_zone":{"type":"string","default":"Asia/Manila"},"body":{"type":"string"},"location":{"type":"string"},"attendees":{"type":"array","items":{"type":"string"}},"is_online_meeting":{"type":"boolean","default":false}}, ["subject","start","end"]),
+            Tool { name: "mscal_create_event".into(), description: "Create a Microsoft Calendar event. Defaults to 'Asia/Manila' timezone. Set 'is_online_meeting' to true to generate a Microsoft Teams meeting link. For an ALL-DAY event pass dates only (e.g. start '2025-06-15', end '2025-06-15').".into(),
+                input_schema: schema!({
+                    "subject":           { "type": "string",  "description": "Event title / name. What the event is called, e.g. 'Team Standup' or 'Doctor Appointment'." },
+                    "start":             { "type": "string",  "description": "Start date and time, e.g. '2025-06-15T09:00:00'. Any common format works: ISO 8601, '2025-06-15 09:00', 'June 15, 2025 9am', '06/15/2025 9:00 AM', or a Unix timestamp. A date alone ('2025-06-15') makes an all-day event.", "displayOptions": { "inlineGroup": "event_time" } },
+                    "end":               { "type": "string",  "description": "End date and time, e.g. '2025-06-15T10:00:00'. Accepts the same flexible formats as start. Must be after start. For all-day events use a date; same date as start means a one-day event.", "displayOptions": { "inlineGroup": "event_time" } },
+                    "body":              { "type": "string",  "description": "Optional notes or agenda for the event. Supports plain text details about what this event is about." },
+                    "location":          { "type": "string",  "description": "Physical or virtual place where the event occurs, e.g. 'Teams', 'Conference Room A', or a full address." },
+                    "attendees":         { "type": "array",   "description": "List of people to invite to this event. Each item is an attendee with their email address.", "items": { "type": "object", "properties": { "email": { "type": "string", "description": "Attendee email address, e.g. john@example.com" } } } },
+                    "time_zone":         { "type": "string",  "description": "Timezone for the event times, e.g. 'Asia/Manila', 'America/New_York'.", "default": "Asia/Manila",
+                        "enum": ["Asia/Manila","Asia/Singapore","Asia/Tokyo","Asia/Hong_Kong","Asia/Seoul","Asia/Bangkok","Asia/Kolkata","Asia/Dubai","Asia/Karachi","Asia/Jakarta","Asia/Shanghai","Australia/Sydney","Australia/Melbourne","Europe/London","Europe/Paris","Europe/Berlin","Europe/Rome","Europe/Madrid","Europe/Amsterdam","Europe/Moscow","America/New_York","America/Chicago","America/Denver","America/Los_Angeles","America/Toronto","America/Vancouver","America/Sao_Paulo","America/Buenos_Aires","America/Mexico_City","America/Bogota","Africa/Cairo","Africa/Lagos","Africa/Nairobi","Pacific/Auckland","Pacific/Honolulu","UTC"]
+                    },
+                    "is_online_meeting": { "type": "boolean", "description": "Set to true to automatically generate a Microsoft Teams online meeting link for this event.", "default": false }
+                }, ["subject","start","end"])
             },
-            Tool {
-                name: "mscal_update_event".into(),
-                description: "Update a Microsoft Calendar event. Only provided fields are changed. Defaults to 'Asia/Manila' timezone.".into(),
-                input_schema: schema!({"event_id":{"type":"string"},"subject":{"type":"string"},"start":{"type":"string"},"end":{"type":"string"},"body":{"type":"string"},"location":{"type":"string"},"time_zone":{"type":"string","default":"Asia/Manila"}}, ["event_id"]),
+            Tool { name: "mscal_update_event".into(), description: "Update a Microsoft Calendar event. Only the provided fields change — blank fields are left untouched. Defaults to 'Asia/Manila' timezone. A date alone ('2025-06-15') switches the event to all-day; timed values switch it back.".into(),
+                input_schema: schema!({
+                    "event_id":  { "type": "string", "description": "ID of the event to update." },
+                    "subject":   { "type": "string", "description": "New event title / name." },
+                    "start":     { "type": "string", "description": "New start time, e.g. '2025-06-15T09:00:00'. Any common datetime format or a Unix timestamp works. A date alone ('2025-06-15') switches the event to all-day." },
+                    "end":       { "type": "string", "description": "New end time, e.g. '2025-06-15T10:00:00'. Accepts the same flexible formats as start. For all-day events use a date." },
+                    "body":      { "type": "string", "description": "New event notes / agenda." },
+                    "location":  { "type": "string", "description": "New event location." },
+                    "attendees": { "type": "array",  "description": "Updated attendee list (replaces the existing one). Each item is an attendee with their email.", "items": { "type": "object", "properties": { "email": { "type": "string", "description": "Attendee email address" } } } },
+                    "time_zone": { "type": "string", "description": "Timezone for the updated event times.", "default": "Asia/Manila",
+                        "enum": ["Asia/Manila","Asia/Singapore","Asia/Tokyo","Asia/Hong_Kong","Asia/Seoul","Asia/Bangkok","Asia/Kolkata","Asia/Dubai","Asia/Karachi","Asia/Jakarta","Asia/Shanghai","Australia/Sydney","Australia/Melbourne","Europe/London","Europe/Paris","Europe/Berlin","Europe/Rome","Europe/Madrid","Europe/Amsterdam","Europe/Moscow","America/New_York","America/Chicago","America/Denver","America/Los_Angeles","America/Toronto","America/Vancouver","America/Sao_Paulo","America/Buenos_Aires","America/Mexico_City","America/Bogota","Africa/Cairo","Africa/Lagos","Africa/Nairobi","Pacific/Auckland","Pacific/Honolulu","UTC"]
+                    }
+                }, ["event_id"])
             },
             Tool {
                 name: "mscal_delete_event".into(),
