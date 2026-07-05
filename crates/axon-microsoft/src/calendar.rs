@@ -308,7 +308,7 @@ pub async fn cancel_event(
     let tok = access_token(state).await?;
     state
         .client
-        .post(format!("{BASE}/me/events/{event_id}/cancel"))
+        .post(format!("{BASE}/me/events/{}/cancel", urlenc(event_id)))
         .bearer_auth(&tok)
         .json(&json!({"comment": comment.unwrap_or("")}))
         .send()
