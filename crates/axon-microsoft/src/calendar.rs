@@ -218,6 +218,9 @@ pub async fn create_event(
 }
 
 /// Update an event using PATCH (only the provided fields are changed).
+/// Date-only start/end values switch the event to all-day and timed values
+/// switch it back, mirroring [`create_event`] and the Google adapter.
+#[allow(clippy::too_many_arguments)]
 pub async fn update_event(
     state: &AppState,
     event_id: &str,
@@ -227,6 +230,7 @@ pub async fn update_event(
     body: Option<&str>,
     location: Option<&str>,
     time_zone: Option<&str>,
+    attendees: Option<Vec<&str>>,
 ) -> Result<Value> {
     let tok = access_token(state).await?;
     let mut patch = json!({});
@@ -239,16 +243,35 @@ pub async fn update_event(
     if let Some(l) = location {
         patch["location"] = json!({"displayName": l});
     }
-    let tz = time_zone.unwrap_or("Asia/Manila");
-    if let Some(s) = start {
-        patch["start"] = json!({"dateTime": s, "timeZone": tz});
+    if let Some(att) = attendees {
+        patch["attendees"] = json!(att
+            .iter()
+            .map(|a| json!({"emailAddress": {"address": a}, "type": "required"}))
+            .collect::<Vec<_>>());
     }
-    if let Some(e) = end {
-        patch["end"] = json!({"dateTime": e, "timeZone": tz});
+    let default_tz = default_tz();
+    let tz = time_zone.unwrap_or(&default_tz);
+    let end = match (start, end) {
+        // Both given as dates: apply the same exclusive-end bump as create.
+        (Some(st), Some(en)) => Some(fix_all_day_end(st, en).unwrap_or_else(|| en.to_owned())),
+        (_, en) => en.map(str::to_owned),
+    };
+    if let Some(st) = start {
+        patch["start"] = graph_time(st, tz);
+    }
+    if let Some(en) = &end {
+        patch["end"] = graph_time(en, tz);
+    }
+    // Graph validates isAllDay against midnight bounds, so flip it whenever
+    // the event's times change; untouched-time patches leave it alone.
+    if start.is_some() || end.is_some() {
+        let all_day = start.map(|s| date_only(s).is_some()).unwrap_or(true)
+            && end.as_deref().map(|e| date_only(e).is_some()).unwrap_or(true);
+        patch["isAllDay"] = json!(all_day);
     }
     let resp: Value = state
         .client
-        .patch(format!("{BASE}/me/events/{event_id}"))
+        .patch(format!("{BASE}/me/events/{}", urlenc(event_id)))
         .bearer_auth(&tok)
         .json(&patch)
         .send()
