@@ -63,15 +63,15 @@ const DATE_PATTERNS: &[&str] = &[
 ];
 
 /// Time shapes combined with each date pattern. `%.f` also matches an empty
-/// fraction, so the first entry covers plain `HH:MM:SS`.
+/// fraction, so the first entry covers plain `HH:MM:SS`. There are no
+/// bare-hour `%I%p` entries because chrono needs a minute to resolve a time;
+/// normalization rewrites "3pm" to "3:00PM" instead.
 const TIME_PATTERNS: &[&str] = &[
     "%H:%M:%S%.f",
     "%H:%M",
     "%I:%M:%S %p",
     "%I:%M %p",
     "%I:%M%p",
-    "%I %p",
-    "%I%p",
 ];
 
 /// Offset-carrying shapes that RFC 3339 parsing rejects: colonless offsets
