@@ -1348,6 +1348,7 @@ pub(crate) async fn run_inner(
                 qc_enabled,
                 is_subtask,
                 &run_id,
+                ctx.expects_structured_output,
             )
             .await;
 
