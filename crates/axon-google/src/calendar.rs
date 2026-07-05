@@ -535,7 +535,7 @@ mod tests {
         assert_eq!(normalize_rfc3339("07/05/2026 3:00 PM"), "2026-07-05T15:00:00+08:00");
         assert_eq!(normalize_rfc3339("July 5, 2026"), "2026-07-05T00:00:00+08:00");
         // Unix seconds resolve to an absolute UTC instant
-        assert_eq!(normalize_rfc3339("1783299600"), "2026-07-05T01:00:00Z");
+        assert_eq!(normalize_rfc3339("1783213200"), "2026-07-05T01:00:00Z");
     }
 
     #[test]
