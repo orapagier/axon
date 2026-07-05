@@ -256,6 +256,9 @@ pub async fn create_event(
 }
 
 /// Update an event using PATCH (only the provided fields are changed).
+/// Date-only start/end values switch the event to all-day, mirroring
+/// [`create_event`].
+#[allow(clippy::too_many_arguments)]
 pub async fn update_event(
     state: &AppState,
     event_id: &str,
@@ -268,6 +271,7 @@ pub async fn update_event(
     calendar_id: &str,
     attendees: Option<Vec<&str>>,
     recurrence: Option<Vec<String>>,
+    send_updates: &str,
 ) -> Result<Value> {
     let tok = access_token(state).await?;
     let cal = urlenc(calendar_id);
@@ -289,20 +293,25 @@ pub async fn update_event(
     if let Some(rules) = recurrence {
         patch["recurrence"] = json!(rules);
     }
-    let tz = time_zone.unwrap_or("Asia/Manila");
+    let default_tz = default_tz();
+    let tz = time_zone.unwrap_or(&default_tz);
+    let end = match (start, end) {
+        // Both given as dates: apply the same exclusive-end bump as create.
+        (Some(st), Some(en)) => Some(fix_all_day_end(st, en).unwrap_or_else(|| en.to_owned())),
+        (_, en) => en.map(str::to_owned),
+    };
     if let Some(st) = start {
-        patch["start"] = json!({"dateTime": st, "timeZone": tz});
+        patch["start"] = event_time(st, tz);
     }
     if let Some(en) = end {
-        patch["end"] = json!({"dateTime": en, "timeZone": tz});
+        patch["end"] = event_time(&en, tz);
     }
 
     let resp: Value = state
         .client
-        .patch(format!(
-            "{BASE}/calendars/{cal}/events/{enc_event}?sendUpdates=all"
-        ))
+        .patch(format!("{BASE}/calendars/{cal}/events/{enc_event}"))
         .bearer_auth(&tok)
+        .query(&[("sendUpdates", send_updates)])
         .json(&patch)
         .send()
         .await?
