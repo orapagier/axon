@@ -205,11 +205,23 @@ fn pre_normalize(s: &str) -> String {
         }
         tokens.push(normalize_ampm(raw));
     }
+    // A detached marker after a bare hour ("3 PM") needs the same ":00"
+    // treatment normalize_ampm gives the attached form.
+    for i in 1..tokens.len() {
+        if (tokens[i] == "AM" || tokens[i] == "PM")
+            && !tokens[i - 1].is_empty()
+            && tokens[i - 1].chars().all(|c| c.is_ascii_digit())
+        {
+            tokens[i - 1].push_str(":00");
+        }
+    }
     tokens.join(" ")
 }
 
 /// Uppercase an am/pm marker, standalone ("pm", "p.m.") or attached to the
-/// time ("3pm", "9:30am"), leaving every other token untouched.
+/// time ("3pm", "9:30am"), leaving every other token untouched. Bare hours
+/// gain an explicit ":00" minute — chrono can't resolve a time from hour and
+/// am/pm alone.
 fn normalize_ampm(token: &str) -> String {
     let lower = token.to_ascii_lowercase();
     match lower.as_str() {
@@ -220,7 +232,12 @@ fn normalize_ampm(token: &str) -> String {
     if let Some(prefix) = lower.strip_suffix("am").or_else(|| lower.strip_suffix("pm")) {
         if !prefix.is_empty() && prefix.chars().all(|c| c.is_ascii_digit() || c == ':') {
             let split = token.len() - 2;
-            return format!("{}{}", &token[..split], token[split..].to_ascii_uppercase());
+            let marker = token[split..].to_ascii_uppercase();
+            let time = &token[..split];
+            if time.contains(':') {
+                return format!("{time}{marker}");
+            }
+            return format!("{time}:00{marker}");
         }
     }
     token.to_owned()
