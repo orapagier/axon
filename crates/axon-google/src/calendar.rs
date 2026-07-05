@@ -34,28 +34,6 @@ fn event_time(value: &str, tz: &str) -> Value {
     }
 }
 
-/// The date when a value parses as date-only (all-day semantics), in any
-/// format parse_flexible understands.
-fn date_only(v: &str) -> Option<NaiveDate> {
-    match parse_flexible(v) {
-        Some(FlexiDateTime::DateOnly(d)) => Some(d),
-        _ => None,
-    }
-}
-
-/// Google's all-day `end.date` is exclusive: a one-day event on the 5th needs
-/// end = the 6th, and end == start is rejected as an empty range. Callers
-/// naturally pass start == end for a single day, so bump the end forward when
-/// both are dates and end doesn't already clear start.
-fn fix_all_day_end(start: &str, end: &str) -> Option<String> {
-    let s = date_only(start)?;
-    let e = date_only(end)?;
-    if e > s {
-        return None; // already a valid exclusive end
-    }
-    Some(s.succ_opt()?.to_string())
-}
-
 /// Validated sendUpdates value; anything unrecognized falls back to "all",
 /// which matches the node's historical behavior.
 pub(crate) fn send_updates_or_all(v: Option<&str>) -> &'static str {
