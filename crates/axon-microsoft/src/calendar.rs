@@ -289,7 +289,7 @@ pub async fn delete_event(state: &AppState, event_id: &str) -> Result<Value> {
     let tok = access_token(state).await?;
     state
         .client
-        .delete(format!("{BASE}/me/events/{event_id}"))
+        .delete(format!("{BASE}/me/events/{}", urlenc(event_id)))
         .bearer_auth(&tok)
         .send()
         .await?
