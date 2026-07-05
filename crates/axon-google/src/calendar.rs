@@ -26,38 +26,48 @@ fn default_tz_offset() -> String {
 /// Normalize a user/expression-supplied time into the RFC 3339 form Google
 /// requires for timeMin/timeMax:
 ///   - offset-aware strings ("...Z", "...+08:00") pass through untouched
-///   - date-only "YYYY-MM-DD" expands to local midnight with the default offset
-///   - naive datetimes get the default offset appended — NOT "Z", because a
-///     naive time means operator-local wall clock, not UTC
+///   - everything else goes through [`parse_flexible`], which accepts any
+///     common datetime shape (Sheets-style, slash dates, month names, 12-hour
+///     clocks, Unix timestamps); naive results get the default offset appended
+///     — NOT "Z", because a naive time means operator-local wall clock, not UTC
 /// Unrecognized shapes pass through so Google reports them in its own words.
 fn normalize_rfc3339(t: &str) -> String {
     let t = t.trim();
     if chrono::DateTime::parse_from_rfc3339(t).is_ok() {
         return t.to_owned();
     }
-    if NaiveDate::parse_from_str(t, "%Y-%m-%d").is_ok() {
-        return format!("{t}T00:00:00{}", default_tz_offset());
+    match parse_flexible(t) {
+        Some(f) => f.to_rfc3339(&default_tz_offset()),
+        None => t.to_owned(),
     }
-    if NaiveDateTime::parse_from_str(t, "%Y-%m-%dT%H:%M:%S%.f").is_ok() {
-        return format!("{t}{}", default_tz_offset());
-    }
-    // datetime-local without seconds ("2026-07-05T09:00")
-    if NaiveDateTime::parse_from_str(t, "%Y-%m-%dT%H:%M").is_ok() {
-        return format!("{t}:00{}", default_tz_offset());
-    }
-    t.to_owned()
 }
 
-/// Build an event start/end object. A date-only value ("2026-07-05") produces
-/// an all-day `{date}`; anything else a timed `{dateTime, timeZone}`. A naive
-/// dateTime plus timeZone is Google's preferred wall-clock form, so timed
-/// values are passed through as given.
+/// Build an event start/end object from any [`parse_flexible`] shape. A
+/// date-only value ("2026-07-05", "July 5, 2026") produces an all-day
+/// `{date}`; naive datetimes become `{dateTime, timeZone}` — Google's
+/// preferred wall-clock form; offset-aware values (including Unix timestamps)
+/// keep their absolute instant. Unparseable values pass through so Google
+/// reports them in its own words.
 fn event_time(value: &str, tz: &str) -> Value {
     let v = value.trim();
-    if NaiveDate::parse_from_str(v, "%Y-%m-%d").is_ok() {
-        json!({ "date": v })
-    } else {
-        json!({ "dateTime": v, "timeZone": tz })
+    match parse_flexible(v) {
+        Some(FlexiDateTime::DateOnly(d)) => json!({ "date": d.format("%Y-%m-%d").to_string() }),
+        Some(FlexiDateTime::Naive(dt)) => {
+            json!({ "dateTime": dt.format("%Y-%m-%dT%H:%M:%S").to_string(), "timeZone": tz })
+        }
+        Some(FlexiDateTime::Zoned(dt)) => {
+            json!({ "dateTime": dt.to_rfc3339_opts(SecondsFormat::Secs, true), "timeZone": tz })
+        }
+        None => json!({ "dateTime": v, "timeZone": tz }),
+    }
+}
+
+/// The date when a value parses as date-only (all-day semantics), in any
+/// format parse_flexible understands.
+fn date_only(v: &str) -> Option<NaiveDate> {
+    match parse_flexible(v) {
+        Some(FlexiDateTime::DateOnly(d)) => Some(d),
+        _ => None,
     }
 }
 
@@ -66,8 +76,8 @@ fn event_time(value: &str, tz: &str) -> Value {
 /// naturally pass start == end for a single day, so bump the end forward when
 /// both are dates and end doesn't already clear start.
 fn fix_all_day_end(start: &str, end: &str) -> Option<String> {
-    let s = NaiveDate::parse_from_str(start.trim(), "%Y-%m-%d").ok()?;
-    let e = NaiveDate::parse_from_str(end.trim(), "%Y-%m-%d").ok()?;
+    let s = date_only(start)?;
+    let e = date_only(end)?;
     if e > s {
         return None; // already a valid exclusive end
     }
