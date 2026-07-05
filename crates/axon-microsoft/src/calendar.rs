@@ -356,11 +356,12 @@ pub async fn get_schedule(
     time_zone: Option<&str>,
 ) -> Result<Value> {
     let tok = access_token(state).await?;
-    let tz = time_zone.unwrap_or("Asia/Manila");
+    let default_tz = default_tz();
+    let tz = time_zone.unwrap_or(&default_tz);
     let body = json!({
         "schedules":                  emails,
-        "startTime": { "dateTime": start, "timeZone": tz },
-        "endTime":   { "dateTime": end,   "timeZone": tz },
+        "startTime": graph_time(start, tz),
+        "endTime":   graph_time(end, tz),
         "availabilityViewInterval":   30,
     });
     let resp: Value = state
