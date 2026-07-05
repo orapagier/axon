@@ -394,16 +394,18 @@ pub async fn move_event(
     event_id: &str,
     source_calendar_id: &str,
     destination_calendar_id: &str,
+    send_updates: &str,
 ) -> Result<Value> {
     let tok = access_token(state).await?;
     let cal = urlenc(source_calendar_id);
     let enc_event = urlenc(event_id);
-    let dest = urlenc(destination_calendar_id);
     let resp: Value = state
         .client
         .post(format!("{BASE}/calendars/{cal}/events/{enc_event}/move"))
         .bearer_auth(&tok)
-        .query(&[("destination", &dest), ("sendUpdates", &"all".to_string())])
+        // destination goes through .query() raw — reqwest percent-encodes it;
+        // pre-encoding here double-encodes the "@" every calendar ID contains.
+        .query(&[("destination", destination_calendar_id), ("sendUpdates", send_updates)])
         .send()
         .await?
         .ensure_ok()
@@ -414,14 +416,19 @@ pub async fn move_event(
 }
 
 /// Create an event from a natural-language string (e.g. "Lunch with John tomorrow at noon").
-pub async fn quick_add(state: &AppState, text: &str, calendar_id: &str) -> Result<Value> {
+pub async fn quick_add(
+    state: &AppState,
+    text: &str,
+    calendar_id: &str,
+    send_updates: &str,
+) -> Result<Value> {
     let tok = access_token(state).await?;
     let cal = urlenc(calendar_id);
     let resp: Value = state
         .client
         .post(format!("{BASE}/calendars/{cal}/events/quickAdd"))
         .bearer_auth(&tok)
-        .query(&[("text", text), ("sendUpdates", "all")])
+        .query(&[("text", text), ("sendUpdates", send_updates)])
         .send()
         .await?
         .ensure_ok()
