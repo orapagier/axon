@@ -561,7 +561,7 @@ mod tests {
         );
         // Offset-aware inputs keep their absolute instant
         assert_eq!(
-            event_time("1783299600", "Asia/Manila"),
+            event_time("1783213200", "Asia/Manila"),
             json!({"dateTime": "2026-07-05T01:00:00Z", "timeZone": "Asia/Manila"})
         );
         // Garbage still passes through for Google to report
