@@ -67,7 +67,10 @@ fn event_time(value: &str, tz: &str) -> Value {
 fn fix_all_day_end(start: &str, end: &str) -> Option<String> {
     let s = NaiveDate::parse_from_str(start.trim(), "%Y-%m-%d").ok()?;
     let e = NaiveDate::parse_from_str(end.trim(), "%Y-%m-%d").ok()?;
-    (e <= s).then(|| s.succ_opt().map(|d| d.to_string()))?
+    if e > s {
+        return None; // already a valid exclusive end
+    }
+    Some(s.succ_opt()?.to_string())
 }
 
 /// Validated sendUpdates value; anything unrecognized falls back to "all",
