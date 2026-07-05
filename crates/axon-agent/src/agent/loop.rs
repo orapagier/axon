@@ -504,8 +504,11 @@ async fn validate_response(
         || trimmed.contains("<function=")
         || RE_CALL_COLON.is_match(trimmed);
 
-    // Fast structural check before burning an LLM token
-    if looks_like_raw_tool {
+    // Fast structural check before burning an LLM token. Skipped for runs
+    // that are SUPPOSED to answer with bare JSON (Classifier node): rejecting
+    // their correct output injects a complaint into the conversation, and the
+    // model ends up responding to the complaint instead of the task.
+    if looks_like_raw_tool && !expects_structured_output {
         return ValidationDecision::Retry {
             message: "The response contains raw JSON data or hallucinated tool commands. \
                       If you meant to use a tool, please call it natively using the system's tool format. \
