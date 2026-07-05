@@ -75,6 +75,10 @@ pub(crate) fn execute<'a>(
         ctx.preferred_model = selected_model;
         ctx.memory_enabled = false;
         ctx.isolated_memory = true;
+        // The node demands a bare JSON object; without this flag the loop's
+        // raw-JSON guard would reject the answer and inject a rewrite-in-prose
+        // correction, which the model then classifies instead of the input.
+        ctx.expects_structured_output = true;
         // Empty allow-list => the agent loop filters down to zero tools, so this
         // is a single tool-free completion (see agent::loop filter at the
         // `allowed_tools` branch).
