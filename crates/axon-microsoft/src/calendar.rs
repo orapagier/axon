@@ -145,7 +145,7 @@ pub async fn get_event(state: &AppState, event_id: &str) -> Result<Value> {
     let tok = access_token(state).await?;
     let resp: Value = state
         .client
-        .get(format!("{BASE}/me/events/{event_id}"))
+        .get(format!("{BASE}/me/events/{}", urlenc(event_id)))
         .bearer_auth(&tok)
         .query(&[(
             "$select",
