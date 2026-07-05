@@ -1,46 +1,18 @@
 use crate::auth::access_token;
 use anyhow::Result;
-use axon_core::flexidate::{parse_flexible, FlexiDateTime};
+use axon_core::flexidate::{
+    date_only, default_tz, fix_all_day_end, normalize_rfc3339, parse_flexible, FlexiDateTime,
+};
 use axon_core::{AppState, EnsureOk};
-use chrono::{NaiveDate, SecondsFormat, Utc};
+use chrono::{SecondsFormat, Utc};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
 const BASE: &str = "https://www.googleapis.com/calendar/v3";
 
 // ── Time handling ─────────────────────────────────────────────────────────────
-
-/// IANA timezone applied when a caller doesn't specify one.
-/// Override with AXON_DEFAULT_TZ (keep AXON_DEFAULT_TZ_OFFSET in sync).
-pub(crate) fn default_tz() -> String {
-    std::env::var("AXON_DEFAULT_TZ").unwrap_or_else(|_| "Asia/Manila".into())
-}
-
-/// Fixed UTC offset matching [`default_tz`], used to make naive datetimes
-/// unambiguous where the API demands an offset (timeMin/timeMax, freeBusy).
-/// Override with AXON_DEFAULT_TZ_OFFSET, e.g. "+02:00".
-fn default_tz_offset() -> String {
-    std::env::var("AXON_DEFAULT_TZ_OFFSET").unwrap_or_else(|_| "+08:00".into())
-}
-
-/// Normalize a user/expression-supplied time into the RFC 3339 form Google
-/// requires for timeMin/timeMax:
-///   - offset-aware strings ("...Z", "...+08:00") pass through untouched
-///   - everything else goes through [`parse_flexible`], which accepts any
-///     common datetime shape (Sheets-style, slash dates, month names, 12-hour
-///     clocks, Unix timestamps); naive results get the default offset appended
-///     — NOT "Z", because a naive time means operator-local wall clock, not UTC
-/// Unrecognized shapes pass through so Google reports them in its own words.
-fn normalize_rfc3339(t: &str) -> String {
-    let t = t.trim();
-    if chrono::DateTime::parse_from_rfc3339(t).is_ok() {
-        return t.to_owned();
-    }
-    match parse_flexible(t) {
-        Some(f) => f.to_rfc3339(&default_tz_offset()),
-        None => t.to_owned(),
-    }
-}
+// default_tz / normalize_rfc3339 / date_only / fix_all_day_end live in
+// axon_core::flexidate, shared with the Microsoft calendar adapter.
 
 /// Build an event start/end object from any [`parse_flexible`] shape. A
 /// date-only value ("2026-07-05", "July 5, 2026") produces an all-day
