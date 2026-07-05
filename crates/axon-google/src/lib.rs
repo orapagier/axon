@@ -380,101 +380,91 @@ impl GoogleService {
             "gmail_send_draft" => gmail::send_draft(&self.0, s("draft_id")?).await,
             "gmail_delete_draft" => gmail::delete_draft(&self.0, s("draft_id")?).await,
 
-            // Calendar
+            // Calendar. Optional params go through opt_str/opt_bool so the
+            // blank strings workflow nodes send for untouched fields read as
+            // "not provided" instead of empty values.
             "gcal_list_calendars" => calendar::list_calendars(&self.0).await,
             "gcal_list_events" => {
                 calendar::list_events(
                     &self.0,
-                    n("max_results", 10.0).min(10.0) as u32,
-                    a.get("time_min").and_then(|v| v.as_str()),
-                    a.get("time_max").and_then(|v| v.as_str()),
-                    a.get("query").and_then(|v| v.as_str()),
-                    a.get("calendar_id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("primary"),
-                    a.get("single_events").and_then(|v| v.as_bool()),
+                    n("max_results", 10.0).clamp(1.0, 2500.0) as u32,
+                    opt_str(a, "time_min"),
+                    opt_str(a, "time_max"),
+                    opt_str(a, "query"),
+                    opt_str(a, "calendar_id").unwrap_or("primary"),
+                    opt_bool(a, "single_events"),
+                    opt_str(a, "page_token"),
                 )
                 .await
             }
             "gcal_create_event" => {
                 calendar::create_event(
                     &self.0,
-                    s("summary")?,
-                    s("start")?,
-                    s("end")?,
-                    a.get("description").and_then(|v| v.as_str()),
-                    a.get("location").and_then(|v| v.as_str()),
+                    req_str(a, "summary")?,
+                    req_str(a, "start")?,
+                    req_str(a, "end")?,
+                    opt_str(a, "description"),
+                    opt_str(a, "location"),
                     extract_attendees(a, "attendees"),
-                    a.get("time_zone").and_then(|v| v.as_str()),
-                    a.get("create_meet_link")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false),
-                    a.get("calendar_id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("primary"),
+                    opt_str(a, "time_zone"),
+                    opt_bool(a, "create_meet_link").unwrap_or(false),
+                    opt_str(a, "calendar_id").unwrap_or("primary"),
                     json_arr_opt(a, "recurrence"),
+                    calendar::send_updates_or_all(opt_str(a, "send_updates")),
                 )
                 .await
             }
             "gcal_get_event" => {
                 calendar::get_event(
                     &self.0,
-                    s("event_id")?,
-                    a.get("calendar_id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("primary"),
+                    req_str(a, "event_id")?,
+                    opt_str(a, "calendar_id").unwrap_or("primary"),
                 )
                 .await
             }
             "gcal_update_event" => {
                 calendar::update_event(
                     &self.0,
-                    s("event_id")?,
-                    a.get("summary").and_then(|v| v.as_str()),
-                    a.get("start").and_then(|v| v.as_str()),
-                    a.get("end").and_then(|v| v.as_str()),
-                    a.get("description").and_then(|v| v.as_str()),
-                    a.get("location").and_then(|v| v.as_str()),
-                    a.get("time_zone").and_then(|v| v.as_str()),
-                    a.get("calendar_id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("primary"),
+                    req_str(a, "event_id")?,
+                    opt_str(a, "summary"),
+                    opt_str(a, "start"),
+                    opt_str(a, "end"),
+                    opt_str(a, "description"),
+                    opt_str(a, "location"),
+                    opt_str(a, "time_zone"),
+                    opt_str(a, "calendar_id").unwrap_or("primary"),
                     extract_attendees(a, "attendees"),
                     json_arr_opt(a, "recurrence"),
+                    calendar::send_updates_or_all(opt_str(a, "send_updates")),
                 )
                 .await
             }
             "gcal_delete_event" => {
                 calendar::delete_event(
                     &self.0,
-                    s("event_id")?,
-                    a.get("calendar_id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("primary"),
-                    a.get("all_events")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false),
+                    req_str(a, "event_id")?,
+                    opt_str(a, "calendar_id").unwrap_or("primary"),
+                    opt_bool(a, "all_events").unwrap_or(false),
+                    calendar::send_updates_or_all(opt_str(a, "send_updates")),
                 )
                 .await
             }
             "gcal_move_event" => {
                 calendar::move_event(
                     &self.0,
-                    s("event_id")?,
-                    a.get("source_calendar_id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("primary"),
-                    s("destination_calendar_id")?,
+                    req_str(a, "event_id")?,
+                    opt_str(a, "source_calendar_id").unwrap_or("primary"),
+                    req_str(a, "destination_calendar_id")?,
+                    calendar::send_updates_or_all(opt_str(a, "send_updates")),
                 )
                 .await
             }
             "gcal_quick_add" => {
                 calendar::quick_add(
                     &self.0,
-                    s("text")?,
-                    a.get("calendar_id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("primary"),
+                    req_str(a, "text")?,
+                    opt_str(a, "calendar_id").unwrap_or("primary"),
+                    calendar::send_updates_or_all(opt_str(a, "send_updates")),
                 )
                 .await
             }
@@ -482,8 +472,8 @@ impl GoogleService {
                 calendar::get_freebusy(
                     &self.0,
                     json_arr(a, "calendar_ids")?,
-                    s("time_min")?,
-                    s("time_max")?,
+                    req_str(a, "time_min")?,
+                    req_str(a, "time_max")?,
                 )
                 .await
             }
