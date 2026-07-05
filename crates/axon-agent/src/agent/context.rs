@@ -35,6 +35,13 @@ pub struct RunContext {
     /// knows its own last N interactions — never the rest of the system.
     #[serde(default)]
     pub isolated_memory: bool,
+    /// When true, the run is EXPECTED to answer with machine-readable output
+    /// (a bare JSON object, etc.), so the response validators must not treat
+    /// that as a "raw dump" and inject a rewrite-in-prose correction — doing so
+    /// pollutes the conversation and the model ends up answering the correction
+    /// instead of the task. Set by structured workflow nodes (Classifier).
+    #[serde(default)]
+    pub expects_structured_output: bool,
 }
 
 impl RunContext {
