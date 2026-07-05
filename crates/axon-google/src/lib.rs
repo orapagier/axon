@@ -406,11 +406,13 @@ impl GoogleService {
                 .await
             }
             "gcal_create_event" => {
+                let start = req_dt(a, "start")?;
+                let end = req_dt(a, "end")?;
                 calendar::create_event(
                     &self.0,
                     req_str(a, "summary")?,
-                    req_str(a, "start")?,
-                    req_str(a, "end")?,
+                    &start,
+                    &end,
                     opt_str(a, "description"),
                     opt_str(a, "location"),
                     extract_attendees(a, "attendees"),
