@@ -277,10 +277,10 @@ mod tests {
     #[test]
     fn rfc2822_and_js_date_tostring() {
         assert!(matches!(
-            parse_flexible("Sat, 05 Jul 2026 09:00:00 +0800"),
+            parse_flexible("Sun, 05 Jul 2026 09:00:00 +0800"),
             Some(FlexiDateTime::Zoned(_))
         ));
-        let js = parse_flexible("Sat Jul 05 2026 09:00:00 GMT+0800 (Philippine Standard Time)");
+        let js = parse_flexible("Sun Jul 05 2026 09:00:00 GMT+0800 (Philippine Standard Time)");
         assert!(matches!(js, Some(FlexiDateTime::Zoned(_))), "got {js:?}");
     }
 
