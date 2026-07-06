@@ -58,6 +58,9 @@ pub struct HttpRequestParams {
     pub retry_on_fail: Option<bool>,
     pub max_tries: Option<u32>,         // total attempts incl. the first
     pub retry_interval_ms: Option<u64>, // wait between attempts
+    // When true, a 4xx/5xx response is turned into an Err instead of a normal
+    // result, so the node's continue-on-fail / error-workflow machinery fires.
+    pub fail_on_error_status: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
