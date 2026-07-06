@@ -63,12 +63,70 @@ fn webhook_dedup_key(
     None
 }
 
+/// 3.1: does this workflow contain an enabled Respond to Webhook node? Decides
+/// whether the handler holds the request open for a workflow-authored response
+/// or acknowledges immediately (the legacy fire-and-forget path).
+fn workflow_has_respond_node(state: &AppState, workflow_id: &str) -> bool {
+    let Ok(conn) = state.db.get() else {
+        return false;
+    };
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM workflow_nodes WHERE workflow_id = ?1 \
+         AND node_type = 'respondToWebhook' AND enabled = 1)",
+        [workflow_id],
+        |r| r.get::<_, i64>(0),
+    )
+    .map(|n| n != 0)
+    .unwrap_or(false)
+}
+
+/// The pre-3.1 acknowledgement: 200 + run id, sent when no respond node fires
+/// (none on the taken branch, respond timeout, or plain fire-and-forget).
+fn default_ack(workflow_id: &str, run_id: &str) -> Response {
+    (
+        StatusCode::OK,
+        Json(json!({
+            "ok": true,
+            "workflow_id": workflow_id,
+            "run_id": run_id,
+            "message": "Workflow triggered successfully"
+        })),
+    )
+        .into_response()
+}
+
+/// Materialize a Respond-to-Webhook payload as the actual HTTP response. The
+/// node already validated the status; author headers are applied best-effort
+/// (an invalid name/value is skipped, never a 500) and content-type defaults
+/// by body kind unless the author set their own.
+fn build_custom_response(resp: WebhookHttpResponse) -> Response {
+    let status = StatusCode::from_u16(resp.status).unwrap_or(StatusCode::OK);
+    let mut out = match resp.body {
+        ResponseBody::Json(v) => (status, Json(v)).into_response(),
+        ResponseBody::Text(s) => (status, s).into_response(),
+        ResponseBody::Empty => status.into_response(),
+    };
+    let headers = out.headers_mut();
+    for (name, value) in resp.headers {
+        let Ok(name) = axum::http::header::HeaderName::from_bytes(name.as_bytes()) else {
+            tracing::warn!("Respond to Webhook: invalid header name '{}', skipped", name);
+            continue;
+        };
+        let Ok(value) = axum::http::header::HeaderValue::from_str(&value) else {
+            tracing::warn!("Respond to Webhook: invalid value for header '{}', skipped", name);
+            continue;
+        };
+        headers.insert(name, value);
+    }
+    out
+}
+
 pub async fn handle_external_webhook(
     Path(workflow_id): Path<String>,
     State(state): State<AppState>,
     headers: HeaderMap,
     body: Bytes,
-) -> impl IntoResponse {
+) -> Response {
     tracing::info!("Received external webhook for workflow {}", workflow_id);
     let payload = parse_webhook_body(&body);
 
@@ -80,7 +138,45 @@ pub async fn handle_external_webhook(
             return (
                 StatusCode::OK,
                 Json(json!({ "ok": true, "duplicate": true, "workflow_id": workflow_id })),
-            );
+            )
+                .into_response();
+        }
+    }
+
+    // 3.1: a workflow with a Respond to Webhook node authors its own HTTP
+    // response — hold the request open (bounded) and serve what the node sends.
+    if workflow_has_respond_node(&state, &workflow_id) {
+        match WorkflowEngine::run_in_background_for_webhook(&workflow_id, &state, Some(payload)) {
+            Ok((run_id, rx)) => {
+                let timeout = state.settings.workflow_webhook_respond_timeout_secs();
+                return match tokio::time::timeout(std::time::Duration::from_secs(timeout), rx)
+                    .await
+                {
+                    Ok(Ok(resp)) => build_custom_response(resp),
+                    // Channel closed: the run ended (or suspended on a durable
+                    // Wait) without the respond node firing — e.g. it sits on a
+                    // branch that wasn't taken. Fall back to the default ack.
+                    Ok(Err(_)) => default_ack(&workflow_id, &run_id),
+                    // Timeout: release the caller; the run keeps executing and
+                    // the run-end guard will drop the now-orphaned channel.
+                    Err(_) => {
+                        tracing::warn!(
+                            "External webhook {}: respond node didn't fire within {}s, sent default ack (run {} continues)",
+                            workflow_id, timeout, run_id
+                        );
+                        default_ack(&workflow_id, &run_id)
+                    }
+                };
+            }
+            Err(e) => {
+                tracing::error!(
+                    "Failed to trigger workflow {} via webhook: {}",
+                    workflow_id,
+                    e
+                );
+                return (StatusCode::OK, Json(json!({ "ok": false, "error": e.to_string() })))
+                    .into_response();
+            }
         }
     }
 
@@ -97,15 +193,7 @@ pub async fn handle_external_webhook(
         None,
         Some(payload),
     ) {
-        Ok(run_id) => (
-            StatusCode::OK,
-            Json(json!({
-                "ok": true,
-                "workflow_id": workflow_id,
-                "run_id": run_id,
-                "message": "Workflow triggered successfully"
-            })),
-        ),
+        Ok(run_id) => default_ack(&workflow_id, &run_id),
         Err(e) => {
             tracing::error!(
                 "Failed to trigger workflow {} via webhook: {}",
@@ -119,6 +207,7 @@ pub async fn handle_external_webhook(
                     "error": e.to_string()
                 })),
             )
+                .into_response()
         }
     }
 }
