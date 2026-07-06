@@ -1,10 +1,11 @@
 # Axon Node Expansion Plan
 
 **Goal:** close the capability gap between Axon's workflow engine and n8n's most-used
-nodes, one node at a time. Axon is already strong on **AI, messaging, HTTP, and SQL**.
-The gaps are in **data plumbing, format/utility conversion, email, and a few
-high-value connectors**. This plan adds them in leverage order so each phase unlocks
-whole new *workflow shapes*, not just one more integration.
+nodes, one node at a time. Axon is already strong on **AI, messaging, HTTP, SQL, and
+Gmail** (trigger + send — see Phase 3 note). The gaps are in **data plumbing,
+format/utility conversion, workflow-as-API, and a few high-value connectors**. This
+plan adds them in leverage order so each phase unlocks whole new *workflow shapes*,
+not just one more integration.
 
 > Status legend: `[ ]` not started · `[~]` in progress · `[x]` done
 > Effort: **S** ≈ half-day · **M** ≈ 1–2 days · **L** ≈ 3+ days
@@ -44,8 +45,32 @@ than rewriting the execution core.
 > Limit/Dedupe) all agree on this so they compose with each other and with `loop`.
 
 Primary input is still "the most recent predecessor by `position`" (as `soma` /
-`javascript` already read `node_results`). No engine change — a list node just
+`javascript` already read `node_results`). No engine rewrite — a list node just
 expects that primary `Value` to be an array and loops over it in its own `execute()`.
+
+### What the engine already gives us (verified in code)
+**Fan-in synchronization already exists.** `run_inner` executes via in-degree
+counting (Kahn's algorithm): a node with two incoming edges only runs after *both*
+predecessors resolve. Not-taken branch edges still release in-degree, `live_inputs`
+tracks which branches actually ran, and skip-propagation emits `skipped` results so
+nothing hangs — the code even anticipates "a merge node fed by both branches"
+(`workflow.rs`, `run_inner`, edge-release block). **Merge is therefore mostly a node,
+not an engine feature.** The hard half is already built.
+
+### Multi-input caveats (why Task 1.0 exists)
+Three verified facts mean a Merge node **cannot** just scan `node_results`:
+1. **`node_results` is pre-seeded with stale cache.** Before a run starts it is
+   backfilled from up to 25 *prior* runs (expression fallback / Execute Step
+   snapshot). A naive scan can merge results from nodes that never ran this run.
+2. **Skipped branches leave entries** — `status: "skipped"`, output
+   `{"skipped": true, ...}` — that must be filtered out.
+3. **Dispatch doesn't pass edges.** From inside `execute()` a node can't tell which
+   results are its *direct* predecessors, nor which input (left/right) each feeds.
+   Edges already persist `target_handle` and the canvas records `targetHandle`, so
+   the data exists — it just isn't handed to the node.
+
+Task 1.0 fixes all three with one small dispatch change + one helper. That is the
+only engine-adjacent work in this plan.
 
 ### The one trade-off, and how we pay it down
 Cost: "do X to each item" always costs an explicit Loop (n8n hides it). Mitigation, in
@@ -79,6 +104,22 @@ the downstream body across items, optionally in parallel), whereas n8n's is a
 
 ---
 
+## Dependency policy (binding for every phase)
+
+Deploy target is a **1 GB e2-micro**, deliberately trimmed to a **single
+reqwest 0.12 + rustls stack** (malloc arena caps, shrunk SQLite pools). Every new
+crate must respect that:
+
+- `default-features = false`, enable only what's needed.
+- **rustls only** where TLS is involved. `lettre` and every IMAP crate default to
+  `native-tls` — a second TLS stack is a regression; configure rustls explicitly.
+- No second HTTP client stack; wrap HTTP APIs over the shared clients in `http.rs`.
+- Already in tree (free to use): `chrono`, `chrono-tz`, `sha2`, `hmac`, `uuid`
+  (v4), and gzip/deflate machinery via reqwest's compression features (verify with
+  `cargo tree` before adding `flate2` directly).
+
+---
+
 ## 0. How to add a node (the repeatable recipe)
 
 Every node touches the same 5 places. Reuse `soma.rs` / `condition.rs` as templates.
@@ -91,11 +132,12 @@ Every node touches the same 5 places. Reuse `soma.rs` / `condition.rs` as templa
 2. **Module registration** — add `pub(crate) mod <name>;` to
    `crates/axon-agent/src/tools/workflow/nodes/mod.rs`.
 3. **Dispatch arm** — add `"<type>" => nodes::<name>::execute(config, ...).await,`
-   in `execute_node_dispatch` (`crates/axon-agent/src/tools/workflow.rs:500`).
+   in `execute_node_dispatch` (`workflow.rs`, currently ~line 488 — anchor by
+   function name, line numbers drift).
 4. **No-retry list** (only for control/branch nodes that must not re-run) —
-   `execute_node_by_type` (`workflow.rs:600`).
+   `execute_node_by_type` (`workflow.rs`, ~line 590).
 
-Add `#[cfg(test)] mod tests` in the executor file (see `condition.rs:166` for the
+Add `#[cfg(test)] mod tests` in the executor file (see `condition.rs` for the
 pattern — pure functions, table-driven).
 
 ### Frontend (Vue/JS) — 1 edit
@@ -108,33 +150,50 @@ pattern — pure functions, table-driven).
    `nodes/*.vue` only for special UX.
 
 ### Data-model note (read before Phase 1)
-See **"Architecture decision: data model & conventions"** above — the list-shaping
-nodes operate on an **array `Value`** per the locked-in convention (primary input =
-most recent predecessor by `position`, expected to be an array). No engine rewrite.
+See **"Architecture decision"** above — the list-shaping nodes operate on an
+**array `Value`** per the locked-in convention (primary input = most recent
+predecessor by `position`, expected to be an array). Multi-input nodes (Merge)
+additionally require Task 1.0.
 
 **Naming:** type keys stay literal/n8n-parity for developer clarity; `displayName`
 can carry the neuro theme (as `database` already shows as *Hippocampus*). Suggested
-neuro names are noted per node — optional.
+neuro names are noted per node — optional. Pick final displayNames **before**
+building — they end up embedded in saved workflows via `$node["Name"]` references.
 
 ---
 
 ## Phase 1 — Data plumbing (highest leverage) — the biggest structural hole
 
 Today Axon can **split** flow (IF / Switch / Approval fork into branches) but has
-**no way to rejoin or reshape lists**. Every fork is currently a dead-end. Fix that first.
+**no way to rejoin or reshape lists**. Every fork is currently a dead-end. Fix that
+first. The engine's fan-in sync already works (see above), so this phase is almost
+entirely node code.
 
 | # | Node (type key) | displayName (neuro) | Effort | Outputs |
 |---|---|---|---|---|
+| 1.0 | — (dispatch plumbing) | — | S | — |
 | 1.1 | `merge` | Plexus (Merge) | M | 1 |
 | 1.2 | `filter` | Synaptic Gate (Filter) | S | 1 |
 | 1.3 | `aggregate` | Summation (Aggregate) | M | 1 |
 | 1.4 | `splitOut` | Split Out | S | 1 |
 | 1.5 | `sortLimit` | Sort / Limit / Dedupe | M | 1 |
 
+- [ ] **1.0 Multi-input plumbing** — the one engine-adjacent task, done once:
+  - Pass the run's `edges` (or pre-resolved per-handle inputs) into
+    `execute_node_dispatch` for nodes that need them — same pattern as
+    `node_results` today.
+  - Helper `direct_predecessor_outputs(node, edges, node_results)` that:
+    (a) considers only results produced **this run** (excludes the stale
+    prior-run cache seed), (b) filters `status == "skipped"` entries,
+    (c) groups outputs by the incoming edge's `target_handle` so Merge can tell
+    input 0 from input 1.
+  - UI: render **two input handles** on `merge` (mirror of `dynamicOutputs`;
+    edges already persist `targetHandle`, so only node rendering changes).
 - [ ] **1.1 Merge** — join/append two branches. Modes: `append`, `mergeByKey`
-  (SQL-style join on a field), `mergeByPosition`, `combine`. Reads **multiple**
-  predecessors from `node_results` (dispatch already passes it — see how `javascript`
-  and `soma` consume `node_results`). *This is the #1 unlock.*
+  (SQL-style join on a field), `mergeByPosition`, `combine`. Consumes the 1.0
+  helper. **Skipped-branch semantics:** if one input's branch was not taken
+  (IF/Switch routed away), pass the live side through unchanged — merge-after-IF
+  must never error or emit nulls for the dead side. *This is the #1 unlock.*
 - [ ] **1.2 Filter** — keep/drop array items matching a condition. Reuse
   `evaluate_condition_typed` (already used by `condition.rs`). One output; dropped
   items disappear from the stream.
@@ -146,8 +205,13 @@ Today Axon can **split** flow (IF / Switch / Approval fork into branches) but ha
   one node with a `mode` option or three tiny nodes. Sort by field ± direction,
   limit N (head/tail), dedupe by key.
 
-**Phase 1 verification:** build a test workflow `Stimulus → Switch → (two branches) →
-Merge → Soma` and confirm branches rejoin. Add unit tests per node (pure functions).
+**Phase 1 verification:**
+1. `Stimulus → Switch → (two branches) → Merge → Soma` — branches rejoin.
+2. `Stimulus → IF → Merge` where IF takes **one** branch — Merge passes the live
+   side through (skipped-side semantics).
+3. Re-run test 1 as a targeted "Execute Step" on Merge — confirm the stale-cache
+   filter (1.0a) keeps prior-run results out.
+4. Unit tests per node (pure functions, table-driven).
 
 ---
 
@@ -158,49 +222,71 @@ payload. These turn raw bytes into structured data.
 
 | # | Node (type key) | displayName | Effort | Crate dep |
 |---|---|---|---|---|
-| 2.1 | `dateTime` | Chronon (Date & Time) | S | `chrono` (likely present) |
-| 2.2 | `crypto` | Enzyme (Crypto) | S | `sha2`, `hmac`, `uuid` |
+| 2.1 | `dateTime` | Chronon (Date & Time) | S | none — `chrono`/`chrono-tz` in tree |
+| 2.2 | `crypto` | Enzyme (Crypto) | S | none — `sha2`/`hmac`/`uuid` in tree |
 | 2.3 | `htmlExtract` | Retina (HTML Extract) | M | `scraper` |
 | 2.4 | `extractFromFile` | Digest (Extract from File) | M | `csv`, `calamine` (xlsx) |
 | 2.5 | `convertToFile` | Convert to File | M | `csv` |
-| 2.6 | `compression` | Compression (zip/gzip) | S | `zip`, `flate2` |
+| 2.6 | `compression` | Compression (zip/gzip) | S | `zip` (gzip likely in tree) |
 | 2.7 | `xml` / `markdown` | XML / Markdown | S | `quick-xml`, `pulldown-cmark` |
+| 2.8 | `pdfText` | PDF Text | M–L | see warning — demand-driven |
 
 - [ ] **2.1 Date & Time** — parse/format/add/subtract/diff; timezones. Extremely
-  common; today only doable in a JavaScript node.
+  common; today only doable in a JavaScript node. **Build on
+  `axon_core::flexidate`** (universal datetime reconciliation, already powers both
+  Calendar integrations) — the node is mostly a thin config layer over it.
 - [ ] **2.2 Crypto** — hash / HMAC / sign / UUID. Needed for **webhook signature
-  verification** and idempotency keys.
+  verification** and idempotency keys. Zero new deps.
 - [ ] **2.3 HTML Extract** — CSS-selector extraction → turns "Synapse fetch a page"
-  into real **web scraping**.
-- [ ] **2.4 Extract from File** — CSV / XLSX / PDF-text → JSON. Myelin stores files
+  into real **web scraping**. `scraper` is compile-heavy but runtime-light — fine
+  for the e2-micro.
+- [ ] **2.4 Extract from File** — **CSV / XLSX only** → JSON. Myelin stores files
   but can't read a spreadsheet today.
 - [ ] **2.5 Convert to File** — JSON → CSV/XLSX/text for export/attachments.
 - [ ] **2.6 Compression** — zip/unzip/gzip for archives & attachments.
 - [ ] **2.7 XML / Markdown** — XML↔JSON and Markdown↔HTML converters.
+- [ ] **2.8 PDF Text** — split out from 2.4 deliberately: Rust PDF text extraction
+  (`pdf-extract`, `lopdf`) is **flaky on real-world PDFs** (panics, garbled text on
+  scanned/complex layouts). Own line item so it can't stall the spreadsheet path;
+  build only when a workflow actually needs it, and wrap extraction so a bad PDF
+  fails the item, not the process.
 
 ---
 
-## Phase 3 — Communication (close the email gap)
+## Phase 3 — Workflow-as-API & generic email
 
-Glaring omission: Axon has Telegram/WhatsApp/Discord/Slack/Facebook but **no email**,
-even though the Classifier's own description says *"e.g. an email."*
+**Corrected premise:** Axon is *not* email-less. It already has a **Gmail trigger**
+(`execute_gmail_trigger` + the `check_and_trigger_gmail` background poller, wired
+into Stimulus with label/subject/body queries + attachment download) and
+**`gmail_send`** as a registered tool callable from the tool node. What's actually
+missing: **custom HTTP responses** (workflow-as-API) and **non-Google mailboxes**.
+Priority follows accordingly.
 
 | # | Node (type key) | displayName | Effort | Notes |
 |---|---|---|---|---|
-| 3.1 | `email` (send) | Axon Terminal (Email) | M | SMTP via `lettre` |
-| 3.2 | `emailTrigger` | Email Trigger (IMAP) | L | IMAP poll → new Stimulus source |
-| 3.3 | `respondToWebhook` | Efferent (Respond) | M | return custom HTTP response |
-| 3.4 | `rss` | RSS Read | S | `feed-rs` |
+| 3.1 | `respondToWebhook` | Efferent (Respond) | M | the real Phase-3 gem |
+| 3.2 | `email` (send) | Axon Terminal (Email) | M | SMTP via `lettre` — **rustls** |
+| 3.3 | `rss` | RSS Read | S | `feed-rs` |
+| 3.4 | `emailTrigger` | Email Trigger (IMAP) | L | demand-driven — see note |
 | 3.5 | `sms` | SMS (Twilio) | S | HTTP wrapper, low priority |
 
-- [ ] **3.1 Send Email (SMTP)** — one of n8n's top-3 actions. Credential-backed.
-- [ ] **3.2 Email Trigger (IMAP)** — inbound-email automation; integrates as a new
-  trigger source alongside `stimulus`. Pairs perfectly with the Classifier.
-- [ ] **3.3 Respond to Webhook** — return a custom HTTP body/status so a workflow can
-  **be an API**, not just receive. Wire into the existing webhook path
-  (`crates/axon-agent/src/webhook/external.rs`).
-- [ ] **3.4 RSS Read** — feed monitoring.
-- [ ] **3.5 SMS/Twilio** — optional; thin HTTP wrapper.
+- [ ] **3.1 Respond to Webhook** — return a custom HTTP body/status so a workflow
+  can **be an API**, not just receive. Wire into the existing webhook path
+  (`crates/axon-agent/src/webhook/external.rs`) — the resume/approval webhook
+  plumbing already shows the pattern. Unlocks: form backends, Slack slash-command
+  responses, signed-webhook handshakes (pairs with 2.2 Crypto).
+- [ ] **3.2 Send Email (SMTP)** — for non-Gmail/transactional senders.
+  Credential-backed. `lettre` with `default-features = false` +
+  rustls transport (per dependency policy). Build when a concrete non-Gmail sender
+  shows up — Gmail sending already works via the tool node.
+- [ ] **3.3 RSS Read** — feed monitoring.
+- [ ] **3.4 Email Trigger (IMAP)** — **demoted to demand-driven** (was priority 2):
+  the Gmail trigger already covers most inbound-email automation, and this is the
+  plan's only L-effort item. Build only when a real non-Gmail mailbox shows up.
+  When it does: `async-imap` with rustls, integrate as a new Stimulus source
+  alongside the Gmail poller (same background-poll pattern). Pairs with the
+  Classifier.
+- [ ] **3.5 SMS/Twilio** — optional; thin wrapper over the shared HTTP client.
 
 ---
 
@@ -215,11 +301,14 @@ Small additions that meaningfully extend the agent layer you already have.
 | 4.3 | `summarize` / `sentiment` | Summarize / Sentiment | S | LLM presets |
 
 - [ ] **4.1 Information Extractor** — schema-guided structured JSON extraction.
-  Classifier only *tags*; this *pulls fields*. Reuse the Cortex/Classifier LLM path.
+  Classifier only *tags*; this *pulls fields*. Reuse the Cortex/Classifier LLM path
+  and set `expects_structured_output` (the raw-JSON loop guard rejects structured
+  node output otherwise — established pattern).
 - [ ] **4.2 Vector Store / RAG node** — the `qdrant/` folder exists but Engram is
   key-value, not semantic. A first-class **embed → upsert → semantic-search** node
   makes retrieval a workflow step. Reuse the provider-configurable embedder.
-- [ ] **4.3 Summarize / Sentiment** — thin LLM presets over the Cortex path.
+- [ ] **4.3 Summarize / Sentiment** — thin LLM presets over the Cortex path (also
+  set `expects_structured_output` where output is JSON).
 
 ---
 
@@ -238,18 +327,24 @@ only when a real workflow needs them.
 
 ## Suggested build order (if you only do a few at a time)
 
-1. **Merge** (1.1) — unlocks fan-out/fan-in; nothing else compares in leverage.
-2. **Email send + IMAP trigger** (3.1, 3.2) — a whole new automation category.
-3. **HTML Extract + Extract from File** (2.3, 2.4) — scrape-then-process.
-4. **Filter / Aggregate / Split Out** (1.2–1.4) — full list-processing toolkit.
-5. **Date & Time + Crypto** (2.1, 2.2) — remove the "drop to JavaScript" tax.
-6. Everything else as needed.
+1. **Multi-input plumbing + Merge** (1.0, 1.1) — unlocks fan-out/fan-in; nothing
+   else compares in leverage.
+2. **Filter / Aggregate / Split Out / Sort-Limit** (1.2–1.5) — finish the list
+   toolkit while the array convention and test harness are fresh; all S/M.
+3. **Respond to Webhook** (3.1) — workflows become APIs; plumbing already exists.
+4. **Date & Time + Crypto** (2.1, 2.2) — zero new deps, `flexidate` does the heavy
+   lifting; removes the "drop to JavaScript" tax almost for free.
+5. **HTML Extract + Extract from File** (2.3, 2.4) — scrape-then-process.
+6. **Email (3.2 / 3.4) only when a non-Gmail need actually appears**; everything
+   else as demanded.
 
 ## Per-node Definition of Done
 - [ ] Executor file + unit tests (pure logic table-driven like `condition.rs`).
 - [ ] Registered in `nodes/mod.rs` + dispatch arm in `workflow.rs`.
 - [ ] `NODE_TYPES` entry in `nodes.js` (icon, description, properties).
 - [ ] No-retry list updated if it's a control/branch node.
+- [ ] New crates comply with the dependency policy (rustls-only,
+      `default-features = false`); spot-check with `cargo tree`.
 - [ ] Manual run in the canvas exercising the node end-to-end.
 - [ ] `graphify update .` run to refresh the knowledge graph.
 - [ ] Committed + pushed to `main`.
