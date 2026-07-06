@@ -321,8 +321,22 @@ payload. These turn raw bytes into structured data.
   params via `displayOptions`.
   - Remaining DoD item: manual canvas E2E; logic covered by unit tests + backend/UI
     build.
-- [ ] **2.2 Crypto** — hash / HMAC / sign / UUID. Needed for **webhook signature
-  verification** and idempotency keys. Zero new deps.
+- [x] **2.2 Crypto** (`crypto` / *Enzyme*) — hash / HMAC / UUID. Executor
+  `nodes/crypto.rs` (12 table-driven tests incl. NIST/RFC vectors). **Zero new
+  deps** — reuses `sha2`/`hmac`/`hex`/`base64`/`uuid`, the same crates that back
+  the master-key crypto and the GitHub/Facebook webhook signature checks. Three
+  `operation`s: `hash` (digest a value), `hmac` (keyed HMAC with a secret — the
+  "sign" side of webhook verification: compute it, compare to the provider header
+  with an IF node), `generateUuid` (v4). Algorithm ∈ SHA-224/256/384/512
+  (name-normalized so "SHA-256"=="sha256"); output encodes as `hex` (default —
+  GitHub/Stripe), `base64` (Shopify), or `base64url`. Values coerce via
+  `val_to_string` so a number hashes as its plain string. Asymmetric-key signing
+  (RSA/ECDSA) is deliberately out of scope — it needs a new crate, and the plan
+  pins this to zero deps. Output mirrors `dateTime`/Soma (`outputField` +
+  `includeInputFields`). Dispatch uses the Soma/`$json` primary-input convention;
+  not in the no-retry list (pure transform). `NODE_TYPES.crypto` in `nodes.js`.
+  - Remaining DoD item: manual canvas E2E; logic covered by unit tests + backend/UI
+    build.
 - [ ] **2.3 HTML Extract** — CSS-selector extraction → turns "Synapse fetch a page"
   into real **web scraping**. `scraper` is compile-heavy but runtime-light — fine
   for the e2-micro.

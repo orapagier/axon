@@ -663,6 +663,15 @@ async fn execute_node_dispatch(
             let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
             nodes::date_time::execute(config, &input)
         }
+        "crypto" => {
+            // Hash / HMAC / UUID utility. Same primary-input convention as
+            // dateTime: feeds `includeInputFields`; the digest lands under
+            // `outputField`.
+            let mut vec: Vec<_> = node_results.values().cloned().collect();
+            vec.sort_by_key(|r| r.position);
+            let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
+            nodes::crypto::execute(config, &input)
+        }
         "loop" => nodes::iterate::execute(config),
         "subflow" | "workflow" => {
             nodes::subflow::execute(config, state, workflow_id, run_id, node_results).await
