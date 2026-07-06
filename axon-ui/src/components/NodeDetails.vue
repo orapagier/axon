@@ -539,7 +539,10 @@ const nodeResult = computed(() => {
   const run = props.lastRun.node_results ? props.lastRun : props.lastRun.result
   if (!run || !run.node_results) return null
   const nid = String(props.node.id)
-  return run.node_results.find(r => String(r.node_id) === nid) || null
+  const res = run.node_results.find(r => String(r.node_id) === nid) || null
+  // A 'skipped' result (branch not taken / node disabled) is not a real run:
+  // present the node exactly as if it never executed (no output, no badges).
+  return res?.status === 'skipped' ? null : res
 })
 
 const errorDisplay = computed(() => {
