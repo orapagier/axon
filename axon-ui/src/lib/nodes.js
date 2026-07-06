@@ -674,6 +674,7 @@ export const NODE_TYPES = {
                 displayOptions: { show: { sendBody: [true] } },
                 options: [
                     { name: 'JSON', value: 'json' },
+                    { name: 'GraphQL', value: 'graphql' },
                     { name: 'Form-Data', value: 'multipart-form-data' },
                     { name: 'Form Urlencoded', value: 'form-urlencoded' },
                     { name: 'Raw', value: 'raw' },
