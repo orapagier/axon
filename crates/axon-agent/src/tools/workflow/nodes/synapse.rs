@@ -248,26 +248,21 @@ pub(crate) async fn execute_http_node(config: &Value, state: &AppState) -> Resul
         .and_then(|v| v.as_str())
         .unwrap_or("none");
 
-    // The UI stores the mode in `authentication` (none / predefinedCredentialType /
-    // genericCredentialType) and the concrete scheme in `genericAuthType`
-    // (httpBasicAuth / httpHeaderAuth / …). http.rs matches on "basicAuth"/"headerAuth",
-    // so translate here. Query Auth and OAuth2 have no request-layer support yet, and
-    // "predefinedCredentialType" carries no inline fields, so both leave auth unset.
-    let auth = if authentication == "genericCredentialType" {
+    // The UI stores the mode in `authentication` (none / genericCredentialType /
+    // connectedAccount) and the concrete scheme in `genericAuthType`
+    // (httpBasicAuth / httpHeaderAuth / httpBearerAuth / httpQueryAuth / oAuth2).
+    // http.rs matches on "basicAuth" / "headerAuth" / "bearerAuth", so translate
+    // here. Query Auth is applied to `query_obj` further down. All secret fields
+    // may be typed inline OR supplied by a picked credential — interpolate_config
+    // merges the credential's stored fields into this config before we run.
+    let mut auth: Option<HttpAuth> = if authentication == "genericCredentialType" {
         let scheme = config
             .get("genericAuthType")
             .and_then(|v| v.as_str())
             .unwrap_or("httpBasicAuth");
-        let auth_type = match scheme {
-            "httpBasicAuth" => "basicAuth",
-            "httpHeaderAuth" => "headerAuth",
-            _ => "",
-        };
-        if auth_type.is_empty() {
-            None
-        } else {
-            Some(HttpAuth {
-                auth_type: auth_type.to_string(),
+        match scheme {
+            "httpBasicAuth" => Some(HttpAuth {
+                auth_type: "basicAuth".to_string(),
                 user: config
                     .get("user")
                     .and_then(|v| v.as_str())
@@ -276,6 +271,13 @@ pub(crate) async fn execute_http_node(config: &Value, state: &AppState) -> Resul
                     .get("password")
                     .and_then(|v| v.as_str())
                     .map(String::from),
+                header_name: None,
+                header_value: None,
+            }),
+            "httpHeaderAuth" => Some(HttpAuth {
+                auth_type: "headerAuth".to_string(),
+                user: None,
+                password: None,
                 header_name: config
                     .get("authHeaderName")
                     .and_then(|v| v.as_str())
@@ -284,11 +286,62 @@ pub(crate) async fn execute_http_node(config: &Value, state: &AppState) -> Resul
                     .get("authHeaderValue")
                     .and_then(|v| v.as_str())
                     .map(String::from),
-            })
+            }),
+            "httpBearerAuth" => config
+                .get("authBearerToken")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|token| HttpAuth {
+                    auth_type: "bearerAuth".to_string(),
+                    user: None,
+                    password: None,
+                    header_name: None,
+                    header_value: Some(token.to_string()),
+                }),
+            // httpQueryAuth → handled in query_obj; oAuth2 → fetched just below.
+            _ => None,
         }
     } else {
         None
     };
+
+    // OAuth2 generic credential: exchange for (or reuse a cached) access token,
+    // then send it as a Bearer header. Fail loudly — a missing token is not
+    // something to silently retry unauthenticated.
+    if authentication == "genericCredentialType"
+        && config.get("genericAuthType").and_then(|v| v.as_str()) == Some("oAuth2")
+    {
+        let token = fetch_oauth2_token(config)
+            .await
+            .map_err(|e| format!("OAuth2 token request failed: {e}"))?;
+        auth = Some(HttpAuth {
+            auth_type: "bearerAuth".to_string(),
+            user: None,
+            password: None,
+            header_name: None,
+            header_value: Some(token),
+        });
+    }
+
+    // Connected Account: reuse the (auto-refreshed) access token Axon already
+    // holds for a Google / Microsoft / Facebook login, sent as a Bearer header.
+    // This unlocks every API on those platforms without a dedicated node.
+    if authentication == "connectedAccount" {
+        let provider = config
+            .get("connectedAccountProvider")
+            .and_then(|v| v.as_str())
+            .unwrap_or("google");
+        let token = resolve_connected_account_token(state, provider)
+            .await
+            .map_err(|e| format!("Connected account '{provider}' unavailable: {e}"))?;
+        auth = Some(HttpAuth {
+            auth_type: "bearerAuth".to_string(),
+            user: None,
+            password: None,
+            header_name: None,
+            header_value: Some(token),
+        });
+    }
 
     let mut headers_obj = serde_json::Map::new();
     if config
