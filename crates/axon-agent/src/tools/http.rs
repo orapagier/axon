@@ -761,6 +761,21 @@ impl HttpRequestTool {
                 }
             };
 
+        // Fail-on-error: surface 4xx/5xx as an Err so the caller's
+        // continue-on-fail / error-workflow path runs, instead of passing an
+        // error body downstream as if it were data. Include a short snippet of
+        // the response so the failure is diagnosable.
+        if params.fail_on_error_status.unwrap_or(false) && status >= 400 {
+            let snippet: String = match &body {
+                Value::String(s) => s.clone(),
+                other => other.to_string(),
+            }
+            .chars()
+            .take(500)
+            .collect();
+            return Err(anyhow::anyhow!("HTTP {status}: {snippet}"));
+        }
+
         // Return based on requested format
         let mut final_body = body;
         if params.full_response.unwrap_or(false) {
