@@ -557,7 +557,10 @@ function getNodeResult(nodeId) {
   const run = props.lastRun.node_results ? props.lastRun : props.lastRun.result
   if (!run || !run.node_results) return null
   const nid = String(nodeId)
-  return run.node_results.find(r => String(r.node_id) === nid) || null
+  const res = run.node_results.find(r => String(r.node_id) === nid) || null
+  // Same skipped-is-not-a-run rule as nodeResult above, so upstream panels and
+  // the "Has Data" badge treat a not-taken branch as having no data.
+  return res?.status === 'skipped' ? null : res
 }
 
 function isLikelyImageCandidate(rawValue, keyPath = '') {
