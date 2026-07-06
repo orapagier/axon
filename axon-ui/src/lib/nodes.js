@@ -929,6 +929,13 @@ export const NODE_TYPES = {
                         description: 'Returns the full response object (body, headers, statusCode)',
                     },
                     {
+                        displayName: 'Fail on Error Status',
+                        name: 'failOnErrorStatus',
+                        type: 'boolean',
+                        default: false,
+                        description: 'Treat a 4xx/5xx response as a node failure (so Continue-On-Fail and error workflows fire) instead of passing the error body downstream as normal data.',
+                    },
+                    {
                         displayName: 'Data Cleaner',
                         name: 'dataCleaner',
                         type: 'boolean',
