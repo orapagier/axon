@@ -2551,8 +2551,10 @@ impl WorkflowEngine {
                     rid
                 );
                 // The run task never reaches `run_inner`, so drop whatever it
-                // staged (entry pin / trigger payload, keyed by this run_id).
+                // staged (entry pin / trigger payload / webhook responder,
+                // keyed by this run_id).
                 trigger_data::discard(&rid);
+                nodes::respond_to_webhook::discard(&rid);
                 if let Ok(conn) = s.db.get() {
                     // Record *why* it failed so run history (and the Telegram
                     // report) show a reason instead of an empty failed run.
