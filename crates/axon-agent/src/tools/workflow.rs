@@ -2530,6 +2530,11 @@ impl WorkflowEngine {
         if let Some(payload) = trigger_payload {
             trigger_data::stage(&run_id, payload);
         }
+        // 3.1: same before-spawn invariant as the staging above — the respond
+        // node must always find its channel, however fast the task starts.
+        if let Some(tx) = respond_tx {
+            nodes::respond_to_webhook::register(&run_id, tx);
+        }
 
         let s = state.clone();
         let wf_id = workflow_id.to_string();
