@@ -1,6 +1,10 @@
+use crate::state::AppState;
 use crate::tools::http::{HttpAuth, HttpRequestParams, HttpRequestTool};
 use crate::tools::workflow::try_parse_json_value;
+use once_cell::sync::Lazy;
 use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::sync::Mutex;
 use std::time::Duration;
 
 /// A response "page" counts as empty (stop paginating) when it has no data.
@@ -21,6 +25,194 @@ fn get_by_path<'a>(v: &'a Value, path: &str) -> Option<&'a Value> {
         cur = cur.get(seg)?;
     }
     Some(cur)
+}
+
+/// Decide whether pagination should stop. When a data-field path is set, the
+/// page is "empty" when that field's array is empty/absent — so APIs that wrap
+/// results (e.g. `{"items": [], "total": 0}`) stop correctly instead of running
+/// to the page cap because the envelope is never literally empty.
+fn page_is_empty(body: &Value, data_field: Option<&str>) -> bool {
+    match data_field {
+        Some(f) => match get_by_path(body, f) {
+            Some(Value::Array(a)) => a.is_empty(),
+            Some(v) => is_empty_body(v),
+            None => true,
+        },
+        None => is_empty_body(body),
+    }
+}
+
+/// Extract the items of one page into `out`. With a data-field path, pull that
+/// array (or scalar); otherwise flatten top-level arrays and pass objects through.
+fn collect_page_items(body: &Value, data_field: Option<&str>, out: &mut Vec<Value>) {
+    let target = match data_field {
+        Some(f) => get_by_path(body, f),
+        None => Some(body),
+    };
+    match target {
+        Some(Value::Array(arr)) => out.extend(arr.iter().cloned()),
+        Some(other) => out.push(other.clone()),
+        None => {}
+    }
+}
+
+/// Parse an RFC 5988 `Link` header for the URL with `rel="next"` (GitHub-style).
+fn parse_link_next(headers: &Value) -> Option<String> {
+    let link = headers
+        .get("link")
+        .or_else(|| headers.get("Link"))
+        .and_then(|v| v.as_str())?;
+    for part in link.split(',') {
+        let is_next = part.contains("rel=\"next\"") || part.contains("rel=next");
+        if is_next {
+            let a = part.find('<')?;
+            let b = part.find('>')?;
+            if b > a + 1 {
+                return Some(part[a + 1..b].to_string());
+            }
+        }
+    }
+    None
+}
+
+/// In-process cache of OAuth2 client-credentials / refresh-token results, keyed
+/// by the grant identity. Avoids a token round-trip on every request; entries
+/// are treated as expired 60s early so a request never rides a just-expired token.
+static OAUTH2_TOKEN_CACHE: Lazy<Mutex<HashMap<String, (String, i64)>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// Fetch (or reuse a cached) OAuth2 access token for the generic OAuth2
+/// credential type. Supports the `client_credentials` and `refresh_token` grants.
+async fn fetch_oauth2_token(config: &Value) -> Result<String, String> {
+    let grant = config
+        .get("oauth2GrantType")
+        .and_then(|v| v.as_str())
+        .unwrap_or("clientCredentials");
+    let token_url = config
+        .get("oauth2TokenUrl")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if token_url.is_empty() {
+        return Err("OAuth2 Token URL is required".to_string());
+    }
+    let client_id = config
+        .get("oauth2ClientId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let client_secret = config
+        .get("oauth2ClientSecret")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let scope = config
+        .get("oauth2Scope")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let cache_key = format!("{grant}|{token_url}|{client_id}|{scope}");
+    let now = chrono::Utc::now().timestamp_millis();
+    if let Ok(cache) = OAUTH2_TOKEN_CACHE.lock() {
+        if let Some((tok, exp)) = cache.get(&cache_key) {
+            if *exp - 60_000 > now {
+                return Ok(tok.clone());
+            }
+        }
+    }
+
+    let client = reqwest::Client::new();
+    let (access_token, expires_at) = match grant {
+        "refreshToken" => {
+            let refresh = config
+                .get("oauth2RefreshToken")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if refresh.is_empty() {
+                return Err("OAuth2 Refresh Token is required for the refresh_token grant".into());
+            }
+            let extra: Vec<(&str, &str)> = if scope.is_empty() {
+                vec![]
+            } else {
+                vec![("scope", scope.as_str())]
+            };
+            let tok = axon_core::oauth::refresh_token(
+                &client,
+                &token_url,
+                &client_id,
+                &client_secret,
+                refresh,
+                &extra,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            (tok.access_token, tok.expires_at)
+        }
+        _ => {
+            // client_credentials
+            let mut form = vec![
+                ("grant_type", "client_credentials"),
+                ("client_id", client_id.as_str()),
+                ("client_secret", client_secret.as_str()),
+            ];
+            if !scope.is_empty() {
+                form.push(("scope", scope.as_str()));
+            }
+            let resp = client
+                .post(&token_url)
+                .form(&form)
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+            let status = resp.status();
+            let body: Value = resp.json().await.map_err(|e| e.to_string())?;
+            let token = body
+                .get("access_token")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    let desc = body
+                        .get("error_description")
+                        .or_else(|| body.get("error"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("no access_token in response");
+                    format!("token endpoint returned {status}: {desc}")
+                })?
+                .to_string();
+            let expires_in = body.get("expires_in").and_then(|v| v.as_i64()).unwrap_or(3600);
+            (token, now + expires_in * 1000)
+        }
+    };
+
+    if let Ok(mut cache) = OAUTH2_TOKEN_CACHE.lock() {
+        cache.insert(cache_key, (access_token.clone(), expires_at));
+    }
+    Ok(access_token)
+}
+
+/// Resolve a live access token for a Google / Microsoft / Facebook account the
+/// user has already connected in Axon. Tokens are auto-refreshed by the
+/// respective auth module. Bridges to the shared `axon_core::AppState` that the
+/// in-process MCP backend owns (where OAuth tokens live).
+async fn resolve_connected_account_token(state: &AppState, provider: &str) -> Result<String, String> {
+    let core = state
+        .mcp
+        .inprocess_state()
+        .await
+        .ok_or_else(|| "connected-accounts backend is not available".to_string())?;
+    match provider {
+        "google" => axon_google::auth::access_token(&core)
+            .await
+            .map_err(|e| e.to_string()),
+        "microsoft" => axon_microsoft::auth::access_token(&core)
+            .await
+            .map_err(|e| e.to_string()),
+        "facebook" => axon_facebook::auth::page_token(&core)
+            .await
+            .map_err(|e| e.to_string()),
+        other => Err(format!("unknown connected-account provider '{other}'")),
+    }
 }
 
 /// Header and query-parameter values are always strings on the wire, so they must
