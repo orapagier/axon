@@ -505,7 +505,6 @@ fn find_iteration_source_node_id(
 ///    input `input_main_0`, matching what the editor persists), so the consumer
 ///    can tell input 0 from input 1. Within a handle, outputs are ordered by the
 ///    source node's `position` for deterministic append order.
-#[allow(dead_code)] // Consumed by Task 1.1 (Merge dispatch arm); exercised by tests below.
 pub(crate) fn direct_predecessor_outputs(
     target_node_id: &str,
     edges: &[WorkflowEdge],
@@ -553,6 +552,10 @@ async fn execute_node_dispatch(
     workflow_id: &str,
     run_id: &str,
     node_results: &std::collections::HashMap<String, NodeResult>,
+    // Task 1.0: for multi-input nodes (Merge), this-run direct-predecessor outputs
+    // grouped by input handle (`direct_predecessor_outputs`). Empty for every other
+    // node type — only Merge reads it.
+    merge_inputs: &std::collections::BTreeMap<String, Vec<Value>>,
     // Whether a Wait node here may durably suspend the whole run (vs sleeping
     // in-process). False inside Loop iterations and for test/partial runs.
     durable_allowed: bool,
@@ -617,6 +620,7 @@ async fn execute_node_dispatch(
         "homeostasis" => nodes::homeostasis::execute(config, state).await,
         "ifCondition" => nodes::condition::execute_if_condition_node(config),
         "switch" => nodes::condition::execute_switch_node(config),
+        "merge" => nodes::merge::execute(config, merge_inputs),
         "loop" => nodes::iterate::execute(config),
         "subflow" | "workflow" => {
             nodes::subflow::execute(config, state, workflow_id, run_id, node_results).await
@@ -655,6 +659,7 @@ async fn execute_node_by_type(
     workflow_id: &str,
     run_id: &str,
     node_results: &std::collections::HashMap<String, NodeResult>,
+    merge_inputs: &std::collections::BTreeMap<String, Vec<Value>>,
     durable_allowed: bool,
 ) -> (Result<Value, String>, u32) {
     let no_retry = matches!(
@@ -684,6 +689,7 @@ async fn execute_node_by_type(
             workflow_id,
             run_id,
             node_results,
+            merge_inputs,
             durable_allowed,
         )
         .await
@@ -1463,12 +1469,28 @@ impl WorkflowEngine {
                         "loop"
                             | "ifCondition"
                             | "switch"
+                            // Merge is fan-IN: it must never be mapped per-item even
+                            // when placed directly after a Loop — it consumes the
+                            // loop's aggregated output as one input and joins it with
+                            // the other branch.
+                            | "merge"
                             | "trigger"
                             | "circadian"
                             | "stimulus"
                             | "subflow"
                             | "workflow"
                     );
+
+                // Task 1.0/1.1: a Merge node's inputs are its direct predecessors'
+                // outputs grouped by input handle, taken from THIS run's
+                // `ordered_results` (which excludes the prior-run cache seed and
+                // carries real skip entries). Empty for every non-merge node, so the
+                // scan only runs where it's needed.
+                let merge_inputs = if node.node_type == "merge" {
+                    direct_predecessor_outputs(&current_id, &edges, &ordered_results)
+                } else {
+                    std::collections::BTreeMap::new()
+                };
 
                 let (result, attempts): (Result<Value, String>, u32) = if can_iterate {
                     if let Some(source_node_id) = iteration_source_id {
@@ -1553,6 +1575,10 @@ impl WorkflowEngine {
                                     let futs = units.into_iter().map(|(idx, current)| {
                                         let (item_config, temp_results) = build_unit(idx, &current);
                                         async move {
+                                            // Merge never iterates (excluded from
+                                            // can_iterate), so a loop body has no
+                                            // fan-in inputs.
+                                            let no_merge_inputs = std::collections::BTreeMap::new();
                                             let (r, a) = execute_node_by_type(
                                                 node,
                                                 &item_config,
@@ -1561,6 +1587,7 @@ impl WorkflowEngine {
                                                 workflow_id,
                                                 run_id_ref,
                                                 &temp_results,
+                                                &no_merge_inputs,
                                                 // A Wait inside a Loop body can't durably
                                                 // suspend — it sleeps in-process per item.
                                                 false,
@@ -1596,6 +1623,7 @@ impl WorkflowEngine {
                                             workflow_id,
                                             run_id_ref,
                                             &temp_results,
+                                            &merge_inputs,
                                             // Iterated Wait: in-process sleep per item.
                                             false,
                                         )
@@ -1655,6 +1683,7 @@ impl WorkflowEngine {
                                     workflow_id,
                                     &run_id,
                                     &node_results,
+                                    &merge_inputs,
                                     target_node_id.is_none(),
                                 )
                                 .await
@@ -1675,6 +1704,7 @@ impl WorkflowEngine {
                                 workflow_id,
                                 &run_id,
                                 &node_results,
+                                &merge_inputs,
                                 target_node_id.is_none(),
                             )
                             .await
@@ -1695,6 +1725,7 @@ impl WorkflowEngine {
                             workflow_id,
                             &run_id,
                             &node_results,
+                            &merge_inputs,
                             target_node_id.is_none(),
                         )
                         .await
@@ -1715,6 +1746,7 @@ impl WorkflowEngine {
                         workflow_id,
                         &run_id,
                         &node_results,
+                        &merge_inputs,
                         target_node_id.is_none(),
                     )
                     .await

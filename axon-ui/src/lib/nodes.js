@@ -1266,6 +1266,59 @@ export const NODE_TYPES = {
             },
         ],
     },
+    merge: {
+        displayName: 'Plexus (Merge)',
+        name: 'merge',
+        icon: '🔀',
+        // Two input handles: the fan-in counterpart to Switch's dynamic outputs.
+        // Rendered via getNodeInputs() + CanvasNode.vue (Task 1.0). Edges persist
+        // targetHandle as input_main_0 / input_main_1.
+        inputs: ['input 1', 'input 2'],
+        outputs: ['main'],
+        description: 'Rejoin two forked branches, or combine two lists into one. Append, merge by matching field, merge by position, or all-combinations. A branch routed away by an IF/Switch passes the live side straight through.',
+        properties: [
+            {
+                displayName: 'Mode',
+                name: 'mode',
+                type: 'options',
+                default: 'append',
+                options: [
+                    { name: 'Append', value: 'append', description: 'Concatenate input 1 then input 2 into one list.' },
+                    { name: 'Merge By Key', value: 'mergeByKey', description: 'SQL-style join: enrich each input-1 item with the input-2 item that shares a field value.' },
+                    { name: 'Merge By Position', value: 'mergeByPosition', description: 'Zip by index: pair item 1 of each input, item 2 of each, and so on.' },
+                    { name: 'Combine (All Pairs)', value: 'combine', description: 'Cartesian product: every input-1 item merged with every input-2 item.' },
+                ],
+                hint: 'Append is the common case for rejoining IF/Switch branches. The others reshape two lists.',
+            },
+            {
+                displayName: 'Field to Match',
+                name: 'field',
+                type: 'string',
+                default: '',
+                placeholder: 'id',
+                displayOptions: { show: { mode: ['mergeByKey'] } },
+                hint: 'The field whose value must be equal on both sides to join a pair. Use Field 1 / Field 2 below if the two inputs name it differently.',
+            },
+            {
+                displayName: 'Field 1 (Input 1)',
+                name: 'field1',
+                type: 'string',
+                default: '',
+                placeholder: 'userId',
+                displayOptions: { show: { mode: ['mergeByKey'] } },
+                hint: 'Optional. Overrides Field to Match for input 1 when the key name differs per side.',
+            },
+            {
+                displayName: 'Field 2 (Input 2)',
+                name: 'field2',
+                type: 'string',
+                default: '',
+                placeholder: 'id',
+                displayOptions: { show: { mode: ['mergeByKey'] } },
+                hint: 'Optional. Overrides Field to Match for input 2 when the key name differs per side.',
+            },
+        ],
+    },
     loop: {
         displayName: 'Loop',
         name: 'loop',

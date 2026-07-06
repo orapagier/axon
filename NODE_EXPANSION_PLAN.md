@@ -178,7 +178,7 @@ entirely node code.
 | 1.4 | `splitOut` | Split Out | S | 1 |
 | 1.5 | `sortLimit` | Sort / Limit / Dedupe | M | 1 |
 
-- [~] **1.0 Multi-input plumbing** — the one engine-adjacent task, done once:
+- [x] **1.0 Multi-input plumbing** — the one engine-adjacent task, done once:
   - [x] Helper `direct_predecessor_outputs(target_node_id, edges,
     this_run_results)` in `workflow.rs` (table-driven tests:
     `multi_input_plumbing_tests`). Sources from the run's `ordered_results`
@@ -192,15 +192,22 @@ entirely node code.
     + `CanvasNode.vue` `inputs` computed (mirror of `dynamicOutputs`). A node
     type declaring `inputs: 2` (or a label array) in `NODE_TYPES` now renders
     two input handles; edges already persist `targetHandle`.
-  - [ ] Wire the helper into the dispatch path (pass `edges` +
-    `ordered_results`, or the pre-resolved grouped inputs, into
-    `execute_node_dispatch`). **Deferred to 1.1** so it lands atop the `merge`
-    dispatch arm that consumes it — avoids an unused param on the exec hot path.
-- [ ] **1.1 Merge** — join/append two branches. Modes: `append`, `mergeByKey`
-  (SQL-style join on a field), `mergeByPosition`, `combine`. Consumes the 1.0
-  helper. **Skipped-branch semantics:** if one input's branch was not taken
-  (IF/Switch routed away), pass the live side through unchanged — merge-after-IF
-  must never error or emit nulls for the dead side. *This is the #1 unlock.*
+  - [x] Wired the helper into the dispatch path: `merge_inputs` threaded through
+    `execute_node_by_type` → `execute_node_dispatch` (all 6 call sites), computed
+    once per node in `run_inner` (gated to `node_type == "merge"`) from
+    `edges` + `ordered_results`. `merge` also added to the `can_iterate`
+    exclusion so it is never mapped per-item after a Loop.
+- [x] **1.1 Merge** (`merge` / *Plexus*) — join/append two branches. Executor
+  `nodes/merge.rs` (11 table-driven tests) consumes the 1.0 helper. Modes:
+  `append` (default), `mergeByKey` (SQL-style left join on a field, with
+  optional per-side `field1`/`field2`), `mergeByPosition` (zip by index),
+  `combine` (cartesian). **Skipped-branch semantics done:** the 1.0 helper drops
+  the not-taken side, so with one live side Merge passes it through unchanged for
+  *every* mode — never errors or nulls the dead side. Field-merge is a full union
+  (second input enriches the first; conflicts → input 2 wins). `NODE_TYPES.merge`
+  entry renders two input handles via the 1.0 UI seam. *This is the #1 unlock.*
+  - Remaining DoD item: manual canvas E2E (Phase 1 verification tests 1–3);
+    logic is covered by unit tests + compile/build.
 - [ ] **1.2 Filter** — keep/drop array items matching a condition. Reuse
   `evaluate_condition_typed` (already used by `condition.rs`). One output; dropped
   items disappear from the stream.

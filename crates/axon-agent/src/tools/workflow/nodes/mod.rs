@@ -23,6 +23,7 @@ pub(crate) mod github;
 pub(crate) mod homeostasis;
 pub(crate) mod iterate;
 pub(crate) mod mcp;
+pub(crate) mod merge;
 pub(crate) mod shell;
 pub(crate) mod slack;
 pub(crate) mod soma;
