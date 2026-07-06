@@ -55,6 +55,92 @@ export const CONDITION_OPERATIONS = [
 // Operators that take no comparison value — Value 2 / Rule Value is hidden.
 const UNARY_OPERATIONS = ['exists', 'notExists', 'empty', 'notEmpty', 'true', 'false']
 
+// ── Synapse "Quick Start" presets ────────────────────────────────────────────
+// One-click starting points for popular APIs that have no dedicated node. Each
+// preset's `apply` object is merged into the node config; the user then fills in
+// their own token in the auth field the preset selected. `docs` is surfaced as a
+// hint after applying. This is just data — extend it freely.
+export const SYNAPSE_PRESETS = [
+    {
+        label: 'OpenAI', value: 'openai',
+        docs: 'Paste your API key in the Bearer Token field. Base URL set to api.openai.com/v1.',
+        apply: {
+            url: 'https://api.openai.com/v1/chat/completions',
+            method: 'POST',
+            authentication: 'genericCredentialType', genericAuthType: 'httpBearerAuth',
+            sendBody: true, contentType: 'json', specifyBody: 'json',
+        },
+    },
+    {
+        label: 'Notion', value: 'notion',
+        docs: 'Paste your integration token in the Bearer Token field. The Notion-Version header is prefilled.',
+        apply: {
+            url: 'https://api.notion.com/v1/',
+            method: 'GET',
+            authentication: 'genericCredentialType', genericAuthType: 'httpBearerAuth',
+            sendHeaders: true, specifyHeaders: 'keypair',
+            headerParameters: { parameters: [{ name: 'Notion-Version', value: '2022-06-28' }] },
+        },
+    },
+    {
+        label: 'Airtable', value: 'airtable',
+        docs: 'Paste your personal access token in the Bearer Token field. URL: append {baseId}/{tableName}.',
+        apply: {
+            url: 'https://api.airtable.com/v0/',
+            method: 'GET',
+            authentication: 'genericCredentialType', genericAuthType: 'httpBearerAuth',
+        },
+    },
+    {
+        label: 'Stripe', value: 'stripe',
+        docs: 'Paste your secret key in the Bearer Token field. Stripe uses form-urlencoded bodies.',
+        apply: {
+            url: 'https://api.stripe.com/v1/',
+            method: 'GET',
+            authentication: 'genericCredentialType', genericAuthType: 'httpBearerAuth',
+        },
+    },
+    {
+        label: 'Slack (Web API)', value: 'slack',
+        docs: 'Paste your bot token (xoxb-…) in the Bearer Token field.',
+        apply: {
+            url: 'https://slack.com/api/',
+            method: 'POST',
+            authentication: 'genericCredentialType', genericAuthType: 'httpBearerAuth',
+        },
+    },
+    {
+        label: 'GitHub', value: 'github',
+        docs: 'Paste a personal access token in the Bearer Token field. Link-header pagination is preselected.',
+        apply: {
+            url: 'https://api.github.com/',
+            method: 'GET',
+            authentication: 'genericCredentialType', genericAuthType: 'httpBearerAuth',
+            sendHeaders: true, specifyHeaders: 'keypair',
+            headerParameters: { parameters: [{ name: 'Accept', value: 'application/vnd.github+json' }] },
+            pagination: true, paginationMode: 'header',
+        },
+    },
+    {
+        label: 'SendGrid', value: 'sendgrid',
+        docs: 'Paste your API key in the Bearer Token field.',
+        apply: {
+            url: 'https://api.sendgrid.com/v3/',
+            method: 'GET',
+            authentication: 'genericCredentialType', genericAuthType: 'httpBearerAuth',
+        },
+    },
+    {
+        label: 'HubSpot', value: 'hubspot',
+        docs: 'Paste a private-app token in the Bearer Token field.',
+        apply: {
+            url: 'https://api.hubapi.com/',
+            method: 'GET',
+            authentication: 'genericCredentialType', genericAuthType: 'httpBearerAuth',
+        },
+    },
+]
+
 export const NODE_TYPES = {
     stimulus: {
         displayName: 'Stimulus',
