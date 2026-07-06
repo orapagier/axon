@@ -2356,4 +2356,30 @@ mod tests {
         // No tag → unchanged
         assert_eq!(resolve_send_file_links("plain text"), "plain text");
     }
+
+    #[test]
+    fn stage_and_resolve_copies_host_file_into_staging() {
+        // A file that lives elsewhere on the agent's host (outside data/files)
+        // must be copied into staging so the staging-only download endpoint can
+        // serve it — the exact case "find a file on my server" hit before.
+        let name = "axon_send_file_stage_test.pdf";
+        let src = std::env::temp_dir().join(name);
+        std::fs::write(&src, b"%PDF-1.4 test").unwrap();
+
+        let text = format!("Here you go: <send_file>{}</send_file>", src.display());
+        let out = stage_and_resolve_send_file_links(&text);
+
+        assert!(out.contains(&format!("[Download {name}]")), "got: {out}");
+        // The link target must now pass the download endpoint's staging check.
+        let start = out.find("path=").unwrap() + 5;
+        let end = out[start..].find(')').unwrap() + start;
+        let decoded = urlencoding::decode(&out[start..end]).unwrap().into_owned();
+        assert!(
+            crate::files::is_valid_staged_path(&decoded),
+            "link is not a staged path: {decoded}"
+        );
+
+        std::fs::remove_file(&src).ok();
+        std::fs::remove_file(crate::files::staging_dir().join(name)).ok();
+    }
 }
