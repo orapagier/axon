@@ -320,6 +320,20 @@ impl HttpRequestTool {
                         headers.insert(hname, hval);
                     }
                 }
+                "bearerAuth" => {
+                    // header_value carries the raw token; normalize so we never
+                    // double-prefix a value the user already pasted as "Bearer …".
+                    let token = auth.header_value.clone().unwrap_or_default();
+                    let token = token.trim();
+                    let value = if token.to_lowercase().starts_with("bearer ") {
+                        token.to_string()
+                    } else {
+                        format!("Bearer {token}")
+                    };
+                    if let Ok(hval) = HeaderValue::from_str(&value) {
+                        headers.insert(reqwest::header::AUTHORIZATION, hval);
+                    }
+                }
                 _ => {}
             }
         }
