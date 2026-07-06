@@ -125,6 +125,8 @@ function getNodeIcon(nodeType) {
     ifCondition: '🔀',
     switch: '🧭',
     condition: '🔀',
+    merge: '🔀',
+    filter: '🚦',
     loop: '🔄',
     wait: '⏱️',
     delay: '⏱️',

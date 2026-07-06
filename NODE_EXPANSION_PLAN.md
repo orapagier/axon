@@ -208,9 +208,22 @@ entirely node code.
   entry renders two input handles via the 1.0 UI seam. *This is the #1 unlock.*
   - Remaining DoD item: manual canvas E2E (Phase 1 verification tests 1–3);
     logic is covered by unit tests + compile/build.
-- [ ] **1.2 Filter** — keep/drop array items matching a condition. Reuse
-  `evaluate_condition_typed` (already used by `condition.rs`). One output; dropped
-  items disappear from the stream.
+- [x] **1.2 Filter** (`filter` / *Synaptic Gate*) — keep/drop array items matching
+  a condition. Executor `nodes/filter.rs` (12 table-driven tests) reuses
+  `evaluate_condition_typed` (shared with IF/Switch) so operators never drift.
+  **Per-item field access is the key difference from IF:** IF resolves one `value1`
+  expression once and routes the whole item; Filter tests a *different* value per
+  item, which the engine can't pre-resolve, so each condition names a `field`
+  (dot/bracket path relative to the item, via `parse_path_pointer`; blank = the item
+  itself, for scalar arrays). `value2` is still interpolated once (constant across
+  items). Combine `all`/`any`; `keep: matching|notMatching` inverts the gate;
+  optional `arrayPath` unwraps a `{ results: [...] }` wrapper. Bare object → 1-item
+  list (mirrors Merge's `flatten_items`, not Loop's aggressive scan). One output;
+  dropped items disappear from the stream. Dispatch uses the Soma/`$json`
+  primary-input convention (most recent predecessor by position); not in the
+  no-retry list (pure transform). `NODE_TYPES.filter` entry in `nodes.js`.
+  - Remaining DoD item: manual canvas E2E (Phase 1 verification test 1 with a Filter
+    on a branch); logic is covered by unit tests + backend/UI build.
 - [ ] **1.3 Aggregate / Summarize** — roll an array into one item:
   `sum`/`avg`/`min`/`max`/`count`/`concat`/`collectField`. Complements Loop.
 - [ ] **1.4 Split Out** — explode a list field into individual items (inverse of

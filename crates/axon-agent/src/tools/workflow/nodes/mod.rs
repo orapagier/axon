@@ -18,6 +18,7 @@ pub(crate) mod database;
 pub(crate) mod discord;
 pub(crate) mod engram;
 pub(crate) mod facebook;
+pub(crate) mod filter;
 pub(crate) mod fovea;
 pub(crate) mod github;
 pub(crate) mod homeostasis;

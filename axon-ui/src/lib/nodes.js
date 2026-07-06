@@ -1319,6 +1319,89 @@ export const NODE_TYPES = {
             },
         ],
     },
+    filter: {
+        displayName: 'Synaptic Gate (Filter)',
+        name: 'filter',
+        icon: '🚦',
+        outputs: ['kept'],
+        description: 'Keep or drop the items of a list by one or more per-item conditions. Dropped items disappear from the stream — the survivors pass through as one array. Conditions test a field of EACH item (not a single upstream value like IF).',
+        properties: [
+            {
+                displayName: 'Keep',
+                name: 'keep',
+                type: 'options',
+                options: [
+                    { name: 'Items matching the conditions', value: 'matching' },
+                    { name: 'Items NOT matching (invert)', value: 'notMatching' },
+                ],
+                default: 'matching',
+                hint: 'Invert to grab the dropped side without rewriting every operator.',
+            },
+            {
+                displayName: 'Combine',
+                name: 'combineOperation',
+                type: 'options',
+                options: [
+                    { name: 'ALL conditions must be true (AND)', value: 'all' },
+                    { name: 'ANY condition must be true (OR)', value: 'any' },
+                ],
+                default: 'all',
+            },
+            {
+                displayName: 'Conditions',
+                name: 'conditions',
+                type: 'fixedCollection',
+                default: { parameters: [{ field: '', dataType: 'string', operation: 'equals', value2: '' }] },
+                placeholder: 'Add Condition',
+                typeOptions: { multipleValues: true },
+                options: [
+                    {
+                        name: 'field',
+                        displayName: 'Field',
+                        type: 'string',
+                        default: '',
+                        placeholder: 'age  ·  user.role  ·  (blank = whole item)',
+                        // A path RELATIVE to each item — not an upstream expression,
+                        // because Filter tests a different value per item. Leave blank
+                        // to test the item itself (scalar arrays).
+                        noExpr: true,
+                        hint: 'Field of each item to test, as a dot/bracket path (e.g. user.role). Blank tests the item itself — use that for a list of plain strings/numbers.',
+                    },
+                    {
+                        name: 'dataType', displayName: 'Data Type', type: 'options', default: 'string',
+                        options: CONDITION_DATA_TYPES,
+                        noExpr: true,
+                    },
+                    {
+                        name: 'operation', displayName: 'Operation', type: 'options', default: 'equals',
+                        filterBy: 'dataType',
+                        options: CONDITION_OPERATIONS,
+                        noExpr: true,
+                    },
+                    {
+                        name: 'value2', displayName: 'Value', type: 'string', default: '', placeholder: 'Compare value',
+                        displayOptions: { hide: { operation: UNARY_OPERATIONS } },
+                    },
+                ],
+            },
+            {
+                displayName: 'Case Sensitive',
+                name: 'caseSensitive',
+                type: 'boolean',
+                default: true,
+                hint: 'When off, string comparisons ignore upper/lower case.',
+            },
+            {
+                displayName: 'Array Path',
+                name: 'arrayPath',
+                type: 'string',
+                default: '',
+                placeholder: 'results',
+                noExpr: true,
+                hint: 'Optional. If the input is a wrapper object like { "results": [...] }, name the array field here. Leave blank when the input is already an array.',
+            },
+        ],
+    },
     loop: {
         displayName: 'Loop',
         name: 'loop',

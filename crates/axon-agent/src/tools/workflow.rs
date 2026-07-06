@@ -621,6 +621,15 @@ async fn execute_node_dispatch(
         "ifCondition" => nodes::condition::execute_if_condition_node(config),
         "switch" => nodes::condition::execute_switch_node(config),
         "merge" => nodes::merge::execute(config, merge_inputs),
+        "filter" => {
+            // Same primary-input convention as Soma/$json: the most recent
+            // predecessor by position, expected to be an array (the list-node
+            // convention). Filter keeps/drops its items per-condition.
+            let mut vec: Vec<_> = node_results.values().cloned().collect();
+            vec.sort_by_key(|r| r.position);
+            let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
+            nodes::filter::execute(config, &input)
+        }
         "loop" => nodes::iterate::execute(config),
         "subflow" | "workflow" => {
             nodes::subflow::execute(config, state, workflow_id, run_id, node_results).await
