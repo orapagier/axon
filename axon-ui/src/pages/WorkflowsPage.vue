@@ -1014,12 +1014,15 @@ function handleRunNode(nodeId) {
 // from the last run. Used to decide whether "Execute Step" can run just this node
 // (reusing that cached data) instead of re-running the whole chain.
 //
-// A parent only provides reusable data when it produced output AND did not error
-// (`!!r.error` is the canonical error signal, same as updateNodeExecutionStates).
-// If any immediate parent errored or has no output, fall back to re-running the
-// whole chain so this node receives fresh, valid inputs. This matches NodeDetails'
-// "Has Data" badge (getUpstreamData), which is gated on the same two conditions —
-// so what the panel shows and what Execute Step does stay consistent.
+// A parent only provides reusable data when it produced output, did not error
+// (`!!r.error` is the canonical error signal, same as updateNodeExecutionStates),
+// AND actually ran — a 'skipped' branch-not-taken result carries a placeholder
+// output ({"skipped": true}) that must never be fed into a node as input.
+// If any immediate parent errored, was skipped, or has no output, fall back to
+// re-running the whole chain so this node receives fresh, valid inputs. This
+// matches NodeDetails' "Has Data" badge (getUpstreamData), which is gated on the
+// same conditions — so what the panel shows and what Execute Step does stay
+// consistent.
 function immediateUpstreamHaveData(nodeId) {
   const parentIds = edges.value
     .filter(e => edgeTarget(e) === nodeId)
@@ -1027,7 +1030,7 @@ function immediateUpstreamHaveData(nodeId) {
   if (parentIds.length === 0) return true // no upstream → nothing to wait on
   const haveData = new Set(
     (lastRunResult.value?.node_results || [])
-      .filter(r => !!r.output && !r.error)
+      .filter(r => !!r.output && !r.error && r.status !== 'skipped')
       .map(r => String(r.node_id))
   )
   return parentIds.every(pid => haveData.has(String(pid)))
