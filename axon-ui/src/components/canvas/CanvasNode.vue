@@ -8,7 +8,7 @@ import { Position, Handle, useVueFlow } from '@vue-flow/core'
 import { CanvasNodeKey, CanvasConnectionMode, NodeConnectionTypes } from '../../lib/canvas/constants.js'
 import { useNodeConnections } from '../../composables/useNodeConnections.js'
 import { createCanvasConnectionHandleString, insertSpacersBetweenEndpoints } from '../../lib/canvas/utils.js'
-import { NODE_TYPES, getNodeOutputs } from '../../lib/nodes.js'
+import { NODE_TYPES, getNodeOutputs, getNodeInputs } from '../../lib/nodes.js'
 import CanvasNodeDefault from './nodes/CanvasNodeDefault.vue'
 import CanvasNodeToolbar from './CanvasNodeToolbar.vue'
 
@@ -64,7 +64,23 @@ provide(CanvasNodeKey, {
 })
 
 // Node connections
-const inputs = computed(() => props.data.inputs || [])
+// Multi-input nodes (e.g. Merge) declare their input handles in NODE_TYPES, so a
+// node like Merge renders two input handles instead of the default one — the
+// input-side mirror of `dynamicOutputs` below. Edges already persist targetHandle
+// (`input_main_<index>`), so only the rendering changes here.
+const inputs = computed(() => {
+  const type = props.data.node_type || props.data.type
+  const labels = getNodeInputs(type, props.data.config || {})
+  if (labels) {
+    return labels.map((label, index) => ({
+      type: NodeConnectionTypes.Main,
+      required: index === 0,
+      index,
+      label,
+    }))
+  }
+  return props.data.inputs || []
+})
 // Nodes with dynamic outputs (e.g. Switch) derive their handles from the live
 // config, so adding/removing a rule instantly adds/removes an output handle —
 // no need to re-create the node. Everything else uses its stored outputs.

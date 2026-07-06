@@ -4470,3 +4470,22 @@ export function getNodeOutputs(type, config = {}) {
     }
     return NODE_TYPES[type]?.outputs || null
 }
+
+/**
+ * Multi-input nodes (Merge, Task 1.0/1.1) render more than the default single
+ * input handle. Mirror of getNodeOutputs for the input side: a node type may
+ * declare `inputs` in its NODE_TYPES descriptor as either a count (e.g. `2`) or
+ * an array of handle labels (e.g. `['input 1', 'input 2']`). Returns null for
+ * ordinary single-input nodes so the caller keeps the existing default. Each
+ * label's index is what edges persist as `input_main_<index>` (targetHandle),
+ * which is exactly the key `direct_predecessor_outputs` groups by on the backend.
+ */
+export function getNodeInputs(type, _config = {}) {
+    const def = NODE_TYPES[type]
+    if (!def || def.inputs == null) return null
+    if (typeof def.inputs === 'number') {
+        return Array.from({ length: def.inputs }, (_, i) => `input ${i + 1}`)
+    }
+    if (Array.isArray(def.inputs)) return def.inputs
+    return null
+}

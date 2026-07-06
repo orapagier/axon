@@ -178,17 +178,24 @@ entirely node code.
 | 1.4 | `splitOut` | Split Out | S | 1 |
 | 1.5 | `sortLimit` | Sort / Limit / Dedupe | M | 1 |
 
-- [ ] **1.0 Multi-input plumbing** — the one engine-adjacent task, done once:
-  - Pass the run's `edges` (or pre-resolved per-handle inputs) into
-    `execute_node_dispatch` for nodes that need them — same pattern as
-    `node_results` today.
-  - Helper `direct_predecessor_outputs(node, edges, node_results)` that:
-    (a) considers only results produced **this run** (excludes the stale
-    prior-run cache seed), (b) filters `status == "skipped"` entries,
-    (c) groups outputs by the incoming edge's `target_handle` so Merge can tell
-    input 0 from input 1.
-  - UI: render **two input handles** on `merge` (mirror of `dynamicOutputs`;
-    edges already persist `targetHandle`, so only node rendering changes).
+- [~] **1.0 Multi-input plumbing** — the one engine-adjacent task, done once:
+  - [x] Helper `direct_predecessor_outputs(target_node_id, edges,
+    this_run_results)` in `workflow.rs` (table-driven tests:
+    `multi_input_plumbing_tests`). Sources from the run's `ordered_results`
+    (this-run sequence) — NOT `node_results` — because (a) `ordered_results`
+    already excludes the prior-run cache seed AND a skipped node keeps a *stale
+    success* in `node_results` via `.or_insert`. So it: (a) considers only
+    results produced **this run**, (b) filters `status == "skipped"` entries,
+    (c) groups outputs by the incoming edge's `target_handle` (normalized;
+    missing → `input_main_0`) so Merge can tell input 0 from input 1.
+  - [x] UI: two-input-handle rendering seam — `getNodeInputs()` in `nodes.js`
+    + `CanvasNode.vue` `inputs` computed (mirror of `dynamicOutputs`). A node
+    type declaring `inputs: 2` (or a label array) in `NODE_TYPES` now renders
+    two input handles; edges already persist `targetHandle`.
+  - [ ] Wire the helper into the dispatch path (pass `edges` +
+    `ordered_results`, or the pre-resolved grouped inputs, into
+    `execute_node_dispatch`). **Deferred to 1.1** so it lands atop the `merge`
+    dispatch arm that consumes it — avoids an unused param on the exec hot path.
 - [ ] **1.1 Merge** — join/append two branches. Modes: `append`, `mergeByKey`
   (SQL-style join on a field), `mergeByPosition`, `combine`. Consumes the 1.0
   helper. **Skipped-branch semantics:** if one input's branch was not taken

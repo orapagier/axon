@@ -485,6 +485,66 @@ fn find_iteration_source_node_id(
     None
 }
 
+/// Task 1.0 (multi-input plumbing): collect a node's DIRECT predecessor outputs,
+/// grouped by the incoming edge's `target_handle`, for multi-input nodes (Merge).
+///
+/// This is the one primitive a Merge node needs and the reason it can't just scan
+/// `node_results`. It guarantees three things the plan calls out:
+///  - **(a) this-run only.** `this_run_results` is the run's `ordered_results`
+///    sequence, which is built up as nodes execute/skip *this* run. It never
+///    contains the prior-run cache seed that `node_results` is backfilled with
+///    before a run starts, so stale results from nodes that never ran this run
+///    can't leak into a merge. (A skipped node also keeps a *stale success* in
+///    `node_results` via `.or_insert`, so `node_results` is doubly wrong here —
+///    sourcing from `ordered_results` sidesteps both traps.)
+///  - **(b) skipped branches dropped.** A not-taken IF/Switch branch emits a
+///    `status: "skipped"` result; those are filtered out, so a Merge placed after
+///    an IF sees only the live side (and can pass it straight through).
+///  - **(c) grouped by input handle.** Outputs are keyed by the edge's
+///    `target_handle` (normalized; a missing/empty handle is the default first
+///    input `input_main_0`, matching what the editor persists), so the consumer
+///    can tell input 0 from input 1. Within a handle, outputs are ordered by the
+///    source node's `position` for deterministic append order.
+#[allow(dead_code)] // Consumed by Task 1.1 (Merge dispatch arm); exercised by tests below.
+pub(crate) fn direct_predecessor_outputs(
+    target_node_id: &str,
+    edges: &[WorkflowEdge],
+    this_run_results: &[NodeResult],
+) -> std::collections::BTreeMap<String, Vec<Value>> {
+    // Index this-run results by node id. This list already excludes the prior-run
+    // cache seed, so requirement (a) holds by construction.
+    let by_id: std::collections::HashMap<&str, &NodeResult> = this_run_results
+        .iter()
+        .map(|r| (r.node_id.as_str(), r))
+        .collect();
+
+    let mut rows: Vec<(String, i64, Value)> = Vec::new();
+    for edge in edges.iter().filter(|e| e.target_id == target_node_id) {
+        let Some(nr) = by_id.get(edge.source_id.as_str()) else {
+            continue; // (a) predecessor never ran this run — ignore any stale cache
+        };
+        if nr.status == "skipped" {
+            continue; // (b) not-taken IF/Switch branch
+        }
+        let handle = edge
+            .target_handle
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or("input_main_0")
+            .to_string();
+        rows.push((handle, nr.position, nr.output.clone()));
+    }
+
+    // Deterministic order: by source position within each input handle.
+    rows.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    let mut grouped: std::collections::BTreeMap<String, Vec<Value>> =
+        std::collections::BTreeMap::new();
+    for (handle, _pos, output) in rows {
+        grouped.entry(handle).or_default().push(output);
+    }
+    grouped
+}
+
 async fn execute_node_dispatch(
     node: &WorkflowNode,
     config: &Value,
@@ -3973,5 +4033,133 @@ mod upstream_cache_tests {
         );
         assert!(complete);
         assert_eq!(prior_ordered.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod multi_input_plumbing_tests {
+    use super::{direct_predecessor_outputs, NodeResult, WorkflowEdge};
+    use serde_json::{json, Value};
+
+    fn nr(node_id: &str, position: i64, status: &str, output: Value) -> NodeResult {
+        NodeResult {
+            node_id: node_id.to_string(),
+            node_name: node_id.to_string(),
+            node_type: "test".to_string(),
+            position,
+            status: status.to_string(),
+            output,
+            duration_ms: 0,
+            error: None,
+            attempts: 1,
+        }
+    }
+
+    fn edge(source: &str, target: &str, target_handle: Option<&str>) -> WorkflowEdge {
+        WorkflowEdge {
+            id: format!("{source}->{target}"),
+            workflow_id: "wf".to_string(),
+            source_id: source.to_string(),
+            target_id: target.to_string(),
+            source_handle: None,
+            target_handle: target_handle.map(|s| s.to_string()),
+        }
+    }
+
+    // (c) Two live branches on distinct handles rejoin at the merge, each grouped
+    // under its own input handle so the consumer can tell input 0 from input 1.
+    #[test]
+    fn groups_two_live_branches_by_handle() {
+        let edges = vec![
+            edge("a", "merge", Some("input_main_0")),
+            edge("b", "merge", Some("input_main_1")),
+        ];
+        let results = vec![
+            nr("a", 1, "success", json!({ "side": "left" })),
+            nr("b", 2, "success", json!({ "side": "right" })),
+            nr("merge", 3, "success", json!({})), // the merge itself, ignored
+        ];
+        let out = direct_predecessor_outputs("merge", &edges, &results);
+        assert_eq!(out["input_main_0"], vec![json!({ "side": "left" })]);
+        assert_eq!(out["input_main_1"], vec![json!({ "side": "right" })]);
+    }
+
+    // (b) A not-taken IF/Switch branch is dropped: the merge sees ONLY the live
+    // side, which is what lets a merge-after-IF pass it straight through.
+    #[test]
+    fn drops_skipped_branch() {
+        let edges = vec![
+            edge("a", "merge", Some("input_main_0")),
+            edge("b", "merge", Some("input_main_1")),
+        ];
+        let results = vec![
+            nr("a", 1, "success", json!({ "kept": true })),
+            nr(
+                "b",
+                2,
+                "skipped",
+                json!({ "skipped": true, "reason": "Branch not taken" }),
+            ),
+        ];
+        let out = direct_predecessor_outputs("merge", &edges, &results);
+        assert_eq!(out["input_main_0"], vec![json!({ "kept": true })]);
+        assert!(
+            !out.contains_key("input_main_1"),
+            "skipped side must not appear as a merge input"
+        );
+    }
+
+    // (a) A predecessor that exists in the graph (an edge points to it) but never
+    // ran THIS run — only lives in the prior-run cache seed — is excluded. Here it
+    // is simply absent from `this_run_results`.
+    #[test]
+    fn ignores_predecessor_not_run_this_run() {
+        let edges = vec![
+            edge("a", "merge", Some("input_main_0")),
+            edge("stale", "merge", Some("input_main_1")),
+        ];
+        // `stale` has an edge but produced no result this run (cache-only).
+        let results = vec![nr("a", 1, "success", json!({ "kept": true }))];
+        let out = direct_predecessor_outputs("merge", &edges, &results);
+        assert_eq!(out["input_main_0"], vec![json!({ "kept": true })]);
+        assert!(!out.contains_key("input_main_1"));
+    }
+
+    // Two predecessors feeding the SAME handle both come through, ordered by the
+    // source node's position (deterministic append semantics).
+    #[test]
+    fn same_handle_appends_in_position_order() {
+        let edges = vec![
+            edge("late", "merge", Some("input_main_0")),
+            edge("early", "merge", Some("input_main_0")),
+        ];
+        let results = vec![
+            nr("late", 5, "success", json!({ "n": 2 })),
+            nr("early", 1, "success", json!({ "n": 1 })),
+        ];
+        let out = direct_predecessor_outputs("merge", &edges, &results);
+        assert_eq!(
+            out["input_main_0"],
+            vec![json!({ "n": 1 }), json!({ "n": 2 })],
+            "outputs on one handle are ordered by source position"
+        );
+    }
+
+    // A missing/empty target_handle normalizes to the default first input, so a
+    // bare edge (the editor persists handle-less edges as the default) still lands
+    // on input 0 rather than under an empty key.
+    #[test]
+    fn missing_handle_normalizes_to_first_input() {
+        let edges = vec![edge("a", "merge", None), edge("b", "merge", Some(""))];
+        let results = vec![
+            nr("a", 1, "success", json!({ "a": 1 })),
+            nr("b", 2, "success", json!({ "b": 2 })),
+        ];
+        let out = direct_predecessor_outputs("merge", &edges, &results);
+        assert_eq!(
+            out["input_main_0"],
+            vec![json!({ "a": 1 }), json!({ "b": 2 })]
+        );
+        assert_eq!(out.len(), 1, "both bare edges collapse onto input_main_0");
     }
 }
