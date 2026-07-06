@@ -1253,6 +1253,18 @@ function openCurlImport() {
   showCurlModal.value = true
 }
 
+// Synapse "Quick Start": merge a service preset's fields into the node config so
+// the user only has to fill in their own token. A deep clone avoids sharing
+// nested objects (e.g. headerParameters) with the shared preset catalog.
+function applySynapsePreset(prop, value) {
+  const preset = (prop.presets || []).find(p => p.value === value)
+  if (!preset) return
+  const cfg = props.node.data.config
+  const apply = JSON.parse(JSON.stringify(preset.apply || {}))
+  Object.assign(cfg, apply)
+  toast(`Prefilled ${preset.label}. ${preset.docs || ''}`.trim())
+}
+
 // Tokenize a shell-style command line, honoring single/double quotes,
 // $'...' ANSI-C quoting, and backslash escapes. Line continuations are
 // stripped beforehand. Returns an array of unquoted argument strings.
