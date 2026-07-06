@@ -559,6 +559,25 @@ pub(crate) async fn execute_http_node(config: &Value, state: &AppState) -> Resul
                 .get("body")
                 .and_then(|v| v.as_str())
                 .map(|b| json!(b)),
+            "graphql" => {
+                // Compose the standard { "query": ..., "variables": {...} } POST
+                // body. Variables may be a JSON string or an already-parsed object.
+                let query = config
+                    .get("graphqlQuery")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let mut gql = serde_json::Map::new();
+                gql.insert("query".to_string(), json!(query));
+                let vars = match config.get("graphqlVariables") {
+                    Some(Value::String(s)) if !s.trim().is_empty() => serde_json::from_str(s).ok(),
+                    Some(Value::Object(_)) => config.get("graphqlVariables").cloned(),
+                    _ => None,
+                };
+                if let Some(v) = vars {
+                    gql.insert("variables".to_string(), v);
+                }
+                Some(Value::Object(gql))
+            }
             _ => None,
         }
     } else {
