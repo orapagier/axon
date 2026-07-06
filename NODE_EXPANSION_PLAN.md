@@ -11,6 +11,74 @@ whole new *workflow shapes*, not just one more integration.
 
 ---
 
+## Architecture decision: data model & conventions (read first)
+
+**Decision: keep Axon's single-Value data model. Do NOT adopt n8n's item-array
+engine.** Close the capability gap additively (new nodes + one convention) rather
+than rewriting the execution core.
+
+### The two models
+- **n8n = item-array.** Every node receives an *array of items* and is expected to
+  **map over each item automatically** in one execution pass. Iteration is implicit,
+  baked into the data plane.
+- **Axon = single Value.** Each node's `execute()` takes one predecessor `Value` and
+  returns one `Value` (which *may* be a JSON array). The engine does **not** auto-map;
+  iteration is **explicit** via the `loop` node and visible on the canvas.
+
+### Why single-Value is the right foundation for Axon
+1. **Axon is agent-first, not ETL-first.** The center of gravity is
+   Cortex/Classifier/messaging/MCP — orchestration and reasoning, not bulk row
+   crunching, which is exactly where n8n's implicit mapping pays off.
+2. **It preserves Axon's speed edge.** The Rust engine already gives the Loop node
+   real `Parallelism` that n8n's single-threaded JS Loop can't. An item-array rewrite
+   is large, touches every node + every expression path, and risks that advantage.
+3. **Node authoring stays tiny.** "One Value in, one Value out" is why nodes are ~40
+   lines and why this whole plan is additive.
+4. **Explicit iteration is safer + more readable.** For a tool whose runs have side
+   effects (send message, call a tool), a *visible* Loop beats a node that silently
+   ran 500 times.
+
+### The convention this locks in
+> **A node whose input is a collection receives an array `Value`, and iterates it
+> internally.** The list-shaping nodes (Merge, Filter, Aggregate, Split Out, Sort/
+> Limit/Dedupe) all agree on this so they compose with each other and with `loop`.
+
+Primary input is still "the most recent predecessor by `position`" (as `soma` /
+`javascript` already read `node_results`). No engine change — a list node just
+expects that primary `Value` to be an array and loops over it in its own `execute()`.
+
+### The one trade-off, and how we pay it down
+Cost: "do X to each item" always costs an explicit Loop (n8n hides it). Mitigation, in
+order:
+1. **Standardize the array-input convention above** — do this before building Merge.
+2. **Ship the Phase-1 list nodes** — they absorb most per-item work, so `loop` is only
+   needed when a *multi-node sub-branch* must run per item (where an explicit loop is
+   genuinely clearer anyway).
+3. **(Optional, later — engine-level, NOT Phase 1) a "Run Once Per Item" toggle** on
+   select nodes (Soma, Cortex, Synapse). When on, the engine maps that single node over
+   an array input — giving n8n-style implicit mapping *selectively and opt-in*, without
+   converting the whole engine. This is the best-of-both middle path; treat it as a
+   future enhancement with its own design pass.
+
+### n8n's Loop vs Axon's Loop (why the settings differ)
+n8n has **two** iteration concepts: implicit item-mapping (every node) **and** an
+explicit *Loop Over Items* node for batching / loop-back sub-graphs. Axon has **one**
+loop, so it does **both** jobs — which is why it needs richer knobs:
+
+| Axon `loop` setting | Purpose | n8n equivalent |
+|---|---|---|
+| **Items** | Array *expression* to iterate | n8n pulls from the input connection; Axon takes it explicitly |
+| **Array Path** | Pick the array field if Items resolves to an object | — (n8n items are already an array) |
+| **Parallelism** | Run N iterations concurrently | ⚡ none — n8n's Loop is single-threaded |
+| **Batch Size** | Items per iteration (`{{ $node["Loop"].current }}` = the slice) | same as n8n "Batch Size" |
+| **Max Iterations** | Safety cap against runaway fan-out | — (Axon-specific guardrail) |
+
+Mechanically, Axon's Loop is a **fan-out** (resolve the array up front, engine spreads
+the downstream body across items, optionally in parallel), whereas n8n's is a
+**loop-back** ("send me a batch, I'll return for the next").
+
+---
+
 ## 0. How to add a node (the repeatable recipe)
 
 Every node touches the same 5 places. Reuse `soma.rs` / `condition.rs` as templates.
@@ -40,11 +108,9 @@ pattern — pure functions, table-driven).
    `nodes/*.vue` only for special UX.
 
 ### Data-model note (read before Phase 1)
-Axon nodes currently output a **single `Value`**, and a node reads its predecessors
-from `node_results` (sorted by `position`; primary input = last). n8n is
-**item-array** based. The list-shaping nodes below therefore operate on an **array
-`Value`** as their item stream. Decide once: keep the "primary input is one Value
-that may be an array" convention. This keeps parity without rewriting the engine.
+See **"Architecture decision: data model & conventions"** above — the list-shaping
+nodes operate on an **array `Value`** per the locked-in convention (primary input =
+most recent predecessor by `position`, expected to be an array). No engine rewrite.
 
 **Naming:** type keys stay literal/n8n-parity for developer clarity; `displayName`
 can carry the neuro theme (as `database` already shows as *Hippocampus*). Suggested
