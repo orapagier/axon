@@ -29,6 +29,7 @@ pub(crate) mod merge;
 pub(crate) mod shell;
 pub(crate) mod slack;
 pub(crate) mod soma;
+pub(crate) mod sort_limit;
 pub(crate) mod split_out;
 pub(crate) mod subflow;
 pub(crate) mod synapse;

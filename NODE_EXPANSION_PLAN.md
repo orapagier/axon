@@ -253,9 +253,24 @@ entirely node code.
   Shares Filter/Aggregate's `to_items`/`arrayPath` convention. Dispatch uses the
   Soma/`$json` primary-input convention; `NODE_TYPES.splitOut` in `nodes.js`.
   - Remaining DoD item: manual canvas E2E; logic covered by unit tests + build.
-- [ ] **1.5 Sort / Limit / Remove Duplicates** — item-list utilities. Can ship as
-  one node with a `mode` option or three tiny nodes. Sort by field ± direction,
-  limit N (head/tail), dedupe by key.
+- [x] **1.5 Sort / Limit / Remove Duplicates** (`sortLimit`) — shipped as **one
+  node**, structured as a pipeline rather than a one-of `mode` so the common "top N
+  unique" needs no chaining. Executor `nodes/sort_limit.rs` (13 table-driven tests).
+  Three independently-toggled stages applied in a fixed order: **dedupe** (keep
+  first by `dedupeBy` key fields, or whole item) → **sort** (`sortRules`: multiple
+  field rules, each `asc`/`desc` and typed `auto`/`number`/`string`/`date`; blank
+  field sorts the item itself; stable; missing values sort last) → **limit** (`keep`
+  first/last `maxItems`; 0 = no limit). Nothing enabled = pass-through. Reuses the
+  shared `val_to_number`/`val_to_datetime`/`val_to_string` + `cfg_usize` helpers and
+  the Filter/Aggregate `to_items`/`arrayPath` convention. UI gates each stage's
+  params on its boolean toggle via `displayOptions`. Dispatch uses the Soma/`$json`
+  primary-input convention; `NODE_TYPES.sortLimit` in `nodes.js`.
+  - Remaining DoD item: manual canvas E2E; logic covered by unit tests + build.
+
+**Phase 1 complete** (1.0–1.5): the list toolkit — Merge, Filter, Aggregate, Split
+Out, Sort/Limit/Dedupe — all share the array-input convention and compose with each
+other and with Loop. Every fork can now rejoin/reshape. Only shared DoD gap across
+1.1–1.5 is the manual canvas E2E pass (Phase 1 verification tests 1–3).
 
 **Phase 1 verification:**
 1. `Stimulus → Switch → (two branches) → Merge → Soma` — branches rejoin.

@@ -129,6 +129,7 @@ function getNodeIcon(nodeType) {
     filter: '🚦',
     aggregate: '🧮',
     splitOut: '💥',
+    sortLimit: '🔃',
     loop: '🔄',
     wait: '⏱️',
     delay: '⏱️',
