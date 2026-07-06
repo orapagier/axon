@@ -2215,16 +2215,33 @@ fn trim_tool_results_by_budget(messages: &mut Vec<Message>, budget_chars: usize)
 // ── Text cleaning ────────────────────────────────────────────────────────────
 
 /// Rewrite `<send_file>path</send_file>` tags into authorized dashboard
-/// download links. Used live before the Token/Done emission, and again when
-/// the dashboard rehydrates a stored transcript (`GET /conversations/:id/messages`)
-/// — the raw tag is what's persisted, so reloaded chats must resolve it too.
+/// download links. Used to rehydrate a stored transcript
+/// (`GET /conversations/:id/messages`) — the raw tag is what's persisted, so
+/// reloaded chats must resolve it too. This variant never touches the
+/// filesystem; use [`stage_and_resolve_send_file_links`] on the live path.
 pub fn resolve_send_file_links(text: &str) -> String {
+    rewrite_send_file_links(text, false)
+}
+
+/// Live-delivery variant used before the Token/Done emission. The
+/// `/api/download` endpoint only serves files inside the staging dir
+/// (`data/files`), so a `<send_file>` path pointing at a local file elsewhere on
+/// the agent's host is copied into staging first — that's how a file the agent
+/// located anywhere on its own server becomes directly downloadable. A remote
+/// path (e.g. an SSH server) doesn't exist locally and must be downloaded into
+/// staging by the agent before it can be delivered.
+pub fn stage_and_resolve_send_file_links(text: &str) -> String {
+    rewrite_send_file_links(text, true)
+}
+
+fn rewrite_send_file_links(text: &str, stage: bool) -> String {
     let mut out = text.to_string();
     while let (Some(s), Some(e)) = (out.find("<send_file>"), out.find("</send_file>")) {
         if s >= e {
             break;
         }
-        let path = out[s + 11..e].trim().to_string();
+        let raw = out[s + 11..e].trim().to_string();
+        let path = deliverable_path(&raw, stage);
         let filename = std::path::Path::new(&path)
             .file_name()
             .unwrap_or_default()
@@ -2238,6 +2255,34 @@ pub fn resolve_send_file_links(text: &str) -> String {
         out = format!("{}{}{}", &out[..s], md_link, &out[e + 12..]);
     }
     out
+}
+
+/// Resolve a `<send_file>` path to something the staging-only download endpoint
+/// can serve. Already-staged paths pass through untouched. On the live path a
+/// local file elsewhere on the host is copied into staging (freshest source
+/// wins); otherwise we fall back to a surviving staged copy of the same name
+/// (e.g. rehydrating an old transcript whose source is gone), or leave the path
+/// as-is so the endpoint returns its own 403/404.
+fn deliverable_path(raw: &str, stage: bool) -> String {
+    use crate::files;
+    if files::is_valid_staged_path(raw) {
+        return raw.to_string();
+    }
+    let p = std::path::Path::new(raw);
+    if stage && p.is_file() {
+        match files::stage_file(p) {
+            Ok(staged) => return staged.display().to_string(),
+            Err(err) => tracing::warn!("send_file: could not stage '{}': {}", raw, err),
+        }
+    }
+    if let Some(name) = p.file_name() {
+        let candidate =
+            files::staging_dir().join(files::sanitize_filename(&name.to_string_lossy()));
+        if candidate.exists() {
+            return candidate.display().to_string();
+        }
+    }
+    raw.to_string()
 }
 
 fn strip_reasoning(text: &str) -> String {
