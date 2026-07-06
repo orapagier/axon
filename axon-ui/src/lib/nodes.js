@@ -3968,7 +3968,9 @@ export const NODE_TYPES = {
     database: {
         displayName: 'Hippocampus',
         name: 'database',
-        icon: '🗃️',
+        // Seahorse — the hippocampus is literally named after one (Greek hippos
+        // "horse" + kampos "sea monster"). Custom flat icon matching the set.
+        icon: '/icons/hippocampus.png',
         description: 'Long-term structured memory — run queries and CRUD operations against Postgres, MySQL, MariaDB, or SQLite from one node.',
         properties: [
             {

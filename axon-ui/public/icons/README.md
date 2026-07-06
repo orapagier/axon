@@ -19,6 +19,7 @@ Place your icon files here. Each file is named after the node's internal `name` 
 | `myelin.png` | Myelin (Storage) |
 | `mcp.png` | MCP Tool |
 | `fovea.png` | Fovea (Visual) |
+| `hippocampus.png` | Hippocampus (SQL Database) — seahorse |
 
 ## MCP Tool Icons (shown dynamically per tool selection)
 | File | Tool |
