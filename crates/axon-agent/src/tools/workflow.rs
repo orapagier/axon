@@ -733,6 +733,10 @@ async fn execute_node_by_type(
             | "loop"
             | "ifCondition"
             | "switch"
+            // Respond to Webhook consumes a one-shot channel on success; after
+            // a failure (deterministic config error) a retry could never
+            // re-send anyway, so re-running it is pure noise.
+            | "respondToWebhook"
     );
     let max_attempts = if no_retry { 0 } else { node.retries };
 
