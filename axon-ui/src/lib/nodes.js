@@ -409,6 +409,13 @@ export const NODE_TYPES = {
                 default: '',
             },
             {
+                displayName: 'Quick Start',
+                name: 'servicePreset',
+                type: 'servicePreset',
+                default: '',
+                presets: SYNAPSE_PRESETS,
+            },
+            {
                 displayName: 'Method',
                 name: 'method',
                 type: 'options',
