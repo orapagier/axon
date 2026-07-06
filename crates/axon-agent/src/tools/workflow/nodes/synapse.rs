@@ -688,6 +688,10 @@ pub(crate) async fn execute_http_node(config: &Value, state: &AppState) -> Resul
         retry_interval_ms: options
             .and_then(|o| o.get("retryInterval"))
             .and_then(|v| v.as_u64()),
+        fail_on_error_status: options
+            .and_then(|o| o.get("failOnErrorStatus"))
+            .and_then(|v| v.as_bool())
+            .or_else(|| config.get("failOnErrorStatus").and_then(|v| v.as_bool())),
     };
 
     let tool = HttpRequestTool::new();
