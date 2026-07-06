@@ -1710,10 +1710,14 @@ function updateNodeExecutionStates(nodeResults) {
   const executionMap = {}
   nodeResults.forEach(result => {
     const hasError = !!result.error
+    // A 'skipped' result (branch not taken / node disabled) is not a real run:
+    // no canvas class styles 'skipped', so the node renders as never-ran instead
+    // of green — while still overwriting any stale state from an earlier run.
+    const isSkipped = result.status === 'skipped'
     executionMap[String(result.node_id)] = {
       running: false,
       waiting: false,
-      status: hasError ? 'error' : 'success',
+      status: isSkipped ? 'skipped' : (hasError ? 'error' : 'success'),
     }
   })
   
