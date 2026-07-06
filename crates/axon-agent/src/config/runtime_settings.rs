@@ -244,6 +244,14 @@ RESPONSE RULES:
     pub fn workflow_webhook_dedup_window_secs(&self) -> i64 {
         self.get_int("workflow.webhook_dedup_window_secs", 0).max(0)
     }
+    /// 3.1: how long (seconds) the external-webhook handler holds the HTTP
+    /// request open waiting for a Respond to Webhook node to fire before
+    /// answering with the default ack instead. The run keeps executing either
+    /// way — a timeout only releases the caller, it never cancels the run.
+    pub fn workflow_webhook_respond_timeout_secs(&self) -> u64 {
+        self.get_int("workflow.webhook_respond_timeout_secs", 30)
+            .clamp(1, 600) as u64
+    }
     /// C2: days of `trigger_dedup` idempotency keys kept before pruning.
     pub fn retention_trigger_dedup_days(&self) -> i64 {
         self.get_int("retention.trigger_dedup_days", 7).max(1)
