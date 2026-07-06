@@ -1542,9 +1542,10 @@ pub(crate) async fn run_inner(
                         final_output = "I encountered an error and couldn't produce a valid response. Please check the logs or try your request again.".to_string();
                     }
 
-                    // Resolve <send_file> tags for dashboard
+                    // Resolve <send_file> tags for dashboard. Live path stages
+                    // local files outside data/files so the download link works.
                     if ctx.platform == "dashboard" {
-                        final_output = resolve_send_file_links(&final_output);
+                        final_output = stage_and_resolve_send_file_links(&final_output);
                     }
 
                     // Emit token (deferred until we know we're passing). Uses the
