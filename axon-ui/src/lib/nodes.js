@@ -765,6 +765,26 @@ export const NODE_TYPES = {
                     },
                 },
             },
+            {
+                displayName: 'Query',
+                name: 'graphqlQuery',
+                type: 'string',
+                typeOptions: { rows: 8 },
+                default: '',
+                placeholder: 'query { viewer { login } }',
+                displayOptions: { show: { sendBody: [true], contentType: ['graphql'] } },
+                description: 'The GraphQL query or mutation. Sent as a JSON POST: { "query": …, "variables": … }.',
+            },
+            {
+                displayName: 'Variables',
+                name: 'graphqlVariables',
+                type: 'string',
+                typeOptions: { rows: 5 },
+                default: '',
+                placeholder: '{ "id": 123 }',
+                displayOptions: { show: { sendBody: [true], contentType: ['graphql'] } },
+                description: 'Optional JSON object of GraphQL variables.',
+            },
 
             {
                 displayName: 'Pagination',
