@@ -85,11 +85,26 @@ fn require(config: &Value, key: &str) -> Result<String, String> {
     }
 }
 
+/// Read a boolean-ish value from any of the shapes a UI/expression can produce:
+/// a real bool, the strings "true"/"1", or a non-zero number.
+fn as_bool(v: Option<&Value>) -> bool {
+    match v {
+        Some(Value::Bool(b)) => *b,
+        Some(Value::String(s)) => {
+            let s = s.trim();
+            s.eq_ignore_ascii_case("true") || s == "1"
+        }
+        Some(Value::Number(n)) => n.as_i64().map(|i| i != 0).unwrap_or(false),
+        _ => false,
+    }
+}
+
+fn bool_cfg(cfg: &Value, key: &str) -> bool {
+    as_bool(cfg.get(key))
+}
+
 fn confirm_no_where(cfg: &Value) -> bool {
-    matches!(cfg.get("allow_no_where"), Some(Value::Bool(true)))
-        || str_val(cfg, "allow_no_where")
-            .map(|s| s == "true" || s == "1")
-            .unwrap_or(false)
+    bool_cfg(cfg, "allow_no_where")
 }
 
 // ── SQLite database files ──────────────────────────────────────────────────────
@@ -592,6 +607,248 @@ async fn op_delete(pool: &AnyPool, dialect: Dialect, cfg: &Value) -> Result<Valu
     run_exec(pool, &sql, vec![]).await
 }
 
+// ── Table management (Create / Drop / Describe) ────────────────────────────────
+
+/// A raw SQL type the author typed in the Type box (e.g. `VARCHAR(100)`,
+/// `DECIMAL(10,2)`). Allow only letters/digits/space/parens/commas so the type
+/// can't smuggle SQL into the CREATE statement, and require an alphabetic start.
+fn valid_raw_type(s: &str) -> bool {
+    let s = s.trim();
+    !s.is_empty()
+        && s.chars().next().map(|c| c.is_ascii_alphabetic()).unwrap_or(false)
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '(' | ')' | ','))
+}
+
+/// Map a beginner-friendly logical type to the concrete SQL type for `dialect`.
+/// Anything not in the known set is treated as a raw SQL type and validated.
+fn map_column_type(dialect: Dialect, logical: &str) -> Result<String, String> {
+    let mapped = match logical.trim().to_ascii_lowercase().as_str() {
+        "" | "text" | "string" => match dialect {
+            Dialect::MySql => "VARCHAR(255)",
+            _ => "TEXT",
+        },
+        "integer" | "int" => match dialect {
+            Dialect::MySql => "INT",
+            _ => "INTEGER",
+        },
+        "number" | "float" | "double" | "real" | "decimal" => match dialect {
+            Dialect::Postgres => "DOUBLE PRECISION",
+            Dialect::MySql => "DOUBLE",
+            Dialect::Sqlite => "REAL",
+        },
+        "boolean" | "bool" => match dialect {
+            Dialect::Postgres => "BOOLEAN",
+            Dialect::MySql => "TINYINT(1)",
+            Dialect::Sqlite => "BOOLEAN",
+        },
+        "date" => "DATE",
+        "datetime" | "timestamp" => match dialect {
+            Dialect::MySql => "DATETIME",
+            _ => "TIMESTAMP",
+        },
+        "json" => match dialect {
+            Dialect::Postgres => "JSONB",
+            Dialect::MySql => "JSON",
+            Dialect::Sqlite => "TEXT",
+        },
+        _ => {
+            if valid_raw_type(logical) {
+                return Ok(logical.trim().to_string());
+            }
+            return Err(format!(
+                "Unsupported column type '{logical}'. Use text, integer, number, \
+                 boolean, date, datetime or json — or a simple SQL type like VARCHAR(100)."
+            ));
+        }
+    };
+    Ok(mapped.to_string())
+}
+
+/// Render a DEFAULT value literal safely. Numbers and a small keyword allowlist
+/// (booleans / NULL / CURRENT_*) embed raw; everything else becomes a quoted
+/// string literal with single quotes doubled — so a default can't inject SQL.
+fn format_default_literal(raw: &str) -> String {
+    let t = raw.trim();
+    if t.parse::<i64>().is_ok() || t.parse::<f64>().is_ok() {
+        return t.to_string();
+    }
+    let up = t.to_ascii_uppercase();
+    if matches!(
+        up.as_str(),
+        "TRUE" | "FALSE" | "NULL" | "CURRENT_TIMESTAMP" | "CURRENT_DATE" | "CURRENT_TIME"
+    ) {
+        return up;
+    }
+    format!("'{}'", t.replace('\'', "''"))
+}
+
+/// Build one column's DDL from a `columns_def` row. `sole_pk` is true when this
+/// row is the ONLY primary-key column, which lets a single integer PK become an
+/// auto-incrementing id (SERIAL / AUTO_INCREMENT / AUTOINCREMENT per dialect).
+fn build_column_def(dialect: Dialect, row: &Value, sole_pk: bool) -> Result<String, String> {
+    let name = row.get("name").and_then(|v| v.as_str()).unwrap_or("").trim();
+    let col = quote_ident(dialect, name)?;
+    let logical = row.get("type").and_then(|v| v.as_str()).unwrap_or("text");
+    let is_integer = matches!(
+        logical.trim().to_ascii_lowercase().as_str(),
+        "integer" | "int"
+    );
+    let is_pk = row_bool(row, "primary_key");
+    let auto_pk = sole_pk && is_pk && is_integer;
+
+    let mut parts = vec![col];
+    // A single integer PK on Postgres uses SERIAL (which is the type + sequence).
+    if auto_pk && dialect == Dialect::Postgres {
+        parts.push("SERIAL".to_string());
+    } else {
+        parts.push(map_column_type(dialect, logical)?);
+    }
+
+    if sole_pk && is_pk {
+        match dialect {
+            Dialect::Sqlite if is_integer => parts.push("PRIMARY KEY AUTOINCREMENT".into()),
+            Dialect::MySql if is_integer => parts.push("AUTO_INCREMENT PRIMARY KEY".into()),
+            _ => parts.push("PRIMARY KEY".into()),
+        }
+    } else {
+        // PRIMARY KEY already implies NOT NULL + uniqueness, so only apply these
+        // to non-sole-PK columns.
+        if row_bool(row, "not_null") {
+            parts.push("NOT NULL".into());
+        }
+        if row_bool(row, "unique") {
+            parts.push("UNIQUE".into());
+        }
+    }
+
+    // A DEFAULT is meaningless on an auto-increment id — skip it there only.
+    if !auto_pk {
+        if let Some(d) = row
+            .get("default")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            parts.push(format!("DEFAULT {}", format_default_literal(d)));
+        }
+    }
+    Ok(parts.join(" "))
+}
+
+/// Read a boolean sub-field from a fixedCollection row.
+fn row_bool(row: &Value, key: &str) -> bool {
+    as_bool(row.get(key))
+}
+
+async fn op_create_table(pool: &AnyPool, dialect: Dialect, cfg: &Value) -> Result<Value, String> {
+    let name_raw = require(cfg, "table")?;
+    let table = quote_ident(dialect, &name_raw)?;
+    let rows = cfg
+        .get("columns_def")
+        .and_then(|v| v.get("parameters"))
+        .and_then(|v| v.as_array())
+        .map(|a| a.as_slice())
+        .unwrap_or(&[]);
+    // Keep only rows with a column name — blank rows the editor leaves behind.
+    let cols: Vec<&Value> = rows
+        .iter()
+        .filter(|r| {
+            r.get("name")
+                .and_then(|v| v.as_str())
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false)
+        })
+        .collect();
+    if cols.is_empty() {
+        return Err("Create Table: add at least one column — a name and a type.".into());
+    }
+
+    let pk_names: Vec<&str> = cols
+        .iter()
+        .filter(|r| row_bool(r, "primary_key"))
+        .filter_map(|r| r.get("name").and_then(|v| v.as_str()))
+        .map(str::trim)
+        .collect();
+    let sole_pk = pk_names.len() == 1;
+
+    let mut defs = Vec::new();
+    for r in &cols {
+        defs.push(build_column_def(dialect, r, sole_pk)?);
+    }
+    // More than one PK column → a table-level composite PRIMARY KEY constraint.
+    if pk_names.len() > 1 {
+        let quoted = pk_names
+            .iter()
+            .map(|n| quote_ident(dialect, n))
+            .collect::<Result<Vec<_>, _>>()?;
+        defs.push(format!("PRIMARY KEY ({})", quoted.join(", ")));
+    }
+
+    let if_not_exists = if bool_cfg(cfg, "if_not_exists") {
+        "IF NOT EXISTS "
+    } else {
+        ""
+    };
+    let sql = format!("CREATE TABLE {if_not_exists}{table} ({})", defs.join(", "));
+    bind_all(sqlx::query(&sql), vec![])
+        .execute(pool)
+        .await
+        .map_err(fmt_err)?;
+    Ok(json!({ "success": true, "created": true, "table": name_raw }))
+}
+
+async fn op_drop_table(pool: &AnyPool, dialect: Dialect, cfg: &Value) -> Result<Value, String> {
+    let name_raw = require(cfg, "table")?;
+    let table = quote_ident(dialect, &name_raw)?;
+    let if_exists = if bool_cfg(cfg, "if_exists") {
+        "IF EXISTS "
+    } else {
+        ""
+    };
+    let sql = format!("DROP TABLE {if_exists}{table}");
+    bind_all(sqlx::query(&sql), vec![])
+        .execute(pool)
+        .await
+        .map_err(fmt_err)?;
+    Ok(json!({ "success": true, "dropped": true, "table": name_raw }))
+}
+
+/// List a table's columns (name, type, nullability, default) — a schema peek so
+/// authors can see what to Insert/Select without leaving the node.
+async fn op_describe_table(pool: &AnyPool, dialect: Dialect, cfg: &Value) -> Result<Value, String> {
+    let name_raw = require(cfg, "table")?;
+    match dialect {
+        Dialect::Sqlite => {
+            // PRAGMA takes no bound params; the name is validated + quoted.
+            let t = quote_ident(dialect, &name_raw)?;
+            run_fetch(pool, &format!("PRAGMA table_info({t})"), vec![]).await
+        }
+        Dialect::MySql => {
+            let t = quote_ident(dialect, &name_raw)?;
+            run_fetch(pool, &format!("SHOW COLUMNS FROM {t}"), vec![]).await
+        }
+        Dialect::Postgres => {
+            // Split an optional schema qualifier; both parts bind as parameters.
+            let (schema, tbl) = match name_raw.rsplit_once('.') {
+                Some((s, t)) => (Some(s.trim().to_string()), t.trim().to_string()),
+                None => (None, name_raw.clone()),
+            };
+            let mut sql = String::from(
+                "SELECT column_name, data_type, is_nullable, column_default \
+                 FROM information_schema.columns WHERE table_name = $1",
+            );
+            let mut binds = vec![Value::String(tbl)];
+            if let Some(s) = schema {
+                sql.push_str(" AND table_schema = $2");
+                binds.push(Value::String(s));
+            }
+            sql.push_str(" ORDER BY ordinal_position");
+            run_fetch(pool, &sql, binds).await
+        }
+    }
+}
+
 // ── Database & schema management ──────────────────────────────────────────────
 
 async fn op_create_database(pool: &AnyPool, dialect: Dialect, cfg: &Value) -> Result<Value, String> {
@@ -697,6 +954,9 @@ pub(crate) async fn execute(config: &Value) -> Result<Value, String> {
         "insert" => op_insert(&pool, dialect, config).await,
         "update" => op_update(&pool, dialect, config).await,
         "delete" => op_delete(&pool, dialect, config).await,
+        "createTable" => op_create_table(&pool, dialect, config).await,
+        "dropTable" => op_drop_table(&pool, dialect, config).await,
+        "describeTable" => op_describe_table(&pool, dialect, config).await,
         "createDatabase" => op_create_database(&pool, dialect, config).await,
         "dropDatabase" => op_drop_database_server(&pool, dialect, config).await,
         "listDatabases" => op_list_databases_server(&pool, dialect).await,
@@ -922,6 +1182,109 @@ mod tests {
         // Traversal / bad chars rejected.
         assert!(resolve_sqlite_path("../secret").is_err());
         assert!(resolve_sqlite_path("bad name!").is_err());
+    }
+
+    #[test]
+    fn column_types_map_per_dialect() {
+        assert_eq!(map_column_type(Dialect::Postgres, "text").unwrap(), "TEXT");
+        assert_eq!(map_column_type(Dialect::MySql, "text").unwrap(), "VARCHAR(255)");
+        assert_eq!(map_column_type(Dialect::MySql, "integer").unwrap(), "INT");
+        assert_eq!(map_column_type(Dialect::Sqlite, "integer").unwrap(), "INTEGER");
+        assert_eq!(map_column_type(Dialect::Postgres, "number").unwrap(), "DOUBLE PRECISION");
+        assert_eq!(map_column_type(Dialect::Sqlite, "json").unwrap(), "TEXT");
+        assert_eq!(map_column_type(Dialect::Postgres, "json").unwrap(), "JSONB");
+        // A safe raw type passes through; an injection attempt is rejected.
+        assert_eq!(map_column_type(Dialect::MySql, "VARCHAR(100)").unwrap(), "VARCHAR(100)");
+        assert!(map_column_type(Dialect::Postgres, "TEXT); DROP TABLE x;--").is_err());
+    }
+
+    #[test]
+    fn default_literals_are_safe() {
+        assert_eq!(format_default_literal("0"), "0");
+        assert_eq!(format_default_literal("3.5"), "3.5");
+        assert_eq!(format_default_literal("true"), "TRUE");
+        assert_eq!(format_default_literal("CURRENT_TIMESTAMP"), "CURRENT_TIMESTAMP");
+        assert_eq!(format_default_literal("active"), "'active'");
+        // Quotes are doubled so a string default can't break out.
+        assert_eq!(format_default_literal("O'Brien"), "'O''Brien'");
+    }
+
+    #[test]
+    fn column_def_auto_increment_pk() {
+        let int_pk = json!({ "name": "id", "type": "integer", "primary_key": true });
+        assert_eq!(
+            build_column_def(Dialect::Postgres, &int_pk, true).unwrap(),
+            "\"id\" SERIAL PRIMARY KEY"
+        );
+        assert_eq!(
+            build_column_def(Dialect::MySql, &int_pk, true).unwrap(),
+            "`id` INT AUTO_INCREMENT PRIMARY KEY"
+        );
+        assert_eq!(
+            build_column_def(Dialect::Sqlite, &int_pk, true).unwrap(),
+            "\"id\" INTEGER PRIMARY KEY AUTOINCREMENT"
+        );
+        // NOT NULL / UNIQUE / DEFAULT on a plain column.
+        let col = json!({ "name": "email", "type": "text", "not_null": true, "unique": true, "default": "x" });
+        assert_eq!(
+            build_column_def(Dialect::Postgres, &col, false).unwrap(),
+            "\"email\" TEXT NOT NULL UNIQUE DEFAULT 'x'"
+        );
+    }
+
+    /// Create Table via the row editor, then Describe and Drop it on SQLite.
+    #[tokio::test]
+    async fn sqlite_create_describe_drop_table() {
+        let path = std::env::temp_dir()
+            .join(format!("axon_ddl_{}.sqlite", uuid::Uuid::new_v4().simple()))
+            .to_string_lossy()
+            .replace('\\', "/");
+        let base = |op: &str| json!({ "db_type": "sqlite", "database": path.clone(), "operation": op });
+
+        // Create a table with an auto-increment id + two columns.
+        let mut c = base("createTable");
+        c["table"] = json!("contacts");
+        c["if_not_exists"] = json!(true);
+        c["columns_def"] = json!({ "parameters": [
+            { "name": "id", "type": "integer", "primary_key": true },
+            { "name": "name", "type": "text", "not_null": true },
+            { "name": "score", "type": "number", "default": "0" },
+            { "name": "", "type": "text" },
+        ] });
+        let created = execute(&c).await.expect("createTable");
+        assert_eq!(created["created"], true);
+
+        // Re-running with IF NOT EXISTS is a safe no-op (would error otherwise).
+        execute(&c).await.expect("createTable again");
+
+        // The auto-increment id fills itself in on insert.
+        let mut ins = base("insert");
+        ins["table"] = json!("contacts");
+        ins["data_mode"] = json!("fields");
+        ins["data_fields"] = json!({ "parameters": [{ "column": "name", "value": "Ann" }] });
+        execute(&ins).await.expect("insert");
+
+        let mut sel = base("select");
+        sel["table"] = json!("contacts");
+        let out = execute(&sel).await.expect("select");
+        assert_eq!(out["rows"][0]["id"], 1);
+        // `score` is a REAL column with DEFAULT 0, so it comes back as 0.0.
+        assert_eq!(out["rows"][0]["score"], 0.0);
+
+        // Describe returns one row per column.
+        let mut d = base("describeTable");
+        d["table"] = json!("contacts");
+        let desc = execute(&d).await.expect("describeTable");
+        assert_eq!(desc["row_count"], 3);
+
+        // Drop it, then it's gone from listTables.
+        let mut dr = base("dropTable");
+        dr["table"] = json!("contacts");
+        execute(&dr).await.expect("dropTable");
+        let t = execute(&base("listTables")).await.expect("listTables");
+        assert_eq!(t["table_count"], 0);
+
+        let _ = std::fs::remove_file(path.replace('/', std::path::MAIN_SEPARATOR_STR));
     }
 
     /// Full lifecycle in the MANAGED dir: create a named database, see it in the
