@@ -1964,10 +1964,10 @@ export const NODE_TYPES = {
         description: 'Efferent — answer the HTTP request that triggered this workflow with your own status, headers and body, turning the workflow into an API endpoint. The caller is held waiting until this node runs (bounded by workflow.webhook_respond_timeout_secs, default 30s); without it they just get the generic "triggered" ack.',
         properties: [
             {
-                displayName: 'Only external-webhook runs have a live caller to answer. On a manual editor run this node shows the response it would send and the workflow continues normally.',
+                displayName: 'Live Requests Only',
                 name: 'liveRequestNotice',
                 type: 'notice',
-                default: '',
+                default: 'Only external-webhook runs have a live caller to answer. On a manual editor run this node just shows the response it would send, and the workflow continues normally either way.',
             },
             {
                 displayName: 'Respond With',
