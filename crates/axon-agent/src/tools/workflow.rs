@@ -2496,6 +2496,7 @@ impl WorkflowEngine {
             false,
             Some(node_id),
             None,
+            None,
         )
     }
 
