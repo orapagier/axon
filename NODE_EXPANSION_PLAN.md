@@ -370,11 +370,31 @@ Priority follows accordingly.
 | 3.4 | `emailTrigger` | Email Trigger (IMAP) | L | demand-driven — see note |
 | 3.5 | `sms` | SMS (Twilio) | S | HTTP wrapper, low priority |
 
-- [ ] **3.1 Respond to Webhook** — return a custom HTTP body/status so a workflow
-  can **be an API**, not just receive. Wire into the existing webhook path
-  (`crates/axon-agent/src/webhook/external.rs`) — the resume/approval webhook
-  plumbing already shows the pattern. Unlocks: form backends, Slack slash-command
-  responses, signed-webhook handshakes (pairs with 2.2 Crypto).
+- [x] **3.1 Respond to Webhook** (`respondToWebhook` / *Efferent*) — a workflow
+  answers the live HTTP request that triggered it with its own status/headers/
+  body, so a workflow can **be an API**. Executor `nodes/respond_to_webhook.rs`
+  (13 table-driven tests) + a run-id-keyed oneshot registry mirroring
+  `trigger_data` (registered in `run_in_background_inner` BEFORE spawn — same
+  invariant as payload staging — so the node can't race the registration; a
+  `ChannelCleanup` RAII guard in `run_inner` drops an unfired sender on any
+  exit/suspend path so the caller falls back instantly). Handler side
+  (`webhook/external.rs`): a delivery whose workflow has an enabled
+  `respondToWebhook` node runs via `run_in_background_for_webhook` and holds
+  the request open up to `workflow.webhook_respond_timeout_secs` (default 30s,
+  new RuntimeSettings accessor); respond fired → custom response, channel
+  closed/timeout → the legacy `{ok, run_id}` ack, and the run continues either
+  way. Modes: `firstIncomingItem` (default — echoes the primary input, first
+  element of a list), `json` (string body must parse; expression-resolved
+  objects ride as-is), `text`, `noData`; `statusCode` validated 100–599;
+  `responseHeaders` fixedCollection can override the by-body-kind content-type.
+  One-shot by construction: first respond wins, a second (or a manual editor
+  run) reports `responded: false` + preview instead of erroring. In the
+  no-retry list AND the `can_iterate` exclusion (a per-item map after a Loop
+  would burn the channel on item 0). `NODE_TYPES.respondToWebhook` in
+  `nodes.js`. Unlocks: form backends, Slack slash-command responses,
+  signed-webhook handshakes (pairs with 2.2 Crypto).
+  - Remaining DoD item: manual canvas E2E (curl an external-webhook workflow
+    with/without the node); logic covered by unit tests + backend build.
 - [ ] **3.2 Send Email (SMTP)** — for non-Gmail/transactional senders.
   Credential-backed. `lettre` with `default-features = false` +
   rustls transport (per dependency policy). Build when a concrete non-Gmail sender
