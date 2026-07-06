@@ -433,15 +433,37 @@ export const NODE_TYPES = {
             },
             {
                 displayName: 'Authentication',
-
-
                 name: 'authentication',
                 type: 'options',
                 options: [
                     { name: 'None', value: 'none' },
                     { name: 'Generic Credential Type', value: 'genericCredentialType' },
+                    { name: 'Connected Account (Google / Microsoft / Facebook)', value: 'connectedAccount' },
                 ],
                 default: 'none',
+                description: 'How to authenticate. "Connected Account" reuses a login you already connected in Settings → Services — no keys needed.',
+            },
+            {
+                displayName: 'Account',
+                name: 'connectedAccountProvider',
+                type: 'options',
+                displayOptions: { show: { authentication: ['connectedAccount'] } },
+                options: [
+                    { name: 'Google', value: 'google' },
+                    { name: 'Microsoft', value: 'microsoft' },
+                    { name: 'Facebook', value: 'facebook' },
+                ],
+                default: 'google',
+                description: 'Sends this account’s current (auto-refreshed) access token as a Bearer header. Connect the account first in Settings → Services. Unlocks any API on that platform — Drive, Docs, YouTube, Graph, OneDrive, and more.',
+            },
+            {
+                displayName: 'Credential',
+                name: 'credential_id',
+                type: 'credential',
+                service: 'http',
+                default: '',
+                displayOptions: { show: { authentication: ['genericCredentialType'] } },
+                hint: 'Optional. Pick a saved HTTP credential (service "http") to fill the secret fields instead of typing them here. Recognized keys: user, password, authHeaderName, authHeaderValue, authBearerToken, oauth2ClientId, oauth2ClientSecret, oauth2RefreshToken.',
             },
             {
                 displayName: 'Generic Auth Type',
@@ -451,7 +473,9 @@ export const NODE_TYPES = {
                 options: [
                     { name: 'Basic Auth', value: 'httpBasicAuth' },
                     { name: 'Header Auth', value: 'httpHeaderAuth' },
+                    { name: 'Bearer Token', value: 'httpBearerAuth' },
                     { name: 'Query Auth', value: 'httpQueryAuth' },
+                    { name: 'OAuth2', value: 'oAuth2' },
                 ],
                 default: 'httpBasicAuth',
             },
