@@ -3908,6 +3908,14 @@ small.form-desc {
 .fc-sub-field.fc-sub-boolean { flex: 0 0 auto; min-width: 0; }
 .fc-sub-field.fc-sub-boolean .field-with-fx { width: auto; }
 .fc-sub-field.fc-sub-boolean .fc-toggle { justify-content: flex-start; padding-left: 2px; }
+/* Pin single-line inputs, selects and the toggle box to one control height so the
+   small switch lands on the same vertical midline as the text/select fields. Before
+   this the input height drifted with the browser's default line-height, so the
+   fixed 32px toggle box sat lower than the inputs' centre in the create-table
+   column editor. (Textareas are excluded so multi-row fields can still grow.) */
+.fc-sub-field input:not([type="checkbox"]):not([type="radio"]),
+.fc-sub-field select { height: 32px; box-sizing: border-box; }
+.fc-sub-field.fc-sub-boolean .fc-toggle { height: 32px; }
 .fc-sub-field input,
 .fc-sub-field textarea,
 .fc-sub-field select {

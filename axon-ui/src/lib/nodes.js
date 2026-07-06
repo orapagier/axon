@@ -4059,21 +4059,22 @@ export const NODE_TYPES = {
             },
             // ── Select ──
             {
-                displayName: 'Columns',
+                displayName: 'Columns to return',
                 name: 'columns',
                 type: 'string',
                 default: '*',
                 placeholder: '*  or  id, name, email',
                 displayOptions: { show: { operation: ['select'] } },
-                hint: 'Comma-separated column names, or * for all.',
+                hint: 'Which columns come back in each row. * (the default) means every column. Otherwise list just the ones you want, comma-separated — e.g. id, name, email.',
             },
             {
-                displayName: 'Limit',
+                displayName: 'Limit (max rows)',
                 name: 'limit',
                 type: 'number',
                 default: '',
-                placeholder: 'e.g. 100',
+                placeholder: 'e.g. 100  (empty = no limit)',
                 displayOptions: { show: { operation: ['select'] } },
+                hint: 'The most rows to return. Leave empty to get every matching row; set e.g. 100 to cap it at the first 100. Useful to avoid pulling a huge table all at once.',
             },
             // ── Insert / Update data ──
             {
@@ -4114,22 +4115,22 @@ export const NODE_TYPES = {
             },
             // ── Where (Select / Update / Delete) ──
             {
-                displayName: 'Where',
+                displayName: 'Where (which rows to match)',
                 name: 'where',
                 type: 'string',
                 typeOptions: { rows: 2 },
                 default: '',
-                placeholder: "id = 42  AND  status = 'active'",
+                placeholder: "id = 42   AND   status = 'active'",
                 displayOptions: { show: { operation: ['select', 'update', 'delete'] } },
-                hint: 'Raw SQL condition (without the WHERE keyword). This is authored SQL — for parameterized filters use the Execute Query operation instead.',
+                hint: 'A filter that decides which rows this operation acts on — Select reads them, Update changes them, Delete removes them. Type a condition WITHOUT the word "WHERE", e.g. id = 42, or combine with AND / OR. Leave it empty to match EVERY row (for Update/Delete that needs the toggle below). This box is raw SQL; to safely plug in values from other nodes, use the Execute Query operation with parameters instead.',
             },
             {
-                displayName: 'Allow no WHERE (affect every row)',
+                displayName: 'Apply to every row (no Where filter)',
                 name: 'allow_no_where',
                 type: 'boolean',
                 default: false,
                 displayOptions: { show: { operation: ['update', 'delete'] } },
-                hint: 'Safety guard: Update/Delete without a Where clause is blocked unless you enable this.',
+                hint: 'Safety switch. An Update or Delete with the Where box empty would change or remove EVERY row in the table, so it is blocked by default. Turn this on only when you truly mean to affect the whole table.',
             },
             // ── Create Table (beginner-friendly column editor) ──
             {
