@@ -1,10 +1,11 @@
 use crate::state::AppState;
+use crate::tools::workflow::nodes::respond_to_webhook::{ResponseBody, WebhookHttpResponse};
 use crate::tools::workflow::WorkflowEngine;
 use axum::{
     body::Bytes,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     Json,
 };
 use serde_json::{json, Value};
