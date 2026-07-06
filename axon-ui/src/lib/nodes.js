@@ -3966,10 +3966,10 @@ export const NODE_TYPES = {
         ],
     },
     database: {
-        displayName: 'Database',
+        displayName: 'Hippocampus',
         name: 'database',
-        icon: '🗄️',
-        description: 'Run queries and CRUD operations against Postgres, MySQL, MariaDB, or SQLite from one node.',
+        icon: '🗃️',
+        description: 'Long-term structured memory — run queries and CRUD operations against Postgres, MySQL, MariaDB, or SQLite from one node.',
         properties: [
             {
                 displayName: 'Database Type',
