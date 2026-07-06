@@ -4140,11 +4140,12 @@ export const NODE_TYPES = {
                 placeholder: 'Add Column',
                 typeOptions: { multipleValues: true },
                 displayOptions: { show: { operation: ['createTable'] } },
-                hint: 'One row per column. Tick "Primary key" on an Integer column to get an auto-incrementing id. Types are translated to the right SQL for your database automatically.',
+                hint: 'One row per column. Column = the field name · Type = the kind of data · Primary key = the unique row id (tick it on an Integer to auto-number rows) · Required = value can\'t be empty · Unique = no duplicates allowed · Default = value used when none is given. Tip: spaces and symbols in a name become underscores automatically (e.g. "first name" → first_name), so the same rule applies when you Insert/Select later.',
                 options: [
-                    { name: 'name', displayName: 'Column', type: 'string', default: '', placeholder: 'id' },
+                    { name: 'name', displayName: 'Column', type: 'string', default: '', placeholder: 'first_name', hint: 'The column name. Spaces and symbols are converted to underscores automatically (e.g. "first name" → first_name).' },
                     {
                         name: 'type', displayName: 'Type', type: 'options', default: 'text', noExpr: true,
+                        hint: 'The kind of data stored. Translated to the right SQL type for your database (Text, whole-number Integer, decimal Number, true/false Boolean, Date, Date & time, or JSON).',
                         options: [
                             { name: 'Text', value: 'text' },
                             { name: 'Integer', value: 'integer' },
@@ -4155,10 +4156,10 @@ export const NODE_TYPES = {
                             { name: 'JSON', value: 'json' },
                         ],
                     },
-                    { name: 'primary_key', displayName: 'Primary key', type: 'boolean', default: false, noExpr: true },
-                    { name: 'not_null', displayName: 'Required', type: 'boolean', default: false, noExpr: true },
-                    { name: 'unique', displayName: 'Unique', type: 'boolean', default: false, noExpr: true },
-                    { name: 'default', displayName: 'Default', type: 'string', default: '', placeholder: 'optional' },
+                    { name: 'primary_key', displayName: 'Primary key', type: 'boolean', default: false, noExpr: true, hint: 'Marks this column as the row\'s unique id. Tick it on a single Integer column to get an auto-incrementing id (1, 2, 3…). A primary key is automatically Required and Unique.' },
+                    { name: 'not_null', displayName: 'Required', type: 'boolean', default: false, noExpr: true, hint: 'NOT NULL — every row must have a value for this column; inserting without one is rejected.' },
+                    { name: 'unique', displayName: 'Unique', type: 'boolean', default: false, noExpr: true, hint: 'No two rows may share the same value in this column (e.g. an email address).' },
+                    { name: 'default', displayName: 'Default', type: 'string', default: '', placeholder: 'e.g. 0, now(), true', hint: 'Value used when a row is inserted without one. Numbers, true/false, NULL and CURRENT_TIMESTAMP/CURRENT_DATE embed as-is; anything else is stored as text.' },
                 ],
             },
             {

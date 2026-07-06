@@ -132,9 +132,8 @@ fn resolve_sqlite_path(name: &str) -> Result<PathBuf, String> {
     if name.contains("..") {
         return Err("Invalid database name (path traversal not allowed)".into());
     }
-    let looks_pathy = name.contains('/')
-        || name.contains('\\')
-        || (name.len() > 1 && name.as_bytes()[1] == b':');
+    let looks_pathy =
+        name.contains('/') || name.contains('\\') || (name.len() > 1 && name.as_bytes()[1] == b':');
     if looks_pathy {
         return Ok(PathBuf::from(name));
     }
@@ -225,6 +224,48 @@ fn quote_ident(dialect: Dialect, ident: &str) -> Result<String, String> {
         quoted.push(format!("{qc}{escaped}{qc}"));
     }
     Ok(quoted.join("."))
+}
+
+/// Coerce a user-typed name into a valid identifier so a stray space or symbol
+/// doesn't make the operation error. Applied per dotted segment (so `schema.table`
+/// still works): every character that isn't a letter, digit or underscore becomes
+/// `_`, and a leading digit gets an `_` prefix (identifiers may not start with a
+/// digit). Already-valid names pass through completely unchanged. An empty or
+/// all-symbol segment is left alone so the strict `quote_ident` below still rejects
+/// it with a helpful message rather than silently inventing a name.
+fn sanitize_ident(ident: &str) -> String {
+    ident
+        .split('.')
+        .map(|seg| {
+            let seg = seg.trim();
+            if seg.is_empty() {
+                return String::new();
+            }
+            let mut out: String = seg
+                .chars()
+                .map(|c| {
+                    if c == '_' || c.is_ascii_alphanumeric() {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
+                .collect();
+            if out.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+                out.insert(0, '_');
+            }
+            out
+        })
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+/// The identifier path for every name a workflow author types (tables, columns,
+/// databases): sanitize spaces/symbols to underscores, then run through the strict
+/// validator+quoter. `quote_ident` stays strict on its own so it remains the
+/// injection boundary and can still reject anything sanitizing can't rescue.
+fn quote_user_ident(dialect: Dialect, ident: &str) -> Result<String, String> {
+    quote_ident(dialect, &sanitize_ident(ident))
 }
 
 // ── Connection URL ─────────────────────────────────────────────────────────────
@@ -417,7 +458,9 @@ fn parse_object(cfg: &Value, key: &str) -> Result<Map<String, Value>, String> {
 fn resolve_data(cfg: &Value) -> Result<Map<String, Value>, String> {
     let mode = str_val(cfg, "data_mode").unwrap_or_default();
     let has_json = matches!(cfg.get("data"), Some(Value::Object(_)))
-        || str_val(cfg, "data").map(|s| !s.trim().is_empty()).unwrap_or(false);
+        || str_val(cfg, "data")
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
     if mode == "json" || (mode.is_empty() && has_json) {
         return parse_object(cfg, "data");
     }
@@ -491,9 +534,11 @@ async fn op_execute_query(pool: &AnyPool, cfg: &Value) -> Result<Value, String> 
     let sql = require(cfg, "query")?;
     let params = parse_params(cfg)?;
     let head = sql.trim_start().to_ascii_uppercase();
-    let returns_rows = ["SELECT", "WITH", "SHOW", "EXPLAIN", "PRAGMA", "VALUES", "DESCRIBE", "DESC"]
-        .iter()
-        .any(|k| head.starts_with(k))
+    let returns_rows = [
+        "SELECT", "WITH", "SHOW", "EXPLAIN", "PRAGMA", "VALUES", "DESCRIBE", "DESC",
+    ]
+    .iter()
+    .any(|k| head.starts_with(k))
         || head.contains(" RETURNING ");
     if returns_rows {
         run_fetch(pool, &sql, params).await
@@ -503,7 +548,7 @@ async fn op_execute_query(pool: &AnyPool, cfg: &Value) -> Result<Value, String> 
 }
 
 async fn op_select(pool: &AnyPool, dialect: Dialect, cfg: &Value) -> Result<Value, String> {
-    let table = quote_ident(dialect, &require(cfg, "table")?)?;
+    let table = quote_user_ident(dialect, &require(cfg, "table")?)?;
     let cols_raw = str_val(cfg, "columns").unwrap_or_default();
     let cols = if cols_raw.trim().is_empty() || cols_raw.trim() == "*" {
         "*".to_string()
@@ -512,7 +557,7 @@ async fn op_select(pool: &AnyPool, dialect: Dialect, cfg: &Value) -> Result<Valu
         for c in cols_raw.split(',') {
             let c = c.trim();
             if !c.is_empty() {
-                parts.push(quote_ident(dialect, c)?);
+                parts.push(quote_user_ident(dialect, c)?);
             }
         }
         if parts.is_empty() {
@@ -536,7 +581,7 @@ async fn op_select(pool: &AnyPool, dialect: Dialect, cfg: &Value) -> Result<Valu
 }
 
 async fn op_insert(pool: &AnyPool, dialect: Dialect, cfg: &Value) -> Result<Value, String> {
-    let table = quote_ident(dialect, &require(cfg, "table")?)?;
+    let table = quote_user_ident(dialect, &require(cfg, "table")?)?;
     let data = resolve_data(cfg)?;
     if data.is_empty() {
         return Err("Insert: 'data' object is empty".into());
@@ -545,7 +590,7 @@ async fn op_insert(pool: &AnyPool, dialect: Dialect, cfg: &Value) -> Result<Valu
     let mut phs = Vec::new();
     let mut vals = Vec::new();
     for (i, (k, v)) in data.iter().enumerate() {
-        cols.push(quote_ident(dialect, k)?);
+        cols.push(quote_user_ident(dialect, k)?);
         phs.push(dialect.placeholder(i + 1));
         vals.push(v.clone());
     }
@@ -564,23 +609,27 @@ async fn op_insert(pool: &AnyPool, dialect: Dialect, cfg: &Value) -> Result<Valu
 }
 
 async fn op_update(pool: &AnyPool, dialect: Dialect, cfg: &Value) -> Result<Value, String> {
-    let table = quote_ident(dialect, &require(cfg, "table")?)?;
+    let table = quote_user_ident(dialect, &require(cfg, "table")?)?;
     let data = resolve_data(cfg)?;
     if data.is_empty() {
         return Err("Update: 'data' object is empty".into());
     }
-    let where_clause = str_val(cfg, "where").map(|s| s.trim().to_string()).unwrap_or_default();
+    let where_clause = str_val(cfg, "where")
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
     if where_clause.is_empty() && !confirm_no_where(cfg) {
-        return Err("Update without a WHERE clause would modify EVERY row. Set a 'where' \
+        return Err(
+            "Update without a WHERE clause would modify EVERY row. Set a 'where' \
                     clause, or enable 'Allow no WHERE' to proceed."
-            .into());
+                .into(),
+        );
     }
     let mut sets = Vec::new();
     let mut vals = Vec::new();
     for (i, (k, v)) in data.iter().enumerate() {
         sets.push(format!(
             "{} = {}",
-            quote_ident(dialect, k)?,
+            quote_user_ident(dialect, k)?,
             dialect.placeholder(i + 1)
         ));
         vals.push(v.clone());
@@ -593,12 +642,16 @@ async fn op_update(pool: &AnyPool, dialect: Dialect, cfg: &Value) -> Result<Valu
 }
 
 async fn op_delete(pool: &AnyPool, dialect: Dialect, cfg: &Value) -> Result<Value, String> {
-    let table = quote_ident(dialect, &require(cfg, "table")?)?;
-    let where_clause = str_val(cfg, "where").map(|s| s.trim().to_string()).unwrap_or_default();
+    let table = quote_user_ident(dialect, &require(cfg, "table")?)?;
+    let where_clause = str_val(cfg, "where")
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
     if where_clause.is_empty() && !confirm_no_where(cfg) {
-        return Err("Delete without a WHERE clause would remove EVERY row. Set a 'where' \
+        return Err(
+            "Delete without a WHERE clause would remove EVERY row. Set a 'where' \
                     clause, or enable 'Allow no WHERE' to proceed."
-            .into());
+                .into(),
+        );
     }
     let mut sql = format!("DELETE FROM {table}");
     if !where_clause.is_empty() {
@@ -615,7 +668,10 @@ async fn op_delete(pool: &AnyPool, dialect: Dialect, cfg: &Value) -> Result<Valu
 fn valid_raw_type(s: &str) -> bool {
     let s = s.trim();
     !s.is_empty()
-        && s.chars().next().map(|c| c.is_ascii_alphabetic()).unwrap_or(false)
+        && s.chars()
+            .next()
+            .map(|c| c.is_ascii_alphabetic())
+            .unwrap_or(false)
         && s.chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '(' | ')' | ','))
 }
@@ -687,8 +743,12 @@ fn format_default_literal(raw: &str) -> String {
 /// row is the ONLY primary-key column, which lets a single integer PK become an
 /// auto-incrementing id (SERIAL / AUTO_INCREMENT / AUTOINCREMENT per dialect).
 fn build_column_def(dialect: Dialect, row: &Value, sole_pk: bool) -> Result<String, String> {
-    let name = row.get("name").and_then(|v| v.as_str()).unwrap_or("").trim();
-    let col = quote_ident(dialect, name)?;
+    let name = row
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    let col = quote_user_ident(dialect, name)?;
     let logical = row.get("type").and_then(|v| v.as_str()).unwrap_or("text");
     let is_integer = matches!(
         logical.trim().to_ascii_lowercase().as_str(),
@@ -742,8 +802,10 @@ fn row_bool(row: &Value, key: &str) -> bool {
 }
 
 async fn op_create_table(pool: &AnyPool, dialect: Dialect, cfg: &Value) -> Result<Value, String> {
-    let name_raw = require(cfg, "table")?;
-    let table = quote_ident(dialect, &name_raw)?;
+    // The name the author typed may have spaces/symbols; sanitize once so both the
+    // SQL and the value we report back reflect the actual table that was created.
+    let name = sanitize_ident(&require(cfg, "table")?);
+    let table = quote_ident(dialect, &name)?;
     let rows = cfg
         .get("columns_def")
         .and_then(|v| v.get("parameters"))
@@ -780,7 +842,7 @@ async fn op_create_table(pool: &AnyPool, dialect: Dialect, cfg: &Value) -> Resul
     if pk_names.len() > 1 {
         let quoted = pk_names
             .iter()
-            .map(|n| quote_ident(dialect, n))
+            .map(|n| quote_user_ident(dialect, n))
             .collect::<Result<Vec<_>, _>>()?;
         defs.push(format!("PRIMARY KEY ({})", quoted.join(", ")));
     }
@@ -795,12 +857,12 @@ async fn op_create_table(pool: &AnyPool, dialect: Dialect, cfg: &Value) -> Resul
         .execute(pool)
         .await
         .map_err(fmt_err)?;
-    Ok(json!({ "success": true, "created": true, "table": name_raw }))
+    Ok(json!({ "success": true, "created": true, "table": name }))
 }
 
 async fn op_drop_table(pool: &AnyPool, dialect: Dialect, cfg: &Value) -> Result<Value, String> {
-    let name_raw = require(cfg, "table")?;
-    let table = quote_ident(dialect, &name_raw)?;
+    let name = sanitize_ident(&require(cfg, "table")?);
+    let table = quote_ident(dialect, &name)?;
     let if_exists = if bool_cfg(cfg, "if_exists") {
         "IF EXISTS "
     } else {
@@ -811,13 +873,15 @@ async fn op_drop_table(pool: &AnyPool, dialect: Dialect, cfg: &Value) -> Result<
         .execute(pool)
         .await
         .map_err(fmt_err)?;
-    Ok(json!({ "success": true, "dropped": true, "table": name_raw }))
+    Ok(json!({ "success": true, "dropped": true, "table": name }))
 }
 
 /// List a table's columns (name, type, nullability, default) — a schema peek so
 /// authors can see what to Insert/Select without leaving the node.
 async fn op_describe_table(pool: &AnyPool, dialect: Dialect, cfg: &Value) -> Result<Value, String> {
-    let name_raw = require(cfg, "table")?;
+    // Sanitize so describing "user profile" finds the "user_profile" that Create
+    // Table made from the same typed name.
+    let name_raw = sanitize_ident(&require(cfg, "table")?);
     match dialect {
         Dialect::Sqlite => {
             // PRAGMA takes no bound params; the name is validated + quoted.
@@ -851,7 +915,11 @@ async fn op_describe_table(pool: &AnyPool, dialect: Dialect, cfg: &Value) -> Res
 
 // ── Database & schema management ──────────────────────────────────────────────
 
-async fn op_create_database(pool: &AnyPool, dialect: Dialect, cfg: &Value) -> Result<Value, String> {
+async fn op_create_database(
+    pool: &AnyPool,
+    dialect: Dialect,
+    cfg: &Value,
+) -> Result<Value, String> {
     match dialect {
         // For SQLite the file is created by connecting with mode=rwc (build_url),
         // so by the time we get here it already exists — just report it.
@@ -860,7 +928,7 @@ async fn op_create_database(pool: &AnyPool, dialect: Dialect, cfg: &Value) -> Re
             Ok(json!({ "created": true, "database": name }))
         }
         _ => {
-            let name = require(cfg, "new_database")?;
+            let name = sanitize_ident(&require(cfg, "new_database")?);
             let ident = quote_ident(dialect, &name)?;
             run_exec(pool, &format!("CREATE DATABASE {ident}"), vec![]).await?;
             Ok(json!({ "created": true, "database": name }))
@@ -873,7 +941,7 @@ async fn op_drop_database_server(
     dialect: Dialect,
     cfg: &Value,
 ) -> Result<Value, String> {
-    let name = require(cfg, "new_database").or_else(|_| require(cfg, "database"))?;
+    let name = sanitize_ident(&require(cfg, "new_database").or_else(|_| require(cfg, "database"))?);
     let ident = quote_ident(dialect, &name)?;
     run_exec(pool, &format!("DROP DATABASE {ident}"), vec![]).await?;
     Ok(json!({ "dropped": true, "database": name }))
@@ -993,7 +1061,10 @@ mod tests {
 
     #[test]
     fn identifier_quoting_and_rejection() {
-        assert_eq!(quote_ident(Dialect::Postgres, "users").unwrap(), "\"users\"");
+        assert_eq!(
+            quote_ident(Dialect::Postgres, "users").unwrap(),
+            "\"users\""
+        );
         assert_eq!(quote_ident(Dialect::MySql, "users").unwrap(), "`users`");
         assert_eq!(
             quote_ident(Dialect::Postgres, "public.users").unwrap(),
@@ -1006,6 +1077,24 @@ mod tests {
     }
 
     #[test]
+    fn sanitize_ident_fixes_names_without_erroring() {
+        // Spaces and symbols become underscores; a leading digit is prefixed.
+        assert_eq!(sanitize_ident("user profile"), "user_profile");
+        assert_eq!(sanitize_ident("  full name  "), "full_name");
+        assert_eq!(sanitize_ident("email@address!"), "email_address_");
+        assert_eq!(sanitize_ident("1st_col"), "_1st_col");
+        // Valid names pass through completely unchanged (including real underscores).
+        assert_eq!(sanitize_ident("first_name"), "first_name");
+        assert_eq!(sanitize_ident("schema.my table"), "schema.my_table");
+        // Sanitized names sail through the strict quoter that raw ones would fail.
+        assert!(quote_ident(Dialect::Postgres, "a b").is_err());
+        assert_eq!(
+            quote_user_ident(Dialect::Postgres, "a b").unwrap(),
+            "\"a_b\""
+        );
+    }
+
+    #[test]
     fn postgres_url_encodes_password() {
         let cfg = json!({
             "host": "db.example.com", "port": "6432",
@@ -1014,7 +1103,10 @@ mod tests {
         });
         let url = build_url(Dialect::Postgres, &cfg).unwrap();
         assert!(url.starts_with("postgres://admin:"), "got {url}");
-        assert!(url.contains("p%40ss%3Aword%2F%21"), "password not encoded: {url}");
+        assert!(
+            url.contains("p%40ss%3Aword%2F%21"),
+            "password not encoded: {url}"
+        );
         assert!(url.contains("@db.example.com:6432/app"));
         assert!(url.ends_with("?sslmode=require"));
     }
@@ -1036,7 +1128,10 @@ mod tests {
         assert_eq!(coerce_text(Some(&json!("Ann"))), json!("Ann"));
         // Codes that must not silently become numbers stay text.
         assert_eq!(coerce_text(Some(&json!("007"))), json!("007"));
-        assert_eq!(coerce_text(Some(&json!("+639171234567"))), json!("+639171234567"));
+        assert_eq!(
+            coerce_text(Some(&json!("+639171234567"))),
+            json!("+639171234567")
+        );
         // Absent / empty → empty string, not NULL.
         assert_eq!(coerce_text(None), json!(""));
         assert_eq!(coerce_text(Some(&json!("  "))), json!(""));
@@ -1096,9 +1191,8 @@ mod tests {
             .to_string_lossy()
             .replace('\\', "/");
 
-        let base = |op: &str| {
-            json!({ "db_type": "sqlite", "database": path.clone(), "operation": op })
-        };
+        let base =
+            |op: &str| json!({ "db_type": "sqlite", "database": path.clone(), "operation": op });
 
         // CREATE
         let mut c = base("executeQuery");
@@ -1157,7 +1251,10 @@ mod tests {
         // DELETE without where is blocked
         let mut c = base("delete");
         c["table"] = json!("people");
-        assert!(execute(&c).await.is_err(), "empty-where delete must be blocked");
+        assert!(
+            execute(&c).await.is_err(),
+            "empty-where delete must be blocked"
+        );
 
         // DELETE with where
         let mut c = base("delete");
@@ -1176,9 +1273,18 @@ mod tests {
         assert_eq!(p.file_name().unwrap(), "sales.db");
         assert_eq!(p.parent().unwrap(), sqlite_dir());
         // Existing extension kept.
-        assert_eq!(resolve_sqlite_path("x.sqlite").unwrap().file_name().unwrap(), "x.sqlite");
+        assert_eq!(
+            resolve_sqlite_path("x.sqlite")
+                .unwrap()
+                .file_name()
+                .unwrap(),
+            "x.sqlite"
+        );
         // Explicit path honored as-is.
-        assert_eq!(resolve_sqlite_path("/tmp/a.db").unwrap(), PathBuf::from("/tmp/a.db"));
+        assert_eq!(
+            resolve_sqlite_path("/tmp/a.db").unwrap(),
+            PathBuf::from("/tmp/a.db")
+        );
         // Traversal / bad chars rejected.
         assert!(resolve_sqlite_path("../secret").is_err());
         assert!(resolve_sqlite_path("bad name!").is_err());
@@ -1187,14 +1293,26 @@ mod tests {
     #[test]
     fn column_types_map_per_dialect() {
         assert_eq!(map_column_type(Dialect::Postgres, "text").unwrap(), "TEXT");
-        assert_eq!(map_column_type(Dialect::MySql, "text").unwrap(), "VARCHAR(255)");
+        assert_eq!(
+            map_column_type(Dialect::MySql, "text").unwrap(),
+            "VARCHAR(255)"
+        );
         assert_eq!(map_column_type(Dialect::MySql, "integer").unwrap(), "INT");
-        assert_eq!(map_column_type(Dialect::Sqlite, "integer").unwrap(), "INTEGER");
-        assert_eq!(map_column_type(Dialect::Postgres, "number").unwrap(), "DOUBLE PRECISION");
+        assert_eq!(
+            map_column_type(Dialect::Sqlite, "integer").unwrap(),
+            "INTEGER"
+        );
+        assert_eq!(
+            map_column_type(Dialect::Postgres, "number").unwrap(),
+            "DOUBLE PRECISION"
+        );
         assert_eq!(map_column_type(Dialect::Sqlite, "json").unwrap(), "TEXT");
         assert_eq!(map_column_type(Dialect::Postgres, "json").unwrap(), "JSONB");
         // A safe raw type passes through; an injection attempt is rejected.
-        assert_eq!(map_column_type(Dialect::MySql, "VARCHAR(100)").unwrap(), "VARCHAR(100)");
+        assert_eq!(
+            map_column_type(Dialect::MySql, "VARCHAR(100)").unwrap(),
+            "VARCHAR(100)"
+        );
         assert!(map_column_type(Dialect::Postgres, "TEXT); DROP TABLE x;--").is_err());
     }
 
@@ -1203,7 +1321,10 @@ mod tests {
         assert_eq!(format_default_literal("0"), "0");
         assert_eq!(format_default_literal("3.5"), "3.5");
         assert_eq!(format_default_literal("true"), "TRUE");
-        assert_eq!(format_default_literal("CURRENT_TIMESTAMP"), "CURRENT_TIMESTAMP");
+        assert_eq!(
+            format_default_literal("CURRENT_TIMESTAMP"),
+            "CURRENT_TIMESTAMP"
+        );
         assert_eq!(format_default_literal("active"), "'active'");
         // Quotes are doubled so a string default can't break out.
         assert_eq!(format_default_literal("O'Brien"), "'O''Brien'");
@@ -1239,7 +1360,8 @@ mod tests {
             .join(format!("axon_ddl_{}.sqlite", uuid::Uuid::new_v4().simple()))
             .to_string_lossy()
             .replace('\\', "/");
-        let base = |op: &str| json!({ "db_type": "sqlite", "database": path.clone(), "operation": op });
+        let base =
+            |op: &str| json!({ "db_type": "sqlite", "database": path.clone(), "operation": op });
 
         // Create a table with an auto-increment id + two columns.
         let mut c = base("createTable");
@@ -1292,25 +1414,35 @@ mod tests {
     #[tokio::test]
     async fn sqlite_managed_lifecycle() {
         let name = format!("axon_life_{}", uuid::Uuid::new_v4().simple());
-        let base = |op: &str| json!({ "db_type": "sqlite", "database": name.clone(), "operation": op });
+        let base =
+            |op: &str| json!({ "db_type": "sqlite", "database": name.clone(), "operation": op });
 
         // Create the database (file in the managed dir).
-        let created = execute(&base("createDatabase")).await.expect("createDatabase");
+        let created = execute(&base("createDatabase"))
+            .await
+            .expect("createDatabase");
         assert_eq!(created["created"], true);
         assert!(resolve_sqlite_path(&name).unwrap().exists());
 
         // It shows up in listDatabases.
-        let list = execute(&base("listDatabases")).await.expect("listDatabases");
+        let list = execute(&base("listDatabases"))
+            .await
+            .expect("listDatabases");
         let names: Vec<String> = list["databases"]
             .as_array()
             .unwrap()
             .iter()
             .map(|d| d["name"].as_str().unwrap().to_string())
             .collect();
-        assert!(names.contains(&format!("{name}.db")), "listing missing new db: {names:?}");
+        assert!(
+            names.contains(&format!("{name}.db")),
+            "listing missing new db: {names:?}"
+        );
 
         // Empty database → no tables.
-        let t0 = execute(&base("listTables")).await.expect("listTables empty");
+        let t0 = execute(&base("listTables"))
+            .await
+            .expect("listTables empty");
         assert_eq!(t0["table_count"], 0);
 
         // Create a table, then it appears in listTables.
