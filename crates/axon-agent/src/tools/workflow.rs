@@ -1544,6 +1544,11 @@ impl WorkflowEngine {
                             | "stimulus"
                             | "subflow"
                             | "workflow"
+                            // Respond to Webhook answers ONE http request via a
+                            // one-shot channel — mapping it per-item after a
+                            // Loop would burn the channel on item 0 and no-op
+                            // the rest; run it once with the aggregate instead.
+                            | "respondToWebhook"
                     );
 
                 // Task 1.0/1.1: a Merge node's inputs are its direct predecessors'
