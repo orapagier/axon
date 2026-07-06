@@ -2446,7 +2446,36 @@ impl WorkflowEngine {
             false,
             None,
             trigger_payload,
+            None,
         )
+    }
+
+    /// 3.1: like `run_in_background_with_payload` (source fixed to "webhook"),
+    /// but for a delivery whose workflow contains a Respond to Webhook node.
+    /// Returns the run id AND a oneshot receiver the HTTP handler awaits (with
+    /// a timeout) to serve the workflow-authored response; the sender is
+    /// registered before the run task spawns and dropped by the run-end guard,
+    /// so the receiver always resolves or closes.
+    pub fn run_in_background_for_webhook(
+        workflow_id: &str,
+        state: &AppState,
+        trigger_payload: Option<Value>,
+    ) -> anyhow::Result<(
+        String,
+        tokio::sync::oneshot::Receiver<nodes::respond_to_webhook::WebhookHttpResponse>,
+    )> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let run_id = Self::run_in_background_inner(
+            workflow_id,
+            state,
+            "webhook",
+            None,
+            false,
+            None,
+            trigger_payload,
+            Some(tx),
+        )?;
+        Ok((run_id, rx))
     }
 
     /// Manual "Run" (play button) on a single Stimulus/trigger node: start a full
