@@ -395,6 +395,81 @@ fn parse_object(cfg: &Value, key: &str) -> Result<Map<String, Value>, String> {
     }
 }
 
+/// Resolve the column → value map for Insert/Update from whichever input the
+/// user filled in: the beginner-friendly `data_fields` row editor (default) or
+/// the advanced raw-JSON `data` box. `data_mode` records the pick; legacy nodes
+/// have no `data_mode` and only a `data` string, so those still parse as JSON.
+fn resolve_data(cfg: &Value) -> Result<Map<String, Value>, String> {
+    let mode = str_val(cfg, "data_mode").unwrap_or_default();
+    let has_json = matches!(cfg.get("data"), Some(Value::Object(_)))
+        || str_val(cfg, "data").map(|s| !s.trim().is_empty()).unwrap_or(false);
+    if mode == "json" || (mode.is_empty() && has_json) {
+        return parse_object(cfg, "data");
+    }
+    parse_data_fields(cfg)
+}
+
+/// Build a column → value map from the `data_fields` fixedCollection rows,
+/// shaped `{ "parameters": [ { "column": "name", "value": "Ann" }, … ] }`.
+/// Rows with a blank column are skipped; values are plain text, lightly coerced
+/// by [`coerce_text`] so number/boolean columns aren't stored as strings.
+fn parse_data_fields(cfg: &Value) -> Result<Map<String, Value>, String> {
+    let rows = cfg
+        .get("data_fields")
+        .and_then(|v| v.get("parameters"))
+        .and_then(|v| v.as_array())
+        .map(|a| a.as_slice())
+        .unwrap_or(&[]);
+    let mut out = Map::new();
+    for row in rows {
+        let col = row
+            .get("column")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        if col.is_empty() {
+            continue;
+        }
+        out.insert(col.to_string(), coerce_text(row.get("value")));
+    }
+    if out.is_empty() {
+        return Err("Add at least one Data field — a column name and a value.".into());
+    }
+    Ok(out)
+}
+
+/// Turn a plain-text row value into the most natural JSON scalar so number and
+/// boolean columns bind as numbers/bools rather than text. Anything that isn't
+/// unambiguously a number/bool/null stays a string — and codes that would lose
+/// meaning as a number (leading zeros like `007`, a leading `+`) stay strings.
+fn coerce_text(v: Option<&Value>) -> Value {
+    let s = match v {
+        Some(Value::String(s)) => s.clone(),
+        // Already typed by an upstream expression, or absent → empty string.
+        Some(Value::Null) | None => return Value::String(String::new()),
+        Some(other) => return other.clone(),
+    };
+    let t = s.trim();
+    match t {
+        "" => Value::String(String::new()),
+        "true" => Value::Bool(true),
+        "false" => Value::Bool(false),
+        "null" => Value::Null,
+        _ => {
+            if let Ok(i) = t.parse::<i64>() {
+                if t == i.to_string() {
+                    return Value::Number(i.into());
+                }
+            } else if let Ok(f) = t.parse::<f64>() {
+                if let Some(n) = serde_json::Number::from_f64(f) {
+                    return Value::Number(n);
+                }
+            }
+            Value::String(s)
+        }
+    }
+}
+
 // ── Operations ─────────────────────────────────────────────────────────────────
 
 async fn op_execute_query(pool: &AnyPool, cfg: &Value) -> Result<Value, String> {
@@ -447,7 +522,7 @@ async fn op_select(pool: &AnyPool, dialect: Dialect, cfg: &Value) -> Result<Valu
 
 async fn op_insert(pool: &AnyPool, dialect: Dialect, cfg: &Value) -> Result<Value, String> {
     let table = quote_ident(dialect, &require(cfg, "table")?)?;
-    let data = parse_object(cfg, "data")?;
+    let data = resolve_data(cfg)?;
     if data.is_empty() {
         return Err("Insert: 'data' object is empty".into());
     }
@@ -475,7 +550,7 @@ async fn op_insert(pool: &AnyPool, dialect: Dialect, cfg: &Value) -> Result<Valu
 
 async fn op_update(pool: &AnyPool, dialect: Dialect, cfg: &Value) -> Result<Value, String> {
     let table = quote_ident(dialect, &require(cfg, "table")?)?;
-    let data = parse_object(cfg, "data")?;
+    let data = resolve_data(cfg)?;
     if data.is_empty() {
         return Err("Update: 'data' object is empty".into());
     }
@@ -691,6 +766,58 @@ mod tests {
     }
 
     #[test]
+    fn coerce_text_picks_natural_scalar() {
+        assert_eq!(coerce_text(Some(&json!("30"))), json!(30));
+        assert_eq!(coerce_text(Some(&json!("-5"))), json!(-5));
+        assert_eq!(coerce_text(Some(&json!("3.14"))), json!(3.14));
+        assert_eq!(coerce_text(Some(&json!("true"))), json!(true));
+        assert_eq!(coerce_text(Some(&json!("false"))), json!(false));
+        assert_eq!(coerce_text(Some(&json!("null"))), json!(null));
+        assert_eq!(coerce_text(Some(&json!("Ann"))), json!("Ann"));
+        // Codes that must not silently become numbers stay text.
+        assert_eq!(coerce_text(Some(&json!("007"))), json!("007"));
+        assert_eq!(coerce_text(Some(&json!("+639171234567"))), json!("+639171234567"));
+        // Absent / empty → empty string, not NULL.
+        assert_eq!(coerce_text(None), json!(""));
+        assert_eq!(coerce_text(Some(&json!("  "))), json!(""));
+        // Already-typed values from an upstream expression pass through.
+        assert_eq!(coerce_text(Some(&json!(42))), json!(42));
+    }
+
+    #[test]
+    fn resolve_data_prefers_mode_then_falls_back() {
+        // Fields mode: build from the row editor, skipping blank-column rows.
+        let cfg = json!({
+            "data_mode": "fields",
+            "data_fields": { "parameters": [
+                { "column": "name", "value": "Ann" },
+                { "column": "age", "value": "30" },
+                { "column": "", "value": "ignored" },
+            ] },
+        });
+        let m = resolve_data(&cfg).unwrap();
+        assert_eq!(m.get("name"), Some(&json!("Ann")));
+        assert_eq!(m.get("age"), Some(&json!(30)));
+        assert_eq!(m.len(), 2);
+
+        // JSON mode: parse the raw box even if stale rows linger.
+        let cfg = json!({
+            "data_mode": "json",
+            "data": "{\"x\": 1}",
+            "data_fields": { "parameters": [{ "column": "y", "value": "2" }] },
+        });
+        assert_eq!(resolve_data(&cfg).unwrap().get("x"), Some(&json!(1)));
+
+        // Legacy node (no data_mode, only a data string) still parses as JSON.
+        let cfg = json!({ "data": "{\"x\": 1}" });
+        assert_eq!(resolve_data(&cfg).unwrap().get("x"), Some(&json!(1)));
+
+        // Fields mode with all-blank rows gives a friendly error, not a panic.
+        let cfg = json!({ "data_mode": "fields", "data_fields": { "parameters": [{ "column": "", "value": "" }] } });
+        assert!(resolve_data(&cfg).is_err());
+    }
+
+    #[test]
     fn update_without_where_is_blocked() {
         // Build a config with no where + no override; op requires a pool but we can
         // check the guard fires before any connection by calling the guard logic.
@@ -724,6 +851,24 @@ mod tests {
         c["data"] = json!("{\"name\": \"Ann\", \"age\": 30}");
         let ins = execute(&c).await.expect("insert");
         assert_eq!(ins["rows_affected"], 1);
+
+        // INSERT (beginner row editor — plain-text values, age coerced to a number)
+        let mut c = base("insert");
+        c["table"] = json!("people");
+        c["data_mode"] = json!("fields");
+        c["data_fields"] = json!({ "parameters": [
+            { "column": "name", "value": "Cara" },
+            { "column": "age", "value": "20" },
+        ] });
+        let ins = execute(&c).await.expect("row-editor insert");
+        assert_eq!(ins["rows_affected"], 1);
+
+        // The plain-text "20" was coerced to a number and lands in the INTEGER column.
+        let mut c = base("select");
+        c["table"] = json!("people");
+        c["where"] = json!("name = 'Cara'");
+        let cara = execute(&c).await.expect("select cara");
+        assert_eq!(cara["rows"][0]["age"], 20);
 
         // INSERT (parameterized raw query)
         let mut c = base("executeQuery");

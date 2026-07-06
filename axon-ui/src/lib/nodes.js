@@ -4074,14 +4074,39 @@ export const NODE_TYPES = {
             },
             // ── Insert / Update data ──
             {
+                displayName: 'How to enter data',
+                name: 'data_mode',
+                type: 'options',
+                default: 'fields',
+                options: [
+                    { name: 'Fields (simple)', value: 'fields' },
+                    { name: 'Raw JSON (advanced)', value: 'json' },
+                ],
+                displayOptions: { show: { operation: ['insert', 'update'] } },
+                hint: '"Fields" gives you one row per column — just type the column name and value. "Raw JSON" lets you paste a full JSON object instead.',
+            },
+            {
                 displayName: 'Data',
+                name: 'data_fields',
+                type: 'fixedCollection',
+                default: { parameters: [{ column: '', value: '' }] },
+                placeholder: 'Add Field',
+                typeOptions: { multipleValues: true },
+                displayOptions: { show: { operation: ['insert', 'update'], data_mode: ['fields'] } },
+                hint: 'One row per column: enter the column name and its value as plain text. Numbers (30), true/false and null are detected automatically; everything else is stored as text. Values are always sent as safe bound parameters.',
+                options: [
+                    { name: 'column', displayName: 'Column', type: 'string', default: '', placeholder: 'name' },
+                    { name: 'value', displayName: 'Value', type: 'string', default: '', placeholder: 'Ann' },
+                ],
+            },
+            {
+                displayName: 'Data (JSON)',
                 name: 'data',
                 type: 'string',
                 typeOptions: { rows: 5 },
                 default: '',
-                required: true,
                 placeholder: '{ "name": "Ann", "email": "ann@example.com" }',
-                displayOptions: { show: { operation: ['insert', 'update'] } },
+                displayOptions: { show: { operation: ['insert', 'update'], data_mode: ['json'] } },
                 hint: 'JSON object of column → value. Values are sent as bound parameters. On Postgres, Insert returns the new row.',
             },
             // ── Where (Select / Update / Delete) ──
