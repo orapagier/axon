@@ -298,10 +298,29 @@ payload. These turn raw bytes into structured data.
 | 2.7 | `xml` / `markdown` | XML / Markdown | S | `quick-xml`, `pulldown-cmark` |
 | 2.8 | `pdfText` | PDF Text | M–L | see warning — demand-driven |
 
-- [ ] **2.1 Date & Time** — parse/format/add/subtract/diff; timezones. Extremely
-  common; today only doable in a JavaScript node. **Build on
-  `axon_core::flexidate`** (universal datetime reconciliation, already powers both
-  Calendar integrations) — the node is mostly a thin config layer over it.
+- [x] **2.1 Date & Time** (`dateTime` / *Chronon*) — parse/format/add/subtract/
+  diff/extract; timezone-aware. Executor `nodes/date_time.rs` (18 table-driven
+  tests) is a thin config layer over **`axon_core::flexidate`** (universal datetime
+  reconciliation, already powers both Calendar integrations) for parsing, plus
+  `chrono`/`chrono-tz` (both in tree) for arithmetic, formatting, and zone
+  conversion. Five `operation`s: `getCurrentDate` (now, optionally date-only),
+  `format` (presets — ISO/date/time/datetime/human/RFC2822/unix/unixMs — or a
+  custom strftime string, pre-validated so a bad token errors instead of
+  panicking), `addSubtract` (calendar-aware for months/quarters/years — chrono
+  clamps day-of-month, e.g. Mar 31 − 1mo = Feb 28; duration-based & fractional for
+  weeks→seconds), `diff` (whole calendar months/quarters/years via
+  `full_months_between`; fractional for smaller units), `extract`
+  (year/month/day/hour/minute/second/ISO-weekday/dayOfYear/ISO-week/quarter → a
+  number). Input values keep their JSON type through `interpolate_config`, so a
+  Unix-timestamp number parses as readily as a string. A `timezone` (IANA, default
+  `flexidate::default_tz` = Asia/Manila) anchors naive/date-only inputs and
+  converts zoned ones. Output mirrors Soma: result lands under `outputField`
+  (per-op default) and `includeInputFields` merges it onto the incoming item.
+  Dispatch uses the Soma/`$json` primary-input convention; not in the no-retry list
+  (pure transform). `NODE_TYPES.dateTime` in `nodes.js` gates each operation's
+  params via `displayOptions`.
+  - Remaining DoD item: manual canvas E2E; logic covered by unit tests + backend/UI
+    build.
 - [ ] **2.2 Crypto** — hash / HMAC / sign / UUID. Needed for **webhook signature
   verification** and idempotency keys. Zero new deps.
 - [ ] **2.3 HTML Extract** — CSS-selector extraction → turns "Synapse fetch a page"
