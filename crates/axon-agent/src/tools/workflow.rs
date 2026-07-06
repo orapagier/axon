@@ -1052,6 +1052,13 @@ impl WorkflowEngine {
         // can never touch another run's data.
         let _staged_cleanup = trigger_data::StagedCleanup::new(&run_id);
 
+        // 3.1: drop this run's unfired Respond-to-Webhook channel on every exit
+        // path (respond node on a not-taken branch, error, durable-wait
+        // suspend). Closing it unblocks the HTTP handler holding the request
+        // open, which then falls back to the default ack instead of waiting
+        // out its timeout.
+        let _respond_cleanup = nodes::respond_to_webhook::ChannelCleanup::new(&run_id);
+
         let (workflow_name, nodes, edges) = {
             let conn = state.db.get()?;
             let name: String = conn.query_row(
