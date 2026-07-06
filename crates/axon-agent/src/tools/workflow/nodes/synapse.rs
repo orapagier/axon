@@ -722,109 +722,195 @@ pub(crate) async fn execute_http_node(config: &Value, state: &AppState) -> Resul
         .get("paginationInterval")
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
+    // Optional dot-path to the array of results inside each page. Drives both the
+    // stop condition and the flattened `items` output, so APIs that wrap results
+    // in an envelope (e.g. `{"items": [...], "total": N}`) paginate correctly.
+    let data_field = config
+        .get("paginationDataField")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
 
     let mut pages: Vec<Value> = Vec::new();
     let mut page: u64 = 0;
 
-    if mode == "nextUrl" {
-        let field = config
-            .get("paginationNextUrlField")
-            .and_then(|v| v.as_str())
-            .unwrap_or("next")
-            .to_string();
-        let mut next_params = params.clone();
-        loop {
-            page += 1;
-            if page > max_pages {
-                break;
-            }
-            let resp = match tool.request(next_params.clone()).await {
-                Ok(r) => r,
-                Err(e) => {
-                    if pages.is_empty() {
-                        return Err(e.to_string());
-                    }
+    match mode {
+        "nextUrl" | "header" => {
+            // nextUrl: read the next-page URL from a body field. header: read it
+            // from the RFC 5988 Link header (rel="next"), GitHub-style.
+            let field = config
+                .get("paginationNextUrlField")
+                .and_then(|v| v.as_str())
+                .unwrap_or("next")
+                .to_string();
+            let mut next_params = params.clone();
+            loop {
+                page += 1;
+                if page > max_pages {
                     break;
                 }
-            };
-            let next_url = get_by_path(&resp.body, &field)
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-                .filter(|s| !s.is_empty());
-            pages.push(resp.body);
-            match next_url {
-                Some(u) => {
-                    next_params.url = u;
-                    // The next URL already carries its own query string.
-                    next_params.query = None;
+                let resp = match tool.request(next_params.clone()).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        if pages.is_empty() {
+                            return Err(e.to_string());
+                        }
+                        break;
+                    }
+                };
+                let next_url = if mode == "header" {
+                    parse_link_next(&resp.headers)
+                } else {
+                    get_by_path(&resp.body, &field)
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                        .filter(|s| !s.is_empty())
+                };
+                pages.push(resp.body);
+                match next_url {
+                    Some(u) => {
+                        next_params.url = u;
+                        // The next URL already carries its own query string.
+                        next_params.query = None;
+                    }
+                    None => break,
                 }
-                None => break,
-            }
-            if interval_ms > 0 {
-                tokio::time::sleep(Duration::from_millis(interval_ms)).await;
+                if interval_ms > 0 {
+                    tokio::time::sleep(Duration::from_millis(interval_ms)).await;
+                }
             }
         }
-    } else {
-        // updateParameter: bump a query parameter each page, stop on an empty page.
-        let param_name = config
-            .get("paginationParameterName")
-            .and_then(|v| v.as_str())
-            .unwrap_or("page")
-            .to_string();
-        let start = config
-            .get("paginationParameterStart")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(1);
-        let increment = config
-            .get("paginationParameterIncrement")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(1)
-            .max(1);
-        let mut value = start;
-        loop {
-            page += 1;
-            if page > max_pages {
-                break;
-            }
-            let mut p = params.clone();
-            let mut q = p
-                .query
-                .as_ref()
-                .and_then(|v| v.as_object())
-                .cloned()
-                .unwrap_or_default();
-            q.insert(param_name.clone(), Value::String(value.to_string()));
-            p.query = Some(Value::Object(q));
-
-            let resp = match tool.request(p).await {
-                Ok(r) => r,
-                Err(e) => {
-                    if pages.is_empty() {
-                        return Err(e.to_string());
-                    }
+        "cursor" => {
+            // Cursor / token pagination (Notion, Slack, Stripe): read a cursor
+            // token from each response and send it back on the next request as a
+            // query param or a body field. Stop when the token is absent/empty.
+            let cursor_field = config
+                .get("paginationCursorField")
+                .and_then(|v| v.as_str())
+                .unwrap_or("next_cursor")
+                .to_string();
+            let cursor_param = config
+                .get("paginationCursorParameter")
+                .and_then(|v| v.as_str())
+                .unwrap_or("cursor")
+                .to_string();
+            let cursor_in = config
+                .get("paginationCursorIn")
+                .and_then(|v| v.as_str())
+                .unwrap_or("query");
+            let mut cursor: Option<String> = None;
+            loop {
+                page += 1;
+                if page > max_pages {
                     break;
                 }
-            };
-            let empty = is_empty_body(&resp.body);
-            pages.push(resp.body);
-            if empty {
-                break;
+                let mut p = params.clone();
+                if let Some(c) = &cursor {
+                    if cursor_in == "body" {
+                        let mut b = p
+                            .body
+                            .as_ref()
+                            .and_then(|v| v.as_object())
+                            .cloned()
+                            .unwrap_or_default();
+                        b.insert(cursor_param.clone(), Value::String(c.clone()));
+                        p.body = Some(Value::Object(b));
+                    } else {
+                        let mut q = p
+                            .query
+                            .as_ref()
+                            .and_then(|v| v.as_object())
+                            .cloned()
+                            .unwrap_or_default();
+                        q.insert(cursor_param.clone(), Value::String(c.clone()));
+                        p.query = Some(Value::Object(q));
+                    }
+                }
+                let resp = match tool.request(p).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        if pages.is_empty() {
+                            return Err(e.to_string());
+                        }
+                        break;
+                    }
+                };
+                let next_cursor = get_by_path(&resp.body, &cursor_field)
+                    .and_then(|v| match v {
+                        Value::String(s) => Some(s.clone()),
+                        Value::Number(n) => Some(n.to_string()),
+                        _ => None,
+                    })
+                    .filter(|s| !s.is_empty());
+                pages.push(resp.body);
+                match next_cursor {
+                    Some(c) => cursor = Some(c),
+                    None => break,
+                }
+                if interval_ms > 0 {
+                    tokio::time::sleep(Duration::from_millis(interval_ms)).await;
+                }
             }
-            value += increment;
-            if interval_ms > 0 {
-                tokio::time::sleep(Duration::from_millis(interval_ms)).await;
+        }
+        _ => {
+            // updateParameter: bump a query parameter each page, stop on an empty page.
+            let param_name = config
+                .get("paginationParameterName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("page")
+                .to_string();
+            let start = config
+                .get("paginationParameterStart")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(1);
+            let increment = config
+                .get("paginationParameterIncrement")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(1)
+                .max(1);
+            let mut value = start;
+            loop {
+                page += 1;
+                if page > max_pages {
+                    break;
+                }
+                let mut p = params.clone();
+                let mut q = p
+                    .query
+                    .as_ref()
+                    .and_then(|v| v.as_object())
+                    .cloned()
+                    .unwrap_or_default();
+                q.insert(param_name.clone(), Value::String(value.to_string()));
+                p.query = Some(Value::Object(q));
+
+                let resp = match tool.request(p).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        if pages.is_empty() {
+                            return Err(e.to_string());
+                        }
+                        break;
+                    }
+                };
+                let empty = page_is_empty(&resp.body, data_field);
+                pages.push(resp.body);
+                if empty {
+                    break;
+                }
+                value += increment;
+                if interval_ms > 0 {
+                    tokio::time::sleep(Duration::from_millis(interval_ms)).await;
+                }
             }
         }
     }
 
-    // Flatten array-shaped pages into a single `items` list for easy downstream use,
-    // while preserving the raw per-page bodies in `pages`.
+    // Flatten each page's items into a single `items` list for easy downstream
+    // use (respecting the data-field path), while preserving raw bodies in `pages`.
     let mut items: Vec<Value> = Vec::new();
     for b in &pages {
-        match b {
-            Value::Array(arr) => items.extend(arr.iter().cloned()),
-            other => items.push(other.clone()),
-        }
+        collect_page_items(b, data_field, &mut items);
     }
 
     Ok(json!({
