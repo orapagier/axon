@@ -2012,6 +2012,17 @@ onUnmounted(() => {
                       Import from cURL
                     </button>
                   </div>
+                  <template v-else-if="prop.type === 'servicePreset'">
+                    <label class="field-label">{{ prop.displayName }}</label>
+                    <select
+                      class="preset-select"
+                      style="margin-bottom:10px;"
+                      @change="applySynapsePreset(prop, $event.target.value); $event.target.value = ''"
+                    >
+                      <option value="">Prefill for a service…</option>
+                      <option v-for="p in prop.presets || []" :key="p.value" :value="p.value">{{ p.label }}</option>
+                    </select>
+                  </template>
                   <template v-else-if="prop.type === 'boolean'">
                     <label class="field-label" :title="prop.description || prop.displayName">{{ prop.displayName }}</label>
                     <ExprInput
