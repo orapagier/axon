@@ -638,6 +638,14 @@ async fn execute_node_dispatch(
             let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
             nodes::aggregate::execute(config, &input)
         }
+        "splitOut" => {
+            // Inverse of Aggregate: explode a list field into individual items.
+            // Same primary-input convention as Filter/Aggregate/Soma.
+            let mut vec: Vec<_> = node_results.values().cloned().collect();
+            vec.sort_by_key(|r| r.position);
+            let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
+            nodes::split_out::execute(config, &input)
+        }
         "loop" => nodes::iterate::execute(config),
         "subflow" | "workflow" => {
             nodes::subflow::execute(config, state, workflow_id, run_id, node_results).await

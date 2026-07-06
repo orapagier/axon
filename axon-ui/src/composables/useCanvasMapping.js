@@ -128,6 +128,7 @@ function getNodeIcon(nodeType) {
     merge: '🔀',
     filter: '🚦',
     aggregate: '🧮',
+    splitOut: '💥',
     loop: '🔄',
     wait: '⏱️',
     delay: '⏱️',

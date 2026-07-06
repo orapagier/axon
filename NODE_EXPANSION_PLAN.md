@@ -239,8 +239,20 @@ entirely node code.
   Filter's `to_items`/`field_value`/`arrayPath` convention. Dispatch uses the
   Soma/`$json` primary-input convention; `NODE_TYPES.aggregate` in `nodes.js`.
   - Remaining DoD item: manual canvas E2E; logic covered by unit tests + build.
-- [ ] **1.4 Split Out** — explode a list field into individual items (inverse of
-  Aggregate). Enables per-item fan-out into Loop/Cortex.
+- [x] **1.4 Split Out** (`splitOut`) — explode a list field into individual items
+  (inverse of Aggregate). Executor `nodes/split_out.rs` (12 table-driven tests).
+  Operates over the primary input as a list: for EACH source item it reads the array
+  at `fieldToSplitOut`, emits one output per element, and per `include`
+  (`noOtherFields`/`allOtherFields`/`selectedOtherFields`) optionally carries the
+  source's other fields onto each element (excluding the split field's top-level
+  segment; `fieldsToInclude` names the selected ones). All per-source results
+  concatenate. Object elements are used directly; scalar elements — or any element
+  when `destinationFieldName` is set — wrap as `{ <dest>: el }` (dest defaults to the
+  split field's last segment). The exploded element wins over carried fields on a key
+  conflict. Missing field → contributes nothing; non-array field → single element.
+  Shares Filter/Aggregate's `to_items`/`arrayPath` convention. Dispatch uses the
+  Soma/`$json` primary-input convention; `NODE_TYPES.splitOut` in `nodes.js`.
+  - Remaining DoD item: manual canvas E2E; logic covered by unit tests + build.
 - [ ] **1.5 Sort / Limit / Remove Duplicates** — item-list utilities. Can ship as
   one node with a `mode` option or three tiny nodes. Sort by field ± direction,
   limit N (head/tail), dedupe by key.
