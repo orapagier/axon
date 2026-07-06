@@ -801,8 +801,11 @@ export const NODE_TYPES = {
                 options: [
                     { name: 'Update a Query Parameter', value: 'updateParameter' },
                     { name: 'Response Contains Next URL', value: 'nextUrl' },
+                    { name: 'Cursor / Token in Response', value: 'cursor' },
+                    { name: 'Link Header (rel="next")', value: 'header' },
                 ],
                 default: 'updateParameter',
+                description: 'How to advance pages: bump a query param, follow a next-URL in the body, follow a cursor token (Notion/Slack/Stripe), or follow the RFC 5988 Link header (GitHub).',
             },
             {
                 displayName: 'Parameter Name',
