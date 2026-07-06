@@ -224,8 +224,21 @@ entirely node code.
   no-retry list (pure transform). `NODE_TYPES.filter` entry in `nodes.js`.
   - Remaining DoD item: manual canvas E2E (Phase 1 verification test 1 with a Filter
     on a branch); logic is covered by unit tests + backend/UI build.
-- [ ] **1.3 Aggregate / Summarize** — roll an array into one item:
-  `sum`/`avg`/`min`/`max`/`count`/`concat`/`collectField`. Complements Loop.
+- [x] **1.3 Aggregate / Summarize** (`aggregate` / *Summation*) — roll an array
+  into one item. Executor `nodes/aggregate.rs` (13 table-driven tests). Each
+  aggregation names an `operation` (`sum`/`avg`/`min`/`max`/`count`/`concat`/
+  `collectField`), a source `field` (dot/bracket path per item; blank = the item
+  itself, for scalar arrays) and an `outputField` (defaults to the field's last
+  segment, or the op name when no field); several aggregations compose into one
+  summary object. Numeric ops coerce via the shared `val_to_number` and skip
+  non-numeric; concat/collectField skip missing/null; `count` counts all items (or
+  only those with the field present). **Output is a bare object** (a reducer's
+  result is one item) — `{{ $node["Aggregate"].total }}` reads it directly, and the
+  list nodes still treat a bare object as a 1-item list so it composes. Empty
+  numeric set → `avg` null, `sum` 0; no aggregations → `{ count: N }`. Shares
+  Filter's `to_items`/`field_value`/`arrayPath` convention. Dispatch uses the
+  Soma/`$json` primary-input convention; `NODE_TYPES.aggregate` in `nodes.js`.
+  - Remaining DoD item: manual canvas E2E; logic covered by unit tests + build.
 - [ ] **1.4 Split Out** — explode a list field into individual items (inverse of
   Aggregate). Enables per-item fan-out into Loop/Cortex.
 - [ ] **1.5 Sort / Limit / Remove Duplicates** — item-list utilities. Can ship as

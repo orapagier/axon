@@ -630,6 +630,14 @@ async fn execute_node_dispatch(
             let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
             nodes::filter::execute(config, &input)
         }
+        "aggregate" => {
+            // List reducer: same primary-input convention as Filter/Soma. Rolls the
+            // predecessor array into one summary object.
+            let mut vec: Vec<_> = node_results.values().cloned().collect();
+            vec.sort_by_key(|r| r.position);
+            let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
+            nodes::aggregate::execute(config, &input)
+        }
         "loop" => nodes::iterate::execute(config),
         "subflow" | "workflow" => {
             nodes::subflow::execute(config, state, workflow_id, run_id, node_results).await

@@ -11,6 +11,7 @@
 //! its boa sandbox is shared with the expression engine; extracting that
 //! subsystem cleanly is a separate follow-up.
 
+pub(crate) mod aggregate;
 pub(crate) mod classifier;
 pub(crate) mod condition;
 pub(crate) mod cortex;
