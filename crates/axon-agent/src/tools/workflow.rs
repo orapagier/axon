@@ -501,7 +501,7 @@ async fn execute_node_dispatch(
         "trigger" | "circadian" | "stimulus" => {
             nodes::trigger::execute(config, state, trigger_source, workflow_id, run_id).await
         }
-        "synapse" => nodes::synapse::execute_http_node(config).await,
+        "synapse" => nodes::synapse::execute_http_node(config, state).await,
         "myelin" => crate::tools::myelin::execute_myelin_node(state, config).await,
         "telegram" => crate::tools::telegram::execute_telegram_node(config).await,
         "whatsapp" => crate::tools::whatsapp::execute_whatsapp_node(config).await,
