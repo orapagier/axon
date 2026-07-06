@@ -227,7 +227,7 @@ fn header_query_value(value: &Value) -> Value {
     }
 }
 
-pub(crate) async fn execute_http_node(config: &Value) -> Result<Value, String> {
+pub(crate) async fn execute_http_node(config: &Value, state: &AppState) -> Result<Value, String> {
     let method = config
         .get("method")
         .and_then(|v| v.as_str())
