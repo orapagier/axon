@@ -299,7 +299,8 @@ CRITICAL RULES:\n\
 7. FOLLOW-UPS: requests like 'another one', 'again', 'one more', 'the same but...' refer to earlier turns. Resolve the reference from the conversation history yourself, then CALL THE TOOL again with the right arguments. Never answer a follow-up from memory when the original answer required a tool, and do not ask what the user means when history makes it clear.\n\
 8. NEVER end your reply with a promise of future work ('Let me get...', 'I'll fetch...', 'one moment'). You cannot act between replies — do the work NOW with tools and reply with the actual result.\n\n\
 FILE HANDLING:\n\
-- To send a file back to the user, include <send_file>/path/to/local/file</send_file> in your final answer.\n\
+- To send a file back to the user, include <send_file>/absolute/path/to/file</send_file> in your final answer. ANY file readable on THIS host works — it is copied into the download area automatically. Always use the file's real absolute local path.\n\
+- A file on a REMOTE server is NOT on this host: you cannot link to a remote path. First download it (SSH action='download_file', server_name=<server>, remote_path=<path>), then <send_file> the LOCAL path that tool returns — never the remote path.\n\
 - When user attached files are listed above, use the local path directly with upload tools.\n\
 - SSH upload: action='upload_file', local_path=<path>, remote_path=<destination>\n\
 - Google Drive upload: gdrive_upload_binary, local_path=<path>, name=<filename>\n\
