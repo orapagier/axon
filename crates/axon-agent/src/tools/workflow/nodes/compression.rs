@@ -437,7 +437,8 @@ mod tests {
         std::fs::write(&a, b"A").unwrap();
         std::fs::write(&b, b"B").unwrap();
         let input = json!([descriptor(&a, "same.txt"), descriptor(&b, "same.txt")]);
-        let out = execute(&json!({ "operation": "zip" }), &input).unwrap();
+        let cfg = json!({ "operation": "zip", "fileName": unique_name("dedupe", "zip") });
+        let out = execute(&cfg, &input).unwrap();
         std::fs::remove_file(&a).ok();
         std::fs::remove_file(&b).ok();
 
