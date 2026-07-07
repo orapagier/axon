@@ -257,7 +257,9 @@ entirely node code.
   conflict. Missing field → contributes nothing; non-array field → single element.
   Shares Filter/Aggregate's `to_items`/`arrayPath` convention. Dispatch uses the
   Soma/`$json` primary-input convention; `NODE_TYPES.splitOut` in `nodes.js`.
-  - Remaining DoD item: manual canvas E2E; logic covered by unit tests + build.
+  - **DoD complete.** Manual canvas E2E via Playwright (2026-07-07):
+    `Soma { items: [{x:1},{x:2},{x:3}] } → Split Out (items)` produced three
+    items `{x:1}`, `{x:2}`, `{x:3}`. Clean.
 - [x] **1.5 Sort / Limit / Remove Duplicates** (`sortLimit`) — shipped as **one
   node**, structured as a pipeline rather than a one-of `mode` so the common "top N
   unique" needs no chaining. Executor `nodes/sort_limit.rs` (13 table-driven tests).
