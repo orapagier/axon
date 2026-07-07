@@ -2003,7 +2003,7 @@ export const NODE_TYPES = {
         name: 'extractFromFile',
         icon: '🧾',
         outputs: ['rows'],
-        description: 'Digest — read a CSV or spreadsheet (XLSX / XLS / ODS) into a list of JSON items the list toolkit can work on. Reads Myelin-stored files, downloaded attachments, raw CSV text, or base64 data.',
+        description: 'Digest — read a CSV, spreadsheet (XLSX / XLS / ODS), JSON, XML, or plain text file into workflow data. Reads Myelin-stored files, downloaded attachments, raw text, or base64 data.',
         properties: [
             {
                 displayName: 'Format',
@@ -2014,7 +2014,11 @@ export const NODE_TYPES = {
                 options: [
                     { name: 'CSV', value: 'csv' },
                     { name: 'Spreadsheet (XLSX / XLS / ODS)', value: 'xlsx' },
+                    { name: 'JSON', value: 'json' },
+                    { name: 'XML', value: 'xml' },
+                    { name: 'Text', value: 'text' },
                 ],
+                hint: 'CSV/Spreadsheet read rows into a list of items. JSON parses the file as-is (an array becomes the item list; an object is one item). XML parses into { rootTag: value } (attributes as @_name, text as #text) — same parser as the XML node. Text reads the raw file content as a string, or one item per line with Split Into Lines.',
             },
             {
                 displayName: 'Source',
@@ -2024,10 +2028,10 @@ export const NODE_TYPES = {
                 noExpr: true,
                 options: [
                     { name: 'File on disk', value: 'file' },
-                    { name: 'Raw text (CSV only)', value: 'text' },
+                    { name: 'Raw text (not for spreadsheets)', value: 'text' },
                     { name: 'Base64 data', value: 'base64' },
                 ],
-                hint: 'File on disk covers Myelin retrieve / Telegram download / Synapse file responses. Raw text is for a CSV fetched as a text body. Base64 for encoded bytes.',
+                hint: 'File on disk covers Myelin retrieve / Telegram download / Synapse file responses. Raw text is for content fetched as a text body (CSV/JSON/XML/plain text) — not for XLSX/XLS/ODS, which is binary. Base64 for encoded bytes.',
             },
             {
                 displayName: 'File Path',
@@ -2046,7 +2050,7 @@ export const NODE_TYPES = {
                 default: '',
                 placeholder: '{{ $node["Synapse"].body }}',
                 displayOptions: { show: { source: ['text'] } },
-                hint: 'The raw CSV content. Blank uses the incoming item when it is a string.',
+                hint: 'The raw file content (CSV/JSON/XML/plain text). Blank uses the incoming item when it is a string.',
             },
             {
                 displayName: 'Data (Base64)',
@@ -2073,6 +2077,7 @@ export const NODE_TYPES = {
                 type: 'boolean',
                 default: true,
                 noExpr: true,
+                displayOptions: { show: { operation: ['csv', 'xlsx'] } },
                 hint: 'On keys each row by the header names ({ "name": "Ada", … }); off emits plain value arrays. Blank/duplicate headers become column_N / name_2.',
             },
             {
@@ -2094,12 +2099,21 @@ export const NODE_TYPES = {
                 hint: 'Convert numeric/boolean-looking CSV text ("42", "true") into real numbers/booleans. Leading-zero values ("0917" — IDs, phone numbers) stay text. Spreadsheet cells are already typed.',
             },
             {
+                displayName: 'Split Into Lines',
+                name: 'splitLines',
+                type: 'boolean',
+                default: false,
+                noExpr: true,
+                displayOptions: { show: { operation: ['text'] } },
+                hint: 'On splits the file into one array item per line (composes with Filter/Loop). Off returns the whole file as a single string.',
+            },
+            {
                 displayName: 'Max Rows',
                 name: 'maxRows',
                 type: 'number',
                 default: 0,
                 noExpr: true,
-                hint: 'Cap the number of rows read. 0 = all rows.',
+                hint: 'Cap the number of rows/items read. Applies to CSV, Spreadsheet, JSON arrays, and Text when Split Into Lines is on. 0 = all.',
             },
         ],
     },
