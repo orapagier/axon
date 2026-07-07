@@ -516,7 +516,8 @@ mod tests {
     // An explicit fileName config overrides the embedded/derived default.
     #[test]
     fn gunzip_filename_override() {
-        let out = execute(&json!({ "operation": "gzip" }), &json!("x")).unwrap();
+        let cfg = json!({ "operation": "gzip", "fileName": unique_name("override", "gz") });
+        let out = execute(&cfg, &json!("x")).unwrap();
         let gz_path = out["binary"]["local_path"].as_str().unwrap().to_string();
         let bytes = std::fs::read(&gz_path).unwrap();
         std::fs::remove_file(&gz_path).ok();
