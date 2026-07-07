@@ -32,7 +32,11 @@ async function searchLTM() {
 }
 
 async function deleteMemory(id) {
-  if (!confirm('Delete this memory permanently?')) return
+  const ok = await confirmDialog('This memory will be permanently deleted. This action cannot be undone.', {
+    title: 'Delete Memory',
+    confirmText: 'Delete',
+  })
+  if (!ok) return
   const r = await del(`/memory/${id}`)
   toast(r.ok ? 'Deleted' : r.error, r.ok)
   if (ltmSearch.value.trim()) searchLTM()
