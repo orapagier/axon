@@ -147,13 +147,31 @@ def main():
         num_train_epochs=args.epochs, learning_rate=2e-4,
         lr_scheduler_type="cosine", warmup_ratio=0.03,
         bf16=(args.dtype == "bf16"), optim="adamw_torch",
-        save_strategy="epoch", save_total_limit=2,
-        logging_steps=5, dataloader_num_workers=0, max_grad_norm=1.0,
-        max_length=2048, packing=False, report_to="none",
+        # ~16min/optimizer-step on this CPU (measured), so checkpoint every
+        # step rather than every epoch (~1.5-2hr) -- this run has already
+        # been killed once by an apparent ~30min ceiling on long-running
+        # background processes, so losing at most one step of progress
+        # matters a lot more than the extra save overhead (a LoRA adapter is
+        # only tens of MB).
+        save_strategy="steps", save_steps=1, save_total_limit=3,
+        logging_steps=1, dataloader_num_workers=0, max_grad_norm=1.0,
+        # dataset median/mean token length is 699/927 (measured on this exact
+        # tokenizer+chat template); 1536 truncates only the longest ~10% of
+        # examples instead of the original 2048, trimming worst-case
+        # per-example compute without cutting the typical example.
+        max_length=1536, packing=False, report_to="none",
     )
     trainer = SFTTrainer(model=model, args=cfg, train_dataset=dataset,
                          formatting_func=lambda ex: render_text(ex, tokenizer))
-    trainer.train()
+
+    last_checkpoint = None
+    if OUT_DIR.exists():
+        checkpoints = sorted(OUT_DIR.glob("checkpoint-*"), key=lambda p: int(p.name.split("-")[1]))
+        if checkpoints:
+            last_checkpoint = str(checkpoints[-1])
+            print(f"Resuming from {last_checkpoint}")
+
+    trainer.train(resume_from_checkpoint=last_checkpoint)
     trainer.save_model(str(OUT_DIR / "final"))
     tokenizer.save_pretrained(str(OUT_DIR / "final"))
     print(f"Saved final LoRA adapter to {OUT_DIR / 'final'}")
