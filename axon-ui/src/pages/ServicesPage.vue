@@ -243,7 +243,11 @@ async function saveWs() {
   }
 }
 async function deleteWs(id) {
-  if (!confirm('Delete this search account?')) return
+  const ok = await confirmDialog('This search account will be permanently removed.', {
+    title: 'Delete Search Account',
+    confirmText: 'Delete',
+  })
+  if (!ok) return
   const r = await del(`/websearch/accounts/${id}`)
   toast(r.ok ? 'Deleted' : r.error, r.ok)
   loadWs()
