@@ -1784,7 +1784,12 @@ async function loadVersions() {
 // is itself undoable; we reload the editor afterwards to show the restored graph.
 async function restoreVersion(v) {
   if (!wfId.value) return
-  if (!confirm(`Restore version ${v.version}? The current state is saved to history first, so you can undo this.`)) return
+  const ok = await confirmDialog('The current state will be saved to history first, so this can be undone.', {
+    title: `Restore Version ${v.version}`,
+    confirmText: 'Restore',
+    danger: false,
+  })
+  if (!ok) return
   try {
     const res = await post(`/workflows/${wfId.value}/versions/${v.version}/restore`, {})
     if (!res || res.ok === false) { toast(res?.error || 'Restore failed', false); return }
