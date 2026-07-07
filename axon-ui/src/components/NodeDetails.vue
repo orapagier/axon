@@ -382,7 +382,11 @@ function startRename() {
 
 const webhookUrl = computed(() => {
   if (props.node.data.node_type !== 'trigger' && props.node.data.node_type !== 'stimulus') return ''
-  return `${window.location.origin}/webhook/external/${props.node.id}`
+  // The backend route is `/webhook/external/:workflow_id` (dashboard/server.rs)
+  // and looks the workflow up by that id — it must be the WORKFLOW's id, not
+  // this node's id. Using the node id here always 404s on delivery ("Query
+  // returned no rows") even though the trigger looks correctly configured.
+  return `${window.location.origin}/webhook/external/${props.workflowId}`
 })
 
 async function copyWebhookUrl() {
