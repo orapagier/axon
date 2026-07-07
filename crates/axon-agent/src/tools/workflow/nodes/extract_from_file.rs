@@ -334,6 +334,45 @@ fn parse_spreadsheet(bytes: Vec<u8>, config: &Value) -> Result<Value, String> {
     Ok(Value::Array(rows))
 }
 
+/// Raw text extraction (lossy UTF-8 — a stray Latin-1 export doesn't fail the
+/// run, same tolerance as CSV). `splitLines` breaks it into one array item
+/// per line — the list-node shape, so it composes with Filter/Loop — capped
+/// by `maxRows` when set; off (the default) returns the whole file as a
+/// single string, the natural shape for a config file or message body.
+fn parse_text(bytes: &[u8], config: &Value) -> Value {
+    let text = String::from_utf8_lossy(bytes).into_owned();
+    let split = config
+        .get("splitLines")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if !split {
+        return Value::String(text);
+    }
+    let mut lines: Vec<Value> = text.lines().map(|l| json!(l)).collect();
+    let max_rows = cfg_usize(config, "maxRows").unwrap_or(0);
+    if max_rows > 0 && lines.len() > max_rows {
+        lines.truncate(max_rows);
+    }
+    Value::Array(lines)
+}
+
+/// Parse the bytes as a JSON document, as-is — an array is the (optionally
+/// `maxRows`-capped) list of items, an object is a single item, matching
+/// Convert to File's `json` operation (its exact inverse).
+fn parse_json(bytes: &[u8], config: &Value) -> Result<Value, String> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|e| format!("Extract from File: JSON file is not valid UTF-8: {e}"))?;
+    let mut value: Value = serde_json::from_str(text)
+        .map_err(|e| format!("Extract from File: JSON parse error: {e}"))?;
+    let max_rows = cfg_usize(config, "maxRows").unwrap_or(0);
+    if max_rows > 0 {
+        if let Value::Array(arr) = &mut value {
+            arr.truncate(max_rows);
+        }
+    }
+    Ok(value)
+}
+
 pub(crate) fn execute(config: &Value, input: &Value) -> Result<Value, String> {
     let operation = config
         .get("operation")
@@ -343,6 +382,12 @@ pub(crate) fn execute(config: &Value, input: &Value) -> Result<Value, String> {
     match operation {
         "csv" => parse_csv(&bytes, config),
         "xlsx" => parse_spreadsheet(bytes, config),
+        "json" => parse_json(&bytes, config),
+        "text" => Ok(parse_text(&bytes, config)),
+        "xml" => {
+            let text = String::from_utf8_lossy(&bytes).into_owned();
+            super::xml::parse_document(&text).map_err(|e| format!("Extract from File: {e}"))
+        }
         other => Err(format!("Unknown Extract from File format: {other}")),
     }
 }
