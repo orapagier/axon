@@ -452,7 +452,9 @@ payload. These turn raw bytes into structured data.
   composes with Filter/Aggregate/Split Out/Sort-Limit/Loop directly. Dispatch
   uses the Soma/`$json` primary-input convention; `NODE_TYPES.extractFromFile`
   in `nodes.js`.
-  - Remaining DoD item: manual canvas E2E; logic covered by unit tests + build.
+  - **DoD complete.** Manual canvas E2E via Playwright (2026-07-07): raw-text
+    CSV `"name,age\nAda,30\nAlan,25"` (source=text) produced two row items
+    `{name:"Ada",age:"30"}`, `{name:"Alan",age:"25"}`. Clean.
 - [x] **2.5 Convert to File** (`convertToFile`) — **JSON → CSV / JSON / text /
   binary file**, the inverse of Digest. Executor `nodes/convert_to_file.rs`
   (15 table-driven tests). **Zero new deps** — `csv` is already in tree (2.4);
