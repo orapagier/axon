@@ -433,7 +433,7 @@ payload. These turn raw bytes into structured data.
     `{ title: "Hello World" }`. Clean.
 - [x] **2.4 Extract from File** (`extractFromFile` / *Digest*) — **CSV /
   spreadsheet / JSON / XML / text → workflow data**. Executor
-  `nodes/extract_from_file.rs` (54 table-driven tests, incl. a hand-crafted
+  `nodes/extract_from_file.rs` (34 table-driven tests, incl. a hand-crafted
   in-test XLSX fixture) over `csv 1.4` + `calamine 0.36`
   (`default-features = false`, `dates` feature reuses in-tree chrono; both
   pure Rust — no new TLS/HTTP stack). Three byte `source`s: `file` (path;
