@@ -803,7 +803,7 @@ async fn execute_node_by_type(
     workflow_id: &str,
     run_id: &str,
     node_results: &std::collections::HashMap<String, NodeResult>,
-    merge_inputs: &std::collections::BTreeMap<String, Vec<Value>>,
+    direct_inputs: &std::collections::BTreeMap<String, Vec<Value>>,
     durable_allowed: bool,
 ) -> (Result<Value, String>, u32) {
     let no_retry = matches!(
