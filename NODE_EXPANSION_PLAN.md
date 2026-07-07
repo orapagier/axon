@@ -806,10 +806,14 @@ Small additions that meaningfully extend the agent layer you already have.
     both are added to `NodeDetails.vue`'s dynamic model-list injection
     condition alongside `cortex`/`classifier`/`informationExtractor` so their
     Model dropdown populates.
-  - Remaining DoD item: manual canvas E2E; logic covered by 17 new unit tests +
-    `cargo build -p axon --lib` (clean) + `node --check` on `nodes.js` (frontend
-    `vite build` still blocked by the same pre-existing win32-rollup-under-WSL
-    mismatch noted in 4.1, unrelated to this change).
+  - **DoD complete.** Manual canvas E2E via Playwright with live LLM calls
+    (2026-07-07):
+    - `summarize`: a 3-sentence quarterly-report paragraph produced a
+      coherent, accurate one-paragraph `{ summary }`. Clean.
+    - `sentiment`: `"I absolutely love this product, it exceeded all my
+      expectations!"` produced `{ label: "positive", score: 0.97,
+      reasoning: "..." }` — `label` correctly constrained to the configured
+      set. Clean.
 
 ---
 
