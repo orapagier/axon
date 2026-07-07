@@ -403,6 +403,27 @@ mod tests {
         std::fs::remove_file(&entry_path).ok();
     }
 
+    // Regression: the NODE_TYPES form default for Compression Level is 0
+    // ("use the library default" per the UI hint), and the saved workflow
+    // config always sends that literal 0 — unlike a hand-written test config
+    // that simply omits the key. The zip crate rejects Some(0) as an invalid
+    // Deflated level, so this must not error.
+    #[test]
+    fn zip_default_compression_level_zero_does_not_error() {
+        let path = temp_path("zero.txt");
+        std::fs::write(&path, b"hello zip").unwrap();
+        let input = descriptor(&path, "zero.txt");
+        let cfg = json!({
+            "operation": "zip",
+            "fileName": unique_name("zero-level", "zip"),
+            "compressionLevel": 0,
+        });
+        let out = execute(&cfg, &input).unwrap();
+        std::fs::remove_file(&path).ok();
+        let zip_path = out["binary"]["local_path"].as_str().unwrap().to_string();
+        std::fs::remove_file(&zip_path).ok();
+    }
+
     // An array of items zips each as its own entry: descriptors read their
     // staged file, plain values serialize as text/JSON.
     #[test]
