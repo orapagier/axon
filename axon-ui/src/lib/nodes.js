@@ -2253,7 +2253,7 @@ export const NODE_TYPES = {
             },
             {
                 displayName: 'Data',
-                name: 'data',
+                name: 'gzipData',
                 type: 'string',
                 typeOptions: { rows: 2 },
                 default: '',
