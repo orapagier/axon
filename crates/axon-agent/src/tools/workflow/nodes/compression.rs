@@ -203,8 +203,8 @@ fn do_unzip(bytes: Vec<u8>) -> Result<Value, String> {
     Ok(Value::Array(out))
 }
 
-/// The value to gzip: the `data` expression when it resolved to something,
-/// else the primary input (the Convert to File convention). Returns the
+/// The value to gzip: the `gzipData` expression when it resolved to
+/// something, else the primary input (the Convert to File convention). Returns the
 /// compressed bytes plus the original file name (embedded in the gzip
 /// header and used to derive the default output name).
 fn build_gzip(config: &Value, input: &Value) -> Result<(Vec<u8>, String), String> {
