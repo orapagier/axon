@@ -398,8 +398,8 @@ async function copyWebhookUrl() {
   }
 }
 
-// GitHub deliveries hit a per-workflow endpoint keyed by the workflow id (the
-// handler looks the workflow up by that id), unlike the legacy external webhook.
+// GitHub deliveries hit a per-workflow endpoint keyed by the workflow id, same
+// as the generic external webhook above.
 const githubWebhookUrl = computed(() => {
   if (props.node.data.node_type !== 'trigger' && props.node.data.node_type !== 'stimulus') return ''
   return `${window.location.origin}/webhook/github/${props.workflowId}`
