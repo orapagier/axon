@@ -208,7 +208,7 @@ fn do_unzip(bytes: Vec<u8>) -> Result<Value, String> {
 /// compressed bytes plus the original file name (embedded in the gzip
 /// header and used to derive the default output name).
 fn build_gzip(config: &Value, input: &Value) -> Result<(Vec<u8>, String), String> {
-    let data = match config.get("data") {
+    let data = match config.get("gzipData") {
         None | Some(Value::Null) => input.clone(),
         Some(Value::String(s)) if s.trim().is_empty() => input.clone(),
         Some(v) => v.clone(),
