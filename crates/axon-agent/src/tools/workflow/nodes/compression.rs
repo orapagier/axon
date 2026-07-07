@@ -358,14 +358,21 @@ mod tests {
     }
 
     fn temp_path(tag: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!(
-            "axon_compression_test_{tag}_{}_{}",
+        std::env::temp_dir().join(unique_name(tag, "src"))
+    }
+
+    // A name unique enough that parallel test threads never stage to the
+    // same path in the shared staging dir (files.rs overwrites same-named
+    // files, so two tests both defaulting to e.g. "archive.zip" would race).
+    fn unique_name(tag: &str, ext: &str) -> String {
+        format!(
+            "axon_compression_test_{tag}_{}_{}.{ext}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
-        ))
+        )
     }
 
     // Zipping a single staged file round-trips through unzip with the same
