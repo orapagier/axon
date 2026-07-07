@@ -761,11 +761,19 @@ Small additions that meaningfully extend the agent layer you already have.
   both take an `Id` field (`upsert`/`delete`) share one property entry with a
   combined `show.operation` list, matching the `database` node's `table`-field
   convention, rather than two same-named entries.
-  - Remaining DoD item: manual canvas E2E against a real Qdrant instance;
-    logic covered by 26 new unit tests + `cargo build -p axon --lib` (clean,
-    zero clippy warnings on the new file) + `node --check` on `nodes.js`
-    (`vite build` still blocked by the same pre-existing win32-rollup-under-WSL
-    mismatch noted in 4.1/4.3, unrelated to this change).
+  - **Not live-tested this pass** — `QDRANT_URL` in this environment points at
+    the deployed instance, which is unreachable from this sandbox (network
+    egress blocked); flag for a manual canvas E2E in an environment that can
+    reach Qdrant. **Found and fixed a real bug via code audit** while chasing
+    the identical RSS `maxItems` root cause (2026-07-07): `limit` and
+    `scoreThreshold` were both read with raw `.as_u64()`/`.as_f64()`, the
+    same anti-pattern that broke RSS — so a configured `Limit` or `Score
+    Threshold` would silently no-op (falling back to the default 5 results /
+    no cutoff) whenever the UI saved them as strings. Fixed to use
+    `cfg_usize`/`val_to_number`. `cargo build -p axon --lib` clean; existing
+    26 unit tests still green (they call the pure logic directly and don't
+    cover this config-parsing entry point either way, so the fix is
+    logic-verified but not yet canvas-verified).
 - [x] **4.3 Summarize / Sentiment** — thin LLM presets over the Cortex path,
   shipped as two node types (per the plan's type-key naming) built together,
   each cloning Classifier's isolated-session skeleton almost verbatim (own
