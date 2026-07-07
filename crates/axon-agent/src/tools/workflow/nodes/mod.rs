@@ -46,5 +46,6 @@ pub(crate) mod subflow;
 pub(crate) mod summarize;
 pub(crate) mod synapse;
 pub(crate) mod trigger;
+pub(crate) mod vector_store;
 pub(crate) mod wait;
 pub(crate) mod xml;
