@@ -102,7 +102,11 @@ async function openConversation(id) {
 }
 
 async function removeConversation(id) {
-  if (!window.confirm('Delete this conversation? This cannot be undone.')) return
+  const ok = await confirmDialog('This conversation and its messages will be permanently deleted. This action cannot be undone.', {
+    title: 'Delete Conversation',
+    confirmText: 'Delete',
+  })
+  if (!ok) return
   try {
     await del(`/conversations/${id}`)
   } catch {
