@@ -689,6 +689,24 @@ async fn execute_node_dispatch(
             let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
             nodes::extract_from_file::execute(config, &input)
         }
+        "xml" => {
+            // XML<->JSON. Same primary-input convention as htmlExtract: the
+            // input supplies the document fallback and feeds
+            // includeInputFields (xmlToJson) / outputField (jsonToXml).
+            let mut vec: Vec<_> = node_results.values().cloned().collect();
+            vec.sort_by_key(|r| r.position);
+            let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
+            nodes::xml::execute(config, &input)
+        }
+        "markdown" => {
+            // Markdown<->HTML. Same primary-input convention as htmlExtract/
+            // xml: the input supplies the source fallback and feeds
+            // outputField/includeInputFields.
+            let mut vec: Vec<_> = node_results.values().cloned().collect();
+            vec.sort_by_key(|r| r.position);
+            let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
+            nodes::markdown::execute(config, &input)
+        }
         "convertToFile" => {
             // Inverse of extractFromFile: JSON → staged file + the standard
             // binary descriptor. Same primary-input convention; the input is

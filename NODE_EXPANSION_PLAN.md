@@ -404,7 +404,47 @@ payload. These turn raw bytes into structured data.
   - Remaining DoD item: manual canvas E2E; logic covered by unit tests +
     backend/UI build.
 - [ ] **2.6 Compression** — zip/unzip/gzip for archives & attachments.
-- [ ] **2.7 XML / Markdown** — XML↔JSON and Markdown↔HTML converters.
+- [x] **2.7 XML / Markdown** — two node types, built together.
+  - **`xml`** — Executor `nodes/xml.rs` (21 table-driven tests) over `quick-xml`
+    (new dep, `default-features = false`, no TLS/HTTP of its own). Uses the
+    fast-xml-parser convention so the two operations round-trip: attributes
+    become `@_name` keys, text becomes `#text` (only when mixed with
+    attrs/children — a pure text leaf is just a plain string, an empty leaf is
+    `""`), repeated sibling tags group into an array. `xmlToJson` parses into
+    `{ <rootTag>: value }` and merges onto the incoming item like `htmlExtract`
+    (`includeInputFields`, root key wins on conflict); source is the `xml`
+    field falling back to the primary input (same body/xml/data/text probing
+    as `htmlExtract`). `jsonToXml` serializes back to a string: a single-key
+    object's key becomes the root tag (the round-trip case), anything else
+    wraps under `rootName` (default `root`); a bare array at the root wraps as
+    an `item` child so the output is always one well-formed root element.
+    `pretty` (indented, default on) and `declaration` (default on) are
+    configurable; output lands under `outputField`, `dateTime`/`crypto`'s
+    convention. Malformed XML (mismatched tags) surfaces quick-xml's own error
+    instead of panicking.
+  - **`markdown`** — Executor `nodes/markdown.rs` (16 table-driven tests).
+    `toHtml` uses `pulldown-cmark` (new dep, `features = ["html"]` only,
+    `default-features = false`) — CommonMark plus optional GFM tables/
+    strikethrough/tasklists/footnotes (`gfm` toggle, default on) — a correct,
+    well-tested renderer, so that direction is full-fidelity. `toMarkdown` (the
+    harder, unconstrained direction) walks the DOM with `scraper` — already in
+    tree for 2.3, so the only new crate this adds is `ego-tree` (`scraper`'s
+    own tree type, already pulled in transitively; just named directly since
+    Rust requires that for a type used by path) — mapping the common tags
+    (headings, paragraphs, `**bold**`/`_em_`, links, images, `-`/`1.` lists,
+    inline/fenced code with whitespace preserved verbatim, blockquote, hr, br).
+    Unknown tags pass through as transparent containers (their text still
+    surfaces); `script`/`style`/`head` are dropped; HTML formatting whitespace
+    between block elements collapses away. Explicitly scoped as a **pragmatic
+    converter, not spec-complete** — good enough for message bodies and
+    scraped content (the plan's actual use case: Telegram/Discord/email/Slack
+    round-tripping), not a full HTML-to-Markdown engine. Both operations share
+    the `outputField`/`includeInputFields` convention.
+  - Both dispatch through the Soma/`$json` primary-input convention; neither is
+    in the no-retry list (pure transforms). `NODE_TYPES.xml` and
+    `NODE_TYPES.markdown` in `nodes.js`.
+  - Remaining DoD item: manual canvas E2E; logic covered by unit tests +
+    backend/UI build.
 - [ ] **2.8 PDF Text** — split out from 2.4 deliberately: Rust PDF text extraction
   (`pdf-extract`, `lopdf`) is **flaky on real-world PDFs** (panics, garbled text on
   scanned/complex layouts). Own line item so it can't stall the spreadsheet path;
