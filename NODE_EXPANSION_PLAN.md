@@ -432,29 +432,47 @@ payload. These turn raw bytes into structured data.
     `<h1 class="title">Hello World</h1>` with selector `h1.title` produced
     `{ title: "Hello World" }`. Clean.
 - [x] **2.4 Extract from File** (`extractFromFile` / *Digest*) — **CSV /
-  spreadsheet → JSON**. Executor `nodes/extract_from_file.rs` (20 table-driven
-  tests, incl. a hand-crafted in-test XLSX fixture) over `csv 1.4` +
-  `calamine 0.36` (`default-features = false`, `dates` feature reuses in-tree
-  chrono; both pure Rust — no new TLS/HTTP stack). Three byte `source`s: `file`
-  (path; blank auto-detects the standard binary descriptor `binary.local_path`
-  that Myelin retrieve / Telegram download / Synapse file responses emit),
-  `text` (raw CSV — how a `text/csv` HTTP fetch arrives, since Synapse returns
-  text bodies as strings; spreadsheet+text is a teaching error), and `base64`
-  (line-wrap tolerant). CSV: `delimiter` (with `tab`/`\t` alias), BOM strip,
-  lossy-UTF-8 byte records (Latin-1 exports don't fail), flexible/ragged rows,
-  blank-line skip, optional `inferTypes` (numbers/bools; leading-zero IDs stay
-  text). Spreadsheet: XLSX/XLS/XLSB/ODS via `open_workbook_auto_from_rs` format
-  sniffing, `sheetName` (blank = first; unknown sheet errors listing the real
-  ones), typed cells (integral floats → ints, dates → naive ISO strings, error
-  cells surface "#DIV/0!" text). Shared: `headerRow` (blank/duplicate headers →
-  `column_N`/`name_2`), `maxRows` cap. **Output is a bare array of row items**
-  (objects, or arrays when `headerRow` off) — the list-node convention, so it
-  composes with Filter/Aggregate/Split Out/Sort-Limit/Loop directly. Dispatch
-  uses the Soma/`$json` primary-input convention; `NODE_TYPES.extractFromFile`
-  in `nodes.js`.
+  spreadsheet / JSON / XML / text → workflow data**. Executor
+  `nodes/extract_from_file.rs` (54 table-driven tests, incl. a hand-crafted
+  in-test XLSX fixture) over `csv 1.4` + `calamine 0.36`
+  (`default-features = false`, `dates` feature reuses in-tree chrono; both
+  pure Rust — no new TLS/HTTP stack). Three byte `source`s: `file` (path;
+  blank auto-detects the standard binary descriptor `binary.local_path` that
+  Myelin retrieve / Telegram download / Synapse file responses emit), `text`
+  (raw content for any non-binary `operation` — CSV/JSON/XML/plain text, e.g.
+  how a text HTTP fetch arrives since Synapse returns text bodies as strings;
+  `xlsx` is binary and still rejects this source), and `base64` (line-wrap
+  tolerant). Five `operation`s: `csv` (`delimiter` with `tab`/`\t` alias, BOM
+  strip, lossy-UTF-8 byte records so Latin-1 exports don't fail,
+  flexible/ragged rows, blank-line skip, optional `inferTypes` — numbers/bools,
+  leading-zero IDs stay text), `xlsx` (XLSX/XLS/XLSB/ODS via
+  `open_workbook_auto_from_rs` format sniffing, `sheetName` — blank = first,
+  unknown sheet errors listing the real ones — typed cells: integral floats →
+  ints, dates → naive ISO strings, error cells surface "#DIV/0!" text), `json`
+  (parsed as-is — an array is already the item list, optionally `maxRows`-
+  capped; an object is one item — the exact inverse of Convert to File's
+  `json`), `xml` (`{ rootTag: value }` via `nodes::xml::parse_document`,
+  factored out of and shared with the `xml` node rather than duplicated — zero
+  new deps, reuses `quick-xml` already in tree for 2.7), `text` (the whole
+  file as a string, or one array item per line with `splitLines`, capped by
+  `maxRows`). Shared: `headerRow` (csv/xlsx only; blank/duplicate headers →
+  `column_N`/`name_2`), `maxRows` cap (csv/xlsx rows, json array items, or
+  split text lines). **CSV/XLSX output is a bare array of row items** (objects,
+  or arrays when `headerRow` off) — the list-node convention, so it composes
+  with Filter/Aggregate/Split Out/Sort-Limit/Loop directly; json/xml/text
+  output whatever shape is natural to the format. Dispatch uses the
+  Soma/`$json` primary-input convention; `NODE_TYPES.extractFromFile` in
+  `nodes.js`.
   - **DoD complete.** Manual canvas E2E via Playwright (2026-07-07): raw-text
     CSV `"name,age\nAda,30\nAlan,25"` (source=text) produced two row items
     `{name:"Ada",age:"30"}`, `{name:"Alan",age:"25"}`. Clean.
+  - **Extended (2026-07-07)**: added `json`/`xml`/`text` operations and
+    broadened the `text` source to any non-binary operation, closing the gap
+    where the node could only ever produce CSV/XLSX rows. Also fixed
+    `convertToFile`'s canvas icon (`📦`), which was — by coincidence — the same
+    glyph as the engine's generic "no icon" fallback, so it read as unset;
+    changed to `💾` and added it to `useCanvasMapping.js`'s icon map so a
+    freshly-dropped node also gets it immediately.
 - [x] **2.5 Convert to File** (`convertToFile`) — **JSON → CSV / JSON / text /
   binary file**, the inverse of Digest. Executor `nodes/convert_to_file.rs`
   (15 table-driven tests). **Zero new deps** — `csv` is already in tree (2.4);
