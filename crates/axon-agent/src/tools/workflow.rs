@@ -1716,7 +1716,21 @@ impl WorkflowEngine {
                                         Some(&node_ancestors),
                                         &run_id,
                                     );
-                                    (item_config, temp_results)
+                                    // Recompute direct_inputs from THIS iteration's
+                                    // temp_results (not the outer, pre-loop
+                                    // `direct_inputs`) so a single-input node placed
+                                    // right after the Loop sees the mutated
+                                    // current/index output as its primary input,
+                                    // not the Loop node's un-mutated aggregate.
+                                    let iter_ordered: Vec<NodeResult> =
+                                        temp_results.values().cloned().collect();
+                                    let iter_direct_inputs = direct_predecessor_outputs(
+                                        &current_id,
+                                        &edges,
+                                        &iter_ordered,
+                                        &temp_results,
+                                    );
+                                    (item_config, temp_results, iter_direct_inputs)
                                 };
 
                                 let mut iteration_outputs = Vec::new();
