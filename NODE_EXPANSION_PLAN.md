@@ -521,7 +521,27 @@ Priority follows accordingly.
   Credential-backed. `lettre` with `default-features = false` +
   rustls transport (per dependency policy). Build when a concrete non-Gmail sender
   shows up — Gmail sending already works via the tool node.
-- [ ] **3.3 RSS Read** — feed monitoring.
+- [x] **3.3 RSS Read** (`rss`) — feed monitoring. Executor `nodes/rss.rs`
+  (8 table-driven tests over real RSS2/Atom fixtures). Self-contained like
+  Synapse: the feed URL is a config field (not a primary-input fallback) —
+  fetches via the shared `HttpRequestTool` (`response_format: "text"`, 30s
+  timeout, optional `ignoreSSL` → `allow_unauthorized_certs`) and parses with
+  `feed-rs` (new dep — normalizes Atom/RSS 0.x/RSS 1/RSS 2/JSON Feed onto one
+  model; pure Rust, no TLS/HTTP of its own, so the fetch stays on the shared
+  client per the dependency policy). Adds a second `quick-xml` version
+  transitively (feed-rs pins 0.41 vs the workspace's 0.36 for 2.7) — both pure
+  XML parsers, not a TLS/HTTP stack, so this doesn't violate the policy; just a
+  minor compile-weight note (`cargo tree` verified: only feed-rs + mediatype +
+  a quick-xml bump are new). **Output is a bare array of entries** (list-node
+  convention — composes with Loop/Filter/Sort-Limit directly), field names
+  matching n8n's RSS Feed Read node for developer familiarity: `title`, `link`,
+  `pubDate` (RFC 2822), `isoDate` (RFC 3339), `content` (content:encoded/Atom
+  content), `contentSnippet` (summary, plain), `categories`, `creator`, `guid`.
+  Missing fields are `null`/`[]`, never an error — feeds are inconsistent about
+  what they populate. `maxItems` caps entries (0 = no limit, `extractFromFile`'s
+  convention). Not in the no-retry list (transient fetch failures should retry).
+  `NODE_TYPES.rss` in `nodes.js`.
+  - Remaining DoD item: manual canvas E2E; logic covered by unit tests + build.
 - [ ] **3.4 Email Trigger (IMAP)** — **demoted to demand-driven** (was priority 2):
   the Gmail trigger already covers most inbound-email automation, and this is the
   plan's only L-effort item. Build only when a real non-Gmail mailbox shows up.
