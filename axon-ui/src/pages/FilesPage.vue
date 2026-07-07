@@ -2,6 +2,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { get, del } from '../lib/api.js'
 import { toast } from '../lib/toast.js'
+import { confirmDialog } from '../lib/confirm.js'
 import { timeAgo, fmtBytes } from '../lib/utils.js'
 
 function getFileExt(name) {
