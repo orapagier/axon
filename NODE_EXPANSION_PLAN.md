@@ -713,11 +713,16 @@ Small additions that meaningfully extend the agent layer you already have.
   .informationExtractor` in `nodes.js`; `NodeDetails.vue`'s dynamic model-list
   injection (`availableModels`) extended to include `informationExtractor`
   alongside `cortex`/`classifier` so its Model dropdown populates.
-  - Remaining DoD item: manual canvas E2E; logic covered by unit tests +
-    backend build (frontend build blocked in this environment by a
-    pre-existing platform mismatch in `axon-ui/node_modules` — win32 rollup
-    binaries under WSL/Linux bash — unrelated to this change; `nodes.js`
-    itself passes `node --check`).
+  - **DoD complete.** Manual canvas E2E via Playwright with a live LLM call
+    (2026-07-07): input text `"Invoice #4521 for $250.00, due on
+    2026-08-15..."` with one attribute `amount:number` produced
+    `{ amount: 250 }` — correctly extracted and type-coerced. Clean. (The
+    `axon-ui/node_modules` win32-rollup-under-WSL mismatch noted below was
+    worked around for this session by additively installing
+    `@rollup/rollup-linux-x64-gnu` alongside the existing win32 binaries via
+    `npm install --no-save`, so `vite dev` now runs in WSL too — Windows-side
+    `npm run dev`/`run.bat` are untouched, package.json/package-lock.json
+    were not modified.)
 - [x] **4.2 Vector Store / RAG node** (`vectorStore` / *Neocortex*) — the
   `qdrant/` folder exists but Engram is key-value, not semantic; this makes
   **embed → upsert → semantic-search** a workflow step. Executor
