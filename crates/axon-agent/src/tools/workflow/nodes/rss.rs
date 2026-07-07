@@ -227,19 +227,4 @@ mod tests {
         let err = execute(&json!({ "url": "" })).await.unwrap_err();
         assert!(err.contains("Feed URL"), "got: {err}");
     }
-
-    // TEMP smoke test against a real public feed — full fetch+parse runtime
-    // path. Run manually with `--ignored`; not part of the permanent suite.
-    #[tokio::test]
-    #[ignore]
-    async fn live_fetch_smoke_test() {
-        let out = execute(&json!({ "url": "https://hnrss.org/frontpage", "maxItems": 3 }))
-            .await
-            .unwrap();
-        let arr = out.as_array().unwrap();
-        assert_eq!(arr.len(), 3);
-        assert!(arr[0]["title"].as_str().unwrap().len() > 0);
-        assert!(arr[0]["link"].as_str().unwrap().starts_with("http"));
-        println!("{}", serde_json::to_string_pretty(&out).unwrap());
-    }
 }
