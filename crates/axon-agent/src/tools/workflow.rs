@@ -1746,12 +1746,9 @@ impl WorkflowEngine {
                                     // input order, so outputs stay item-aligned.
                                     use futures::StreamExt;
                                     let futs = units.into_iter().map(|(idx, current)| {
-                                        let (item_config, temp_results) = build_unit(idx, &current);
+                                        let (item_config, temp_results, iter_direct_inputs) =
+                                            build_unit(idx, &current);
                                         async move {
-                                            // Merge never iterates (excluded from
-                                            // can_iterate), so a loop body has no
-                                            // fan-in inputs.
-                                            let no_merge_inputs = std::collections::BTreeMap::new();
                                             let (r, a) = execute_node_by_type(
                                                 node,
                                                 &item_config,
@@ -1760,7 +1757,7 @@ impl WorkflowEngine {
                                                 workflow_id,
                                                 run_id_ref,
                                                 &temp_results,
-                                                &no_merge_inputs,
+                                                &iter_direct_inputs,
                                                 // A Wait inside a Loop body can't durably
                                                 // suspend — it sleeps in-process per item.
                                                 false,
