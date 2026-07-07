@@ -271,7 +271,11 @@ async function connectAuth(p) {
   else toast(`Failed to get auth URL: ${r.error || JSON.stringify(r)}`, false)
 }
 async function disconnectAuth(p) {
-  if (!confirm(`Disconnect ${p}?`)) return
+  const ok = await confirmDialog(`You can reconnect ${p} again later.`, {
+    title: `Disconnect ${p}`,
+    confirmText: 'Disconnect',
+  })
+  if (!ok) return
   const r = await post(`/integrations/${p}/disconnect`, {})
   toast(r.success ? `${p} disconnected` : r.error || 'Failed', !!r.success)
   loadAuth()
