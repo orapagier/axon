@@ -153,7 +153,12 @@ async function loadArchived() {
 }
 
 async function archiveRecord(type, id) {
-  if (!confirm(`Archive this ${type}? It can be restored from the Archived tab.`)) return
+  const ok = await confirmDialog('It can be restored later from the Archived tab.', {
+    title: `Archive this ${type}`,
+    confirmText: 'Archive',
+    danger: false,
+  })
+  if (!ok) return
   const r = await post(`/crm/${PLURAL[type]}/${id}/archive`, {})
   if (failed(r)) return toast(errMsg(r), false)
   toast('Archived', true)
