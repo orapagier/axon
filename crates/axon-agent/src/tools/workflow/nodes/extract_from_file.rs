@@ -1,22 +1,30 @@
-//! Digest (Extract from File) — Task 2.4. Reads a CSV or spreadsheet
-//! (XLSX/XLS/XLSB/ODS via calamine's format sniffing) into a JSON array of row
-//! items, so Myelin-stored files and downloaded attachments become data the
-//! list toolkit (Filter/Aggregate/Loop) can chew on. Both `csv` and `calamine`
-//! are pure Rust — no new TLS/HTTP stacks (dependency policy).
+//! Digest (Extract from File) — Task 2.4. Reads a CSV, spreadsheet
+//! (XLSX/XLS/XLSB/ODS via calamine's format sniffing), JSON, XML, or plain
+//! text file into workflow data, so Myelin-stored files and downloaded
+//! attachments become data the list toolkit (Filter/Aggregate/Loop) can chew
+//! on. `csv`, `calamine`, and `quick-xml` (shared with the `xml` node) are all
+//! pure Rust — no new TLS/HTTP stacks (dependency policy).
 //!
 //! Three `source`s for the bytes:
 //!   - `file`   — a path on disk. Left blank, the node auto-detects the
 //!                standard binary descriptor on the incoming item
 //!                (`binary.local_path` — what Myelin retrieve, Telegram
 //!                download, and Synapse file responses all emit).
-//!   - `text`   — raw CSV content (CSV only). This is how a `text/csv` HTTP
-//!                fetch arrives: Synapse returns text bodies as plain strings,
-//!                not staged files.
+//!   - `text`   — raw text content (any format except `xlsx`, which is
+//!                binary). This is how a text HTTP fetch arrives: Synapse
+//!                returns text bodies as plain strings, not staged files.
 //!   - `base64` — base64-encoded bytes (e.g. Synapse's binary `body.body`).
 //!
-//! Output is a bare array of row items (objects when `headerRow`, else arrays)
-//! — the list-node convention, so it composes with Filter/Aggregate/Split
-//! Out/Sort-Limit and Loop directly.
+//! Five `operation`s:
+//!   - `csv`/`xlsx` — a bare array of row items (objects when `headerRow`,
+//!     else arrays) — the list-node convention, so it composes with
+//!     Filter/Aggregate/Split Out/Sort-Limit and Loop directly.
+//!   - `json` — parsed as-is (an array is already the item list; an object is
+//!     one item); the exact inverse of Convert to File's `json` operation.
+//!   - `xml` — `{ <rootTag>: value }` via the same parser as the `xml` node
+//!     (`nodes::xml::parse_document`, shared rather than duplicated).
+//!   - `text` — the whole file as a string, or one array item per line when
+//!     `splitLines` is on.
 
 use crate::tools::workflow::{cfg_usize, val_to_string};
 use base64::{engine::general_purpose::STANDARD, Engine};
