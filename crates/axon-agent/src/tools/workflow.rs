@@ -581,10 +581,11 @@ async fn execute_node_dispatch(
     workflow_id: &str,
     run_id: &str,
     node_results: &std::collections::HashMap<String, NodeResult>,
-    // Task 1.0: for multi-input nodes (Merge), this-run direct-predecessor outputs
-    // grouped by input handle (`direct_predecessor_outputs`). Empty for every other
-    // node type — only Merge reads it.
-    merge_inputs: &std::collections::BTreeMap<String, Vec<Value>>,
+    // This node's direct-predecessor outputs, grouped by input handle
+    // (`direct_predecessor_outputs`). Merge reads it directly (multi-input);
+    // every other single-input node type flattens it to resolve its primary
+    // input instead of the old node_results-position heuristic.
+    direct_inputs: &std::collections::BTreeMap<String, Vec<Value>>,
     // Whether a Wait node here may durably suspend the whole run (vs sleeping
     // in-process). False inside Loop iterations and for test/partial runs.
     durable_allowed: bool,
