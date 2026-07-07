@@ -1003,8 +1003,8 @@ const nodeDefinition = computed(() => {
   const type = props.node.data.node_type === 'trigger' ? 'trigger' : props.node.data.node_type
   const base = NODE_TYPES[type] || { properties: [], displayName: 'Neuron', icon: '📦' }
 
-  // For Axon, Classifier and Extractor nodes, inject dynamic options into model/tools properties
-  if ((type === 'cortex' || type === 'classifier' || type === 'informationExtractor') && base.properties) {
+  // For Axon, Classifier, Extractor, Summarize and Sentiment nodes, inject dynamic options into model/tools properties
+  if ((type === 'cortex' || type === 'classifier' || type === 'informationExtractor' || type === 'summarize' || type === 'sentiment') && base.properties) {
     const enriched = { ...base, properties: base.properties.map(p => {
       if (p.name === 'model' && p.type === 'options') {
         return { ...p, options: availableModels.value, searchable: true }
