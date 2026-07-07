@@ -2,6 +2,8 @@
 import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
 import { get, post, del } from '../lib/api.js'
 import { toast } from '../lib/toast.js'
+import { confirmDialog } from '../lib/confirm.js'
+import { promptDialog } from '../lib/prompt.js'
 import { timeAgo, safeJsonParse } from '../lib/utils.js'
 import WorkflowCanvas from '../components/WorkflowCanvas.vue'
 import Pill from '../components/Pill.vue'
