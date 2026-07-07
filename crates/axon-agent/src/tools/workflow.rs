@@ -716,6 +716,15 @@ async fn execute_node_dispatch(
             let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
             nodes::convert_to_file::execute(config, &input)
         }
+        "compression" => {
+            // zip/unzip/gzip/gunzip. Same primary-input convention as
+            // convertToFile: the input supplies the file(s)/bytes to
+            // (de)compress via the standard binary descriptor.
+            let mut vec: Vec<_> = node_results.values().cloned().collect();
+            vec.sort_by_key(|r| r.position);
+            let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
+            nodes::compression::execute(config, &input)
+        }
         "respondToWebhook" => {
             // Answer the live HTTP request the external-webhook handler is
             // holding open for this run (one-shot; no waiter ⇒ preview). Same
