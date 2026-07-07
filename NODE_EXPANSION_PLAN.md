@@ -609,8 +609,17 @@ Priority follows accordingly.
   would burn the channel on item 0). `NODE_TYPES.respondToWebhook` in
   `nodes.js`. Unlocks: form backends, Slack slash-command responses,
   signed-webhook handshakes (pairs with 2.2 Crypto).
-  - Remaining DoD item: manual canvas E2E (curl an external-webhook workflow
-    with/without the node); logic covered by unit tests + backend build.
+  - **DoD complete.** Manual E2E via Playwright + a real `curl` against the
+    live external-webhook URL (2026-07-07). **Found and fixed a significant,
+    separate bug in the process** (see "Bugs found and fixed" below): the
+    "External Webhook" URL shown on a Stimulus (Webhook) trigger was built
+    from the *node's* id instead of the *workflow's* id, so every
+    Webhook-triggered workflow's real endpoint silently 404-equivalent'd
+    ("Query returned no rows") while still returning a deceptive `200 OK`
+    ack — meaning the feature never actually worked for any user who copied
+    that URL. Fixed in `NodeDetails.vue`; re-verified: `curl -X POST
+    .../webhook/external/<workflow_id>` returned the exact configured
+    `201 { "ok": true, "msg": "hello from pw test" }`. Clean.
 - [ ] **3.2 Send Email (SMTP)** — for non-Gmail/transactional senders.
   Credential-backed. `lettre` with `default-features = false` +
   rustls transport (per dependency policy). Build when a concrete non-Gmail sender
