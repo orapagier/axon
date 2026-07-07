@@ -605,24 +605,49 @@ Small additions that meaningfully extend the agent layer you already have.
     pre-existing platform mismatch in `axon-ui/node_modules` — win32 rollup
     binaries under WSL/Linux bash — unrelated to this change; `nodes.js`
     itself passes `node --check`).
-- [ ] **4.2 Vector Store / RAG node** — the `qdrant/` folder exists but Engram is
-  key-value, not semantic. A first-class **embed → upsert → semantic-search** node
-  makes retrieval a workflow step. Reuse the provider-configurable embedder.
-  Scoping note (from research ahead of building this): the `qdrant/` folder is
-  deployment tooling only (systemd/curl scripts, no Rust); the real client lives
-  in `crates/axon-agent/src/memory/long_term.rs` (`LongTermMemory`, hardcoded to
-  the `axon_memory` collection) alongside `crates/axon-agent/src/memory/
-  embeddings.rs` (`Embedder`, OpenAI-compatible `/embeddings`, provider-agnostic).
-  Both the `documents` and `entities` Qdrant collections already exist
-  (`qdrant/create-collections.sh`) but are unused by any Rust code today — natural
-  targets. No `create_collection` call exists anywhere; a node scoped to
-  embed→upsert→search against a pre-created, config-named collection (skipping
-  collection management) matches the L-effort framing — the work is generalizing
-  the hardcoded memory-specific pairing into a config-driven node, not learning
-  the qdrant-client API. `qdrant-client` is already resolved in the tree (no new
-  TLS stack). Construct a fresh `Embedder::from_settings(&state.settings)` /
-  `Qdrant::from_url(...)` per the `tool_router.rs` precedent rather than reaching
-  into `MemoryStore` (its `qdrant` field is private).
+- [x] **4.2 Vector Store / RAG node** (`vectorStore` / *Neocortex*) — the
+  `qdrant/` folder exists but Engram is key-value, not semantic; this makes
+  **embed → upsert → semantic-search** a workflow step. Executor
+  `nodes/vector_store.rs` (26 table-driven tests covering the pure logic: id
+  resolution, metadata parsing, payload/filter/result shaping — the actual
+  Qdrant/embedder network calls are thin async glue, untested by unit tests,
+  same precedent as RSS's live fetch). Reuses the memory system's plumbing
+  rather than inventing new plumbing: `Embedder::from_settings` (the same
+  `embedder.*`-settings-driven, provider-agnostic embedder `LongTermMemory`/
+  `ToolRouter` already use) and `QDRANT_URL`/`QDRANT_API_KEY` env vars (the
+  same connection `LongTermMemory::new` reads) — a fresh `Qdrant` client is
+  constructed per execution per the `tool_router.rs` precedent, rather than
+  reaching into `MemoryStore` (its `qdrant` field is private and hardcoded to
+  one collection). **Deliberately scoped to skip collection management** — the
+  node targets a `collection` config field that must already exist (`documents`
+  / `entities` / a custom one, see `qdrant/create-collections.sh`); a missing
+  collection is a teaching error naming that script, never an auto-create.
+  Three `operation`s: `upsert` (embeds `text` — falling back to the primary
+  input via the same `body`/`html`/`data`/`text`-probing convention as
+  `htmlExtract` — and stores it as one point; `id` optional, blank
+  auto-generates a UUID v4, a numeric-looking id becomes Qdrant's `Num`
+  variant and anything else the `Uuid`-oneof string variant server-validates;
+  `metadata` merges extra payload fields alongside the stored `text`, metadata
+  winning on conflict), `search` (embeds `query`, same fallback; returns the
+  top `limit` hits as **a bare array** of `{ id, score, ...payload }` — payload
+  spread first so the structural `id`/`score` keys always win a name
+  collision, list-node convention so it composes with Filter/Sort-Limit/Loop;
+  optional `filter` — equality rows combined with AND, values coerced
+  bool/int/keyword the same way Filter's conditions coerce — narrows the
+  search server-side; optional `scoreThreshold` cuts off low-relevance hits),
+  `delete` (by `id`, or by `filter` when `id` is blank — one of the two is
+  required). Dispatch uses the Soma/`$json` primary-input convention (feeds
+  the text/query fallback); not in the no-retry list (transient network
+  failures should retry, same as Synapse/RSS/Cortex). `NODE_TYPES.vectorStore`
+  in `nodes.js`, `displayOptions`-gated per operation; the two operations that
+  both take an `Id` field (`upsert`/`delete`) share one property entry with a
+  combined `show.operation` list, matching the `database` node's `table`-field
+  convention, rather than two same-named entries.
+  - Remaining DoD item: manual canvas E2E against a real Qdrant instance;
+    logic covered by 26 new unit tests + `cargo build -p axon --lib` (clean,
+    zero clippy warnings on the new file) + `node --check` on `nodes.js`
+    (`vite build` still blocked by the same pre-existing win32-rollup-under-WSL
+    mismatch noted in 4.1/4.3, unrelated to this change).
 - [x] **4.3 Summarize / Sentiment** — thin LLM presets over the Cortex path,
   shipped as two node types (per the plan's type-key naming) built together,
   each cloning Classifier's isolated-session skeleton almost verbatim (own
