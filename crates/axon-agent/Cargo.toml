@@ -89,6 +89,14 @@ quick-xml      = { version = "0.36", default-features = false, features = ["esca
 pulldown-cmark = { version = "0.12", default-features = false, features = ["html"] }
 ego-tree       = "0.11"
 
+# Node 2.6 Compression: zip/unzip/gzip/gunzip. Both crates are promotions of
+# deps already resolved transitively — `zip` via calamine's XLSX reader (2.4),
+# `flate2` via `zip`'s deflate backend and reqwest's response decompression —
+# same `zlib-rs` pure-Rust backend both ways, so this adds no new compile
+# weight (verified with `cargo tree`, per dependency policy).
+zip    = { version = "8", default-features = false, features = ["deflate"] }
+flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
+
 # In-process MCP integration services (Google/Microsoft/Facebook/Instagram/CRM).
 rmcp           = { version = "0.1", features = ["server"] }
 axon-core      = { path = "../axon-core" }
