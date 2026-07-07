@@ -647,9 +647,19 @@ Priority follows accordingly.
   (`hnrss.org/frontpage`) with a temporary live test — full fetch through the
   shared HTTP client + feed-rs parse + shaping all confirmed correct, then
   removed so the committed suite stays network-independent.
-  - Remaining DoD item: manual canvas E2E (drag the node onto a canvas, wire
-    it to Loop/Filter); executor logic covered by unit tests + a one-off live
-    fetch + backend/UI build.
+  - **DoD complete.** Manual canvas E2E via Playwright against the live feed
+    (2026-07-07). **Found and fixed a real bug**: `maxItems` was read via a
+    raw `config.get("maxItems").and_then(|v| v.as_u64())`, but the UI's
+    number widget saves the value as a JSON *string* (`"3"`, not `3`) —
+    `.as_u64()` silently returns `None` for a string, so the cap was
+    ignored end-to-end (a configured `maxItems: 3` returned all 25 feed
+    entries). Every other node in this plan reads number fields through the
+    shared `cfg_usize` helper, which explicitly handles both encodings —
+    `rss.rs` was the one bypass. Fixed to use `cfg_usize`; re-verified: the
+    same config now returns exactly 3 entries. Also audited every other
+    node for the same raw-`.as_u64()`/`.as_f64()` anti-pattern and found one
+    more live instance — see 4.2 Vector Store below. `cargo test -p axon
+    --lib` 472/472 green afterward (3 new `cfg_usize` regression tests).
 - [ ] **3.4 Email Trigger (IMAP)** — **demoted to demand-driven** (was priority 2):
   the Gmail trigger already covers most inbound-email automation, and this is the
   plan's only L-effort item. Build only when a real non-Gmail mailbox shows up.
