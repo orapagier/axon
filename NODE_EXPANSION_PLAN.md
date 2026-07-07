@@ -567,10 +567,44 @@ Small additions that meaningfully extend the agent layer you already have.
 | 4.2 | `vectorStore` | Neocortex (RAG) | L | embed → upsert → semantic search |
 | 4.3 | `summarize` / `sentiment` | Summarize / Sentiment | S | LLM presets |
 
-- [ ] **4.1 Information Extractor** — schema-guided structured JSON extraction.
-  Classifier only *tags*; this *pulls fields*. Reuse the Cortex/Classifier LLM path
-  and set `expects_structured_output` (the raw-JSON loop guard rejects structured
-  node output otherwise — established pattern).
+- [x] **4.1 Information Extractor** (`informationExtractor` / *Extractor*) —
+  schema-guided structured JSON extraction. Classifier only *tags* along fixed
+  axes; this *pulls* a caller-defined set of fields. Executor
+  `nodes/information_extractor.rs` (15 table-driven tests) reuses the
+  Classifier/Cortex LLM path exactly: per-node isolated session (memory off),
+  no tools, `expects_structured_output = true` (the raw-JSON loop guard would
+  otherwise reject the bare-JSON answer and inject a rewrite-in-prose
+  correction — established pattern from Classifier). `attributes` is a
+  fixedCollection (`{ parameters: [...] }` envelope, same convention as
+  Aggregate's `aggregations`): each row names a `name` (the output JSON key),
+  a `type` (`string`/`number`/`boolean`/`array`/`object`), an optional
+  `description` fed into the prompt, and a `required` flag (a prompt-emphasis
+  hint only — a field genuinely absent from the text still comes back `null`,
+  never invented). The system prompt lists every attribute with its type/
+  required-ness/description and instructs the model to use `null` for absent
+  fields and match the requested type exactly. The model's JSON response is
+  extracted tolerating markdown fences (same `extract_json` convention as
+  Classifier), then each configured attribute is read from the parsed object
+  and coerced onto its declared type (`coerce_type`: numbers parse from
+  numeric strings, booleans accept yes/no/1/0 string variants, strings
+  stringify non-string scalars, array/object pass through as the model
+  returned them) — a value that can't coerce becomes `null` rather than
+  smuggling a mismatched type downstream. **Output is a bare object keyed
+  exactly by the configured attribute names** (Classifier's fixed-shape
+  convention) — the model can't add or omit keys from the node's output
+  shape, so `{{ $node["Extractor"].data.amount }}` always resolves. Dispatch
+  is NOT primary-input-based (own explicit `input` config field, like
+  Classifier); not in the no-retry list (transient LLM failures should
+  retry, same as Classifier/Cortex); not excluded from `can_iterate` (maps
+  per-item after a Loop like Classifier/Cortex do). `NODE_TYPES
+  .informationExtractor` in `nodes.js`; `NodeDetails.vue`'s dynamic model-list
+  injection (`availableModels`) extended to include `informationExtractor`
+  alongside `cortex`/`classifier` so its Model dropdown populates.
+  - Remaining DoD item: manual canvas E2E; logic covered by unit tests +
+    backend build (frontend build blocked in this environment by a
+    pre-existing platform mismatch in `axon-ui/node_modules` — win32 rollup
+    binaries under WSL/Linux bash — unrelated to this change; `nodes.js`
+    itself passes `node --check`).
 - [ ] **4.2 Vector Store / RAG node** — the `qdrant/` folder exists but Engram is
   key-value, not semantic. A first-class **embed → upsert → semantic-search** node
   makes retrieval a workflow step. Reuse the provider-configurable embedder.
