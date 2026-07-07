@@ -2906,12 +2906,12 @@ export const NODE_TYPES = {
                 hint: 'The content to embed and store. Blank falls back to the incoming item (its text/content/body/data field, or the item itself if it\'s a string).',
             },
             {
-                displayName: 'Id (Optional)',
+                displayName: 'Id',
                 name: 'id',
                 type: 'string',
                 default: '',
-                displayOptions: { show: { operation: ['upsert'] } },
-                hint: 'Point id — an integer or a UUID string. Blank auto-generates a fresh UUID. Reuse an id to overwrite that point.',
+                displayOptions: { show: { operation: ['upsert', 'delete'] } },
+                hint: 'Point id — an integer or a UUID string. Upsert: blank auto-generates a fresh UUID (reuse an id to overwrite that point). Delete: the point to remove — leave blank to delete by Filter instead.',
             },
             {
                 displayName: 'Metadata (Optional)',
