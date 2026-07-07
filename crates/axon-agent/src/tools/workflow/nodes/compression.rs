@@ -407,7 +407,8 @@ mod tests {
         let path = temp_path("report.csv");
         std::fs::write(&path, b"a,b\n1,2\n").unwrap();
         let input = json!([descriptor(&path, "report.csv"), "plain text", { "n": 1 }]);
-        let out = execute(&json!({ "operation": "zip" }), &input).unwrap();
+        let cfg = json!({ "operation": "zip", "fileName": unique_name("multi", "zip") });
+        let out = execute(&cfg, &input).unwrap();
         std::fs::remove_file(&path).ok();
 
         let zip_path = out["binary"]["local_path"].as_str().unwrap().to_string();
