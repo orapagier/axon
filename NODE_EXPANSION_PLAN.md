@@ -390,8 +390,10 @@ payload. These turn raw bytes into structured data.
   Dispatch uses the Soma/`$json` primary-input convention; not in the no-retry list
   (pure transform). `NODE_TYPES.dateTime` in `nodes.js` gates each operation's
   params via `displayOptions`.
-  - Remaining DoD item: manual canvas E2E; logic covered by unit tests + backend/UI
-    build.
+  - **DoD complete.** Manual canvas E2E via Playwright (2026-07-07):
+    `getCurrentDate` (default op, no config) produced a well-formed
+    `{ currentDate: "2026-07-07T18:51:49+08:00" }` (correct Asia/Manila
+    offset). Clean.
 - [x] **2.2 Crypto** (`crypto` / *Enzyme*) — hash / HMAC / UUID. Executor
   `nodes/crypto.rs` (12 table-driven tests incl. NIST/RFC vectors). **Zero new
   deps** — reuses `sha2`/`hmac`/`hex`/`base64`/`uuid`, the same crates that back
