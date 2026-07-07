@@ -58,3 +58,12 @@ Thumbs.db
 nul
 con
 aux
+
+# ── Fine-tuning tooling (finetune/) ──
+finetune/.venv/
+finetune/data/raw/
+finetune/data/processed/
+finetune/checkpoints/
+finetune/merged/
+finetune/gguf/*.gguf
+finetune/llama.cpp/

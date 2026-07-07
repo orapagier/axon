@@ -608,8 +608,57 @@ Small additions that meaningfully extend the agent layer you already have.
 - [ ] **4.2 Vector Store / RAG node** — the `qdrant/` folder exists but Engram is
   key-value, not semantic. A first-class **embed → upsert → semantic-search** node
   makes retrieval a workflow step. Reuse the provider-configurable embedder.
-- [ ] **4.3 Summarize / Sentiment** — thin LLM presets over the Cortex path (also
-  set `expects_structured_output` where output is JSON).
+  Scoping note (from research ahead of building this): the `qdrant/` folder is
+  deployment tooling only (systemd/curl scripts, no Rust); the real client lives
+  in `crates/axon-agent/src/memory/long_term.rs` (`LongTermMemory`, hardcoded to
+  the `axon_memory` collection) alongside `crates/axon-agent/src/memory/
+  embeddings.rs` (`Embedder`, OpenAI-compatible `/embeddings`, provider-agnostic).
+  Both the `documents` and `entities` Qdrant collections already exist
+  (`qdrant/create-collections.sh`) but are unused by any Rust code today — natural
+  targets. No `create_collection` call exists anywhere; a node scoped to
+  embed→upsert→search against a pre-created, config-named collection (skipping
+  collection management) matches the L-effort framing — the work is generalizing
+  the hardcoded memory-specific pairing into a config-driven node, not learning
+  the qdrant-client API. `qdrant-client` is already resolved in the tree (no new
+  TLS stack). Construct a fresh `Embedder::from_settings(&state.settings)` /
+  `Qdrant::from_url(...)` per the `tool_router.rs` precedent rather than reaching
+  into `MemoryStore` (its `qdrant` field is private).
+- [x] **4.3 Summarize / Sentiment** — thin LLM presets over the Cortex path,
+  shipped as two node types (per the plan's type-key naming) built together,
+  each cloning Classifier's isolated-session skeleton almost verbatim (own
+  `input` config field, not primary-input based; per-node isolated session,
+  memory off; not in the no-retry list or the `can_iterate` exclusion — same
+  category as Classifier/Extractor).
+  - **`summarize`** — Executor `nodes/summarize.rs` (5 table-driven tests).
+    Output is prose, so `expects_structured_output` stays at its default
+    (false) — there's no JSON to protect from the raw-JSON loop guard. Config:
+    `length` (short/medium/long, default medium), `style` (paragraph/bullets),
+    `focus` (optional emphasis guidance). Output is a bare `{ summary: "..." }`
+    (Classifier/Extractor's fixed-shape convention, not the dateTime/crypto
+    `outputField`/`includeInputFields` convention — there's no primary-input
+    item to merge onto when dispatch is explicit-`input`-field based).
+  - **`sentiment`** — Executor `nodes/sentiment.rs` (12 table-driven tests).
+    Structurally Classifier with one axis instead of three: `labels`
+    (comma-separated allowed values, default `positive, negative, neutral`)
+    constrained via the identical `coerce_enum`/`coerce_enum_from_text`
+    fallback chain (exact match → substring → last-option catch-all, or scan
+    the raw text if the model skips JSON entirely) so a downstream
+    Switch/IF can rely on `label` always being one of the configured options.
+    `expects_structured_output = true` (JSON output: `label`/`score`/
+    `reasoning`). Deliberately duplicates Classifier's helper functions
+    (`extract_json`, `truncate`, `coerce_enum`, `coerce_enum_from_text`,
+    `parse_list`) rather than factoring a shared module — matches the existing
+    convention (Extractor already duplicates `extract_json`/`truncate` rather
+    than importing Classifier's) and avoids touching already-shipped, tested
+    files for a same-session node addition.
+  - Both add `NODE_TYPES.summarize`/`NODE_TYPES.sentiment` in `nodes.js`, and
+    both are added to `NodeDetails.vue`'s dynamic model-list injection
+    condition alongside `cortex`/`classifier`/`informationExtractor` so their
+    Model dropdown populates.
+  - Remaining DoD item: manual canvas E2E; logic covered by 17 new unit tests +
+    `cargo build -p axon --lib` (clean) + `node --check` on `nodes.js` (frontend
+    `vite build` still blocked by the same pre-existing win32-rollup-under-WSL
+    mismatch noted in 4.1, unrelated to this change).
 
 ---
 
