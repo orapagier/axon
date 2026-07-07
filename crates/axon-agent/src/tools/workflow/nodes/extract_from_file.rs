@@ -57,7 +57,7 @@ fn source_bytes(config: &Value, input: &Value, operation: &str) -> Result<Vec<u8
         .unwrap_or("file")
     {
         "text" => {
-            if operation != "csv" {
+            if operation == "xlsx" {
                 return Err(
                     "Extract from File: a spreadsheet is binary — use the File on Disk \
                             or Base64 source for XLSX/XLS/ODS"
@@ -74,7 +74,7 @@ fn source_bytes(config: &Value, input: &Value, operation: &str) -> Result<Vec<u8
             match input {
                 Value::String(s) if !s.trim().is_empty() => Ok(s.clone().into_bytes()),
                 _ => Err(
-                    "Extract from File: Text source needs CSV content — fill the Text \
+                    "Extract from File: Raw Text source needs content — fill the Text \
                           field (e.g. {{ $node[\"Synapse\"].body }}) or feed a string input"
                         .to_string(),
                 ),
