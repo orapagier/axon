@@ -272,7 +272,9 @@ entirely node code.
   the Filter/Aggregate `to_items`/`arrayPath` convention. UI gates each stage's
   params on its boolean toggle via `displayOptions`. Dispatch uses the Soma/`$json`
   primary-input convention; `NODE_TYPES.sortLimit` in `nodes.js`.
-  - Remaining DoD item: manual canvas E2E; logic covered by unit tests + build.
+  - **DoD complete.** Manual canvas E2E via Playwright (2026-07-07): dedupe by
+    `id` + sort by `v` desc + limit 2 on `[{id:1,v:5},{id:2,v:3},{id:1,v:5},
+    {id:3,v:9}]` produced exactly `[{id:3,v:9},{id:1,v:5}]`. Clean.
 
 **Phase 1 complete** (1.0–1.5): the list toolkit — Merge, Filter, Aggregate, Split
 Out, Sort/Limit/Dedupe — all share the array-input convention and compose with each
