@@ -269,6 +269,18 @@ async fn main() -> anyhow::Result<()> {
     let db = Arc::new(pool);
     let settings = Arc::new(RuntimeSettings::new(Arc::clone(&db)));
 
+    // Seed watcher.notify_chat_id from AXON_NOTIFY_CHAT_ID on first boot only — once
+    // set (via this, the dashboard, or a DB restored from a prior deploy) the DB
+    // value always wins, so per-instance .env files can pin a default without a
+    // dashboard visit while still letting operators override it later.
+    if let Ok(chat_id) = std::env::var("AXON_NOTIFY_CHAT_ID") {
+        let chat_id = chat_id.trim();
+        if !chat_id.is_empty() && settings.get_str("watcher.notify_chat_id", "").is_empty() {
+            let _ = settings.set("watcher.notify_chat_id", chat_id);
+            tracing::info!("Seeded watcher.notify_chat_id from AXON_NOTIFY_CHAT_ID");
+        }
+    }
+
     // Live provider for the CRM's default deal currency (crm.default_currency):
     // read per call so dashboard changes apply without a restart.
     {
