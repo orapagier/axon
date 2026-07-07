@@ -506,7 +506,14 @@ payload. These turn raw bytes into structured data.
   are never meaningfully raw text. Dispatch uses the Soma/`$json` primary-input
   convention; not in the no-retry list (pure transform). `NODE_TYPES.compression`
   in `nodes.js`.
-  - Remaining DoD item: manual canvas E2E; logic covered by unit tests + build.
+  - **DoD complete.** Manual canvas E2E via Playwright (2026-07-07) on
+    `Convert to File (people.csv)`. **Found and fixed a real bug on the first
+    run** (see "Bugs found and fixed" below): Zip at its default Compression
+    Level (0) errored `unsupported Zip archive: Unsupported compression
+    level` — i.e. every Zip with untouched defaults was broken. Fixed;
+    re-verified clean for both `zip` and `gzip`. `cargo test -p axon --lib`
+    472/472 green afterward (12/12 in `compression.rs`, incl. a new
+    regression test).
 - [x] **2.7 XML / Markdown** — two node types, built together.
   - **`xml`** — Executor `nodes/xml.rs` (21 table-driven tests) over `quick-xml`
     (new dep, `default-features = false`, no TLS/HTTP of its own). Uses the
