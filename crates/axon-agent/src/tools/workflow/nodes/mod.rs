@@ -34,6 +34,7 @@ pub(crate) mod markdown;
 pub(crate) mod mcp;
 pub(crate) mod merge;
 pub(crate) mod respond_to_webhook;
+pub(crate) mod rss;
 pub(crate) mod shell;
 pub(crate) mod slack;
 pub(crate) mod soma;
