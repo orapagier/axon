@@ -1630,7 +1630,12 @@ async function save(opts = {}) {
 }
 
 async function removeWorkflow() {
-  if (!wfId.value || !confirm(`Delete workflow "${wfName.value}"?`)) return
+  if (!wfId.value) return
+  const ok = await confirmDialog(`"${wfName.value}" will be permanently deleted.`, {
+    title: 'Delete Workflow',
+    confirmText: 'Delete',
+  })
+  if (!ok) return
   try {
     const r = await del(`/workflows/${wfId.value}`)
     toast(r.ok ? 'Workflow deleted' : r.error, r.ok)
