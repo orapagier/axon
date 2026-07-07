@@ -815,6 +815,82 @@ Small additions that meaningfully extend the agent layer you already have.
       reasoning: "..." }` — `label` correctly constrained to the configured
       set. Clean.
 
+**Phase 2–4 canvas verification — DONE** (2026-07-07), via real Playwright
+browser automation against the live app (backend on `:3000`, `vite dev` on
+`:5173` — the production `vite build` path is blocked in this WSL sandbox by
+a pre-existing win32-rollup-under-Linux `node_modules` mismatch, worked
+around per the 4.1 note above without touching the committed Windows-side
+setup). Every node in Phases 1.2–4.3 except 4.2 Vector Store (Qdrant
+unreachable from this sandbox — see its entry) was driven end-to-end through
+the actual canvas: add node from the palette, wire edges, configure fields,
+Save, Execute Step, read the JSON output panel — the real user flow, not the
+HTTP-API shortcut Phase 1 used. `cargo test -p axon --lib` 472/472 green
+throughout.
+
+**Bugs found and fixed during this verification pass:**
+- **Compression: default Zip always failed.** `nodes/compression.rs`'s zip
+  path passed `compressionLevel` straight through to the `zip` crate; the
+  UI's default value for that field is `0` ("use the library default" per
+  its own hint), but the `zip` crate's `Deflated` compression rejects a
+  literal `0` as an invalid level ("unsupported Zip archive: Unsupported
+  compression level"). Every Zip operation with untouched defaults — which
+  is the overwhelming majority of real usage — errored. Reproduced live on
+  the very first canvas run. **Fix:** treat `0` as "no explicit level"
+  (`filter(|&n| n > 0)`) so it falls through to the crate's own default,
+  matching the documented UI contract. New regression test
+  `zip_default_compression_level_zero_does_not_error` (config-level, not
+  just the pure `build_zip` function, since the pure-function tests never
+  exercised the exact "field present but 0" shape the UI actually sends).
+- **External Webhook URL used the wrong id, breaking every Webhook-triggered
+  workflow.** `NodeDetails.vue`'s `webhookUrl` computed built the copy-paste
+  URL as `/webhook/external/${props.node.id}` (the Stimulus node's own
+  frontend-generated id). The backend route is registered as
+  `/webhook/external/:workflow_id` (`dashboard/server.rs`) and looks the
+  workflow up by that id (`workflow_has_respond_node`,
+  `run_in_background_for_webhook`) — it needs the *workflow's* server-assigned
+  id, not the node's. Every external delivery to the shown URL silently
+  failed server-side ("Background workflow run failed: Query returned no
+  rows") while the handler still returned a deceptive `200 OK` "triggered
+  successfully" ack, so the failure was invisible from the caller's side.
+  The adjacent `githubWebhookUrl` in the same file already used the correct
+  `props.workflowId` — this was a one-off inconsistency, not a missing
+  capability. **Fix:** `webhookUrl` now uses `props.workflowId`. Re-verified
+  with a real `curl` against the corrected URL: the configured Respond to
+  Webhook response (`201`, custom JSON body) came back exactly as configured.
+  (Side note for next session: this WSL environment's Vite dev server did not
+  pick up this file edit via HMR/file-watch — `fs.watch` is known-unreliable
+  on the `/mnt/c` drvfs mount — so the *served* module stayed stale until the
+  `vite` process was killed and restarted. A full-page reload alone did not
+  invalidate it. Restart `vite dev` after editing `axon-ui/src/**` in this
+  sandbox if a change doesn't seem to take effect.)
+- **RSS `maxItems` silently ignored (config number-vs-string mismatch).**
+  `nodes/rss.rs` read the cap via a raw
+  `config.get("maxItems").and_then(|v| v.as_u64())`. The UI's number widget
+  saves a field's value as a JSON *string* (`"3"`), not a JSON number (`3`) —
+  a documented, established quirk (see `cfg_usize`'s doc comment: "may arrive
+  as a JSON number or a string, the UI emits both depending on the widget").
+  `.as_u64()` returns `None` for a string, so `max_items` silently fell back
+  to `0` ("no limit") regardless of what was configured — reproduced live: a
+  configured cap of 3 returned all 25 feed entries. Every other node in this
+  plan reads number-typed config through the shared `cfg_usize` helper
+  specifically to absorb this; `rss.rs` was the one node that bypassed it.
+  **Fix:** switched to `cfg_usize`. Then audited every node executor for the
+  same raw-`as_u64`/`as_f64` anti-pattern and found one more live instance —
+  **Vector Store's `limit` and `scoreThreshold`** (`nodes/vector_store.rs`),
+  same fix applied there (`cfg_usize` / the shared `val_to_number`). Added
+  `cfg_usize_tests` (3 new tests) directly on the shared helper so this
+  class of bug is caught at the helper level for every future caller, not
+  just re-derived per node.
+
+**Known issue, NOT fixed:** two ergonomic (not functional) canvas quirks
+noticed while building test workflows, left as-is since they don't affect
+correctness: (1) fanning two nodes out from one output handle (clicking a
+handle a second time to add a sibling) doesn't collision-avoid like the
+floating "+" picker does — both land at the exact same auto-computed
+position and must be dragged apart by hand to see/click either one
+individually; (2) this is a UI-only overlap (saved workflow data and
+execution are unaffected either way).
+
 ---
 
 ## Phase 5 — Connectors (only as use cases demand)
