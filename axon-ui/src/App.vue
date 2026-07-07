@@ -288,4 +288,6 @@ async function logout() {
   </div>
 
   <Toast />
+  <ConfirmDialog />
+  <PromptDialog />
 </template>
