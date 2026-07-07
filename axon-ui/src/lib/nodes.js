@@ -2979,14 +2979,6 @@ export const NODE_TYPES = {
                 ],
             },
             {
-                displayName: 'Id',
-                name: 'id',
-                type: 'string',
-                default: '',
-                displayOptions: { show: { operation: ['delete'] } },
-                hint: 'Delete this exact point id. Leave blank to delete by Filter instead.',
-            },
-            {
                 displayName: 'Output',
                 name: 'vector_store_output_hint',
                 type: 'notice',
