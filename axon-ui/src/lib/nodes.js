@@ -2120,7 +2120,7 @@ export const NODE_TYPES = {
     convertToFile: {
         displayName: 'Convert to File',
         name: 'convertToFile',
-        icon: '📦',
+        icon: '💾',
         outputs: ['file'],
         description: 'Turn workflow data into a staged file — CSV, JSON or plain text, or decode base64 into binary bytes. Emits the standard binary descriptor that Telegram send, Gmail attachments, uploads and Myelin all accept. The inverse of Extract from File.',
         properties: [
