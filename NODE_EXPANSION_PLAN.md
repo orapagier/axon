@@ -206,8 +206,10 @@ entirely node code.
   *every* mode — never errors or nulls the dead side. Field-merge is a full union
   (second input enriches the first; conflicts → input 2 wins). `NODE_TYPES.merge`
   entry renders two input handles via the 1.0 UI seam. *This is the #1 unlock.*
-  - Remaining DoD item: manual canvas E2E (Phase 1 verification tests 1–3);
-    logic is covered by unit tests + compile/build.
+  - **DoD complete.** Manual E2E done via the HTTP API (equivalent to canvas —
+    same endpoints), Phase 1 verification tests 1–3, on the live running agent.
+    Found and fixed two real bugs in the process — see "Bugs found and fixed
+    during verification" above. 468/468 unit tests green afterward.
 - [x] **1.2 Filter** (`filter` / *Synaptic Gate*) — keep/drop array items matching
   a condition. Executor `nodes/filter.rs` (12 table-driven tests) reuses
   `evaluate_condition_typed` (shared with IF/Switch) so operators never drift.
