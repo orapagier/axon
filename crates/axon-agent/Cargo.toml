@@ -73,6 +73,14 @@ sqlx = { version = "0.8", default-features = false, features = [
     "any", "postgres", "mysql", "sqlite",
 ] }
 
+# Node 2.3 HTML Extract: CSS-selector extraction. No default features (drops the
+# CLI-example deps); compile-heavy but runtime-light, no TLS/HTTP of its own.
+scraper  = { version = "0.27", default-features = false, features = ["errors"] }
+# Node 2.4 Extract from File: CSV / XLSX → JSON. Both pure Rust, no TLS.
+# calamine's `dates` feature reuses the in-tree chrono for Excel date cells.
+csv      = "1.4"
+calamine = { version = "0.36", default-features = false, features = ["dates"] }
+
 # In-process MCP integration services (Google/Microsoft/Facebook/Instagram/CRM).
 rmcp           = { version = "0.1", features = ["server"] }
 axon-core      = { path = "../axon-core" }

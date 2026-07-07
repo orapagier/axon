@@ -672,6 +672,23 @@ async fn execute_node_dispatch(
             let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
             nodes::crypto::execute(config, &input)
         }
+        "htmlExtract" => {
+            // CSS-selector extraction over an HTML page. Same primary-input
+            // convention as dateTime/crypto: the input supplies the HTML
+            // fallback (Synapse's body) and feeds `includeInputFields`.
+            let mut vec: Vec<_> = node_results.values().cloned().collect();
+            vec.sort_by_key(|r| r.position);
+            let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
+            nodes::html_extract::execute(config, &input)
+        }
+        "extractFromFile" => {
+            // CSV / spreadsheet → JSON rows. Same primary-input convention;
+            // the input supplies the binary-descriptor / raw-text fallback.
+            let mut vec: Vec<_> = node_results.values().cloned().collect();
+            vec.sort_by_key(|r| r.position);
+            let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
+            nodes::extract_from_file::execute(config, &input)
+        }
         "respondToWebhook" => {
             // Answer the live HTTP request the external-webhook handler is
             // holding open for this run (one-shot; no waiter ⇒ preview). Same

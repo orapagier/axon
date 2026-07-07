@@ -130,6 +130,8 @@ function getNodeIcon(nodeType) {
     aggregate: '🧮',
     splitOut: '💥',
     sortLimit: '🔃',
+    htmlExtract: '👁️',
+    extractFromFile: '🧾',
     loop: '🔄',
     wait: '⏱️',
     delay: '⏱️',

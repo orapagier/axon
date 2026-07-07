@@ -337,11 +337,45 @@ payload. These turn raw bytes into structured data.
   not in the no-retry list (pure transform). `NODE_TYPES.crypto` in `nodes.js`.
   - Remaining DoD item: manual canvas E2E; logic covered by unit tests + backend/UI
     build.
-- [ ] **2.3 HTML Extract** — CSS-selector extraction → turns "Synapse fetch a page"
-  into real **web scraping**. `scraper` is compile-heavy but runtime-light — fine
-  for the e2-micro.
-- [ ] **2.4 Extract from File** — **CSV / XLSX only** → JSON. Myelin stores files
-  but can't read a spreadsheet today.
+- [x] **2.3 HTML Extract** (`htmlExtract` / *Retina*) — CSS-selector extraction →
+  turns "Synapse fetch a page" into real **web scraping**. Executor
+  `nodes/html_extract.rs` (15 table-driven tests) over `scraper 0.27`
+  (`default-features = false` — compile-heavy but runtime-light, no TLS/HTTP of
+  its own, per dependency policy). Each extraction rule: `key` + `cssSelector` +
+  `returnValue` (`text` — whitespace-collapsed under `trimValues` — inner `html`,
+  or an `attribute`; elements missing the attribute are skipped, not null holes)
+  + `returnArray` (first match vs all matches). HTML source: the `html` config
+  expression, falling back to the primary input — a string as-is, or its
+  `body`/`html`/`data`/`text` field, so a raw Synapse response works unconfigured.
+  Output is ONE object of all extraction keys (a page reduces to one item);
+  `includeInputFields` merges onto the incoming item (Soma/`dateTime`/`crypto`
+  convention). Missing rules / key / selector / attribute name are teaching
+  errors; invalid selectors error with the key + selector named. Dispatch uses
+  the Soma/`$json` primary-input convention; not in the no-retry list (pure
+  transform). `NODE_TYPES.htmlExtract` in `nodes.js`.
+  - Remaining DoD item: manual canvas E2E; logic covered by unit tests + build.
+- [x] **2.4 Extract from File** (`extractFromFile` / *Digest*) — **CSV /
+  spreadsheet → JSON**. Executor `nodes/extract_from_file.rs` (20 table-driven
+  tests, incl. a hand-crafted in-test XLSX fixture) over `csv 1.4` +
+  `calamine 0.36` (`default-features = false`, `dates` feature reuses in-tree
+  chrono; both pure Rust — no new TLS/HTTP stack). Three byte `source`s: `file`
+  (path; blank auto-detects the standard binary descriptor `binary.local_path`
+  that Myelin retrieve / Telegram download / Synapse file responses emit),
+  `text` (raw CSV — how a `text/csv` HTTP fetch arrives, since Synapse returns
+  text bodies as strings; spreadsheet+text is a teaching error), and `base64`
+  (line-wrap tolerant). CSV: `delimiter` (with `tab`/`\t` alias), BOM strip,
+  lossy-UTF-8 byte records (Latin-1 exports don't fail), flexible/ragged rows,
+  blank-line skip, optional `inferTypes` (numbers/bools; leading-zero IDs stay
+  text). Spreadsheet: XLSX/XLS/XLSB/ODS via `open_workbook_auto_from_rs` format
+  sniffing, `sheetName` (blank = first; unknown sheet errors listing the real
+  ones), typed cells (integral floats → ints, dates → naive ISO strings, error
+  cells surface "#DIV/0!" text). Shared: `headerRow` (blank/duplicate headers →
+  `column_N`/`name_2`), `maxRows` cap. **Output is a bare array of row items**
+  (objects, or arrays when `headerRow` off) — the list-node convention, so it
+  composes with Filter/Aggregate/Split Out/Sort-Limit/Loop directly. Dispatch
+  uses the Soma/`$json` primary-input convention; `NODE_TYPES.extractFromFile`
+  in `nodes.js`.
+  - Remaining DoD item: manual canvas E2E; logic covered by unit tests + build.
 - [ ] **2.5 Convert to File** — JSON → CSV/XLSX/text for export/attachments.
 - [ ] **2.6 Compression** — zip/unzip/gzip for archives & attachments.
 - [ ] **2.7 XML / Markdown** — XML↔JSON and Markdown↔HTML converters.
