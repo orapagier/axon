@@ -1806,7 +1806,11 @@ async function restoreVersion(v) {
 
 // Label (or clear) a version so it survives pruning. Empty string clears it.
 async function labelVersion(v) {
-  const label = prompt('Label for this version (keeps it from being pruned). Leave blank to clear:', v.label || '')
+  const label = await promptDialog(
+    'Keep this version from being pruned by giving it a label. Leave blank to clear.',
+    v.label || '',
+    { title: 'Label Version', placeholder: 'e.g. Before refactor' }
+  )
   if (label === null) return
   try {
     const res = await post(`/workflows/${wfId.value}/versions/${v.version}`, { label })
