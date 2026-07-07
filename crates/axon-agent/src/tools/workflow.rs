@@ -647,120 +647,93 @@ async fn execute_node_dispatch(
         }
         "soma" => {
             // Soma's "Include Other Input Fields" merges over the incoming item.
-            // Use the same primary-input convention as $json: the most recent
-            // predecessor by position.
-            let mut vec: Vec<_> = node_results.values().cloned().collect();
-            vec.sort_by_key(|r| r.position);
-            let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
+            // Primary input = this node's direct edge predecessor (see
+            // `direct_predecessor_outputs`), not a position guess.
+            let input = primary_input(direct_inputs);
             nodes::soma::execute(config, &input)
         }
         "engram" => nodes::engram::execute(config, state).await,
         "homeostasis" => nodes::homeostasis::execute(config, state).await,
         "ifCondition" => nodes::condition::execute_if_condition_node(config),
         "switch" => nodes::condition::execute_switch_node(config),
-        "merge" => nodes::merge::execute(config, merge_inputs),
+        "merge" => nodes::merge::execute(config, direct_inputs),
         "filter" => {
-            // Same primary-input convention as Soma/$json: the most recent
-            // predecessor by position, expected to be an array (the list-node
-            // convention). Filter keeps/drops its items per-condition.
-            let mut vec: Vec<_> = node_results.values().cloned().collect();
-            vec.sort_by_key(|r| r.position);
-            let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
+            // Same primary-input convention as Soma/$json, expected to be an
+            // array (the list-node convention). Filter keeps/drops items
+            // per-condition.
+            let input = primary_input(direct_inputs);
             nodes::filter::execute(config, &input)
         }
         "aggregate" => {
             // List reducer: same primary-input convention as Filter/Soma. Rolls the
             // predecessor array into one summary object.
-            let mut vec: Vec<_> = node_results.values().cloned().collect();
-            vec.sort_by_key(|r| r.position);
-            let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
+            let input = primary_input(direct_inputs);
             nodes::aggregate::execute(config, &input)
         }
         "splitOut" => {
             // Inverse of Aggregate: explode a list field into individual items.
             // Same primary-input convention as Filter/Aggregate/Soma.
-            let mut vec: Vec<_> = node_results.values().cloned().collect();
-            vec.sort_by_key(|r| r.position);
-            let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
+            let input = primary_input(direct_inputs);
             nodes::split_out::execute(config, &input)
         }
         "sortLimit" => {
             // Sort / Limit / Remove Duplicates pipeline. Same primary-input
             // convention as the other list nodes.
-            let mut vec: Vec<_> = node_results.values().cloned().collect();
-            vec.sort_by_key(|r| r.position);
-            let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
+            let input = primary_input(direct_inputs);
             nodes::sort_limit::execute(config, &input)
         }
         "dateTime" => {
-            // Utility transform. Primary input (most recent predecessor by
-            // position) feeds `includeInputFields`; the computed date lands under
-            // `outputField`.
-            let mut vec: Vec<_> = node_results.values().cloned().collect();
-            vec.sort_by_key(|r| r.position);
-            let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
+            // Utility transform. Primary input feeds `includeInputFields`; the
+            // computed date lands under `outputField`.
+            let input = primary_input(direct_inputs);
             nodes::date_time::execute(config, &input)
         }
         "crypto" => {
             // Hash / HMAC / UUID utility. Same primary-input convention as
             // dateTime: feeds `includeInputFields`; the digest lands under
             // `outputField`.
-            let mut vec: Vec<_> = node_results.values().cloned().collect();
-            vec.sort_by_key(|r| r.position);
-            let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
+            let input = primary_input(direct_inputs);
             nodes::crypto::execute(config, &input)
         }
         "htmlExtract" => {
             // CSS-selector extraction over an HTML page. Same primary-input
             // convention as dateTime/crypto: the input supplies the HTML
             // fallback (Synapse's body) and feeds `includeInputFields`.
-            let mut vec: Vec<_> = node_results.values().cloned().collect();
-            vec.sort_by_key(|r| r.position);
-            let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
+            let input = primary_input(direct_inputs);
             nodes::html_extract::execute(config, &input)
         }
         "extractFromFile" => {
             // CSV / spreadsheet → JSON rows. Same primary-input convention;
             // the input supplies the binary-descriptor / raw-text fallback.
-            let mut vec: Vec<_> = node_results.values().cloned().collect();
-            vec.sort_by_key(|r| r.position);
-            let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
+            let input = primary_input(direct_inputs);
             nodes::extract_from_file::execute(config, &input)
         }
         "xml" => {
             // XML<->JSON. Same primary-input convention as htmlExtract: the
             // input supplies the document fallback and feeds
             // includeInputFields (xmlToJson) / outputField (jsonToXml).
-            let mut vec: Vec<_> = node_results.values().cloned().collect();
-            vec.sort_by_key(|r| r.position);
-            let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
+            let input = primary_input(direct_inputs);
             nodes::xml::execute(config, &input)
         }
         "markdown" => {
             // Markdown<->HTML. Same primary-input convention as htmlExtract/
             // xml: the input supplies the source fallback and feeds
             // outputField/includeInputFields.
-            let mut vec: Vec<_> = node_results.values().cloned().collect();
-            vec.sort_by_key(|r| r.position);
-            let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
+            let input = primary_input(direct_inputs);
             nodes::markdown::execute(config, &input)
         }
         "convertToFile" => {
             // Inverse of extractFromFile: JSON → staged file + the standard
             // binary descriptor. Same primary-input convention; the input is
             // the default data source.
-            let mut vec: Vec<_> = node_results.values().cloned().collect();
-            vec.sort_by_key(|r| r.position);
-            let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
+            let input = primary_input(direct_inputs);
             nodes::convert_to_file::execute(config, &input)
         }
         "compression" => {
             // zip/unzip/gzip/gunzip. Same primary-input convention as
             // convertToFile: the input supplies the file(s)/bytes to
             // (de)compress via the standard binary descriptor.
-            let mut vec: Vec<_> = node_results.values().cloned().collect();
-            vec.sort_by_key(|r| r.position);
-            let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
+            let input = primary_input(direct_inputs);
             nodes::compression::execute(config, &input)
         }
         "respondToWebhook" => {
@@ -768,18 +741,14 @@ async fn execute_node_dispatch(
             // holding open for this run (one-shot; no waiter ⇒ preview). Same
             // primary-input convention as Soma for the "first incoming item"
             // body mode.
-            let mut vec: Vec<_> = node_results.values().cloned().collect();
-            vec.sort_by_key(|r| r.position);
-            let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
+            let input = primary_input(direct_inputs);
             nodes::respond_to_webhook::execute(config, &input, run_id)
         }
         "vectorStore" => {
             // Embed → upsert / search / delete against a pre-created Qdrant
             // collection. Same primary-input convention as htmlExtract/crypto:
             // the input supplies the text/query fallback.
-            let mut vec: Vec<_> = node_results.values().cloned().collect();
-            vec.sort_by_key(|r| r.position);
-            let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
+            let input = primary_input(direct_inputs);
             nodes::vector_store::execute(config, state, &input).await
         }
         "loop" => nodes::iterate::execute(config),
