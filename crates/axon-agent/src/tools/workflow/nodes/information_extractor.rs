@@ -9,7 +9,7 @@
 //! rewrite-in-prose correction (see classifier.rs for the same pattern).
 
 use crate::state::AppState;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value};
 
 /// Max characters of input text handed to the model — same budget as Classifier.
 const MAX_INPUT_CHARS: usize = 8000;
