@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { del, get, post } from '../lib/api.js'
 import { toast } from '../lib/toast.js'
+import { confirmDialog } from '../lib/confirm.js'
 import { fmtTokens, safeJsonParse, timeAgo } from '../lib/utils.js'
 import Pill from '../components/Pill.vue'
 
