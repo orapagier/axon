@@ -743,6 +743,15 @@ async fn execute_node_dispatch(
             let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
             nodes::respond_to_webhook::execute(config, &input, run_id)
         }
+        "vectorStore" => {
+            // Embed → upsert / search / delete against a pre-created Qdrant
+            // collection. Same primary-input convention as htmlExtract/crypto:
+            // the input supplies the text/query fallback.
+            let mut vec: Vec<_> = node_results.values().cloned().collect();
+            vec.sort_by_key(|r| r.position);
+            let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
+            nodes::vector_store::execute(config, state, &input).await
+        }
         "loop" => nodes::iterate::execute(config),
         "subflow" | "workflow" => {
             nodes::subflow::execute(config, state, workflow_id, run_id, node_results).await
