@@ -480,8 +480,10 @@ payload. These turn raw bytes into structured data.
   sheets. Dispatch uses the Soma/`$json` primary-input convention; not in the
   no-retry list (idempotent overwrite). `NODE_TYPES.convertToFile` in
   `nodes.js`.
-  - Remaining DoD item: manual canvas E2E; logic covered by unit tests +
-    backend/UI build.
+  - **DoD complete.** Manual canvas E2E via Playwright (2026-07-07): CSV of
+    `Soma [{name,age}×2]` produced a real staged file (`people.csv`, 24
+    bytes) with a correct `binary` descriptor (`local_path`, `mimeType:
+    text/csv`, etc). Clean.
 - [x] **2.6 Compression** (`compression`) — zip/unzip/gzip/gunzip. Executor
   `nodes/compression.rs` (11 table-driven tests). **Zero *new* deps** — `zip`
   and `flate2` were already resolved transitively (`zip` via calamine's XLSX
