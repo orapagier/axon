@@ -428,7 +428,9 @@ payload. These turn raw bytes into structured data.
   errors; invalid selectors error with the key + selector named. Dispatch uses
   the Soma/`$json` primary-input convention; not in the no-retry list (pure
   transform). `NODE_TYPES.htmlExtract` in `nodes.js`.
-  - Remaining DoD item: manual canvas E2E; logic covered by unit tests + build.
+  - **DoD complete.** Manual canvas E2E via Playwright (2026-07-07): a literal
+    `<h1 class="title">Hello World</h1>` with selector `h1.title` produced
+    `{ title: "Hello World" }`. Clean.
 - [x] **2.4 Extract from File** (`extractFromFile` / *Digest*) — **CSV /
   spreadsheet → JSON**. Executor `nodes/extract_from_file.rs` (20 table-driven
   tests, incl. a hand-crafted in-test XLSX fixture) over `csv 1.4` +
