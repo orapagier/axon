@@ -421,9 +421,8 @@ mod tests {
     // a numbered suffix so the archive never silently drops one.
     #[test]
     fn zip_dedupes_duplicate_names() {
-        let input = json!(["dup", "dup"]);
-        // Both are plain strings so they'd collide as item_1.txt/item_2.txt
-        // naturally distinct — force a real collision via two descriptors.
+        // Two different files that both resolve to entry name "same.txt"
+        // must not collide silently in the archive.
         let a = temp_path("same.txt");
         let b = temp_path("same2.txt");
         std::fs::write(&a, b"A").unwrap();
@@ -432,7 +431,6 @@ mod tests {
         let out = execute(&json!({ "operation": "zip" }), &input).unwrap();
         std::fs::remove_file(&a).ok();
         std::fs::remove_file(&b).ok();
-        let _ = input; // silence unused warning if reordered later
 
         let zip_path = out["binary"]["local_path"].as_str().unwrap().to_string();
         let zip_bytes = std::fs::read(&zip_path).unwrap();
