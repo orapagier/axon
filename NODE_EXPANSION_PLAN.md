@@ -403,7 +403,29 @@ payload. These turn raw bytes into structured data.
   `nodes.js`.
   - Remaining DoD item: manual canvas E2E; logic covered by unit tests +
     backend/UI build.
-- [ ] **2.6 Compression** — zip/unzip/gzip for archives & attachments.
+- [x] **2.6 Compression** (`compression`) — zip/unzip/gzip/gunzip. Executor
+  `nodes/compression.rs` (11 table-driven tests). **Zero *new* deps** — `zip`
+  and `flate2` were already resolved transitively (`zip` via calamine's XLSX
+  reader in 2.4, `flate2` via `zip`'s deflate backend and reqwest's response
+  decompression); promoted to direct deps at the same versions/backend
+  (`zlib-rs`, pure Rust) so `cargo tree` shows no new compile weight. Four
+  `operation`s: `zip` (bundle the primary input — a single item or an array —
+  into one archive; each item resolves via its binary descriptor when
+  present, else a string writes as text and anything else as compact JSON;
+  duplicate entry names get a numbered suffix so nothing silently
+  overwrites), `unzip` (explode an archive into its entries, each staged and
+  returned as **a bare array** of file descriptors — the list-node
+  convention, so it composes with Loop/Filter/Split Out), `gzip` (compress a
+  single value — a staged file, string, or JSON — embedding the original
+  file name in the gzip header like the standard CLI, so `gunzip` recovers it
+  with zero config), `gunzip` (decompress, recovering the embedded/derived
+  name unless `fileName` overrides it). `unzip`/`gunzip` share Extract from
+  File's `file`/`base64` source convention (auto-detect the binary descriptor,
+  explicit `filePath`, or `data`); no `text` source since archive/gzip bytes
+  are never meaningfully raw text. Dispatch uses the Soma/`$json` primary-input
+  convention; not in the no-retry list (pure transform). `NODE_TYPES.compression`
+  in `nodes.js`.
+  - Remaining DoD item: manual canvas E2E; logic covered by unit tests + build.
 - [x] **2.7 XML / Markdown** — two node types, built together.
   - **`xml`** — Executor `nodes/xml.rs` (21 table-driven tests) over `quick-xml`
     (new dep, `default-features = false`, no TLS/HTTP of its own). Uses the
