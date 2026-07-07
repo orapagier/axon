@@ -269,16 +269,78 @@ entirely node code.
 
 **Phase 1 complete** (1.0–1.5): the list toolkit — Merge, Filter, Aggregate, Split
 Out, Sort/Limit/Dedupe — all share the array-input convention and compose with each
-other and with Loop. Every fork can now rejoin/reshape. Only shared DoD gap across
-1.1–1.5 is the manual canvas E2E pass (Phase 1 verification tests 1–3).
+other and with Loop.
 
-**Phase 1 verification:**
-1. `Stimulus → Switch → (two branches) → Merge → Soma` — branches rejoin.
+**Phase 1 verification — DONE**, run against the live engine via the HTTP API
+(`POST /api/workflows`, `POST /api/workflows/:id/run`, `POST
+/api/workflows/:id/run/:node_id?single=true`, `GET /api/workflow-runs/:run_id`) rather
+than the canvas — equivalent coverage, since the canvas is a thin client over the same
+endpoints. Uncovered two real bugs in the process (both fixed, `cargo test -p axon
+--lib` 468/468 green):
+1. `Stimulus → Switch → (two branches) → Merge → Soma` — branches rejoin. **Found
+   Bug A** (see below) on the first run; clean on re-verification after the fix.
 2. `Stimulus → IF → Merge` where IF takes **one** branch — Merge passes the live
-   side through (skipped-side semantics).
-3. Re-run test 1 as a targeted "Execute Step" on Merge — confirm the stale-cache
-   filter (1.0a) keeps prior-run results out.
-4. Unit tests per node (pure functions, table-driven).
+   side through (skipped-side semantics). Verified clean.
+3. Re-ran test 1 as a targeted "Execute Step" on Merge — confirm the stale-cache
+   filter (1.0a) keeps prior-run results out. **Found Bug B** (see below); fixed and
+   re-verified: Execute Step on Merge now correctly returns the live branch's cached
+   output instead of `[]`.
+4. Unit tests per node (pure functions, table-driven) — 468 passing.
+
+**Bugs found and fixed during verification** (in `workflow.rs`,
+`direct_predecessor_outputs`/`execute_node_dispatch`/`run_inner`):
+- **Bug A — sibling-skip contamination.** Every single-input node type EXCEPT Merge
+  (soma, filter, aggregate, splitOut, sortLimit, dateTime, crypto, htmlExtract,
+  extractFromFile, xml, markdown, convertToFile, compression, respondToWebhook,
+  vectorStore — 15 dispatch arms) resolved its primary input via "sort `node_results`
+  by position, take the last" — the pre-Task-1.0 convention, never fixed for anything
+  but Merge. Downstream of a Switch/IF, the NOT-taken sibling branch's skip result is
+  inserted into `node_results` **eagerly** (skip-cascade runs synchronously at
+  edge-release, before the taken sibling is even dequeued) — so "highest position
+  currently in the map" could resolve to an unrelated, already-skipped sibling instead
+  of the node's real edge predecessor, corrupting output with `{"skipped": true,
+  "reason": "Branch not taken"}` merged in (silently, no error). Reproduced live: a
+  `switch`'s taken branch showed contaminated output whenever the not-taken sibling had
+  a higher declared node position. **Fix:** `direct_predecessor_outputs` (Task 1.0's
+  Merge-only helper) is now computed for every node (not gated to `node_type ==
+  "merge"`) and a new `primary_input()` helper flattens it for the 15 single-input
+  arms — genuinely edge-aware, so an unrelated sibling can never win. Loop iteration
+  bodies needed a matching fix: `direct_inputs` is now recomputed per-iteration from
+  each unit's mutated `temp_results` (previously the outer, pre-loop value was reused
+  unchanged across iterations, which would have fed a per-item node inside a Loop the
+  wrong — un-mutated — predecessor output).
+- **Bug B — Execute Step returns nothing.** `direct_predecessor_outputs` sourced
+  strictly from `ordered_results` (this-run only, by design — see Task 1.0). But a
+  single-node targeted run (`single_node_ready` / "Execute Step") never re-executes
+  ancestors — they're resolved straight from the cached `node_results` snapshot and
+  never pushed into `ordered_results`. So Execute Step on Merge always saw an empty
+  `direct_inputs` and returned `[]`, regardless of real upstream data. Reproduced live.
+  **Fix:** `direct_predecessor_outputs` now takes a `cache_fallback: &HashMap<String,
+  NodeResult>` (the `node_results` map) and falls back to it only when a direct
+  predecessor is absent from `ordered_results` — which, by Kahn's-algorithm guarantee,
+  only happens in exactly the Execute Step case (a normal run always has every direct
+  predecessor in `ordered_results` before its successor is dispatched). Two new unit
+  tests (`falls_back_to_cache_for_execute_step`, `cache_fallback_still_drops_skipped`).
+
+**Known issue found, NOT fixed (separate, larger body of work):** `$json`/`$input`/
+`$items`/`$prevNode` resolution in the expression engine (`evaluate_js_expression` and
+the JS-node's `execute_js_node`, both in `tools/workflow/expressions.rs`) has the
+*same* "sort raw `node_results` by position, take last" bug as Bug A, independently
+implemented — and it is NOT edge-aware at all (these functions don't receive `edges`
+or the current node's id, only the raw `node_results` map). Reproduced live: on a
+workflow's **second** run, `{{ $json.value }}` resolved to `null` instead of the real
+upstream value, because `node_results` was pre-seeded with stale cache from a prior
+run whose higher-position node "won" the position-max heuristic (same root cause as
+Bug A, but hitting the *stale-cache* trap Task 1.0 also had to guard against, since
+this path doesn't have an `ordered_results`-equivalent restriction to this-run-only
+results). This affects `{{ $json.* }}`/`{{ $input.* }}`/bare JS expressions in
+**any** node's config field, workflow-wide — likely the most common way users
+reference "the previous node's output," so probably higher-impact than Bug A. Not
+fixed here because it needs `edges` + the current node's id threaded through
+`interpolate_config` → `resolve_value_scoped` → `evaluate_js_expression` (neither
+currently receives them), plus the same per-loop-iteration recomputation Bug A's fix
+required. Left as a follow-up item — flag before relying on `$json`/`$input` in a
+workflow that has been run more than once, or downstream of a branch node.
 
 ---
 
