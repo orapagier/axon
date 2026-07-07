@@ -79,11 +79,10 @@ pub(crate) async fn execute(config: &Value) -> Result<Value, String> {
         .get("ignoreSSL")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    // 0 = no limit, matching Extract from File's maxRows convention.
-    let max_items = config
-        .get("maxItems")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as usize;
+    // 0 = no limit, matching Extract from File's maxRows convention. cfg_usize
+    // (not a raw .as_u64()) because the UI's number widget can emit either a
+    // JSON number or a string.
+    let max_items = cfg_usize(config, "maxItems").unwrap_or(0);
 
     let params = HttpRequestParams {
         method: "GET".to_string(),
