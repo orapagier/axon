@@ -565,6 +565,9 @@ async fn execute_node_dispatch(
             nodes::trigger::execute(config, state, trigger_source, workflow_id, run_id).await
         }
         "synapse" => nodes::synapse::execute_http_node(config, state).await,
+        // Self-contained fetch+parse, same shape as Synapse: the feed URL is a
+        // config field, not a primary-input fallback.
+        "rss" => nodes::rss::execute(config).await,
         "myelin" => crate::tools::myelin::execute_myelin_node(state, config).await,
         "telegram" => crate::tools::telegram::execute_telegram_node(config).await,
         "whatsapp" => crate::tools::whatsapp::execute_whatsapp_node(config).await,
