@@ -275,12 +275,10 @@ async fn search(
         .await
         .map_err(|e| format!("Vector Store: embedding failed: {e}"))?;
 
-    let limit = config
-        .get("limit")
-        .and_then(|v| v.as_u64())
-        .filter(|&n| n > 0)
-        .unwrap_or(5);
-    let score_threshold = config.get("scoreThreshold").and_then(|v| v.as_f64());
+    // cfg_usize/val_to_number (not raw .as_u64()/.as_f64()) because the UI's
+    // number widget can save either a JSON number or a string.
+    let limit = cfg_usize(config, "limit").filter(|&n| n > 0).unwrap_or(5) as u64;
+    let score_threshold = config.get("scoreThreshold").and_then(val_to_number);
 
     let filter = build_filter(&filter_rows(config))?;
 
