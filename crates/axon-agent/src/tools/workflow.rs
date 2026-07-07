@@ -597,6 +597,9 @@ async fn execute_node_dispatch(
         }
         "cortex" => nodes::cortex::execute_cortex_node(config, state, workflow_id, &node.id).await,
         "classifier" => nodes::classifier::execute(config, state, workflow_id, &node.id).await,
+        "informationExtractor" => {
+            nodes::information_extractor::execute(config, state, workflow_id, &node.id).await
+        }
         "fovea" => nodes::fovea::execute(config, state).await,
         t if t == "mcp" || t.starts_with("mcp_") => nodes::mcp::execute(config, state).await,
         "wait" => nodes::wait::execute(config, state, workflow_id, run_id, durable_allowed).await,
