@@ -16,7 +16,20 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = REPO_ROOT / "finetune" / "data" / "processed"
 OUT_DIR = REPO_ROOT / "finetune" / "checkpoints"
-BASE_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
+LOCAL_MODEL_DIR = REPO_ROOT / "finetune" / "models" / "Qwen2.5-1.5B-Instruct"
+
+
+def resolve_base_model():
+    """HF download of Qwen/Qwen2.5-1.5B-Instruct was throttled to ~100KB/s on
+    this network (mirrors didn't help) -- prefer a manually-downloaded local
+    copy in finetune/models/ if the weights file is there, else fall back to
+    the HF repo id (a normal network download attempt)."""
+    if (LOCAL_MODEL_DIR / "model.safetensors").exists():
+        return str(LOCAL_MODEL_DIR)
+    return "Qwen/Qwen2.5-1.5B-Instruct"
+
+
+BASE_MODEL = resolve_base_model()
 
 
 def load_dataset():

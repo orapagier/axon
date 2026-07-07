@@ -485,30 +485,52 @@ fn find_iteration_source_node_id(
     None
 }
 
-/// Task 1.0 (multi-input plumbing): collect a node's DIRECT predecessor outputs,
-/// grouped by the incoming edge's `target_handle`, for multi-input nodes (Merge).
+/// Task 1.0 (multi-input plumbing), now used by EVERY node's primary-input
+/// resolution: collect a node's DIRECT predecessor outputs, grouped by the
+/// incoming edge's `target_handle`.
 ///
-/// This is the one primitive a Merge node needs and the reason it can't just scan
-/// `node_results`. It guarantees three things the plan calls out:
-///  - **(a) this-run only.** `this_run_results` is the run's `ordered_results`
+/// Originally scoped to Merge alone (the "one primitive a Merge node needs
+/// because it can't just scan `node_results`"), this replaced the naive
+/// "sort `node_results` by position, take the last" convention every other
+/// single-input node used — that convention silently broke downstream of a
+/// Switch/IF: a not-taken sibling branch's skip result is inserted into
+/// `node_results` eagerly (skip-cascade runs synchronously at edge-release,
+/// before the taken sibling is even dequeued), so "highest position currently
+/// in the map" could resolve to an unrelated, skipped sibling instead of the
+/// node's real edge predecessor. Being edge-aware fixes that by construction.
+///
+/// It guarantees the properties the plan calls out:
+///  - **(a) this-run first.** `this_run_results` is the run's `ordered_results`
 ///    sequence, which is built up as nodes execute/skip *this* run. It never
 ///    contains the prior-run cache seed that `node_results` is backfilled with
 ///    before a run starts, so stale results from nodes that never ran this run
-///    can't leak into a merge. (A skipped node also keeps a *stale success* in
-///    `node_results` via `.or_insert`, so `node_results` is doubly wrong here —
-///    sourcing from `ordered_results` sidesteps both traps.)
+///    can't leak in via this path. (A skipped node also keeps a *stale success*
+///    in `node_results` via `.or_insert`, so `node_results` is doubly wrong
+///    here — sourcing from `ordered_results` sidesteps both traps.)
+///  - **(a2) cache fallback for "Execute Step".** A single-node targeted run
+///    (`single_node_ready`) never re-executes ancestors — they're resolved
+///    straight from the cached snapshot in `node_results` and never pushed
+///    into `ordered_results`. `cache_fallback` (that same `node_results` map)
+///    is consulted only when a direct predecessor is absent from
+///    `this_run_results` — which, in a normal multi-node run, Kahn's algorithm
+///    guarantees never happens (a predecessor always resolves, this run,
+///    before its successor is queued), so this fallback only ever fires in
+///    exactly the Execute Step case it exists for.
 ///  - **(b) skipped branches dropped.** A not-taken IF/Switch branch emits a
-///    `status: "skipped"` result; those are filtered out, so a Merge placed after
-///    an IF sees only the live side (and can pass it straight through).
+///    `status: "skipped"` result; those are filtered out, so a Merge (or any
+///    other node) placed after an IF sees only the live side.
 ///  - **(c) grouped by input handle.** Outputs are keyed by the edge's
 ///    `target_handle` (normalized; a missing/empty handle is the default first
-///    input `input_main_0`, matching what the editor persists), so the consumer
-///    can tell input 0 from input 1. Within a handle, outputs are ordered by the
-///    source node's `position` for deterministic append order.
+///    input `input_main_0`, matching what the editor persists), so a
+///    multi-input consumer (Merge) can tell input 0 from input 1; a
+///    single-input consumer just flattens across handles. Within a handle,
+///    outputs are ordered by the source node's `position` for deterministic
+///    append order.
 pub(crate) fn direct_predecessor_outputs(
     target_node_id: &str,
     edges: &[WorkflowEdge],
     this_run_results: &[NodeResult],
+    cache_fallback: &std::collections::HashMap<String, NodeResult>,
 ) -> std::collections::BTreeMap<String, Vec<Value>> {
     // Index this-run results by node id. This list already excludes the prior-run
     // cache seed, so requirement (a) holds by construction.
@@ -519,8 +541,15 @@ pub(crate) fn direct_predecessor_outputs(
 
     let mut rows: Vec<(String, i64, Value)> = Vec::new();
     for edge in edges.iter().filter(|e| e.target_id == target_node_id) {
-        let Some(nr) = by_id.get(edge.source_id.as_str()) else {
-            continue; // (a) predecessor never ran this run — ignore any stale cache
+        let nr = match by_id.get(edge.source_id.as_str()) {
+            Some(nr) => *nr,
+            // (a2) not in this run's sequence — fall back to the cached
+            // snapshot (Execute Step); still absent means a genuinely
+            // never-run predecessor, so skip it.
+            None => match cache_fallback.get(&edge.source_id) {
+                Some(nr) => nr,
+                None => continue,
+            },
         };
         if nr.status == "skipped" {
             continue; // (b) not-taken IF/Switch branch

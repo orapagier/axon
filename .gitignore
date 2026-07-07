@@ -67,3 +67,4 @@ finetune/checkpoints/
 finetune/merged/
 finetune/gguf/*.gguf
 finetune/llama.cpp/
+finetune/models/

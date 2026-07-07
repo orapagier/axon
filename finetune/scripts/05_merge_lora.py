@@ -3,11 +3,13 @@ import argparse
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+LOCAL_MODEL_DIR = REPO_ROOT / "finetune" / "models" / "Qwen2.5-1.5B-Instruct"
+DEFAULT_BASE = str(LOCAL_MODEL_DIR) if (LOCAL_MODEL_DIR / "model.safetensors").exists() else "Qwen/Qwen2.5-1.5B-Instruct"
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--base", default="Qwen/Qwen2.5-1.5B-Instruct")
+    ap.add_argument("--base", default=DEFAULT_BASE)
     ap.add_argument("--adapter", default=str(REPO_ROOT / "finetune" / "checkpoints" / "final"))
     ap.add_argument("--out", default=str(REPO_ROOT / "finetune" / "merged" / "qwen2.5-1.5b-axon"))
     args = ap.parse_args()
