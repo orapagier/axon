@@ -147,7 +147,11 @@ async function resumeJob(j) {
 }
 
 async function removeJob(j) {
-  if (!confirm('Delete this job?')) return
+  const ok = await confirmDialog('This scheduled job will be permanently removed.', {
+    title: 'Delete Job',
+    confirmText: 'Delete',
+  })
+  if (!ok) return
   const r = await del(`/jobs/${j.id}/delete`)
   toast(r.ok ? 'Deleted' : r.error, r.ok)
   load()
