@@ -674,4 +674,162 @@ mod tests {
         let err = execute(&cfg, &Value::Null).unwrap_err();
         assert!(err.contains("cannot open spreadsheet"), "got: {err}");
     }
+
+    // ---- JSON ----
+
+    // An array is already the item list.
+    #[test]
+    fn json_array_source_text() {
+        let cfg = json!({ "operation": "json", "source": "text", "text": "[{\"a\":1},{\"a\":2}]" });
+        let out = execute(&cfg, &Value::Null).unwrap();
+        assert_eq!(out, json!([{ "a": 1 }, { "a": 2 }]));
+    }
+
+    // A bare object stays a single item, not wrapped in an array.
+    #[test]
+    fn json_object_stays_single_item() {
+        let cfg = json!({ "operation": "json", "source": "text", "text": "{\"a\":1}" });
+        let out = execute(&cfg, &Value::Null).unwrap();
+        assert_eq!(out, json!({ "a": 1 }));
+    }
+
+    // maxRows truncates a top-level array.
+    #[test]
+    fn json_max_rows_caps_array() {
+        let cfg = json!({
+            "operation": "json",
+            "source": "text",
+            "text": "[1,2,3,4]",
+            "maxRows": 2,
+        });
+        let out = execute(&cfg, &Value::Null).unwrap();
+        assert_eq!(out, json!([1, 2]));
+    }
+
+    // Base64 source works for JSON too.
+    #[test]
+    fn json_base64_source() {
+        let cfg = json!({
+            "operation": "json",
+            "source": "base64",
+            "data": STANDARD.encode("{\"ok\":true}"),
+        });
+        let out = execute(&cfg, &Value::Null).unwrap();
+        assert_eq!(out, json!({ "ok": true }));
+    }
+
+    // Malformed JSON is a clean error, not a panic.
+    #[test]
+    fn json_malformed_errors() {
+        let cfg = json!({ "operation": "json", "source": "text", "text": "{not json" });
+        let err = execute(&cfg, &Value::Null).unwrap_err();
+        assert!(err.contains("JSON parse error"), "got: {err}");
+    }
+
+    // ---- Text ----
+
+    // Default: the whole file as one string.
+    #[test]
+    fn text_whole_file_as_string() {
+        let cfg = json!({ "operation": "text", "source": "text", "text": "line one\nline two" });
+        let out = execute(&cfg, &Value::Null).unwrap();
+        assert_eq!(out, json!("line one\nline two"));
+    }
+
+    // splitLines breaks it into one item per line.
+    #[test]
+    fn text_split_lines() {
+        let cfg = json!({
+            "operation": "text",
+            "source": "text",
+            "text": "a\nb\nc",
+            "splitLines": true,
+        });
+        let out = execute(&cfg, &Value::Null).unwrap();
+        assert_eq!(out, json!(["a", "b", "c"]));
+    }
+
+    // maxRows caps split lines.
+    #[test]
+    fn text_split_lines_max_rows_caps() {
+        let cfg = json!({
+            "operation": "text",
+            "source": "text",
+            "text": "a\nb\nc",
+            "splitLines": true,
+            "maxRows": 2,
+        });
+        let out = execute(&cfg, &Value::Null).unwrap();
+        assert_eq!(out, json!(["a", "b"]));
+    }
+
+    // File source works for text too (previously CSV-only).
+    #[test]
+    fn text_file_source_reads_from_disk() {
+        let path = std::env::temp_dir().join(format!(
+            "axon_extract_text_{}_{}.txt",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, "hello file").unwrap();
+        let cfg =
+            json!({ "operation": "text", "source": "file", "filePath": path.to_string_lossy() });
+        let out = execute(&cfg, &Value::Null).unwrap();
+        std::fs::remove_file(&path).ok();
+        assert_eq!(out, json!("hello file"));
+    }
+
+    // ---- XML ----
+
+    // Delegates to the shared xml::parse_document parser.
+    #[test]
+    fn xml_parses_via_shared_parser() {
+        let cfg = json!({
+            "operation": "xml",
+            "source": "text",
+            "text": "<note><to>Ada</to></note>",
+        });
+        let out = execute(&cfg, &Value::Null).unwrap();
+        assert_eq!(out, json!({ "note": { "to": "Ada" } }));
+    }
+
+    // Base64 source works for XML too.
+    #[test]
+    fn xml_base64_source() {
+        let cfg = json!({
+            "operation": "xml",
+            "source": "base64",
+            "data": STANDARD.encode("<a>hi</a>"),
+        });
+        let out = execute(&cfg, &Value::Null).unwrap();
+        assert_eq!(out, json!({ "a": "hi" }));
+    }
+
+    // Malformed XML surfaces a clean, prefixed error.
+    #[test]
+    fn xml_malformed_errors() {
+        let cfg = json!({ "operation": "xml", "source": "text", "text": "<a><b></a>" });
+        let err = execute(&cfg, &Value::Null).unwrap_err();
+        assert!(err.starts_with("Extract from File:"), "got: {err}");
+    }
+
+    // A raw-text source now works for any non-binary operation.
+    #[test]
+    fn text_source_allowed_for_json_and_xml() {
+        let json_cfg = json!({ "operation": "json", "source": "text", "text": "[1]" });
+        assert_eq!(execute(&json_cfg, &Value::Null).unwrap(), json!([1]));
+        let xml_cfg = json!({ "operation": "xml", "source": "text", "text": "<a/>" });
+        assert_eq!(execute(&xml_cfg, &Value::Null).unwrap(), json!({ "a": "" }));
+    }
+
+    // A raw-text source is still rejected for the binary xlsx operation.
+    #[test]
+    fn text_source_still_rejected_for_xlsx() {
+        let cfg = json!({ "operation": "xlsx", "source": "text", "text": "a,b" });
+        let err = execute(&cfg, &Value::Null).unwrap_err();
+        assert!(err.contains("binary"), "got: {err}");
+    }
 }
