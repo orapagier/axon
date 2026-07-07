@@ -421,6 +421,34 @@ pub(crate) fn cfg_usize(config: &Value, key: &str) -> Option<usize> {
     })
 }
 
+#[cfg(test)]
+mod cfg_usize_tests {
+    use super::cfg_usize;
+    use serde_json::json;
+
+    // Regression: rss.rs once read maxItems via a raw `.as_u64()`, which
+    // silently returned None (and thus "no limit") whenever the number
+    // widget saved a string — exactly what the UI does in practice. Every
+    // caller must go through cfg_usize, so lock in the string path here.
+    #[test]
+    fn parses_string_encoded_number() {
+        let cfg = json!({ "maxItems": "3" });
+        assert_eq!(cfg_usize(&cfg, "maxItems"), Some(3));
+    }
+
+    #[test]
+    fn parses_json_number() {
+        let cfg = json!({ "maxItems": 3 });
+        assert_eq!(cfg_usize(&cfg, "maxItems"), Some(3));
+    }
+
+    #[test]
+    fn missing_key_is_none() {
+        let cfg = json!({});
+        assert_eq!(cfg_usize(&cfg, "maxItems"), None);
+    }
+}
+
 pub(crate) fn extract_items_for_loop(
     raw_items: &Value,
     array_path: Option<&str>,
