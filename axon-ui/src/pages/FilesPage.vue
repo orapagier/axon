@@ -58,7 +58,11 @@ async function upload(e) {
 }
 
 async function remove(dir, id) {
-  if (!confirm('Delete this file?')) return
+  const ok = await confirmDialog('This file will be permanently deleted. This action cannot be undone.', {
+    title: 'Delete File',
+    confirmText: 'Delete',
+  })
+  if (!ok) return
   try {
     const r = await del(`/files/${dir}/${id}`)
     toast(r.ok ? 'File deleted' : r.error, r.ok)
