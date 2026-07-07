@@ -573,6 +573,20 @@ pub(crate) fn direct_predecessor_outputs(
     grouped
 }
 
+/// Flatten a node's `direct_inputs` down to one primary-input `Value`, for the
+/// single-input node types (everything except Merge). Every input handle is
+/// realistically just `input_main_0` for these (only Merge declares a second
+/// handle), so this is the direct predecessor's output, or `Value::Null` if it
+/// has none (a root node) or its only predecessor was skipped.
+fn primary_input(direct_inputs: &std::collections::BTreeMap<String, Vec<Value>>) -> Value {
+    direct_inputs
+        .values()
+        .flatten()
+        .last()
+        .cloned()
+        .unwrap_or(Value::Null)
+}
+
 async fn execute_node_dispatch(
     node: &WorkflowNode,
     config: &Value,
