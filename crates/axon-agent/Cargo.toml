@@ -97,6 +97,11 @@ ego-tree       = "0.11"
 zip    = { version = "8", default-features = false, features = ["deflate"] }
 flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 
+# Node 3.3 RSS Read: parses Atom/RSS/JSON Feed bytes already fetched via the
+# shared reqwest client (fetch stays in http.rs — feed-rs never touches the
+# network itself). Default features only (no `sanitize`/ammonia needed).
+feed-rs = "2.4"
+
 # In-process MCP integration services (Google/Microsoft/Facebook/Instagram/CRM).
 rmcp           = { version = "0.1", features = ["server"] }
 axon-core      = { path = "../axon-core" }
