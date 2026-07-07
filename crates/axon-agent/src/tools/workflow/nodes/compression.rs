@@ -382,7 +382,8 @@ mod tests {
         let path = temp_path("a.txt");
         std::fs::write(&path, b"hello zip").unwrap();
         let input = descriptor(&path, "a.txt");
-        let out = execute(&json!({ "operation": "zip" }), &input).unwrap();
+        let cfg = json!({ "operation": "zip", "fileName": unique_name("single", "zip") });
+        let out = execute(&cfg, &input).unwrap();
         std::fs::remove_file(&path).ok();
 
         assert_eq!(out["mime_type"], json!("application/zip"));
