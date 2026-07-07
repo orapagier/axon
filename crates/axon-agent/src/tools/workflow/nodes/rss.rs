@@ -15,6 +15,7 @@
 //! `[]`, never a hard error.
 
 use crate::tools::http::{HttpRequestParams, HttpRequestTool};
+use crate::tools::workflow::cfg_usize;
 use feed_rs::model::Entry;
 use serde_json::{json, Value};
 
