@@ -1854,7 +1854,7 @@ impl WorkflowEngine {
                                     workflow_id,
                                     &run_id,
                                     &node_results,
-                                    &merge_inputs,
+                                    &direct_inputs,
                                     target_node_id.is_none(),
                                 )
                                 .await
@@ -1875,7 +1875,7 @@ impl WorkflowEngine {
                                 workflow_id,
                                 &run_id,
                                 &node_results,
-                                &merge_inputs,
+                                &direct_inputs,
                                 target_node_id.is_none(),
                             )
                             .await
@@ -1896,7 +1896,7 @@ impl WorkflowEngine {
                             workflow_id,
                             &run_id,
                             &node_results,
-                            &merge_inputs,
+                            &direct_inputs,
                             target_node_id.is_none(),
                         )
                         .await
@@ -1917,7 +1917,7 @@ impl WorkflowEngine {
                         workflow_id,
                         &run_id,
                         &node_results,
-                        &merge_inputs,
+                        &direct_inputs,
                         target_node_id.is_none(),
                     )
                     .await
@@ -4329,7 +4329,7 @@ mod multi_input_plumbing_tests {
             nr("b", 2, "success", json!({ "side": "right" })),
             nr("merge", 3, "success", json!({})), // the merge itself, ignored
         ];
-        let out = direct_predecessor_outputs("merge", &edges, &results);
+        let out = direct_predecessor_outputs("merge", &edges, &results, &std::collections::HashMap::new());
         assert_eq!(out["input_main_0"], vec![json!({ "side": "left" })]);
         assert_eq!(out["input_main_1"], vec![json!({ "side": "right" })]);
     }
@@ -4351,7 +4351,7 @@ mod multi_input_plumbing_tests {
                 json!({ "skipped": true, "reason": "Branch not taken" }),
             ),
         ];
-        let out = direct_predecessor_outputs("merge", &edges, &results);
+        let out = direct_predecessor_outputs("merge", &edges, &results, &std::collections::HashMap::new());
         assert_eq!(out["input_main_0"], vec![json!({ "kept": true })]);
         assert!(
             !out.contains_key("input_main_1"),
@@ -4370,9 +4370,44 @@ mod multi_input_plumbing_tests {
         ];
         // `stale` has an edge but produced no result this run (cache-only).
         let results = vec![nr("a", 1, "success", json!({ "kept": true }))];
-        let out = direct_predecessor_outputs("merge", &edges, &results);
+        let out = direct_predecessor_outputs("merge", &edges, &results, &std::collections::HashMap::new());
         assert_eq!(out["input_main_0"], vec![json!({ "kept": true })]);
         assert!(!out.contains_key("input_main_1"));
+    }
+
+    // (a2) Execute Step (single_node_ready): the target's ancestors never
+    // re-run this run, so they're absent from `this_run_results` entirely —
+    // but they ARE in the cache_fallback snapshot (`node_results`), and that
+    // must be consulted so a targeted run on Merge doesn't see an empty input.
+    #[test]
+    fn falls_back_to_cache_for_execute_step() {
+        let edges = vec![edge("a", "merge", Some("input_main_0"))];
+        let results: Vec<NodeResult> = vec![]; // nothing ran this run except the target
+        let mut cache = std::collections::HashMap::new();
+        cache.insert("a".to_string(), nr("a", 1, "success", json!({ "cached": true })));
+        let out = direct_predecessor_outputs("merge", &edges, &results, &cache);
+        assert_eq!(out["input_main_0"], vec![json!({ "cached": true })]);
+    }
+
+    // The cache fallback still respects skip semantics: a cached "skipped"
+    // ancestor (a not-taken branch, frozen from the run that populated the
+    // cache) must not resurrect as a live merge input on Execute Step.
+    #[test]
+    fn cache_fallback_still_drops_skipped() {
+        let edges = vec![edge("a", "merge", Some("input_main_0"))];
+        let results: Vec<NodeResult> = vec![];
+        let mut cache = std::collections::HashMap::new();
+        cache.insert(
+            "a".to_string(),
+            nr(
+                "a",
+                1,
+                "skipped",
+                json!({ "skipped": true, "reason": "Branch not taken" }),
+            ),
+        );
+        let out = direct_predecessor_outputs("merge", &edges, &results, &cache);
+        assert!(!out.contains_key("input_main_0"));
     }
 
     // Two predecessors feeding the SAME handle both come through, ordered by the
@@ -4387,7 +4422,7 @@ mod multi_input_plumbing_tests {
             nr("late", 5, "success", json!({ "n": 2 })),
             nr("early", 1, "success", json!({ "n": 1 })),
         ];
-        let out = direct_predecessor_outputs("merge", &edges, &results);
+        let out = direct_predecessor_outputs("merge", &edges, &results, &std::collections::HashMap::new());
         assert_eq!(
             out["input_main_0"],
             vec![json!({ "n": 1 }), json!({ "n": 2 })],
@@ -4405,7 +4440,7 @@ mod multi_input_plumbing_tests {
             nr("a", 1, "success", json!({ "a": 1 })),
             nr("b", 2, "success", json!({ "b": 2 })),
         ];
-        let out = direct_predecessor_outputs("merge", &edges, &results);
+        let out = direct_predecessor_outputs("merge", &edges, &results, &std::collections::HashMap::new());
         assert_eq!(
             out["input_main_0"],
             vec![json!({ "a": 1 }), json!({ "b": 2 })]
