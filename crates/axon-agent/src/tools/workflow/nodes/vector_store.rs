@@ -152,11 +152,7 @@ fn build_filter(conditions: &[Value]) -> Result<Option<Filter>, String> {
     }
     let mut must = Vec::with_capacity(conditions.len());
     for c in conditions {
-        let field = c
-            .get("field")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .trim();
+        let field = c.get("field").and_then(|v| v.as_str()).unwrap_or("").trim();
         if field.is_empty() {
             return Err("Vector Store filter: each row needs a Field".into());
         }
@@ -173,7 +169,11 @@ fn build_filter(conditions: &[Value]) -> Result<Option<Filter>, String> {
 
 /// Shape one search hit as `{ id, score, ...payload }` — payload fields spread
 /// first so the structural `id`/`score` keys always win a name collision.
-fn shape_point(id: String, score: Option<f32>, payload: HashMap<String, qdrant_client::qdrant::Value>) -> Value {
+fn shape_point(
+    id: String,
+    score: Option<f32>,
+    payload: HashMap<String, qdrant_client::qdrant::Value>,
+) -> Value {
     let mut obj: Map<String, Value> = Payload::from(payload).into();
     obj.insert("id".to_string(), Value::String(id));
     if let Some(s) = score {
@@ -345,7 +345,11 @@ async fn delete(config: &Value, qdrant: &Qdrant, collection: &str) -> Result<Val
     Err("Vector Store Delete: set an Id or at least one Filter row".into())
 }
 
-pub(crate) async fn execute(config: &Value, state: &AppState, input: &Value) -> Result<Value, String> {
+pub(crate) async fn execute(
+    config: &Value,
+    state: &AppState,
+    input: &Value,
+) -> Result<Value, String> {
     let operation = config
         .get("operation")
         .and_then(|v| v.as_str())
@@ -521,14 +525,26 @@ mod tests {
 
     #[test]
     fn condition_match_value_coerces_boolean_strings() {
-        assert_eq!(condition_match_value(&json!("true")).unwrap(), MatchValue::from(true));
-        assert_eq!(condition_match_value(&json!(false)).unwrap(), MatchValue::from(false));
+        assert_eq!(
+            condition_match_value(&json!("true")).unwrap(),
+            MatchValue::from(true)
+        );
+        assert_eq!(
+            condition_match_value(&json!(false)).unwrap(),
+            MatchValue::from(false)
+        );
     }
 
     #[test]
     fn condition_match_value_coerces_integer_strings() {
-        assert_eq!(condition_match_value(&json!("42")).unwrap(), MatchValue::from(42i64));
-        assert_eq!(condition_match_value(&json!(7)).unwrap(), MatchValue::from(7i64));
+        assert_eq!(
+            condition_match_value(&json!("42")).unwrap(),
+            MatchValue::from(42i64)
+        );
+        assert_eq!(
+            condition_match_value(&json!(7)).unwrap(),
+            MatchValue::from(7i64)
+        );
     }
 
     #[test]
