@@ -37,12 +37,18 @@ def load_dataset():
     print(f"Loaded {len(rows)} examples "
           f"({sum(1 for r in rows if r['source']=='real')} real, "
           f"{sum(1 for r in rows if r['source']=='synthetic')} synthetic)")
-    return Dataset.from_list(rows)
+    # tool_calls[].function.arguments is free-form JSON that differs per tool
+    # (gmail_send's args look nothing like shell_tool's) -- pyarrow's schema
+    # inference chokes trying to unify that into one struct type across rows,
+    # so each row is stored as a single JSON string column instead and parsed
+    # back out in render_text().
+    return Dataset.from_list([{"row_json": json.dumps(r)} for r in rows])
 
 
 def render_text(example, tokenizer):
+    row = json.loads(example["row_json"])
     return tokenizer.apply_chat_template(
-        example["messages"], tools=example.get("tools") or None,
+        row["messages"], tools=row.get("tools") or None,
         tokenize=False, add_generation_prompt=False,
     )
 
