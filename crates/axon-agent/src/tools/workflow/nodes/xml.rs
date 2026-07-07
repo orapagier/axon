@@ -171,12 +171,14 @@ fn parse_element(reader: &mut Reader<&[u8]>, attrs: Map<String, Value>) -> Resul
     Ok(build_value(attrs, text, children))
 }
 
-fn xml_to_json(config: &Value, input: &Value) -> Result<Value, String> {
-    let xml_str = source_xml(config, input)?;
-    let mut reader = Reader::from_str(&xml_str);
+/// Parse an XML document into `{ <rootTag>: value }` — the reusable core of
+/// `xmlToJson`. Also called directly by Extract from File's `xml` operation,
+/// which reads the document off disk/base64 rather than a config expression.
+pub(crate) fn parse_document(xml_str: &str) -> Result<Value, String> {
+    let mut reader = Reader::from_str(xml_str);
     reader.config_mut().trim_text(true);
 
-    let parsed = loop {
+    loop {
         match reader
             .read_event()
             .map_err(|e| format!("XML: parse error: {e}"))?
@@ -185,17 +187,22 @@ fn xml_to_json(config: &Value, input: &Value) -> Result<Value, String> {
                 let name = tag_name(e.name().local_name().as_ref())?;
                 let attrs = read_attrs(&e)?;
                 let value = parse_element(&mut reader, attrs)?;
-                break json!({ name: value });
+                return Ok(json!({ name: value }));
             }
             Event::Empty(e) => {
                 let name = tag_name(e.name().local_name().as_ref())?;
                 let attrs = read_attrs(&e)?;
-                break json!({ name: build_value(attrs, String::new(), Vec::new()) });
+                return Ok(json!({ name: build_value(attrs, String::new(), Vec::new()) }));
             }
             Event::Eof => return Err("XML: no root element found (empty document)".to_string()),
             _ => continue, // Decl, Comment, PI, DocType before the root
         }
-    };
+    }
+}
+
+fn xml_to_json(config: &Value, input: &Value) -> Result<Value, String> {
+    let xml_str = source_xml(config, input)?;
+    let parsed = parse_document(&xml_str)?;
 
     let include = config
         .get("includeInputFields")
