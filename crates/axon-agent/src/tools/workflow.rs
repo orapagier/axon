@@ -1784,7 +1784,8 @@ impl WorkflowEngine {
                                     // Sequential: honours stop-on-first-error (n8n parity)
                                     // unless continue_on_fail is set.
                                     for (idx, current) in units {
-                                        let (item_config, temp_results) = build_unit(idx, &current);
+                                        let (item_config, temp_results, iter_direct_inputs) =
+                                            build_unit(idx, &current);
                                         let (r, a) = execute_node_by_type(
                                             node,
                                             &item_config,
@@ -1793,7 +1794,7 @@ impl WorkflowEngine {
                                             workflow_id,
                                             run_id_ref,
                                             &temp_results,
-                                            &merge_inputs,
+                                            &iter_direct_inputs,
                                             // Iterated Wait: in-process sleep per item.
                                             false,
                                         )
