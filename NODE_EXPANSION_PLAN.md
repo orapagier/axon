@@ -224,8 +224,9 @@ entirely node code.
   dropped items disappear from the stream. Dispatch uses the Soma/`$json`
   primary-input convention (most recent predecessor by position); not in the
   no-retry list (pure transform). `NODE_TYPES.filter` entry in `nodes.js`.
-  - Remaining DoD item: manual canvas E2E (Phase 1 verification test 1 with a Filter
-    on a branch); logic is covered by unit tests + backend/UI build.
+  - **DoD complete.** Manual canvas E2E via Playwright browser automation
+    (2026-07-07): `Soma [amount:5,15,25] → Filter (amount > 10)` kept exactly
+    `[15, 25]`. Clean.
 - [x] **1.3 Aggregate / Summarize** (`aggregate` / *Summation*) — roll an array
   into one item. Executor `nodes/aggregate.rs` (13 table-driven tests). Each
   aggregation names an `operation` (`sum`/`avg`/`min`/`max`/`count`/`concat`/
