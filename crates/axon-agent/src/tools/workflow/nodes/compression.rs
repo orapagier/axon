@@ -300,7 +300,12 @@ pub(crate) fn execute(config: &Value, input: &Value) -> Result<Value, String> {
                 }
                 other => vec![other.clone()],
             };
-            let level = cfg_usize(config, "compressionLevel").map(|n| n.min(9) as i64);
+            // 0 means "use the library default" (per the UI hint) — the zip
+            // crate's Deflated compression_level rejects a literal 0, so only
+            // pass an explicit level through for 1-9.
+            let level = cfg_usize(config, "compressionLevel")
+                .filter(|&n| n > 0)
+                .map(|n| n.min(9) as i64);
             let bytes = build_zip(&items, level)?;
             let size = bytes.len();
             let file_name = crate::files::sanitize_filename(
