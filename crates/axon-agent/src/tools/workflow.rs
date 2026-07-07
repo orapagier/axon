@@ -689,6 +689,15 @@ async fn execute_node_dispatch(
             let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
             nodes::extract_from_file::execute(config, &input)
         }
+        "convertToFile" => {
+            // Inverse of extractFromFile: JSON → staged file + the standard
+            // binary descriptor. Same primary-input convention; the input is
+            // the default data source.
+            let mut vec: Vec<_> = node_results.values().cloned().collect();
+            vec.sort_by_key(|r| r.position);
+            let input = vec.last().map(|r| r.output.clone()).unwrap_or(Value::Null);
+            nodes::convert_to_file::execute(config, &input)
+        }
         "respondToWebhook" => {
             // Answer the live HTTP request the external-webhook handler is
             // holding open for this run (one-shot; no waiter ⇒ preview). Same

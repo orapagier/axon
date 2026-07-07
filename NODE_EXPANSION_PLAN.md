@@ -376,7 +376,33 @@ payload. These turn raw bytes into structured data.
   uses the Soma/`$json` primary-input convention; `NODE_TYPES.extractFromFile`
   in `nodes.js`.
   - Remaining DoD item: manual canvas E2E; logic covered by unit tests + build.
-- [ ] **2.5 Convert to File** — JSON → CSV/XLSX/text for export/attachments.
+- [x] **2.5 Convert to File** (`convertToFile`) — **JSON → CSV / JSON / text /
+  binary file**, the inverse of Digest. Executor `nodes/convert_to_file.rs`
+  (15 table-driven tests). **Zero new deps** — `csv` is already in tree (2.4);
+  JSON/text/base64 are std + serde. Four `operation`s: `csv` (a list of items →
+  one row each: object items keyed by a first-seen header union with missing
+  fields as empty cells, scalar items in a `value` column, a list of arrays
+  written positionally with no header; `delimiter` with the `tab` alias,
+  `headerRow`, optional UTF-8 `bom` so Excel opens non-ASCII text), `json`
+  (pretty by default, compact via `pretty: false`), `text` (a string as-is; a
+  list joins one item per line), `fromBase64` (n8n's "move base64 string to
+  file" — line-wrap tolerant, optional `mimeType`, default octet-stream).
+  Source is the `data` expression, falling back to the primary input
+  (list-node convention; `arrayPath` unwraps wrappers; empty list → empty
+  file, Null input → teaching error). Bytes stage via `files::stage_bytes`
+  (same-named file overwritten — newest only) and the **output mirrors Myelin
+  store/retrieve**: file facts + the standardized `binary` descriptor (both
+  key conventions), so Telegram send, Gmail attachments, SSH/Drive/OneDrive
+  uploads and Myelin consume it directly. `fileName` sanitized with a per-op
+  default; a missing extension is auto-appended (except fromBase64). **XLSX
+  output deliberately deferred** — writing it needs a new crate
+  (`rust_xlsxwriter` + `zip`) and CSV already opens in Excel; build it
+  alongside 2.6 Compression's `zip` when a workflow actually needs real
+  sheets. Dispatch uses the Soma/`$json` primary-input convention; not in the
+  no-retry list (idempotent overwrite). `NODE_TYPES.convertToFile` in
+  `nodes.js`.
+  - Remaining DoD item: manual canvas E2E; logic covered by unit tests +
+    backend/UI build.
 - [ ] **2.6 Compression** — zip/unzip/gzip for archives & attachments.
 - [ ] **2.7 XML / Markdown** — XML↔JSON and Markdown↔HTML converters.
 - [ ] **2.8 PDF Text** — split out from 2.4 deliberately: Rust PDF text extraction
