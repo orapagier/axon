@@ -837,7 +837,7 @@ async fn execute_node_by_type(
             workflow_id,
             run_id,
             node_results,
-            merge_inputs,
+            direct_inputs,
             durable_allowed,
         )
         .await
