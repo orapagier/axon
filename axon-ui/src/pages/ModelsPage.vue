@@ -106,7 +106,11 @@ async function disableAll() {
 }
 
 async function remove(m) {
-  if (!confirm(`Delete model "${m.name}"?`)) return
+  const ok = await confirmDialog(`"${m.name}" will be permanently removed.`, {
+    title: 'Delete Model',
+    confirmText: 'Delete',
+  })
+  if (!ok) return
   const r = await del(`/models/${encodeURIComponent(m.name)}`)
   toast(r.ok ? 'Deleted' : r.error, r.ok)
   load()
