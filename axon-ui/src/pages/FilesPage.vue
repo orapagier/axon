@@ -76,7 +76,11 @@ async function removeAll() {
   const allFilesCount = incoming.value.length + outgoing.value.length
 
   if (allFilesCount === 0) return
-  if (!confirm(`Delete all ${allFilesCount} files?`)) return
+  const ok = await confirmDialog(`All ${allFilesCount} files will be permanently deleted. This action cannot be undone.`, {
+    title: 'Delete All Files',
+    confirmText: 'Delete All',
+  })
+  if (!ok) return
 
   try {
     const r = await del('/files/delete-all')
