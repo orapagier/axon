@@ -319,6 +319,7 @@ dependencies = [
  "dirs",
  "dotenvy",
  "ego-tree",
+ "flate2",
  "futures",
  "hex",
  "hmac",
@@ -363,6 +364,7 @@ dependencies = [
  "tracing-subscriber",
  "urlencoding",
  "uuid",
+ "zip",
 ]
 
 [[package]]

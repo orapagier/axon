@@ -28,7 +28,7 @@
 use crate::tools::telegram::binary_descriptor;
 use crate::tools::workflow::cfg_usize;
 use base64::{engine::general_purpose::STANDARD, Engine};
-use flate2::{write::GzEncoder, Compression, GzBuilder};
+use flate2::{Compression, GzBuilder};
 use serde_json::{json, Value};
 use std::io::{Read, Write};
 use zip::write::SimpleFileOptions;
