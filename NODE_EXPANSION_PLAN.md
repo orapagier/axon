@@ -241,7 +241,9 @@ entirely node code.
   numeric set → `avg` null, `sum` 0; no aggregations → `{ count: N }`. Shares
   Filter's `to_items`/`field_value`/`arrayPath` convention. Dispatch uses the
   Soma/`$json` primary-input convention; `NODE_TYPES.aggregate` in `nodes.js`.
-  - Remaining DoD item: manual canvas E2E; logic covered by unit tests + build.
+  - **DoD complete.** Manual canvas E2E via Playwright (2026-07-07):
+    `Soma [amount:5,15,25] → Aggregate (sum amount → total)` produced
+    `{ total: 45 }`. Clean.
 - [x] **1.4 Split Out** (`splitOut`) — explode a list field into individual items
   (inverse of Aggregate). Executor `nodes/split_out.rs` (12 table-driven tests).
   Operates over the primary input as a list: for EACH source item it reads the array
