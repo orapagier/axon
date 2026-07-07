@@ -408,8 +408,10 @@ payload. These turn raw bytes into structured data.
   pins this to zero deps. Output mirrors `dateTime`/Soma (`outputField` +
   `includeInputFields`). Dispatch uses the Soma/`$json` primary-input convention;
   not in the no-retry list (pure transform). `NODE_TYPES.crypto` in `nodes.js`.
-  - Remaining DoD item: manual canvas E2E; logic covered by unit tests + backend/UI
-    build.
+  - **DoD complete.** Manual canvas E2E via Playwright (2026-07-07): `Hash`
+    (sha256/hex, default) of `"hello"` produced
+    `2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824` —
+    matches the standard SHA-256 test vector exactly. Clean.
 - [x] **2.3 HTML Extract** (`htmlExtract` / *Retina*) — CSS-selector extraction →
   turns "Synapse fetch a page" into real **web scraping**. Executor
   `nodes/html_extract.rs` (15 table-driven tests) over `scraper 0.27`
