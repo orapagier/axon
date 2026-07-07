@@ -202,7 +202,11 @@ async function saveSsh() {
   }
 }
 async function deleteSsh(name) {
-  if (!confirm(`Delete server "${name}"?`)) return
+  const ok = await confirmDialog(`"${name}" will be permanently removed from your servers.`, {
+    title: 'Delete Server',
+    confirmText: 'Delete',
+  })
+  if (!ok) return
   await del(`/ssh_servers/${encodeURIComponent(name)}`)
   loadSsh()
 }
