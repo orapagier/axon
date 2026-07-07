@@ -239,6 +239,7 @@ fn extract_json(raw: &str) -> Option<Map<String, Value>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn attr(name: &str, t: &str, desc: &str, required: bool) -> Value {
         json!({ "name": name, "type": t, "description": desc, "required": required })
