@@ -575,7 +575,7 @@ mod tests {
         );
         let out = shape_point("42".to_string(), Some(0.87), payload);
         assert_eq!(out["id"], json!("42"));
-        assert_eq!(out["score"], json!(0.87));
+        assert_eq!(out["score"], json!(0.87_f32));
         assert_eq!(out["text"], json!("hi"));
     }
 
