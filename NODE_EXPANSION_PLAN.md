@@ -540,8 +540,13 @@ Priority follows accordingly.
   Missing fields are `null`/`[]`, never an error — feeds are inconsistent about
   what they populate. `maxItems` caps entries (0 = no limit, `extractFromFile`'s
   convention). Not in the no-retry list (transient fetch failures should retry).
-  `NODE_TYPES.rss` in `nodes.js`.
-  - Remaining DoD item: manual canvas E2E; logic covered by unit tests + build.
+  `NODE_TYPES.rss` in `nodes.js`. Verified end-to-end against a real feed
+  (`hnrss.org/frontpage`) with a temporary live test — full fetch through the
+  shared HTTP client + feed-rs parse + shaping all confirmed correct, then
+  removed so the committed suite stays network-independent.
+  - Remaining DoD item: manual canvas E2E (drag the node onto a canvas, wire
+    it to Loop/Filter); executor logic covered by unit tests + a one-off live
+    fetch + backend/UI build.
 - [ ] **3.4 Email Trigger (IMAP)** — **demoted to demand-driven** (was priority 2):
   the Gmail trigger already covers most inbound-email automation, and this is the
   plan's only L-effort item. Build only when a real non-Gmail mailbox shows up.
