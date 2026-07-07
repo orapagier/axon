@@ -1641,16 +1641,15 @@ impl WorkflowEngine {
                             | "respondToWebhook"
                     );
 
-                // Task 1.0/1.1: a Merge node's inputs are its direct predecessors'
-                // outputs grouped by input handle, taken from THIS run's
-                // `ordered_results` (which excludes the prior-run cache seed and
-                // carries real skip entries). Empty for every non-merge node, so the
-                // scan only runs where it's needed.
-                let merge_inputs = if node.node_type == "merge" {
-                    direct_predecessor_outputs(&current_id, &edges, &ordered_results)
-                } else {
-                    std::collections::BTreeMap::new()
-                };
+                // This node's direct predecessors' outputs grouped by input handle,
+                // taken from THIS run's `ordered_results` (excludes the prior-run
+                // cache seed, carries real skip entries) with a `node_results`
+                // cache fallback for Execute Step (single_node_ready), where
+                // ancestors are never re-added to `ordered_results`. Merge reads
+                // this directly; every other node type flattens it via
+                // `primary_input` to resolve its primary input.
+                let direct_inputs =
+                    direct_predecessor_outputs(&current_id, &edges, &ordered_results, &node_results);
 
                 let (result, attempts): (Result<Value, String>, u32) = if can_iterate {
                     if let Some(source_node_id) = iteration_source_id {
