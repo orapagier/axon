@@ -2588,7 +2588,9 @@ impl WorkflowEngine {
         // 3.1: when the delivery came from an external webhook whose workflow
         // has a Respond to Webhook node, the handler's oneshot sender rides in
         // here and is registered keyed by the new run id.
-        respond_tx: Option<tokio::sync::oneshot::Sender<nodes::respond_to_webhook::WebhookHttpResponse>>,
+        respond_tx: Option<
+            tokio::sync::oneshot::Sender<nodes::respond_to_webhook::WebhookHttpResponse>,
+        >,
     ) -> anyhow::Result<String> {
         let run_id = uuid::Uuid::new_v4().to_string();
 

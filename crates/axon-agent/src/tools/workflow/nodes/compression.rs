@@ -263,14 +263,12 @@ fn do_gunzip(config: &Value, bytes: Vec<u8>, input: &Value) -> Result<Value, Str
 
     let default_name = embedded_name
         .or_else(|| {
-            find_file_descriptor(input).map(|(_, n)| {
-                n.strip_suffix(".gz").unwrap_or(&n).to_string()
-            })
+            find_file_descriptor(input)
+                .map(|(_, n)| n.strip_suffix(".gz").unwrap_or(&n).to_string())
         })
         .unwrap_or_else(|| "data".to_string());
-    let file_name = crate::files::sanitize_filename(
-        cfg_str(config, "fileName").unwrap_or(&default_name),
-    );
+    let file_name =
+        crate::files::sanitize_filename(cfg_str(config, "fileName").unwrap_or(&default_name));
     let mime = mime_guess::from_path(&file_name)
         .first_or_octet_stream()
         .to_string();
@@ -418,7 +416,10 @@ mod tests {
         let entries = do_unzip(zip_bytes).unwrap();
         let arr = entries.as_array().unwrap();
         assert_eq!(arr.len(), 3);
-        let names: Vec<&str> = arr.iter().map(|e| e["filename"].as_str().unwrap()).collect();
+        let names: Vec<&str> = arr
+            .iter()
+            .map(|e| e["filename"].as_str().unwrap())
+            .collect();
         assert_eq!(names, vec!["report.csv", "item_2.txt", "item_3.json"]);
         for entry in arr {
             let p = entry["binary"]["local_path"].as_str().unwrap();
@@ -447,7 +448,10 @@ mod tests {
         std::fs::remove_file(&zip_path).ok();
         let entries = do_unzip(zip_bytes).unwrap();
         let arr = entries.as_array().unwrap();
-        let names: Vec<&str> = arr.iter().map(|e| e["filename"].as_str().unwrap()).collect();
+        let names: Vec<&str> = arr
+            .iter()
+            .map(|e| e["filename"].as_str().unwrap())
+            .collect();
         assert_eq!(names, vec!["same.txt", "same_2.txt"]);
         for entry in arr {
             let p = entry["binary"]["local_path"].as_str().unwrap();
@@ -484,7 +488,10 @@ mod tests {
 
         let restored = do_gunzip(&json!({}), bytes, &Value::Null).unwrap();
         assert_eq!(restored["filename"], json!("data"));
-        let restored_path = restored["binary"]["local_path"].as_str().unwrap().to_string();
+        let restored_path = restored["binary"]["local_path"]
+            .as_str()
+            .unwrap()
+            .to_string();
         assert_eq!(
             std::fs::read_to_string(&restored_path).unwrap(),
             "hello gzip"
@@ -508,8 +515,14 @@ mod tests {
         std::fs::remove_file(&gz_path).ok();
         let restored = do_gunzip(&json!({}), bytes, &Value::Null).unwrap();
         assert_eq!(restored["filename"], json!("notes.txt"));
-        let restored_path = restored["binary"]["local_path"].as_str().unwrap().to_string();
-        assert_eq!(std::fs::read_to_string(&restored_path).unwrap(), "file body");
+        let restored_path = restored["binary"]["local_path"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(
+            std::fs::read_to_string(&restored_path).unwrap(),
+            "file body"
+        );
         std::fs::remove_file(&restored_path).ok();
     }
 
@@ -524,7 +537,10 @@ mod tests {
         let restored =
             do_gunzip(&json!({ "fileName": "renamed.bin" }), bytes, &Value::Null).unwrap();
         assert_eq!(restored["filename"], json!("renamed.bin"));
-        let restored_path = restored["binary"]["local_path"].as_str().unwrap().to_string();
+        let restored_path = restored["binary"]["local_path"]
+            .as_str()
+            .unwrap()
+            .to_string();
         std::fs::remove_file(&restored_path).ok();
     }
 
