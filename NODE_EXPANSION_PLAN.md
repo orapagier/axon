@@ -553,8 +553,14 @@ payload. These turn raw bytes into structured data.
   - Both dispatch through the Soma/`$json` primary-input convention; neither is
     in the no-retry list (pure transforms). `NODE_TYPES.xml` and
     `NODE_TYPES.markdown` in `nodes.js`.
-  - Remaining DoD item: manual canvas E2E; logic covered by unit tests +
-    backend/UI build.
+  - **DoD complete.** Manual canvas E2E via Playwright (2026-07-07):
+    - `xml`: full round trip — `xmlToJson` on
+      `<person><name>Ada</name><age>30</age></person>` produced
+      `{ person: { name: "Ada", age: "30" } }`; chaining a second `xml` node
+      set to `jsonToXml` (JSON field blank → falls back to that parsed
+      object) reproduced a well-formed `<person>` document. Clean.
+    - `markdown`: `toHtml` on `"# Hello\n\nSome **bold** text."` produced
+      `<h1>Hello</h1>\n<p>Some <strong>bold</strong> text.</p>\n`. Clean.
 - [ ] **2.8 PDF Text** — split out from 2.4 deliberately: Rust PDF text extraction
   (`pdf-extract`, `lopdf`) is **flaky on real-world PDFs** (panics, garbled text on
   scanned/complex layouts). Own line item so it can't stall the spreadsheet path;
