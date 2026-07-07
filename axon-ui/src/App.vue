@@ -150,8 +150,13 @@ function reload() {
   window.location.reload()
 }
 
-function logout() {
-  if (!window.confirm('Logout from dashboard?')) return
+async function logout() {
+  const ok = await confirmDialog('You will need to sign in again to access the dashboard.', {
+    title: 'Logout',
+    confirmText: 'Logout',
+    danger: false,
+  })
+  if (!ok) return
   localStorage.removeItem('AXON_MASTER_KEY')
   isAuthenticated.value = false
   window.location.reload()
