@@ -29,6 +29,7 @@ pub(crate) mod fovea;
 pub(crate) mod github;
 pub(crate) mod homeostasis;
 pub(crate) mod html_extract;
+pub(crate) mod information_extractor;
 pub(crate) mod iterate;
 pub(crate) mod markdown;
 pub(crate) mod mcp;
