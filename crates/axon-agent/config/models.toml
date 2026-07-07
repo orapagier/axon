@@ -497,6 +497,26 @@ priority   = 5
 timeout_secs = 60
 enabled    = true
 
+# ── LOCAL FINE-TUNE (experimental, fully inert until explicitly requested) ──
+#
+# Fine-tuned Qwen2.5-1.5B-Instruct (finetune/ pipeline), running locally via
+# Ollama (localhost, NOT ollama.com cloud). role is non-empty so this is
+# invisible to the default general pool / any P1-P5 routing (see
+# router/model_router.rs pool_indices vs general_pool) -- opt-in only, until
+# eval results (finetune/scripts/06_eval_tool_calls.py) justify promoting it
+# via an explicit new call site.
+
+[[models]]
+name       = "local-qwen25-1.5b-finetune"
+provider   = "ollama"
+model_id   = "axon-qwen2.5-1.5b-local"
+api_key    = ""
+base_url   = "http://localhost:11434"
+role       = "local_finetune_experimental"
+priority   = 9
+timeout_secs = 30
+enabled    = true
+
 # ── PHASE-AWARE ROLES (agent loop) ──────────────────────────────────────────
 #
 # The agent loop routes each turn to a role (crates/axon-agent/src/agent/loop.rs):
