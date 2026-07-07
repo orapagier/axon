@@ -253,7 +253,12 @@ async function deleteWs(id) {
   loadWs()
 }
 async function resetWsQuotas() {
-  if (!confirm('Reset all monthly search counters?')) return
+  const ok = await confirmDialog('All monthly search counters will be reset to zero.', {
+    title: 'Reset Quotas',
+    confirmText: 'Reset',
+    danger: false,
+  })
+  if (!ok) return
   const r = await post('/websearch/reset', {})
   toast(r.ok ? 'Quotas reset' : r.error, r.ok)
   loadWs()
