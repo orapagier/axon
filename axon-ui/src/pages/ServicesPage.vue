@@ -309,7 +309,11 @@ async function saveCredential() {
 }
 
 async function deleteCredential(id) {
-  if (!confirm('Delete this credential?')) return
+  const ok = await confirmDialog('This credential will be permanently deleted.', {
+    title: 'Delete Credential',
+    confirmText: 'Delete',
+  })
+  if (!ok) return
   const r = await del(`/credentials/${id}`)
   toast(r.ok ? 'Deleted' : r.error, r.ok)
   loadCredentials()
