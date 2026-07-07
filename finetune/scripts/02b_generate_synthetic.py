@@ -16,10 +16,13 @@ user's real connected accounts, which this script must never do.
 Reads a GEMINI_API_KEY_* value from crates/axon-agent/.env (first match)
 and calls Gemini's OpenAI-compatible endpoint directly.
 """
+import itertools
 import json
 import os
 import random
 import re
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -106,14 +109,16 @@ def load_env_key_candidates():
     return keys
 
 
-def find_working_key(candidates):
-    """Some keys in .env may be revoked/invalid (P2 tier round-robins 9 of
-    them) -- probe with a trivial call until one authenticates, rather than
-    assuming the first one found works."""
+def find_working_keys(candidates):
+    """Some keys in .env may be revoked/invalid, and even valid free-tier
+    keys hit low per-key RPM limits fast (Axon's own P2 tier round-robins
+    9 of them for exactly this reason) -- probe all candidates and keep
+    every one that authenticates, so calls can round-robin across them."""
     probe_body = json.dumps({
         "model": GEMINI_MODEL,
         "messages": [{"role": "user", "content": "reply with the single word: ok"}],
     }).encode("utf-8")
+    working = []
     for key in candidates:
         req = urllib.request.Request(
             GEMINI_URL, data=probe_body,
@@ -121,10 +126,14 @@ def find_working_key(candidates):
         )
         try:
             with urllib.request.urlopen(req, timeout=15):
-                return key
+                working.append(key)
         except Exception:
             continue
-    raise SystemExit(f"None of the {len(candidates)} GEMINI_API_KEY* candidates authenticated.")
+        time.sleep(1)  # stay polite to the free-tier RPM limit while probing
+    if not working:
+        raise SystemExit(f"None of the {len(candidates)} GEMINI_API_KEY* candidates authenticated.")
+    print(f"{len(working)}/{len(candidates)} Gemini keys authenticated, will round-robin across them")
+    return working
 
 
 def load_tools_by_name():
@@ -164,7 +173,7 @@ If no tool call is needed, use "tool_calls": [].
 """
 
 
-def call_gemini(api_key, task, tool_defs):
+def call_gemini(key_cycle, task, tool_defs, retries=4):
     tool_list_text = "\n".join(
         f"- {t['name']}: {t['description']}" for t in tool_defs
     )
@@ -175,19 +184,31 @@ def call_gemini(api_key, task, tool_defs):
         "temperature": 0.8,
         "response_format": {"type": "json_object"},
     }).encode("utf-8")
-    req = urllib.request.Request(
-        GEMINI_URL, data=body,
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        payload = json.loads(resp.read().decode("utf-8"))
-    return payload["choices"][0]["message"]["content"]
+
+    last_err = None
+    for attempt in range(retries):
+        api_key = next(key_cycle)
+        req = urllib.request.Request(
+            GEMINI_URL, data=body,
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+            return payload["choices"][0]["message"]["content"]
+        except urllib.error.HTTPError as e:
+            last_err = e
+            if e.code == 429:
+                time.sleep(2 * (attempt + 1))  # back off and try the next key in the cycle
+                continue
+            raise
+    raise last_err
 
 
-def build_example(task, candidate_names, tools_by_name, api_key):
+def build_example(task, candidate_names, tools_by_name, key_cycle):
     tool_defs = [tools_by_name[n] for n in candidate_names if n in tools_by_name]
     search_def = tools_by_name.get("search_tools")
-    raw = call_gemini(api_key, task, tool_defs)
+    raw = call_gemini(key_cycle, task, tool_defs)
     gen = json.loads(raw)
 
     example_tools = []
@@ -221,7 +242,8 @@ def build_example(task, candidate_names, tools_by_name, api_key):
 
 
 def main():
-    api_key = find_working_key(load_env_key_candidates())
+    working_keys = find_working_keys(load_env_key_candidates())
+    key_cycle = itertools.cycle(working_keys)
     tools_by_name = load_tools_by_name()
     random.shuffle(TASKS)
 
@@ -229,11 +251,12 @@ def main():
     errors = []
     for task, candidates in TASKS:
         try:
-            examples.append(build_example(task, candidates, tools_by_name, api_key))
+            examples.append(build_example(task, candidates, tools_by_name, key_cycle))
             print(f"ok: {task[:60]}")
         except Exception as e:
             errors.append((task, str(e)))
             print(f"FAILED: {task[:60]} -- {e}")
+        time.sleep(1)  # spread load across the key pool instead of bursting
 
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(OUT_PATH, "w", encoding="utf-8") as f:
