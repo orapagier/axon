@@ -4,8 +4,14 @@
 #
 # The message is produced by the `claude` CLI in headless mode (`-p`), which
 # reuses Claude Code's existing OAuth auth — no ANTHROPIC_API_KEY required.
-# If generation yields nothing usable, we fall back to a timestamp so the
-# backup never gets skipped.
+# --safe-mode skips CLAUDE.md/hooks/MCP/plugins so the nested call can't get
+# steered into a tool call that stalls on a permission prompt with no TTY to
+# answer it, and a hard timeout bounds worst-case hook duration. stderr and
+# the exit code are logged to auto-backup.log (overwritten each run) so a
+# failure leaves evidence instead of just silently falling back.
+# If generation still yields nothing usable, we fall back to a message
+# derived from `git diff --stat` so even the fallback describes what
+# changed, not just when.
 #
 # AXON_AUTOBACKUP guards against recursion: the nested `claude -p` below runs
 # in this same project and would otherwise fire this Stop hook again forever.
@@ -21,6 +27,8 @@ git add -A
 # Nothing staged -> nothing to back up.
 git diff-index --quiet HEAD && exit 0
 
+log_file="${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/auto-backup.log"
+
 # Compact context for the model: filename stat + a bounded slice of the diff
 # (keeps token cost low on large changes).
 diff_ctx=$(
@@ -33,10 +41,13 @@ diff_ctx=$(
 # straight into head/sed — the model sometimes wraps the message in ``` code
 # fences, and we need the whole reply to strip them reliably.)
 raw=$(
-  printf '%s' "$diff_ctx" | AXON_AUTOBACKUP=1 claude -p --model haiku \
+  printf '%s' "$diff_ctx" | AXON_AUTOBACKUP=1 timeout 25 claude -p --model haiku \
+    --safe-mode --no-session-persistence \
     "Write a single-line Conventional Commits message (format: type(scope): summary, all lowercase, max 70 chars) summarizing this staged git diff. Output ONLY the message text — no quotes, no markdown, no code fences." \
-    2>/dev/null
+    2>"$log_file"
 )
+echo "exit=$?" >>"$log_file"
+
 # Drop any ``` fence lines, take the first non-blank line, trim whitespace and
 # any surrounding quotes/backticks.
 msg=$(printf '%s\n' "$raw" \
@@ -44,8 +55,14 @@ msg=$(printf '%s\n' "$raw" \
   | grep -m1 -E '[^[:space:]]' \
   | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^["`]*//' -e 's/["`]*$//')
 
-# Fallback if the model returned nothing usable.
-[ -z "$msg" ] && msg="claude: auto-backup $(date +%H:%M:%S)"
+# Fallback if the model returned nothing usable: derive a message from the
+# diff itself instead of a bare timestamp.
+if [ -z "$msg" ]; then
+  names=$(git diff --cached --name-only | head -5 | paste -sd, -)
+  extra=$(( $(git diff --cached --name-only | wc -l) - 5 ))
+  [ "$extra" -gt 0 ] && names="$names (+$extra more)"
+  msg="chore: update $names"
+fi
 
 git commit -m "$msg" >/dev/null 2>&1
 git push origin HEAD >/dev/null 2>&1 || true
