@@ -30,6 +30,14 @@ const NON_AGENT_INTERNAL_TOOLS: &[&str] = &[
     "whatsapp",
 ];
 
+/// The trigger-only subset of [`NON_AGENT_INTERNAL_TOOLS`]: these have no
+/// `handle_internal` dispatch arm at all, so calling them always fails with
+/// "Unknown internal tool". Unlike `telegram`/`whatsapp` alongside them (which
+/// dispatch fine and are excluded purely for policy reasons), these stay
+/// excluded even from an explicit per-node allow-list — see
+/// [`ToolRegistry::all_enabled_for_allowed`].
+const NON_DISPATCHABLE_TOOLS: &[&str] = &["telegram_trigger", "whatsapp_trigger"];
+
 /// Social-platform *write* tools that perform outward-facing, public,
 /// hard-to-reverse actions (publish/edit/delete posts, reply/moderate comments,
 /// react, send DMs, edit Page settings). This is the standing pattern for social
