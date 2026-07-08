@@ -970,11 +970,9 @@ pub(crate) async fn run_inner(
             (filtered_initial.clone(), tier_initial.clone(), names)
         } else {
             let (mut f, info) = if let Some(ref allowed) = ctx.allowed_tools {
-                let filtered: Vec<_> = all_tools
-                    .iter()
-                    .filter(|t| allowed.contains(&t.name))
-                    .cloned()
-                    .collect();
+                // Resolved against the full registry, not the agent-gated
+                // `all_tools` above — see `all_enabled_for_allowed`.
+                let filtered = state.tools.all_enabled_for_allowed(allowed).await;
                 let mut route_info = serde_json::Map::new();
                 route_info.insert(
                     "tier".to_string(),
