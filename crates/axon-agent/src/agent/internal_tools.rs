@@ -158,9 +158,9 @@ pub(crate) async fn handle_internal(
         // share the same shape as the node `config` they read from. We first fill
         // in stored credentials (the agent doesn't carry secrets), then lift the
         // String-typed errors into anyhow.
-        "telegram" => {
+        name if name.starts_with("telegram_") => {
             let args = merge_stored_credentials("telegram", args, &state);
-            crate::tools::telegram::execute_telegram_node(&args)
+            crate::tools::telegram::execute_split_tool(name, &args)
                 .await
                 .map_err(|e| anyhow::anyhow!(e))
         }
