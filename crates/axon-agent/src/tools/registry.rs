@@ -15,19 +15,43 @@ use tokio::sync::RwLock;
 ///     one-shot action, so they have no `handle_internal` arm — offering them
 ///     would let the agent pick a tool that fails with "Unknown internal tool".
 ///
-///   • Messaging tools (`telegram`/`whatsapp`) DO have `handle_internal` arms,
-///     but by design messaging platforms are user↔agent chat gateways (the
-///     `messaging/` module) and any agent-initiated sending is expressed as a
-///     workflow node — never an agent send-tool. The arms stay for the workflow
-///     generic-tool-node path; only the agent is denied them here.
+///   • Messaging tools (`telegram_*`/`whatsapp`) DO have `handle_internal`
+///     arms, but by design messaging platforms are user↔agent chat gateways
+///     (the `messaging/` module) and any agent-initiated sending is expressed
+///     as a workflow node — never an agent send-tool by default. The arms
+///     stay for the workflow generic-tool-node path; only the agent is denied
+///     them here. A Cortex node can still be granted one individually via its
+///     `tools` picklist — see [`ToolRegistry::all_enabled_for_allowed`].
 ///
 /// Either way the full set is still served to the UI via [`all`], so their
 /// workflow-node counterparts (dispatched in `workflow.rs`) are unaffected.
 const NON_AGENT_INTERNAL_TOOLS: &[&str] = &[
     "telegram_trigger",
     "whatsapp_trigger",
-    "telegram",
     "whatsapp",
+    // Split per-operation Telegram tools (see `telegram::split_tool_definitions`)
+    // — one name per Bot API action, so a Cortex node can grant exactly one.
+    "telegram_send_message",
+    "telegram_send_photo",
+    "telegram_send_video",
+    "telegram_send_audio",
+    "telegram_send_document",
+    "telegram_send_animation",
+    "telegram_send_sticker",
+    "telegram_send_location",
+    "telegram_send_media_group",
+    "telegram_edit_message",
+    "telegram_delete_message",
+    "telegram_pin_message",
+    "telegram_unpin_message",
+    "telegram_get_chat",
+    "telegram_get_chat_administrators",
+    "telegram_get_chat_member",
+    "telegram_set_chat_title",
+    "telegram_set_chat_description",
+    "telegram_send_chat_action",
+    "telegram_leave_chat",
+    "telegram_answer_callback_query",
 ];
 
 /// The trigger-only subset of [`NON_AGENT_INTERNAL_TOOLS`]: these have no
