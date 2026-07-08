@@ -945,3 +945,42 @@ pub(crate) async fn execute_http_node(config: &Value, state: &AppState) -> Resul
         "page_count": pages.len(),
     }))
 }
+
+#[cfg(test)]
+mod css_extraction_tests {
+    use super::apply_css_extraction;
+    use serde_json::json;
+
+    // Off by default: the response passes through untouched.
+    #[test]
+    fn css_extract_off_leaves_response_unchanged() {
+        let config = json!({});
+        let response = json!({ "status": 200, "body": "<h1>Hi</h1>" });
+        let out = apply_css_extraction(&config, response.clone()).unwrap();
+        assert_eq!(out, response);
+    }
+
+    // On: scrapes the response body and merges the extracted keys onto the
+    // response object, keeping status/headers/body alongside them.
+    #[test]
+    fn css_extract_on_merges_onto_response() {
+        let config = json!({
+            "cssExtract": true,
+            "extractionValues": { "parameters": [
+                { "key": "title", "cssSelector": "h1" }
+            ]},
+        });
+        let response = json!({ "status": 200, "body": "<h1>Hello</h1>" });
+        let out = apply_css_extraction(&config, response).unwrap();
+        assert_eq!(out["status"], json!(200));
+        assert_eq!(out["title"], json!("Hello"));
+    }
+
+    // A rule error (e.g. no extraction rows configured) surfaces as a node error.
+    #[test]
+    fn css_extract_on_without_rules_errors() {
+        let config = json!({ "cssExtract": true });
+        let response = json!({ "status": 200, "body": "<h1>Hi</h1>" });
+        assert!(apply_css_extraction(&config, response).is_err());
+    }
+}
