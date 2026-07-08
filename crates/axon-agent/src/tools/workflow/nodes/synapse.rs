@@ -227,6 +227,30 @@ fn header_query_value(value: &Value) -> Value {
     }
 }
 
+/// When `cssExtract` is on, scrape the response with the same CSS-selector
+/// engine as the HTML Extract node — saves wiring a separate HTML Extract node
+/// after a scrape-only Synapse call. Reuses `html_extract::execute` directly:
+/// Synapse's config carries the same `extractionValues`/`trimValues` field
+/// names, and since it has no `html` field of its own, `html_extract`'s
+/// html-source probing falls through to the response we pass as its `input`
+/// (which is exactly the `{ status, body, headers, ... }` shape it already
+/// knows how to read `body` from). `includeInputFields` is forced on so the
+/// extracted keys land merged onto the response, not replacing it.
+fn apply_css_extraction(config: &Value, response: Value) -> Result<Value, String> {
+    if !config
+        .get("cssExtract")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        return Ok(response);
+    }
+    let mut extract_cfg = config.clone();
+    if let Some(o) = extract_cfg.as_object_mut() {
+        o.insert("includeInputFields".to_string(), json!(true));
+    }
+    super::html_extract::execute(&extract_cfg, &response)
+}
+
 pub(crate) async fn execute_http_node(config: &Value, state: &AppState) -> Result<Value, String> {
     let method = config
         .get("method")
