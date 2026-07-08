@@ -314,7 +314,12 @@ fn internal_tools() -> Vec<ToolDefinition> {
             image_tool_parameters(),
             vec!["action".into()],
         ),
-    ]
+    ];
+    // Split per-operation so a Cortex node's `tools` picklist can grant exactly
+    // one Telegram action (e.g. sendMessage) without also granting the rest
+    // (deleteMessage, setChatTitle, leaveChat, ...) — see `split_tool_definitions`.
+    tools.extend(crate::tools::telegram::split_tool_definitions());
+    tools
 }
 
 fn image_tool_parameters() -> serde_json::Value {
