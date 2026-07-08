@@ -668,12 +668,29 @@ async fn execute_node_dispatch(
             execute_js_node(raw_script, node, &vec, workflow_id, run_id).await
         }
         "cortex" => nodes::cortex::execute_cortex_node(config, state, workflow_id, &node.id).await,
-        "classifier" => nodes::classifier::execute(config, state, workflow_id, &node.id).await,
-        "informationExtractor" => {
-            nodes::information_extractor::execute(config, state, workflow_id, &node.id).await
+        // Text Analysis: one node, four operations — each still dispatches to its
+        // own already-tested executor module (classifier/information_extractor/
+        // summarize/sentiment), just routed by an `operation` field instead of by
+        // separate node types. Default 'classify' matches the flagship of the four.
+        "textAnalysis" => {
+            let operation = config
+                .get("operation")
+                .and_then(|v| v.as_str())
+                .unwrap_or("classify");
+            match operation {
+                "extract" => {
+                    nodes::information_extractor::execute(config, state, workflow_id, &node.id)
+                        .await
+                }
+                "summarize" => {
+                    nodes::summarize::execute(config, state, workflow_id, &node.id).await
+                }
+                "sentiment" => {
+                    nodes::sentiment::execute(config, state, workflow_id, &node.id).await
+                }
+                _ => nodes::classifier::execute(config, state, workflow_id, &node.id).await,
+            }
         }
-        "summarize" => nodes::summarize::execute(config, state, workflow_id, &node.id).await,
-        "sentiment" => nodes::sentiment::execute(config, state, workflow_id, &node.id).await,
         "fovea" => nodes::fovea::execute(config, state).await,
         t if t == "mcp" || t.starts_with("mcp_") => nodes::mcp::execute(config, state).await,
         "wait" => nodes::wait::execute(config, state, workflow_id, run_id, durable_allowed).await,
