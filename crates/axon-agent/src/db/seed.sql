@@ -96,6 +96,12 @@ INSERT OR IGNORE INTO settings VALUES
     ('workflow.webhook_dedup_window_secs',    '0',    'int',  'Seconds to dedup generic webhooks by body hash when they send no Idempotency-Key/event_id (0 = off; explicit-key dedup is always on)', 'workflow', datetime('now')),
     ('retention.trigger_dedup_days',          '7',    'int',  'Days of trigger idempotency keys (webhook/github redelivery dedup) kept before pruning', 'retention', datetime('now'));
 
+-- Scheduled local backups of axon.db/crm.db (crate::maintenance::run_backup).
+-- These are on-instance snapshots only, not off-site disaster recovery.
+INSERT OR IGNORE INTO settings VALUES
+    ('backup.enabled',        'true', 'bool', 'Back up axon.db and crm.db daily to the Files page directory (local, on-instance — off-site copy is the operator''s responsibility)', 'backup', datetime('now')),
+    ('backup.retention_days', '14',   'int',  'Days to keep local database backups before pruning', 'backup', datetime('now'));
+
 -- Embeddings provider (semantic tool-router tier + long-term memory recall).
 -- One OpenAI-compatible code path; switching providers is a settings change:
 --   Google: https://generativelanguage.googleapis.com/v1beta/openai + gemini-embedding-001

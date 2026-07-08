@@ -21,60 +21,56 @@ impl InstagramService {
 
     pub fn tool_list() -> Vec<Tool> {
         vec![
-            Tool {
-                name: "ig_get_account".into(),
-                description:
-                    "Get Instagram Business Account info (username, bio, followers, etc.).".into(),
-                input_schema: schema!({}, []),
-            },
-            Tool {
-                name: "ig_list_media".into(),
-                description: "List media (posts, videos) on Instagram.".into(),
-                input_schema: schema!({"limit":{"type":"integer","default":10}}, []),
-            },
-            Tool {
-                name: "ig_create_image_post".into(),
-                description:
-                    "Create an Instagram image post with an image URL or local image path.".into(),
-                input_schema: schema!({"image_url":{"type":"string"},"image_path":{"type":"string"},"caption":{"type":"string"}}, ["caption"]),
-            },
-            Tool {
-                name: "ig_create_video_reel".into(),
-                description: "Create an Instagram video reel with a video URL or local video path."
-                    .into(),
-                input_schema: schema!({"video_url":{"type":"string"},"video_path":{"type":"string"},"caption":{"type":"string"}}, ["caption"]),
-            },
-            Tool {
-                name: "ig_list_comments".into(),
-                description: "List comments on an Instagram media object.".into(),
-                input_schema: schema!({"media_id":{"type":"string"},"limit":{"type":"integer","default":10}}, ["media_id"]),
-            },
-            Tool {
-                name: "ig_reply_to_comment".into(),
-                description: "Reply to an Instagram comment.".into(),
-                input_schema: schema!({"comment_id":{"type":"string"},"message":{"type":"string"}}, ["comment_id","message"]),
-            },
-            Tool {
-                name: "ig_get_insights".into(),
-                description: "Get Instagram account insights (impressions, reach, etc.).".into(),
-                input_schema: schema!({}, []),
-            },
-            Tool {
-                name: "ig_list_conversations".into(),
-                description: "List Instagram DM conversations.".into(),
-                input_schema: schema!({"limit":{"type":"integer","default":10}}, []),
-            },
-            Tool {
-                name: "ig_get_conversation".into(),
-                description: "Get message history for an Instagram conversation.".into(),
-                input_schema: schema!({"conversation_id":{"type":"string"},"limit":{"type":"integer","default":10}}, ["conversation_id"]),
-            },
-            Tool {
-                name: "ig_send_message".into(),
-                description: "Send an Instagram DM text message to a user by their PSID/IGID."
-                    .into(),
-                input_schema: schema!({"recipient_id":{"type":"string"},"message":{"type":"string"}}, ["recipient_id","message"]),
-            },
+            Tool::new(
+                "ig_get_account",
+                "Get Instagram Business Account info (username, bio, followers, etc.).",
+                schema!({}, []),
+            ),
+            Tool::new(
+                "ig_list_media",
+                "List media (posts, videos) on Instagram.",
+                schema!({"limit":{"type":"integer","default":10}}, []),
+            ),
+            Tool::new(
+                "ig_create_image_post",
+                "Create an Instagram image post with an image URL or local image path.",
+                schema!({"image_url":{"type":"string"},"image_path":{"type":"string"},"caption":{"type":"string"}}, ["caption"]),
+            ),
+            Tool::new(
+                "ig_create_video_reel",
+                "Create an Instagram video reel with a video URL or local video path.",
+                schema!({"video_url":{"type":"string"},"video_path":{"type":"string"},"caption":{"type":"string"}}, ["caption"]),
+            ),
+            Tool::new(
+                "ig_list_comments",
+                "List comments on an Instagram media object.",
+                schema!({"media_id":{"type":"string"},"limit":{"type":"integer","default":10}}, ["media_id"]),
+            ),
+            Tool::new(
+                "ig_reply_to_comment",
+                "Reply to an Instagram comment.",
+                schema!({"comment_id":{"type":"string"},"message":{"type":"string"}}, ["comment_id","message"]),
+            ),
+            Tool::new(
+                "ig_get_insights",
+                "Get Instagram account insights (impressions, reach, etc.).",
+                schema!({}, []),
+            ),
+            Tool::new(
+                "ig_list_conversations",
+                "List Instagram DM conversations.",
+                schema!({"limit":{"type":"integer","default":10}}, []),
+            ),
+            Tool::new(
+                "ig_get_conversation",
+                "Get message history for an Instagram conversation.",
+                schema!({"conversation_id":{"type":"string"},"limit":{"type":"integer","default":10}}, ["conversation_id"]),
+            ),
+            Tool::new(
+                "ig_send_message",
+                "Send an Instagram DM text message to a user by their PSID/IGID.",
+                schema!({"recipient_id":{"type":"string"},"message":{"type":"string"}}, ["recipient_id","message"]),
+            ),
         ]
     }
 

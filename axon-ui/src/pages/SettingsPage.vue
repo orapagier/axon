@@ -15,6 +15,7 @@ const retentionResult = ref('')
 
 const CATEGORY_META = {
   agent: { title: 'Agent', description: 'Core agent-loop behavior: iteration and correction budgets, run/tool timeouts, tool scope, reasoning effort, temperature, token caps, and the system prompt.' },
+  backup: { title: 'Backups', description: 'Daily local snapshots of axon.db and crm.db (VACUUM INTO), written to the Files page directory and pruned after the configured retention. These are on-instance only — copying them off the server is the operator’s responsibility.' },
   crm: { title: 'CRM', description: 'Chat-agent access to the built-in CRM. Reads (list/get/search/reports) are always available to the agent; writes are workflow-only unless enabled here.' },
   embedder: { title: 'Embeddings', description: 'OpenAI-compatible embeddings provider powering the semantic tool-routing tier and long-term memory recall.' },
   instagram: { title: 'Instagram Publishing', description: 'Media hosting URLs, bind address, TTL, and image/video processing waits.' },
@@ -206,24 +207,41 @@ onMounted(load)
       </aside>
 
       <div class="page-section-content">
-        <section v-if="activeCategory" class="settings-card premium-card">
+        <section
+          v-if="activeCategory"
+          class="settings-card premium-card"
+        >
           <div class="settings-card-header">
             <div>
               <span class="settings-section-kicker">{{ activeCategory.key }}</span>
               <h2>{{ activeCategory.meta.title }}</h2>
-              <p class="section-desc">{{ activeCategory.meta.description }}</p>
+              <p class="section-desc">
+                {{ activeCategory.meta.description }}
+              </p>
             </div>
             <span class="card-summary">{{ activeCategory.rows.length }} settings</span>
           </div>
 
           <div class="settings-list">
-            <div v-for="s in activeCategory.rows" :key="s.key" class="setting-item">
+            <div
+              v-for="s in activeCategory.rows"
+              :key="s.key"
+              class="setting-item"
+            >
               <div class="setting-copy">
                 <div class="setting-title-row">
                   <span class="setting-key">{{ s.key }}</span>
-                  <Pill type="muted" :text="s.value_type" />
+                  <Pill
+                    type="muted"
+                    :text="s.value_type"
+                  />
                 </div>
-                <p v-if="s.description" class="setting-desc">{{ s.description }}</p>
+                <p
+                  v-if="s.description"
+                  class="setting-desc"
+                >
+                  {{ s.description }}
+                </p>
               </div>
 
               <div class="setting-control">
@@ -233,61 +251,80 @@ onMounted(load)
                   class="premium-input setting-input setting-input-lg"
                   spellcheck="false"
                   placeholder="Enter prompt instructions"
-                ></textarea>
+                />
 
                 <input
                   v-else-if="isSecret(s)"
-                  type="password"
                   v-model="s.draft"
+                  type="password"
                   class="premium-input setting-input"
                   placeholder="Hidden value"
-                />
+                >
 
-                <label v-else-if="s.value_type === 'bool'" class="setting-toggle">
+                <label
+                  v-else-if="s.value_type === 'bool'"
+                  class="setting-toggle"
+                >
                   <input
                     type="checkbox"
                     class="setting-toggle-input"
                     :checked="s.draft === 'true'"
                     @change="s.draft = $event.target.checked ? 'true' : 'false'"
-                  />
-                  <span class="setting-toggle-track"><span class="setting-toggle-thumb"></span></span>
+                  >
+                  <span class="setting-toggle-track"><span class="setting-toggle-thumb" /></span>
                   <span class="setting-toggle-text">{{ s.draft === 'true' ? 'On' : 'Off' }}</span>
                 </label>
 
                 <input
                   v-else-if="s.value_type === 'int'"
+                  v-model="s.draft"
                   type="number"
                   step="1"
-                  v-model="s.draft"
                   class="premium-input setting-input"
                   placeholder="0"
-                />
+                >
 
                 <input
                   v-else
-                  type="text"
                   v-model="s.draft"
+                  type="text"
                   class="premium-input setting-input"
                   placeholder="Value"
-                />
+                >
               </div>
             </div>
           </div>
 
           <div class="settings-card-footer">
-            <button class="btn btn-save" @click="saveCategory(activeCategory.key)">
+            <button
+              class="btn btn-save"
+              @click="saveCategory(activeCategory.key)"
+            >
               Save {{ activeCategory.meta.title }}
             </button>
-            <div v-if="activeCategory.key === 'retention'" class="retention-actions">
-              <span v-if="retentionResult" class="retention-result">{{ retentionResult }}</span>
-              <button class="btn" :disabled="retentionRunning" @click="runRetentionNow">
+            <div
+              v-if="activeCategory.key === 'retention'"
+              class="retention-actions"
+            >
+              <span
+                v-if="retentionResult"
+                class="retention-result"
+              >{{ retentionResult }}</span>
+              <button
+                class="btn"
+                :disabled="retentionRunning"
+                @click="runRetentionNow"
+              >
                 {{ retentionRunning ? 'Running…' : 'Run cleanup now' }}
               </button>
             </div>
           </div>
         </section>
 
-        <section v-else-if="showingPatterns" class="settings-card premium-card">
+        <section
+          v-else-if="showingPatterns"
+          class="settings-card premium-card"
+        >
           <div class="settings-card-header">
             <div>
               <span class="settings-section-kicker">router</span>
@@ -300,20 +337,30 @@ onMounted(load)
           </div>
 
           <div class="editor-shell">
-            <div class="editor-shell-header">Pattern Rules</div>
+            <div class="editor-shell-header">
+              Pattern Rules
+            </div>
             <textarea
               v-model="patternsText"
               class="premium-input code-editor"
               spellcheck="false"
-            ></textarea>
+            />
           </div>
 
           <div class="settings-card-footer">
-            <button class="btn btn-save" @click="savePatterns">Save Patterns</button>
+            <button
+              class="btn btn-save"
+              @click="savePatterns"
+            >
+              Save Patterns
+            </button>
           </div>
         </section>
 
-        <section v-else-if="showingRouterTest" class="settings-card premium-card">
+        <section
+          v-else-if="showingRouterTest"
+          class="settings-card premium-card"
+        >
           <div class="settings-card-header">
             <div>
               <span class="settings-section-kicker">router</span>
@@ -328,34 +375,57 @@ onMounted(load)
           <div class="router-test-shell">
             <div class="router-test-input">
               <input
-                type="text"
                 v-model="testMsg"
+                type="text"
                 class="premium-input setting-input"
                 placeholder="Type a message to test routing"
                 @keydown.enter="testRouter"
-              />
-              <button class="btn btn-primary" @click="testRouter">Run Test</button>
+              >
+              <button
+                class="btn btn-primary"
+                @click="testRouter"
+              >
+                Run Test
+              </button>
             </div>
 
-            <div class="router-test-result" :class="{ populated: testResult }">
+            <div
+              class="router-test-result"
+              :class="{ populated: testResult }"
+            >
               <template v-if="testResult">
                 <div class="router-result-row">
                   <span class="router-result-label">Tier</span>
-                  <Pill type="info" :text="testResult.routing_info?.tier || '?'" />
+                  <Pill
+                    type="info"
+                    :text="testResult.routing_info?.tier || '?'"
+                  />
                 </div>
 
                 <div class="router-result-row router-result-tools">
                   <span class="router-result-label">Matched Tools</span>
                   <div class="matched-tools-list">
                     <template v-if="testResult.matched_tools?.length">
-                      <Pill v-for="t in testResult.matched_tools" :key="t" type="ok" :text="t" />
+                      <Pill
+                        v-for="t in testResult.matched_tools"
+                        :key="t"
+                        type="ok"
+                        :text="t"
+                      />
                     </template>
-                    <Pill v-else type="muted" text="None" />
+                    <Pill
+                      v-else
+                      type="muted"
+                      text="None"
+                    />
                   </div>
                 </div>
               </template>
 
-              <div v-else class="router-placeholder">
+              <div
+                v-else
+                class="router-placeholder"
+              >
                 Run a message through the router to inspect its tier and matching tools.
               </div>
             </div>

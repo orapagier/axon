@@ -36,17 +36,36 @@ const isError = computed(() => props.data.execution?.status === 'error')
       error: isError 
     }"
   >
-    <div class="node-type-bar" style="background: var(--teal, #2c9b8d)"></div>
-    <div class="node-icon">🌐</div>
+    <div
+      class="node-type-bar"
+      style="background: var(--teal, #2c9b8d)"
+    />
+    <div class="node-icon">
+      🌐
+    </div>
     <div class="node-content">
-      <div class="node-label">{{ data.label || "Synapse" }}</div>
+      <div class="node-label">
+        {{ data.label || "Synapse" }}
+      </div>
       <div class="node-sublabel">
         <span class="method">{{ data.config?.method || "GET" }}</span> • {{ getHostname(data.config?.url) }}
       </div>
     </div>
-    <div v-if="data.execution?.status" class="status-indicator" :class="data.execution.status"></div>
-    <Handle type="target" :position="Position.Left" class="custom-handle" />
-    <Handle type="source" :position="Position.Right" class="custom-handle" />
+    <div
+      v-if="data.execution?.status"
+      class="status-indicator"
+      :class="data.execution.status"
+    />
+    <Handle
+      type="target"
+      :position="Position.Left"
+      class="custom-handle"
+    />
+    <Handle
+      type="source"
+      :position="Position.Right"
+      class="custom-handle"
+    />
   </div>
 </template>
 

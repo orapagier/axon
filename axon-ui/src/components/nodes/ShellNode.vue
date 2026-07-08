@@ -34,17 +34,36 @@ const commandPreview = computed(() => {
       error: isError 
     }"
   >
-    <div class="node-type-bar" style="background: var(--purple, #a29bfe)"></div>
-    <div class="node-icon">🐚</div>
+    <div
+      class="node-type-bar"
+      style="background: var(--purple, #a29bfe)"
+    />
+    <div class="node-icon">
+      🐚
+    </div>
     <div class="node-content">
-      <div class="node-label">{{ data.label || "Execute Command" }}</div>
+      <div class="node-label">
+        {{ data.label || "Execute Command" }}
+      </div>
       <div class="node-sublabel">
         <code>{{ commandPreview }}</code>
       </div>
     </div>
-    <div v-if="data.execution?.status" class="status-indicator" :class="data.execution.status"></div>
-    <Handle type="target" :position="Position.Left" class="custom-handle" />
-    <Handle type="source" :position="Position.Right" class="custom-handle" />
+    <div
+      v-if="data.execution?.status"
+      class="status-indicator"
+      :class="data.execution.status"
+    />
+    <Handle
+      type="target"
+      :position="Position.Left"
+      class="custom-handle"
+    />
+    <Handle
+      type="source"
+      :position="Position.Right"
+      class="custom-handle"
+    />
   </div>
 </template>
 

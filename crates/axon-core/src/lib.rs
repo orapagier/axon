@@ -251,16 +251,10 @@ macro_rules! schema {
 pub fn ok_json(v: impl serde::Serialize) -> rmcp::model::CallToolResult {
     let text =
         serde_json::to_string_pretty(&v).unwrap_or_else(|e| format!("serialization error: {e}"));
-    rmcp::model::CallToolResult {
-        content: vec![rmcp::model::Content::text(text)],
-        is_error: None,
-    }
+    rmcp::model::CallToolResult::success(vec![rmcp::model::Content::text(text)])
 }
 
 /// Construct an error `CallToolResult`.
 pub fn err_json(msg: impl std::fmt::Display) -> rmcp::model::CallToolResult {
-    rmcp::model::CallToolResult {
-        content: vec![rmcp::model::Content::text(format!("❌ Error: {msg}"))],
-        is_error: Some(true),
-    }
+    rmcp::model::CallToolResult::error(vec![rmcp::model::Content::text(format!("❌ Error: {msg}"))])
 }

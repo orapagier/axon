@@ -12,5 +12,11 @@ export default defineConfig({
       '/api': 'http://localhost:3000',
       '/ws': { target: 'ws://localhost:3000', ws: true },
     }
-  }
+  },
+  test: {
+    // Component tests mount real Vue components (ServicesPage, ModelsPage, ...),
+    // which needs a DOM. happy-dom is lighter/faster than jsdom for this size
+    // of suite.
+    environment: 'happy-dom',
+  },
 })

@@ -20,6 +20,8 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::params;
 use std::fmt;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::config::RuntimeSettings;
 
@@ -201,6 +203,170 @@ pub fn run_retention(
     Ok(stats)
 }
 
+// ── Scheduled backups ───────────────────────────────────────────────────────
+//
+// Local, on-instance snapshots of axon.db and crm.db, written next to the
+// existing manual crm_backup_db output (`axon_core::data_files_dir()`) so both
+// live in one place instead of introducing a third directory. This is NOT
+// disaster recovery on its own — a backup living on the same disk as the data
+// it protects doesn't survive that disk failing. Off-instance copy (rsync,
+// object storage, ...) is the operator's responsibility.
+
+#[derive(Default, Debug, serde::Serialize)]
+pub struct BackupStats {
+    pub axon_db_file: Option<String>,
+    pub crm_db_file: Option<String>,
+    pub pruned: usize,
+}
+
+impl fmt::Display for BackupStats {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "axon.db={}, crm.db={}, pruned={} old backup(s)",
+            self.axon_db_file.as_deref().unwrap_or("skipped"),
+            self.crm_db_file.as_deref().unwrap_or("skipped"),
+            self.pruned,
+        )
+    }
+}
+
+#[cfg(unix)]
+fn chmod_owner_only(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Err(e) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)) {
+        tracing::warn!("Backup: failed to chmod 0600 {}: {}", path.display(), e);
+    }
+}
+#[cfg(not(unix))]
+fn chmod_owner_only(_path: &Path) {}
+
+/// Lock down the live database files' permissions — same 0600-owner-only
+/// treatment as tokens.json/credentials.json (`axon_core::storage`), applied
+/// here since axon.db/crm.db hold the same class of secrets (encrypted
+/// credentials, OAuth tokens, CRM PII).
+fn secure_live_db_files(axon_db_path: &Path) {
+    chmod_owner_only(axon_db_path);
+    let crm_db_path = axon_core::data_dir().join("crm.db");
+    chmod_owner_only(&crm_db_path);
+    for db_path in [axon_db_path, &crm_db_path] {
+        for suffix in ["-wal", "-shm"] {
+            let sibling = PathBuf::from(format!("{}{}", db_path.display(), suffix));
+            if sibling.exists() {
+                chmod_owner_only(&sibling);
+            }
+        }
+    }
+}
+
+/// Delete backup files older than `retention_days` in `dir`, matching either
+/// naming convention (`axon-backup-*.db` / `crm-backup-*.db`). Age is judged
+/// by file mtime, not the timestamp embedded in the filename, so a restored
+/// or copied-in backup ages out normally too.
+fn prune_old_backups(dir: &Path, retention_days: i64) -> usize {
+    let cutoff = std::time::SystemTime::now().checked_sub(std::time::Duration::from_secs(
+        retention_days.max(0) as u64 * 86400,
+    ));
+    let Some(cutoff) = cutoff else {
+        return 0;
+    };
+
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut pruned = 0;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.ends_with(".db")
+            || !(name.starts_with("axon-backup-") || name.starts_with("crm-backup-"))
+        {
+            continue;
+        }
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        let Ok(modified) = meta.modified() else {
+            continue;
+        };
+        if modified < cutoff {
+            match std::fs::remove_file(entry.path()) {
+                Ok(()) => pruned += 1,
+                Err(e) => {
+                    tracing::warn!("Backup: failed to prune {}: {}", entry.path().display(), e)
+                }
+            }
+        }
+    }
+    pruned
+}
+
+/// Back up `axon.db` (`VACUUM INTO`) and `crm.db` (via
+/// `axon_crm::records::backup_db`) into `axon_core::data_files_dir()`, then
+/// prune backups older than `retention_days`. The `axon.db` half is blocking
+/// SQLite work and runs off the async runtime; the `crm.db` half is native
+/// sqlx-async, so it's awaited directly.
+pub async fn run_backup(
+    db: Arc<Pool<SqliteConnectionManager>>,
+    axon_db_path: PathBuf,
+    retention_days: i64,
+) -> anyhow::Result<BackupStats> {
+    let mut stats = BackupStats::default();
+    let dir = axon_core::data_files_dir();
+    std::fs::create_dir_all(&dir)?;
+
+    // ── axon.db: VACUUM INTO, same technique as crm_backup_db ────────────────
+    let axon_backup_dir = dir.clone();
+    let axon_backup_result = tokio::task::spawn_blocking(move || -> anyhow::Result<PathBuf> {
+        let file_name = format!(
+            "axon-backup-{}.db",
+            chrono::Utc::now().format("%Y%m%d-%H%M%S")
+        );
+        let path = axon_backup_dir.join(&file_name);
+        // VACUUM INTO takes a filename literal, not a bind parameter; single
+        // quotes in the path are SQL-escaped by doubling (mirrors crm_backup_db).
+        let path_sql = path.display().to_string().replace('\'', "''");
+        let conn = db.get()?;
+        conn.execute_batch(&format!("VACUUM INTO '{path_sql}'"))?;
+        Ok(path)
+    })
+    .await;
+
+    match axon_backup_result {
+        Ok(Ok(path)) => {
+            chmod_owner_only(&path);
+            stats.axon_db_file = Some(path.display().to_string());
+        }
+        Ok(Err(e)) => tracing::warn!("Backup: axon.db VACUUM INTO failed: {:#}", e),
+        Err(e) => tracing::warn!("Backup: axon.db backup task join error: {}", e),
+    }
+
+    // ── crm.db: reuse the existing manual-backup implementation ──────────────
+    match axon_crm::backup_pool() {
+        Some(pool) => match axon_crm::records::backup_db(&pool).await {
+            Ok(v) => {
+                if let Some(file) = v.get("file").and_then(|f| f.as_str()) {
+                    chmod_owner_only(Path::new(file));
+                    stats.crm_db_file = Some(file.to_string());
+                }
+            }
+            Err(e) => tracing::warn!("Backup: crm.db backup failed: {:#}", e),
+        },
+        None => {
+            tracing::warn!("Backup: CRM pool not initialized yet — skipping crm.db this round")
+        }
+    }
+
+    secure_live_db_files(&axon_db_path);
+
+    // ── prune ──────────────────────────────────────────────────────────────
+    stats.pruned = tokio::task::spawn_blocking(move || prune_old_backups(&dir, retention_days))
+        .await
+        .unwrap_or(0);
+
+    Ok(stats)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -368,5 +534,50 @@ mod tests {
 
         drop(pool);
         let _ = std::fs::remove_file(&path);
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "axon_backup_test_{name}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn touch_with_age(path: &Path, age_secs: u64) {
+        std::fs::write(path, b"x").unwrap();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(age_secs);
+        let file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+        file.set_modified(old).unwrap();
+    }
+
+    #[test]
+    fn prune_old_backups_removes_only_stale_matching_files() {
+        let dir = temp_dir("prune");
+
+        // Old, matching prefix — should be pruned.
+        touch_with_age(&dir.join("axon-backup-20250101-000000.db"), 20 * 86400);
+        touch_with_age(&dir.join("crm-backup-20250101-000000.db"), 20 * 86400);
+        // Recent, matching prefix — should survive.
+        touch_with_age(&dir.join("axon-backup-20260101-000000.db"), 86400);
+        // Old but non-matching name/extension — must be left alone (shared dir
+        // with regular staged Files-page uploads).
+        touch_with_age(&dir.join("some-user-upload.pdf"), 20 * 86400);
+        touch_with_age(&dir.join("axon-backup-old-not-db.txt"), 20 * 86400);
+
+        let pruned = prune_old_backups(&dir, 14);
+        assert_eq!(pruned, 2);
+        assert!(!dir.join("axon-backup-20250101-000000.db").exists());
+        assert!(!dir.join("crm-backup-20250101-000000.db").exists());
+        assert!(dir.join("axon-backup-20260101-000000.db").exists());
+        assert!(dir.join("some-user-upload.pdf").exists());
+        assert!(dir.join("axon-backup-old-not-db.txt").exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -176,6 +176,13 @@ RESPONSE RULES:
     pub fn retention_vacuum_min_free_mb(&self) -> i64 {
         self.get_int("retention.vacuum_min_free_mb", 20)
     }
+    // Scheduled local backups of axon.db/crm.db (see `crate::maintenance::run_backup`).
+    pub fn backup_enabled(&self) -> bool {
+        self.get_bool("backup.enabled", true)
+    }
+    pub fn backup_retention_days(&self) -> i64 {
+        self.get_int("backup.retention_days", 14)
+    }
     /// Max version snapshots kept per workflow (B1). Labeled snapshots are kept
     /// beyond this cap; only unlabeled ones are pruned oldest-first.
     pub fn retention_workflow_versions_per_workflow(&self) -> i64 {

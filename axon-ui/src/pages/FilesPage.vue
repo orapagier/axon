@@ -100,15 +100,32 @@ onMounted(load)
     <div class="page-header-container">
       <div class="page-header">
         <h1>Files</h1>
-        <p class="page-desc">Browse and manage files shared between you and the AI agents.</p>
+        <p class="page-desc">
+          Browse and manage files shared between you and the AI agents.
+        </p>
       </div>
       <div class="header-actions">
         <label class="btn btn-save file-upload-label">
           <span>+ Upload File</span>
-          <input type="file" hidden @change="upload" />
+          <input
+            type="file"
+            hidden
+            @change="upload"
+          >
         </label>
-        <button class="btn btn-danger" @click="removeAll" :disabled="!hasFiles">Delete All</button>
-        <button class="btn btn-ghost" @click="load">Refresh</button>
+        <button
+          class="btn btn-danger"
+          :disabled="!hasFiles"
+          @click="removeAll"
+        >
+          Delete All
+        </button>
+        <button
+          class="btn btn-ghost"
+          @click="load"
+        >
+          Refresh
+        </button>
       </div>
     </div>
 
@@ -116,17 +133,33 @@ onMounted(load)
       <section class="premium-card">
         <div class="card-header-row no-collapse">
           <div class="card-title-group">
-            <div class="card-icon incoming-icon">IN</div>
+            <div class="card-icon incoming-icon">
+              IN
+            </div>
             <h2>Incoming Files</h2>
           </div>
           <span class="card-summary">{{ incoming.length }} files</span>
         </div>
 
         <div class="card-content">
-          <div v-if="incoming.length === 0" class="empty-state">No incoming files found.</div>
-          <div v-else class="service-list">
-            <div v-for="f in incoming" :key="f.id" class="service-item file-row">
-              <div class="file-type-icon">{{ getFileExt(f.filename) }}</div>
+          <div
+            v-if="incoming.length === 0"
+            class="empty-state"
+          >
+            No incoming files found.
+          </div>
+          <div
+            v-else
+            class="service-list"
+          >
+            <div
+              v-for="f in incoming"
+              :key="f.id"
+              class="service-item file-row"
+            >
+              <div class="file-type-icon">
+                {{ getFileExt(f.filename) }}
+              </div>
               <div class="service-info">
                 <div class="service-name-row">
                   <div class="service-name-group">
@@ -140,7 +173,10 @@ onMounted(load)
                       title="Download file"
                       aria-label="Download file"
                     >
-                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <svg
+                        viewBox="0 0 24 24"
+                        aria-hidden="true"
+                      >
                         <path
                           d="M12 3v11m0 0 4-4m-4 4-4-4M5 19h14"
                           fill="none"
@@ -153,11 +189,14 @@ onMounted(load)
                     </a>
                     <button
                       class="btn btn-sm btn-ghost text-error icon-action-btn"
-                      @click="remove(f.direction || 'incoming', f.id)"
                       title="Delete file"
                       aria-label="Delete file"
+                      @click="remove(f.direction || 'incoming', f.id)"
                     >
-                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <svg
+                        viewBox="0 0 24 24"
+                        aria-hidden="true"
+                      >
                         <path
                           d="M4 7h16m-11 0V5h6v2m-7 0v11m4-11v11m4-11v11M7 7l1 13h8l1-13"
                           fill="none"
@@ -186,17 +225,33 @@ onMounted(load)
       <section class="premium-card">
         <div class="card-header-row no-collapse">
           <div class="card-title-group">
-            <div class="card-icon outgoing-icon">OUT</div>
+            <div class="card-icon outgoing-icon">
+              OUT
+            </div>
             <h2>Outgoing Files</h2>
           </div>
           <span class="card-summary">{{ outgoing.length }} files</span>
         </div>
 
         <div class="card-content">
-          <div v-if="outgoing.length === 0" class="empty-state">No outgoing files found.</div>
-          <div v-else class="service-list">
-            <div v-for="f in outgoing" :key="f.id" class="service-item file-row">
-              <div class="file-type-icon outgoing">{{ getFileExt(f.filename) }}</div>
+          <div
+            v-if="outgoing.length === 0"
+            class="empty-state"
+          >
+            No outgoing files found.
+          </div>
+          <div
+            v-else
+            class="service-list"
+          >
+            <div
+              v-for="f in outgoing"
+              :key="f.id"
+              class="service-item file-row"
+            >
+              <div class="file-type-icon outgoing">
+                {{ getFileExt(f.filename) }}
+              </div>
               <div class="service-info">
                 <div class="service-name-row">
                   <div class="service-name-group">
@@ -210,7 +265,10 @@ onMounted(load)
                       title="Download file"
                       aria-label="Download file"
                     >
-                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <svg
+                        viewBox="0 0 24 24"
+                        aria-hidden="true"
+                      >
                         <path
                           d="M12 3v11m0 0 4-4m-4 4-4-4M5 19h14"
                           fill="none"
@@ -223,11 +281,14 @@ onMounted(load)
                     </a>
                     <button
                       class="btn btn-sm btn-ghost text-error icon-action-btn"
-                      @click="remove(f.direction || 'outgoing', f.id)"
                       title="Delete file"
                       aria-label="Delete file"
+                      @click="remove(f.direction || 'outgoing', f.id)"
                     >
-                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <svg
+                        viewBox="0 0 24 24"
+                        aria-hidden="true"
+                      >
                         <path
                           d="M4 7h16m-11 0V5h6v2m-7 0v11m4-11v11m4-11v11M7 7l1 13h8l1-13"
                           fill="none"

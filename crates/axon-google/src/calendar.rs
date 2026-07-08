@@ -366,7 +366,10 @@ pub async fn move_event(
         .bearer_auth(&tok)
         // destination goes through .query() raw — reqwest percent-encodes it;
         // pre-encoding here double-encodes the "@" every calendar ID contains.
-        .query(&[("destination", destination_calendar_id), ("sendUpdates", send_updates)])
+        .query(&[
+            ("destination", destination_calendar_id),
+            ("sendUpdates", send_updates),
+        ])
         .send()
         .await?
         .ensure_ok()
@@ -447,7 +450,10 @@ mod tests {
 
     #[test]
     fn offset_aware_times_pass_through() {
-        assert_eq!(normalize_rfc3339("2026-07-05T09:00:00Z"), "2026-07-05T09:00:00Z");
+        assert_eq!(
+            normalize_rfc3339("2026-07-05T09:00:00Z"),
+            "2026-07-05T09:00:00Z"
+        );
         assert_eq!(
             normalize_rfc3339("2026-07-05T09:00:00+08:00"),
             "2026-07-05T09:00:00+08:00"
@@ -465,7 +471,10 @@ mod tests {
             "2026-07-05T09:00:00+08:00"
         );
         // datetime-local without seconds
-        assert_eq!(normalize_rfc3339("2026-07-05T09:00"), "2026-07-05T09:00:00+08:00");
+        assert_eq!(
+            normalize_rfc3339("2026-07-05T09:00"),
+            "2026-07-05T09:00:00+08:00"
+        );
     }
 
     #[test]
@@ -481,18 +490,36 @@ mod tests {
 
     #[test]
     fn foreign_formats_normalize_for_time_windows() {
-        assert_eq!(normalize_rfc3339("2026-07-05 09:00:00"), "2026-07-05T09:00:00+08:00");
-        assert_eq!(normalize_rfc3339("07/05/2026 3:00 PM"), "2026-07-05T15:00:00+08:00");
-        assert_eq!(normalize_rfc3339("July 5, 2026"), "2026-07-05T00:00:00+08:00");
+        assert_eq!(
+            normalize_rfc3339("2026-07-05 09:00:00"),
+            "2026-07-05T09:00:00+08:00"
+        );
+        assert_eq!(
+            normalize_rfc3339("07/05/2026 3:00 PM"),
+            "2026-07-05T15:00:00+08:00"
+        );
+        assert_eq!(
+            normalize_rfc3339("July 5, 2026"),
+            "2026-07-05T00:00:00+08:00"
+        );
         // Unix seconds resolve to an absolute UTC instant
         assert_eq!(normalize_rfc3339("1783213200"), "2026-07-05T01:00:00Z");
     }
 
     #[test]
     fn date_only_values_become_all_day_events() {
-        assert_eq!(event_time("2026-07-05", "Asia/Manila"), json!({"date": "2026-07-05"}));
-        assert_eq!(event_time("July 5, 2026", "Asia/Manila"), json!({"date": "2026-07-05"}));
-        assert_eq!(event_time("07/05/2026", "Asia/Manila"), json!({"date": "2026-07-05"}));
+        assert_eq!(
+            event_time("2026-07-05", "Asia/Manila"),
+            json!({"date": "2026-07-05"})
+        );
+        assert_eq!(
+            event_time("July 5, 2026", "Asia/Manila"),
+            json!({"date": "2026-07-05"})
+        );
+        assert_eq!(
+            event_time("07/05/2026", "Asia/Manila"),
+            json!({"date": "2026-07-05"})
+        );
         assert_eq!(
             event_time("2026-07-05T09:00:00", "Asia/Manila"),
             json!({"dateTime": "2026-07-05T09:00:00", "timeZone": "Asia/Manila"})
@@ -531,7 +558,10 @@ mod tests {
         // valid exclusive end left alone
         assert_eq!(fix_all_day_end("2026-07-05", "2026-07-06"), None);
         // timed events are untouched
-        assert_eq!(fix_all_day_end("2026-07-05T09:00:00", "2026-07-05T09:00:00"), None);
+        assert_eq!(
+            fix_all_day_end("2026-07-05T09:00:00", "2026-07-05T09:00:00"),
+            None
+        );
         // date-only in a foreign format still gets the bump
         assert_eq!(
             fix_all_day_end("July 5, 2026", "July 5, 2026"),

@@ -1,8 +1,10 @@
 use anyhow::{Context, Result};
-use async_trait::async_trait;
+use r2d2::Pool;
+use r2d2_sqlite::SqliteConnectionManager;
 use russh::*;
 use std::path::Path;
 use std::sync::Arc;
+use subtle::ConstantTimeEq;
 
 struct ServerDetails {
     host: String,
@@ -14,17 +16,62 @@ struct ServerDetails {
 }
 
 #[derive(Clone)]
-struct Client {}
+struct Client {
+    db: Arc<Pool<SqliteConnectionManager>>,
+    server_name: String,
+}
 
-#[async_trait]
 impl client::Handler for Client {
     type Error = anyhow::Error;
 
+    /// known_hosts-style pinning: trust-on-first-connect, then require an
+    /// exact fingerprint match on every subsequent connect. A mismatch is
+    /// surfaced as a hard error (not just `Ok(false)`) so the caller gets a
+    /// message that actually explains what happened, instead of a generic
+    /// key-exchange failure.
     async fn check_server_key(
         &mut self,
-        _server_public_key: &russh_keys::key::PublicKey,
+        server_public_key: &russh::keys::PublicKey,
     ) -> Result<bool, Self::Error> {
-        Ok(true)
+        let fingerprint = server_public_key
+            .fingerprint(Default::default())
+            .to_string();
+        let conn = self
+            .db
+            .get()
+            .context("SSH host key check: DB connection error")?;
+        let stored: Option<String> = conn
+            .query_row(
+                "SELECT host_key_fingerprint FROM ssh_servers WHERE name = ?1",
+                rusqlite::params![self.server_name],
+                |r| r.get(0),
+            )
+            .context("SSH host key check: DB query error")?;
+
+        match stored {
+            None => {
+                conn.execute(
+                    "UPDATE ssh_servers SET host_key_fingerprint = ?1 WHERE name = ?2",
+                    rusqlite::params![fingerprint, self.server_name],
+                )
+                .context("SSH host key check: failed to store host key fingerprint")?;
+                tracing::info!(
+                    "SSH: trusting and storing new host key fingerprint for '{}': {}",
+                    self.server_name,
+                    fingerprint
+                );
+                Ok(true)
+            }
+            Some(known) if known.as_bytes().ct_eq(fingerprint.as_bytes()).into() => Ok(true),
+            Some(known) => {
+                anyhow::bail!(
+                    "SSH host key verification FAILED for '{}': presented fingerprint ({}) does not match the stored fingerprint ({}). This may indicate a man-in-the-middle attack, or the host was legitimately reinstalled/rekeyed — if the latter, clear host_key_fingerprint for this server in the ssh_servers table to re-trust it.",
+                    self.server_name,
+                    fingerprint,
+                    known
+                );
+            }
+        }
     }
 }
 
@@ -270,7 +317,10 @@ impl SshTool {
     ) -> Result<client::Handle<Client>> {
         let details = Self::get_server_details(state, server_name).await?;
         let config_arc = Arc::new(client::Config::default());
-        let sh = Client {};
+        let sh = Client {
+            db: state.db.clone(),
+            server_name: server_name.to_string(),
+        };
         let mut session =
             client::connect(config_arc, (details.host.as_str(), details.port), sh).await?;
 
@@ -284,21 +334,27 @@ impl SshTool {
         if details.auth_type == "password" {
             if let Some(pwd) = details.password {
                 match session.authenticate_password(&details.user, pwd).await {
-                    Ok(true) => return Ok(session),
-                    Ok(false) => tracing::warn!("SSH: Password auth rejected"),
+                    Ok(res) if res.success() => return Ok(session),
+                    Ok(_) => tracing::warn!("SSH: Password auth rejected"),
                     Err(e) => tracing::warn!("SSH: Password auth protocol error: {}", e),
                 }
             }
         } else if let Some(priv_key) = details.private_key {
-            match russh_keys::decode_secret_key(&priv_key, None) {
-                Ok(key) => match session
-                    .authenticate_publickey(&details.user, Arc::new(key))
-                    .await
-                {
-                    Ok(true) => return Ok(session),
-                    Ok(false) => tracing::warn!("SSH: Public key auth rejected"),
-                    Err(e) => tracing::warn!("SSH: Public key auth protocol error: {}", e),
-                },
+            match russh::keys::decode_secret_key(&priv_key, None) {
+                Ok(key) => {
+                    let hash_alg = session.best_supported_rsa_hash().await?.flatten();
+                    match session
+                        .authenticate_publickey(
+                            &details.user,
+                            russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg),
+                        )
+                        .await
+                    {
+                        Ok(res) if res.success() => return Ok(session),
+                        Ok(_) => tracing::warn!("SSH: Public key auth rejected"),
+                        Err(e) => tracing::warn!("SSH: Public key auth protocol error: {}", e),
+                    }
+                }
                 Err(e) => tracing::warn!("SSH: Failed to decode secret key: {}", e),
             }
         }

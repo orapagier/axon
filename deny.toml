@@ -13,6 +13,26 @@
 # on a strong-copyleft (e.g. GPL-3.0-only) or proprietary license, that crate
 # cannot ship in an AGPL binary as-is — replace it or seek a license exception.
 
+[advisories]
+# Every entry here has been confirmed (via `cargo deny check advisories`) to have
+# no safe upgrade available upstream, as of the date noted. Re-verify before
+# adding a new ID: if a fix has shipped, bump the dependency instead of
+# ignoring it — this list should only ever contain genuinely unfixable findings.
+ignore = [
+    # rsa: Marvin Attack timing side-channel (RustCrypto/RSA#626). No patch exists.
+    # Transitive via russh (SSH key auth) and sqlx-mysql.
+    "RUSTSEC-2023-0071",
+    # rustls-pemfile: unmaintained, no successor released. Transitive via
+    # qdrant-client -> tonic. Unmaintained flag only, not a live vulnerability.
+    "RUSTSEC-2025-0134",
+    # ttf-parser: unmaintained, no successor released. Transitive via
+    # axon-image -> imageproc -> ab_glyph (font rendering for image annotation).
+    "RUSTSEC-2026-0192",
+    # paste: unmaintained proc-macro helper. Transitive via boa_engine (JS sandbox)
+    # and ravif (AVIF image encoding). Unmaintained flag only.
+    "RUSTSEC-2024-0436",
+]
+
 [licenses]
 # SPDX identifiers we accept in the dependency tree. Everything here is either
 # permissive (MIT/Apache/BSD/ISC/Zlib/...) or weak/file-level copyleft (MPL-2.0)

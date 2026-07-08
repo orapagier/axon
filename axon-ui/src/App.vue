@@ -172,19 +172,37 @@ async function logout() {
     class="layout app-shell"
     :class="{ 'sidebar-collapsed': isSidebarCollapsed, 'sidebar-open': sidebarOpen }"
   >
-    <div class="app-shell-backdrop" aria-hidden="true">
-      <span class="shell-ambient shell-ambient-one"></span>
-      <span class="shell-ambient shell-ambient-two"></span>
-      <span class="shell-ambient shell-ambient-three"></span>
+    <div
+      class="app-shell-backdrop"
+      aria-hidden="true"
+    >
+      <span class="shell-ambient shell-ambient-one" />
+      <span class="shell-ambient shell-ambient-two" />
+      <span class="shell-ambient shell-ambient-three" />
     </div>
 
-    <aside class="sidebar" :class="{ open: sidebarOpen, collapsed: isSidebarCollapsed }">
+    <aside
+      class="sidebar"
+      :class="{ open: sidebarOpen, collapsed: isSidebarCollapsed }"
+    >
       <div class="sidebar-panel">
         <div class="sidebar-header-row">
           <div class="sidebar-brand-stack">
-            <button class="brand-lockup" type="button" @click="reload" :title="isSidebarCollapsed ? 'Reload dashboard' : ''">
-              <img src="/favicon.png" alt="Axon" class="logo-img" />
-              <div v-if="!isSidebarCollapsed" class="brand-copy">
+            <button
+              class="brand-lockup"
+              type="button"
+              :title="isSidebarCollapsed ? 'Reload dashboard' : ''"
+              @click="reload"
+            >
+              <img
+                src="/favicon.png"
+                alt="Axon"
+                class="logo-img"
+              >
+              <div
+                v-if="!isSidebarCollapsed"
+                class="brand-copy"
+              >
                 <span class="logo-text">AXON</span>
                 <span class="logo-subtitle">Agent Dashboard</span>
               </div>
@@ -193,19 +211,49 @@ async function logout() {
             <button
               class="shell-icon-btn shell-nav-toggle desktop-only"
               type="button"
-              @click="toggleSidebar"
               :title="isSidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'"
+              @click="toggleSidebar"
             >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M6 5v14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
-                <path :d="isSidebarCollapsed ? 'M11 8l4 4-4 4' : 'M15 8l-4 4 4 4'" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+              <svg
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <path
+                  d="M6 5v14"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                />
+                <path
+                  :d="isSidebarCollapsed ? 'M11 8l4 4-4 4' : 'M15 8l-4 4 4 4'"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
               </svg>
             </button>
           </div>
 
-          <button class="shell-icon-btn shell-nav-toggle mobile-only" type="button" @click="sidebarOpen = false" title="Close navigation">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M18 6 6 18M6 6l12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+          <button
+            class="shell-icon-btn shell-nav-toggle mobile-only"
+            type="button"
+            title="Close navigation"
+            @click="sidebarOpen = false"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path
+                d="M18 6 6 18M6 6l12 12"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
             </svg>
           </button>
         </div>
@@ -221,32 +269,63 @@ async function logout() {
             type="button"
             @click="navigate(item.id)"
           >
-            <span class="nav-icon" v-html="item.icon"></span>
-            <span v-if="!isSidebarCollapsed" class="nav-copy">
+            <span
+              class="nav-icon"
+              v-html="item.icon"
+            />
+            <span
+              v-if="!isSidebarCollapsed"
+              class="nav-copy"
+            >
               <span class="nav-label">{{ item.label }}</span>
               <span class="nav-description">{{ item.description }}</span>
             </span>
           </button>
         </nav>
-
       </div>
     </aside>
 
-    <div v-if="sidebarOpen" class="sidebar-overlay open" @click="sidebarOpen = false"></div>
+    <div
+      v-if="sidebarOpen"
+      class="sidebar-overlay open"
+      @click="sidebarOpen = false"
+    />
 
     <main class="main">
       <header class="shell-topbar">
         <div class="shell-topbar-left">
-          <button class="shell-icon-btn shell-nav-toggle mobile-only" type="button" @click="sidebarOpen = !sidebarOpen" title="Open navigation">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+          <button
+            class="shell-icon-btn shell-nav-toggle mobile-only"
+            type="button"
+            title="Open navigation"
+            @click="sidebarOpen = !sidebarOpen"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path
+                d="M4 7h16M4 12h16M4 17h16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
             </svg>
           </button>
 
-          <div class="shell-page-meta" :style="{ '--page-tint': activeNav.tint }">
+          <div
+            class="shell-page-meta"
+            :style="{ '--page-tint': activeNav.tint }"
+          >
             <div class="shell-page-heading-row">
-              <span class="shell-page-dot" aria-hidden="true"></span>
-              <div class="shell-page-heading">{{ activeNav.label }}</div>
+              <span
+                class="shell-page-dot"
+                aria-hidden="true"
+              />
+              <div class="shell-page-heading">
+                {{ activeNav.label }}
+              </div>
               <span class="shell-page-pill">{{ activeNav.description }}</span>
             </div>
           </div>
@@ -255,10 +334,17 @@ async function logout() {
         <div class="shell-topbar-right">
           <NotificationBell />
           <div class="shell-status-chip">
-            <span class="ws-dot" :class="wsDotClass"></span>
+            <span
+              class="ws-dot"
+              :class="wsDotClass"
+            />
             <span>{{ wsLabel }}</span>
           </div>
-          <button class="btn btn-danger shell-logout-btn" type="button" @click="logout">
+          <button
+            class="btn btn-danger shell-logout-btn"
+            type="button"
+            @click="logout"
+          >
             Logout
           </button>
         </div>
@@ -267,15 +353,15 @@ async function logout() {
       <div class="main-scroll">
         <section
           v-for="item in NAV"
+          :id="`page-${item.id}`"
           :key="item.id"
           class="page"
           :class="{ active: activePage === item.id, 'page-flush': item.id === 'workflows' }"
           :style="{ display: activePage === item.id ? 'flex' : 'none' }"
-          :id="`page-${item.id}`"
         >
           <component
-            v-if="activePage === item.id || (KEEP_MOUNTED.has(item.id) && visitedPages.has(item.id))"
             :is="PAGES[item.id]"
+            v-if="activePage === item.id || (KEEP_MOUNTED.has(item.id) && visitedPages.has(item.id))"
           />
         </section>
       </div>

@@ -170,6 +170,19 @@ if ! $SKIP_BUILD; then
         echo "  ✅ qdrant setup scripts copied"
     fi
 
+    # ── TLS reverse proxy (Caddy) — only if AXON_DOMAIN is set in .deploy.env ──
+    # Rendered here (not on the server) so run.sh never needs AXON_DOMAIN in its
+    # own environment — it just ships or doesn't ship a ready-to-use Caddyfile.
+    if [ -n "${AXON_DOMAIN:-}" ]; then
+        echo "  🔒 Rendering Caddyfile for $AXON_DOMAIN..."
+        sed -e "s/{\$AXON_DOMAIN}/$AXON_DOMAIN/g" -e "s/{\$AXON_PORT}/${AXON_PORT:-3000}/g" \
+            "$ROOT_DIR/deploy/Caddyfile.example" > "$DIST_DIR/Caddyfile"
+        echo "  ✅ Caddyfile rendered"
+    else
+        echo "  ⚠️  AXON_DOMAIN not set in .deploy.env — this deploy will be HTTP-only."
+        echo "      See README.md 'Deployment' for how to enable TLS via Caddy."
+    fi
+
     # ── run.sh (systemd service manager) ──
     cat <<'EOF' > "$DIST_DIR/run.sh"
 #!/bin/bash
@@ -214,9 +227,31 @@ SVC"
     echo "✅ Service installed and enabled."
 }
 
+install_caddy() {
+    # No-op if the deploy script didn't render a Caddyfile (AXON_DOMAIN unset
+    # in .deploy.env) — stays additive, doesn't break domain-less deploys.
+    if [ ! -f "$DEPLOY_DIR/Caddyfile" ]; then
+        return 0
+    fi
+    echo "🔒 Installing Caddy (TLS reverse proxy)..."
+    if ! command -v caddy >/dev/null 2>&1; then
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https curl
+        curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+        curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list >/dev/null
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq caddy
+    fi
+    sudo cp "$DEPLOY_DIR/Caddyfile" /etc/caddy/Caddyfile
+    sudo systemctl enable caddy
+    sudo systemctl restart caddy
+    echo "✅ Caddy installed and running (TLS via automatic Let's Encrypt)."
+}
+
 case "$ACTION" in
     "--install")
         install_service
+        install_caddy
         ;;
     "start")
         if systemctl is-active --quiet axon-agent; then

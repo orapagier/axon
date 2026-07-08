@@ -3,16 +3,23 @@
     <div 
       class="dt-row" 
       draggable="true" 
-      @dragstart.stop="onDragStart($event, field.fullPath)"
       :style="{ paddingLeft: (depth + 1) * 12 + 'px' }"
+      @dragstart.stop="onDragStart($event, field.fullPath)"
     >
       <template v-if="inputMode === 'json'">
         <span class="dt-key">"{{ field.key }}"</span><span class="dt-sep">:</span>
         <span class="dt-val">{{ typeof field.value === 'string' && !field.isObject ? '"' + field.value + '"' : field.value }}</span>
       </template>
       <template v-else>
-        <span class="dt-type" :class="field.type" style="margin-right: 6px;">{{ field.type === 'string' ? 'T' : (field.type === 'number' ? '#' : (field.type === 'boolean' ? '✓' : '{}')) }}</span>
-        <span class="dt-key" style="margin-right: 6px;">{{ field.key }}</span>
+        <span
+          class="dt-type"
+          :class="field.type"
+          style="margin-right: 6px;"
+        >{{ field.type === 'string' ? 'T' : (field.type === 'number' ? '#' : (field.type === 'boolean' ? '✓' : '{}')) }}</span>
+        <span
+          class="dt-key"
+          style="margin-right: 6px;"
+        >{{ field.key }}</span>
         <span class="dt-val">{{ field.value }}</span>
       </template>
     </div>
@@ -23,8 +30,8 @@
         :key="child.fullPath"
         :field="child"
         :depth="depth + 1"
-        :inputMode="inputMode"
-        :nodeLabel="nodeLabel"
+        :input-mode="inputMode"
+        :node-label="nodeLabel"
       />
     </template>
   </div>

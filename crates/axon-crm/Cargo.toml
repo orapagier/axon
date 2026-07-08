@@ -6,7 +6,7 @@ publish = false
 
 [dependencies]
 axon-core   = { path = "../axon-core" }
-rmcp        = { version = "0.1", features = ["server"] }
+rmcp        = { version = "1", default-features = false }
 anyhow      = "1"
 async-trait = "0.1"
 serde       = { version = "1", features = ["derive"] }

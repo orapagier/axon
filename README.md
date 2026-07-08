@@ -172,6 +172,7 @@ Loaded automatically from (in order) `$AXON_ENV_FILE`, the working-directory `.e
 | `SLACK_BOT_TOKEN` | *(unset)* | Slack bot token (or `messaging.slack_token`). |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | *(unset)* | If set, enables OpenTelemetry tracing export. |
 | `RUST_LOG` | `axon=info` | Standard `tracing` log filter. |
+| `AXON_LOG_FORMAT` | *(unset)* | Set to `json` for structured JSON log lines (one object per line — easy to ship to a log aggregator). Unset stays human-readable, for local `cargo run`. |
 | *(provider keys)* | — | Referenced from `models.toml` as `${NAME}` placeholders, e.g. `GEMINI_API_KEY_*`, `GROQ_*`, `CEREBRAS_*`. |
 
 ### The model catalog — `config/models.toml`
@@ -457,6 +458,8 @@ On the server:
 - Run the agent under a process supervisor (**systemd**).
 - Install Qdrant via `qdrant/install.sh` (also sets up backup/health/trim timers and the systemd unit).
 - Set a strong `AXON_MASTER_KEY` and keep it stable (it encrypts stored secrets).
+- **`axon.db`/`crm.db` back up automatically** — a daily in-process sweep (`backup.enabled`/`backup.retention_days` in Settings → Backups) writes timestamped, `VACUUM INTO`-compacted snapshots to the Files page directory and prunes ones past the retention window. Like Qdrant's `axon-backup.sh`, these are **local, on-instance backups only** — they live on the same disk as the data they protect, so they don't protect against disk/instance loss. Copying them off-instance (rsync, object storage, …) is the operator's responsibility.
+- **TLS is required for any internet-facing deployment** — axon-agent itself only ever binds plain HTTP (`0.0.0.0:$AXON_PORT`, default 3000). Set `AXON_DOMAIN` (or `CHAM_DOMAIN`) in `.deploy.env` before deploying and the deploy script installs [Caddy](https://caddyserver.com/) as a reverse proxy in front of it, with automatic Let's Encrypt provisioning/renewal — no certbot cron job to maintain. DNS for the domain must already point at the instance first. See `deploy/Caddyfile.example` for the template, or point your own reverse proxy/load balancer at `localhost:$AXON_PORT` if you're not using the bundled Caddy setup. Deploying without a domain set is HTTP-only and should only be used for local/internal testing.
 
 ---
 

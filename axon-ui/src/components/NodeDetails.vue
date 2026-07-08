@@ -1845,1037 +1845,1858 @@ onUnmounted(() => {
 
 <template>
   <Teleport to="body">
-    <div class="nd-overlay" @click="emit('close')" @keydown.stop @keyup.stop @copy.stop @paste.stop>
-      <div class="nd-window" @click.stop>
-      <!-- Floating Prev Nav -->
-      <div v-if="upstreamNodes.length > 0" class="nd-floating-nav left">
-      <div 
-        v-for="un in upstreamNodes" 
-        :key="un.id" 
-        class="nav-tab" 
-        @click="emit('switch', un.id)"
-        :title="'Switch to ' + un.data.label"
+    <div
+      class="nd-overlay"
+      @click="emit('close')"
+      @keydown.stop
+      @keyup.stop
+      @copy.stop
+      @paste.stop
+    >
+      <div
+        class="nd-window"
+        @click.stop
       >
-        <img v-if="isImageUrl(getNodeIcon(un.data.node_type))" :src="getNodeIcon(un.data.node_type)" class="nav-tab-icon" />
-        <span v-else>{{ getNodeIcon(un.data.node_type) }}</span>
-      </div>
-    </div>
+        <!-- Floating Prev Nav -->
+        <div
+          v-if="upstreamNodes.length > 0"
+          class="nd-floating-nav left"
+        >
+          <div 
+            v-for="un in upstreamNodes" 
+            :key="un.id" 
+            class="nav-tab" 
+            :title="'Switch to ' + un.data.label"
+            @click="emit('switch', un.id)"
+          >
+            <img
+              v-if="isImageUrl(getNodeIcon(un.data.node_type))"
+              :src="getNodeIcon(un.data.node_type)"
+              class="nav-tab-icon"
+            >
+            <span v-else>{{ getNodeIcon(un.data.node_type) }}</span>
+          </div>
+        </div>
 
-    <!-- Floating Next Nav -->
-    <div v-if="downstreamNodes.length > 0" class="nd-floating-nav right">
-      <div 
-        v-for="dn in downstreamNodes" 
-        :key="dn.id" 
-        class="nav-tab" 
-        @click="emit('switch', dn.id)"
-        :title="'Switch to ' + dn.data.label"
-      >
-        <img v-if="isImageUrl(getNodeIcon(dn.data.node_type))" :src="getNodeIcon(dn.data.node_type)" class="nav-tab-icon" />
-        <span v-else>{{ getNodeIcon(dn.data.node_type) }}</span>
-      </div>
-    </div>
+        <!-- Floating Next Nav -->
+        <div
+          v-if="downstreamNodes.length > 0"
+          class="nd-floating-nav right"
+        >
+          <div 
+            v-for="dn in downstreamNodes" 
+            :key="dn.id" 
+            class="nav-tab" 
+            :title="'Switch to ' + dn.data.label"
+            @click="emit('switch', dn.id)"
+          >
+            <img
+              v-if="isImageUrl(getNodeIcon(dn.data.node_type))"
+              :src="getNodeIcon(dn.data.node_type)"
+              class="nav-tab-icon"
+            >
+            <span v-else>{{ getNodeIcon(dn.data.node_type) }}</span>
+          </div>
+        </div>
 
-    <div class="nd-window-inner">
-      <!-- HEADER -->
-      <header class="nd-header">
-        <div class="nd-header-left">
-          <div class="breadcrumbs">
-            <span class="bc-item">Workflows</span>
-            <span class="bc-sep">/</span>
-            <span class="bc-item">{{ workflowId === 'new' ? 'New Workflow' : 'Workflow' }}</span>
-            <span class="bc-sep">/</span>
-            <span class="nd-header-icon">
-              <img v-if="isImageUrl(nodeDefinition.icon)" :src="nodeDefinition.icon" class="bc-icon-img" />
-              <template v-else>{{ nodeDefinition.icon }}</template>
-            </span>
-            
-            <div class="nd-inline-rename">
-              <input 
-                v-if="isRenaming"
-                ref="renameInput"
-                type="text"
-                v-model="node.data.label"
-                @blur="finishRename"
-                @keyup.enter="finishRename"
-                @keyup.esc="finishRename"
-                class="rename-input"
-              />
-              <span 
-                v-else
-                class="nd-header-title"
-                @click="startRename"
-                title="Click to rename"
-              >
-                {{ node.data.label }}
-                <!-- Subtitle -->
-                <span class="nd-header-subtitle" v-if="node.data.label !== nodeDefinition.displayName">
-                  {{ nodeDefinition.displayName }}
+        <div class="nd-window-inner">
+          <!-- HEADER -->
+          <header class="nd-header">
+            <div class="nd-header-left">
+              <div class="breadcrumbs">
+                <span class="bc-item">Workflows</span>
+                <span class="bc-sep">/</span>
+                <span class="bc-item">{{ workflowId === 'new' ? 'New Workflow' : 'Workflow' }}</span>
+                <span class="bc-sep">/</span>
+                <span class="nd-header-icon">
+                  <img
+                    v-if="isImageUrl(nodeDefinition.icon)"
+                    :src="nodeDefinition.icon"
+                    class="bc-icon-img"
+                  >
+                  <template v-else>{{ nodeDefinition.icon }}</template>
                 </span>
-              </span>
-            </div>
-          </div>
-        </div>
-        <div class="nd-header-right">
-          <button class="btn-close" @click="emit('close')">✕</button>
-        </div>
-      </header>
-
-      <div class="nd-body">
-        <!-- COLUMN: INPUT -->
-        <section class="nd-col nd-col-left" :style="{ width: panelWidths.left + 'px' }">
-          <div class="col-header">
-            <span class="col-title">INPUT</span>
-            <div class="col-toggles">
-              <button :class="{ active: inputMode === 'schema' }" @click="inputMode = 'schema'">Schema</button>
-              <button :class="{ active: inputMode === 'table' }" @click="inputMode = 'table'">Table</button>
-              <button :class="{ active: inputMode === 'json' }" @click="inputMode = 'json'">JSON</button>
-            </div>
-          </div>
-          <div class="col-content nd-input-layout">
-            <div v-if="upstreamNodes.length === 0" class="data-empty">
-              No input data. Connect this node to previous nodes to pass data into it.
-            </div>
-
-            <!-- Removed GUTTER for node icons -->
-            <div class="nd-input-main">
-              <div v-for="un in upstreamNodes" :key="un.id" class="data-node" :class="{ 'node-collapsed': !expandedNodes.has(un.id) }">
-                <div class="dn-head" @click="toggleNodeCollapse(un.id)">
-                  <span class="dn-chevron" :class="{ active: expandedNodes.has(un.id) }">
-                    <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+            
+                <div class="nd-inline-rename">
+                  <input 
+                    v-if="isRenaming"
+                    ref="renameInput"
+                    v-model="node.data.label"
+                    type="text"
+                    class="rename-input"
+                    @blur="finishRename"
+                    @keyup.enter="finishRename"
+                    @keyup.esc="finishRename"
+                  >
+                  <span 
+                    v-else
+                    class="nd-header-title"
+                    title="Click to rename"
+                    @click="startRename"
+                  >
+                    {{ node.data.label }}
+                    <!-- Subtitle -->
+                    <span
+                      v-if="node.data.label !== nodeDefinition.displayName"
+                      class="nd-header-subtitle"
+                    >
+                      {{ nodeDefinition.displayName }}
+                    </span>
                   </span>
-                  <span class="dn-label">{{ un.data.label }}</span>
-                  <span v-if="getUpstreamData(un.id)" class="dn-meta">{{ inputMode === 'json' ? '{ JSON }' : 'Has Data' }}</span>
-                </div>
-                
-                <div v-if="expandedNodes.has(un.id)" class="dn-body">
-                  <div v-if="getUpstreamData(un.id)">
-                    <!-- Tree Mode (Schema or JSON) -->
-                    <div v-if="inputMode === 'schema' || inputMode === 'json'" class="data-tree" :class="{ 'mode-json': inputMode === 'json' }">
-                      <DataTreeNode
-                        v-for="field in getSchema(getUpstreamData(un.id))"
-                        :key="field.fullPath"
-                        :field="field"
-                        :depth="0"
-                        :inputMode="inputMode"
-                        :nodeLabel="un.data.label"
-                      />
-                    </div>
-                    <!-- Table fallback -->
-                    <div v-else-if="inputMode === 'table'" class="data-empty">Table view coming soon</div>
-                  </div>
-                  <!-- Node result meta (Error/Empty) -->
-                  <div v-else-if="getUpstreamError(un.id)" class="data-empty" style="color: #f87171">
-                    {{ getUpstreamError(un.id).message || getUpstreamError(un.id) }}
-                  </div>
-                  <div v-else class="data-empty">
-                    Execute previous node to see output data here
-                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        </section>
-
-        <!-- Left Resizer -->
-        <div class="nd-resizer" @mousedown="startResize('left', $event)">
-          <div class="resizer-handle"></div>
-        </div>
-
-        <!-- COLUMN: PARAMETERS -->
-        <section class="nd-col nd-col-mid" style="flex: 1">
-
-          <div class="col-header params-header">
-            <div class="header-tabs">
-              <button class="header-tab" :class="{ active: activeTab === 'parameters' }" @click="activeTab = 'parameters'">PARAMETERS</button>
-              <button class="header-tab" :class="{ active: activeTab === 'settings' }" @click="activeTab = 'settings'">SETTINGS</button>
-              <button class="header-tab" v-if="nodeResult" @click="emit('clear-execution', node.id)" title="Clear execution data">CLEAR</button>
-            </div>
-            <div class="header-actions">
-              <button class="btn btn-sm btn-save" @click="emit('save')" title="Save workflow">
-                <span class="btn-content">💾 Save</span>
-              </button>
-              <button class="btn btn-sm btn-execute" :class="{ 'is-executing': executing }" @click="emit('execute', node.id, { single: true })">
-                <span class="btn-content">⚡ Execute Step</span>
+            <div class="nd-header-right">
+              <button
+                class="btn-close"
+                @click="emit('close')"
+              >
+                ✕
               </button>
             </div>
-          </div>
+          </header>
+
+          <div class="nd-body">
+            <!-- COLUMN: INPUT -->
+            <section
+              class="nd-col nd-col-left"
+              :style="{ width: panelWidths.left + 'px' }"
+            >
+              <div class="col-header">
+                <span class="col-title">INPUT</span>
+                <div class="col-toggles">
+                  <button
+                    :class="{ active: inputMode === 'schema' }"
+                    @click="inputMode = 'schema'"
+                  >
+                    Schema
+                  </button>
+                  <button
+                    :class="{ active: inputMode === 'table' }"
+                    @click="inputMode = 'table'"
+                  >
+                    Table
+                  </button>
+                  <button
+                    :class="{ active: inputMode === 'json' }"
+                    @click="inputMode = 'json'"
+                  >
+                    JSON
+                  </button>
+                </div>
+              </div>
+              <div class="col-content nd-input-layout">
+                <div
+                  v-if="upstreamNodes.length === 0"
+                  class="data-empty"
+                >
+                  No input data. Connect this node to previous nodes to pass data into it.
+                </div>
+
+                <!-- Removed GUTTER for node icons -->
+                <div class="nd-input-main">
+                  <div
+                    v-for="un in upstreamNodes"
+                    :key="un.id"
+                    class="data-node"
+                    :class="{ 'node-collapsed': !expandedNodes.has(un.id) }"
+                  >
+                    <div
+                      class="dn-head"
+                      @click="toggleNodeCollapse(un.id)"
+                    >
+                      <span
+                        class="dn-chevron"
+                        :class="{ active: expandedNodes.has(un.id) }"
+                      >
+                        <svg
+                          viewBox="0 0 24 24"
+                          width="16"
+                          height="16"
+                        ><path
+                          fill="currentColor"
+                          d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"
+                        /></svg>
+                      </span>
+                      <span class="dn-label">{{ un.data.label }}</span>
+                      <span
+                        v-if="getUpstreamData(un.id)"
+                        class="dn-meta"
+                      >{{ inputMode === 'json' ? '{ JSON }' : 'Has Data' }}</span>
+                    </div>
+                
+                    <div
+                      v-if="expandedNodes.has(un.id)"
+                      class="dn-body"
+                    >
+                      <div v-if="getUpstreamData(un.id)">
+                        <!-- Tree Mode (Schema or JSON) -->
+                        <div
+                          v-if="inputMode === 'schema' || inputMode === 'json'"
+                          class="data-tree"
+                          :class="{ 'mode-json': inputMode === 'json' }"
+                        >
+                          <DataTreeNode
+                            v-for="field in getSchema(getUpstreamData(un.id))"
+                            :key="field.fullPath"
+                            :field="field"
+                            :depth="0"
+                            :input-mode="inputMode"
+                            :node-label="un.data.label"
+                          />
+                        </div>
+                        <!-- Table fallback -->
+                        <div
+                          v-else-if="inputMode === 'table'"
+                          class="data-empty"
+                        >
+                          Table view coming soon
+                        </div>
+                      </div>
+                      <!-- Node result meta (Error/Empty) -->
+                      <div
+                        v-else-if="getUpstreamError(un.id)"
+                        class="data-empty"
+                        style="color: #f87171"
+                      >
+                        {{ getUpstreamError(un.id).message || getUpstreamError(un.id) }}
+                      </div>
+                      <div
+                        v-else
+                        class="data-empty"
+                      >
+                        Execute previous node to see output data here
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <!-- Left Resizer -->
+            <div
+              class="nd-resizer"
+              @mousedown="startResize('left', $event)"
+            >
+              <div class="resizer-handle" />
+            </div>
+
+            <!-- COLUMN: PARAMETERS -->
+            <section
+              class="nd-col nd-col-mid"
+              style="flex: 1"
+            >
+              <div class="col-header params-header">
+                <div class="header-tabs">
+                  <button
+                    class="header-tab"
+                    :class="{ active: activeTab === 'parameters' }"
+                    @click="activeTab = 'parameters'"
+                  >
+                    PARAMETERS
+                  </button>
+                  <button
+                    class="header-tab"
+                    :class="{ active: activeTab === 'settings' }"
+                    @click="activeTab = 'settings'"
+                  >
+                    SETTINGS
+                  </button>
+                  <button
+                    v-if="nodeResult"
+                    class="header-tab"
+                    title="Clear execution data"
+                    @click="emit('clear-execution', node.id)"
+                  >
+                    CLEAR
+                  </button>
+                </div>
+                <div class="header-actions">
+                  <button
+                    class="btn btn-sm btn-save"
+                    title="Save workflow"
+                    @click="emit('save')"
+                  >
+                    <span class="btn-content">💾 Save</span>
+                  </button>
+                  <button
+                    class="btn btn-sm btn-execute"
+                    :class="{ 'is-executing': executing }"
+                    @click="emit('execute', node.id, { single: true })"
+                  >
+                    <span class="btn-content">⚡ Execute Step</span>
+                  </button>
+                </div>
+              </div>
           
-          <div class="col-content">
-            <div v-if="activeTab === 'parameters'" class="params-form">
-              <!-- C1: run-scoped resume/approve/reject links for human-in-the-loop
+              <div class="col-content">
+                <div
+                  v-if="activeTab === 'parameters'"
+                  class="params-form"
+                >
+                  <!-- C1: run-scoped resume/approve/reject links for human-in-the-loop
                    Wait (webhook mode) and Approval nodes. Paste into an UPSTREAM
                    node (e.g. Telegram) so the human gets the link before the run
                    parks — the runId placeholder fills in the live run at send time. -->
-              <div v-if="isWaitWebhook || isApproval" class="form-row resume-url-block">
-                <label class="field-label" style="color: var(--teal)">
-                  {{ isApproval ? 'Approval Links' : 'Resume URL' }}
-                  <span class="info-icon" style="opacity: 0.5; font-size: 10px; cursor: help;" title="Send this to a human so they can resume the run. Use it in a node BEFORE this one.">ⓘ</span>
-                </label>
-                <p class="resume-url-hint">
-                  <template v-if="hasLiveRunLink">Scoped to this node's last run — ready to open or send as-is.</template>
-                  <template v-else>Paste into a node <b>before</b> this one. <code>{{ runIdToken }}</code> resolves to the current run automatically.</template>
-                </p>
-                <template v-if="isApproval">
-                  <div class="webhook-url-input-group">
-                    <input type="text" :value="approveUrl" readonly title="Approve → routes down the first (approve) output" />
-                    <button @click="copyText(approveUrl)" class="btn-copy-url btn-copy-url--labeled" title="Copy Approve URL">✓ Approve</button>
-                  </div>
-                  <div class="webhook-url-input-group" style="margin-top: 6px">
-                    <input type="text" :value="rejectUrl" readonly title="Reject → routes down the second (reject) output" />
-                    <button @click="copyText(rejectUrl)" class="btn-copy-url btn-copy-url--labeled" title="Copy Reject URL">✕ Reject</button>
-                  </div>
-                </template>
-                <div v-else class="webhook-url-input-group">
-                  <input type="text" :value="resumeUrl" readonly />
-                  <button @click="copyText(resumeUrl)" class="btn-copy-url" title="Copy Resume URL">Copy</button>
-                </div>
-              </div>
-              <!-- Dynamic Props -->
-              <template v-for="prop in nodeDefinition.properties" :key="prop.name">
-                <div v-if="shouldShowProperty(prop)" class="form-row" :class="'row-' + prop.type">
-                  <div v-if="prop.type === 'curlImport'" class="curl-import-row">
-                    <button class="btn-curl-import" @click="openCurlImport">
-                      Import from cURL
-                    </button>
-                  </div>
-                  <template v-else-if="prop.type === 'servicePreset'">
-                    <label class="field-label">{{ prop.displayName }}</label>
-                    <select
-                      class="preset-select"
-                      style="margin-bottom:10px;"
-                      @change="applySynapsePreset(prop, $event.target.value); $event.target.value = ''"
+                  <div
+                    v-if="isWaitWebhook || isApproval"
+                    class="form-row resume-url-block"
+                  >
+                    <label
+                      class="field-label"
+                      style="color: var(--teal)"
                     >
-                      <option value="">Prefill for a service…</option>
-                      <option v-for="p in prop.presets || []" :key="p.value" :value="p.value">{{ p.label }}</option>
-                    </select>
-                  </template>
-                  <template v-else-if="prop.type === 'boolean'">
-                    <label class="field-label" :title="prop.description || prop.displayName">{{ prop.displayName }}</label>
-                    <ExprInput
-                      v-if="isExprMode('p:'+prop.name, node.data.config[prop.name])"
-                      v-model="node.data.config[prop.name]"
-                      :resolve="resolveExpression"
-                      placeholder="Expression returning true / false…"
-                      @revert="exitExprMode('p:'+prop.name, () => node.data.config[prop.name] = false)"
-                    />
-                    <div v-else class="field-with-fx" @drop.prevent="dropToExpr($event, 'p:'+prop.name, v => node.data.config[prop.name] = v)" @dragover.prevent>
-                      <div class="toggle-field">
-                        <label class="toggle-switch">
-                          <input type="checkbox" v-model="node.data.config[prop.name]" />
-                          <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                        </label>
-                        <span class="toggle-label">{{ node.data.config[prop.name] ? 'Enabled' : 'Disabled' }}</span>
-                      </div>
-                      <button type="button" class="btn-fx-toggle" title="Use an expression" @click="enterExprMode('p:'+prop.name, () => node.data.config[prop.name] = '')">ƒx</button>
-                    </div>
-                  </template>
-                  <template v-else-if="prop.type === 'checkboxCard'">
-                    <div class="checkbox-card">
-                      <div class="checkbox-card-title">{{ prop.displayName }}</div>
-                      <p v-if="prop.description" class="checkbox-card-desc">{{ prop.description }}</p>
-                      <label
-                        v-for="item in prop.options"
-                        :key="item.name"
-                        class="checkbox-card-item"
-                        :title="item.description || ''"
-                      >
-                        <input type="checkbox" v-model="node.data.config[item.name]" />
-                        <span class="cc-item-text">
-                          <span class="cc-item-name">{{ item.displayName }}</span>
-                          <span v-if="item.description" class="cc-item-desc">{{ item.description }}</span>
-                        </span>
-                      </label>
-                    </div>
-                  </template>
-                  <template v-else-if="prop.type === 'options'">
-                    <label>{{ prop.displayName }}</label>
-                    <ExprInput
-                      v-if="isExprMode('p:'+prop.name, node.data.config[prop.name])"
-                      v-model="node.data.config[prop.name]"
-                      :resolve="resolveExpression"
-                      :placeholder="'Expression for ' + prop.displayName + '…'"
-                      @revert="exitExprMode('p:'+prop.name, () => node.data.config[prop.name] = '')"
-                    />
-                    <div v-else class="field-with-fx" @drop.prevent="dropToExpr($event, 'p:'+prop.name, v => node.data.config[prop.name] = v)" @dragover.prevent>
-                      <SearchableSelect
-                        v-if="prop.searchable || prop.allowCustomValue"
-                        v-model="node.data.config[prop.name]"
-                        :options="prop.options"
-                        :allow-custom-value="!!prop.allowCustomValue"
-                        :placeholder="prop.placeholder || (prop.allowCustomValue ? 'Select or type...' : 'Search...')"
-                      />
-                      <select v-else v-model="node.data.config[prop.name]">
-                        <option v-for="opt in prop.options" :key="opt.value" :value="opt.value">{{ optionDisplayName(opt) }}</option>
-                      </select>
-                      <button type="button" class="btn-fx-toggle" title="Use an expression" @click="enterExprMode('p:'+prop.name, () => node.data.config[prop.name] = '')">ƒx</button>
-                    </div>
-                  </template>
-                  <template v-else-if="prop.type === 'multiOptions'">
-                    <label>{{ prop.displayName }}</label>
-                    <ExprInput
-                      v-if="isExprMode('p:'+prop.name, node.data.config[prop.name])"
-                      v-model="node.data.config[prop.name]"
-                      :resolve="resolveExpression"
-                      placeholder="Expression returning a list…"
-                      @revert="exitExprMode('p:'+prop.name, () => node.data.config[prop.name] = [])"
-                    />
-                    <div v-else class="field-with-fx" @drop.prevent="dropToExpr($event, 'p:'+prop.name, v => node.data.config[prop.name] = v)" @dragover.prevent>
-                      <div class="multi-options-field">
-                        <div class="mo-selected-tags">
-                          <span v-for="(val, idx) in (node.data.config[prop.name] || [])" :key="val" class="mo-tag">
-                            {{ getOptionLabel(prop, val) }}
-                            <button class="mo-tag-remove" type="button" @click="node.data.config[prop.name].splice(idx, 1)">✕</button>
-                          </span>
-                        </div>
-                        <SearchableSelect
-                          :modelValue="''"
-                          :options="(prop.options || []).filter(o => !(node.data.config[prop.name] || []).includes(o.value))"
-                          :placeholder="prop.placeholder || `Search ${prop.displayName.toLowerCase()}...`"
-                          @update:modelValue="(v) => { if (v) { if (!node.data.config[prop.name]) node.data.config[prop.name] = []; node.data.config[prop.name].push(v); } }"
-                        />
-                      </div>
-                      <button type="button" class="btn-fx-toggle" title="Use an expression" @click="enterExprMode('p:'+prop.name, () => node.data.config[prop.name] = '')">ƒx</button>
-                    </div>
-                  </template>
-                  <template v-else-if="prop.type === 'credential'">
-                    <label class="field-label">{{ prop.displayName }}</label>
-                    <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px;">
-                      <select v-model="node.data.config[prop.name]" style="flex:1; margin-bottom:0;">
-                        <option value="">-- None --</option>
-                        <option v-for="cred in getCredentialsForService(prop.service)" :key="cred.id" :value="cred.id">{{ cred.name }}</option>
-                      </select>
-                      <button
-                        v-if="prop.service === 'facebook'"
-                        type="button"
-                        class="btn"
-                        :disabled="fbConnecting"
-                        @click="connectFacebook"
-                        style="flex-shrink:0; background:#1877F2 !important; border-color:#1877F2 !important; color:#fff !important;"
-                        title="Log in with Facebook and save each Page you manage as a credential"
-                      >{{ fbConnecting ? 'Connecting…' : '+ Connect' }}</button>
-                    </div>
-                  </template>
-                  <template v-else-if="prop.typeOptions?.rows">
-                    <label>{{ prop.displayName }}</label>
-                    <div class="input-with-preview">
-                      <textarea 
-                        :rows="prop.typeOptions.rows" 
-                        v-model="node.data.config[prop.name]" 
-                        :class="{ 'has-expression': hasExpression(node.data.config[prop.name]), 'focused-exp': isFieldFocused({ name: prop.name }) }"
-                        @drop.prevent="onDrop($event, prop.name)" 
-                        @dragover.prevent
-                        @focus="handleFocus($event, { name: prop.name })"
-                        @blur="handleBlur"
-                        placeholder="Drop variables here..."
-                      ></textarea>
-                      <button type="button" class="btn-expand-input" title="Expand to view full value"
-                        @click="openExpandedInput(prop.displayName, node.data.config[prop.name], v => node.data.config[prop.name] = v)">
-                        <svg viewBox="0 0 24 24" width="13" height="13"><path fill="currentColor" d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
-                      </button>
-
-                      <!-- Bottom Dropdown Preview -->
-                      <Transition name="fade">
-                        <div 
-                          v-if="isFieldFocused({ name: prop.name }) && hasExpression(node.data.config[prop.name])" 
-                          class="nd-dropdown-preview"
-                          @mousedown="keepPreview = true"
-                          @mouseup="releasePreview"
-                          @mouseleave="releasePreview"
+                      {{ isApproval ? 'Approval Links' : 'Resume URL' }}
+                      <span
+                        class="info-icon"
+                        style="opacity: 0.5; font-size: 10px; cursor: help;"
+                        title="Send this to a human so they can resume the run. Use it in a node BEFORE this one."
+                      >ⓘ</span>
+                    </label>
+                    <p class="resume-url-hint">
+                      <template v-if="hasLiveRunLink">
+                        Scoped to this node's last run — ready to open or send as-is.
+                      </template>
+                      <template v-else>
+                        Paste into a node <b>before</b> this one. <code>{{ runIdToken }}</code> resolves to the current run automatically.
+                      </template>
+                    </p>
+                    <template v-if="isApproval">
+                      <div class="webhook-url-input-group">
+                        <input
+                          type="text"
+                          :value="approveUrl"
+                          readonly
+                          title="Approve → routes down the first (approve) output"
                         >
-                          <div class="fp-header"><span>RESULT</span></div>
-                          <div class="fp-body">{{ focusedValue || (focusedValue === '' ? '(Empty String)' : '(Waiting for data...)') }}</div>
-                        </div>
-                      </Transition>
-
-                      <!-- Persistent resolved value (n8n style) -->
+                        <button
+                          class="btn-copy-url btn-copy-url--labeled"
+                          title="Copy Approve URL"
+                          @click="copyText(approveUrl)"
+                        >
+                          ✓ Approve
+                        </button>
+                      </div>
                       <div
-                        v-if="hasExpression(node.data.config[prop.name]) && !isFieldFocused({ name: prop.name })"
-                        class="exp-resolved"
+                        class="webhook-url-input-group"
+                        style="margin-top: 6px"
                       >
-                        <span class="exp-resolved-icon">=</span>
-                        <span class="exp-resolved-val">{{ inlineResolved(node.data.config[prop.name]) ?? '(run previous node to preview)' }}</span>
-                      </div>
-                    </div>
-                  </template>
-                  <template v-else-if="prop.type === 'fixedCollection'">
-                    <div class="collection-wrapper">
-                      <div class="collection-header">
-                        <label>{{ prop.displayName }}</label>
-                      </div>
-                      <div class="fixed-collection">
-                      <div class="fc-items">
-                        <div
-                          v-for="(item, idx) in (node.data.config[prop.name]?.parameters || [])"
-                          :key="idx"
-                          class="fc-item"
-                          :class="{ 'fc-item-dragging': isDraggingItem(prop.name, idx) }"
-                          style="flex-direction: column;"
-                          :draggable="isDragArmed(prop.name, idx)"
-                          @dragstart="onFcDragStart($event, prop.name, idx)"
-                          @dragover.prevent
-                          @drop.prevent="onFcDrop(prop.name, idx)"
-                          @dragend="disarmDrag"
+                        <input
+                          type="text"
+                          :value="rejectUrl"
+                          readonly
+                          title="Reject → routes down the second (reject) output"
                         >
-                          <!-- Full-width rows (e.g. textareas). Use <template> so
+                        <button
+                          class="btn-copy-url btn-copy-url--labeled"
+                          title="Copy Reject URL"
+                          @click="copyText(rejectUrl)"
+                        >
+                          ✕ Reject
+                        </button>
+                      </div>
+                    </template>
+                    <div
+                      v-else
+                      class="webhook-url-input-group"
+                    >
+                      <input
+                        type="text"
+                        :value="resumeUrl"
+                        readonly
+                      >
+                      <button
+                        class="btn-copy-url"
+                        title="Copy Resume URL"
+                        @click="copyText(resumeUrl)"
+                      >
+                        Copy
+                      </button>
+                    </div>
+                  </div>
+                  <!-- Dynamic Props -->
+                  <template
+                    v-for="prop in nodeDefinition.properties"
+                    :key="prop.name"
+                  >
+                    <div
+                      v-if="shouldShowProperty(prop)"
+                      class="form-row"
+                      :class="'row-' + prop.type"
+                    >
+                      <div
+                        v-if="prop.type === 'curlImport'"
+                        class="curl-import-row"
+                      >
+                        <button
+                          class="btn-curl-import"
+                          @click="openCurlImport"
+                        >
+                          Import from cURL
+                        </button>
+                      </div>
+                      <template v-else-if="prop.type === 'servicePreset'">
+                        <label class="field-label">{{ prop.displayName }}</label>
+                        <select
+                          class="preset-select"
+                          style="margin-bottom:10px;"
+                          @change="applySynapsePreset(prop, $event.target.value); $event.target.value = ''"
+                        >
+                          <option value="">
+                            Prefill for a service…
+                          </option>
+                          <option
+                            v-for="p in prop.presets || []"
+                            :key="p.value"
+                            :value="p.value"
+                          >
+                            {{ p.label }}
+                          </option>
+                        </select>
+                      </template>
+                      <template v-else-if="prop.type === 'boolean'">
+                        <label
+                          class="field-label"
+                          :title="prop.description || prop.displayName"
+                        >{{ prop.displayName }}</label>
+                        <ExprInput
+                          v-if="isExprMode('p:'+prop.name, node.data.config[prop.name])"
+                          v-model="node.data.config[prop.name]"
+                          :resolve="resolveExpression"
+                          placeholder="Expression returning true / false…"
+                          @revert="exitExprMode('p:'+prop.name, () => node.data.config[prop.name] = false)"
+                        />
+                        <div
+                          v-else
+                          class="field-with-fx"
+                          @drop.prevent="dropToExpr($event, 'p:'+prop.name, v => node.data.config[prop.name] = v)"
+                          @dragover.prevent
+                        >
+                          <div class="toggle-field">
+                            <label class="toggle-switch">
+                              <input
+                                v-model="node.data.config[prop.name]"
+                                type="checkbox"
+                              >
+                              <span class="toggle-track"><span class="toggle-thumb" /></span>
+                            </label>
+                            <span class="toggle-label">{{ node.data.config[prop.name] ? 'Enabled' : 'Disabled' }}</span>
+                          </div>
+                          <button
+                            type="button"
+                            class="btn-fx-toggle"
+                            title="Use an expression"
+                            @click="enterExprMode('p:'+prop.name, () => node.data.config[prop.name] = '')"
+                          >
+                            ƒx
+                          </button>
+                        </div>
+                      </template>
+                      <template v-else-if="prop.type === 'checkboxCard'">
+                        <div class="checkbox-card">
+                          <div class="checkbox-card-title">
+                            {{ prop.displayName }}
+                          </div>
+                          <p
+                            v-if="prop.description"
+                            class="checkbox-card-desc"
+                          >
+                            {{ prop.description }}
+                          </p>
+                          <label
+                            v-for="item in prop.options"
+                            :key="item.name"
+                            class="checkbox-card-item"
+                            :title="item.description || ''"
+                          >
+                            <input
+                              v-model="node.data.config[item.name]"
+                              type="checkbox"
+                            >
+                            <span class="cc-item-text">
+                              <span class="cc-item-name">{{ item.displayName }}</span>
+                              <span
+                                v-if="item.description"
+                                class="cc-item-desc"
+                              >{{ item.description }}</span>
+                            </span>
+                          </label>
+                        </div>
+                      </template>
+                      <template v-else-if="prop.type === 'options'">
+                        <label>{{ prop.displayName }}</label>
+                        <ExprInput
+                          v-if="isExprMode('p:'+prop.name, node.data.config[prop.name])"
+                          v-model="node.data.config[prop.name]"
+                          :resolve="resolveExpression"
+                          :placeholder="'Expression for ' + prop.displayName + '…'"
+                          @revert="exitExprMode('p:'+prop.name, () => node.data.config[prop.name] = '')"
+                        />
+                        <div
+                          v-else
+                          class="field-with-fx"
+                          @drop.prevent="dropToExpr($event, 'p:'+prop.name, v => node.data.config[prop.name] = v)"
+                          @dragover.prevent
+                        >
+                          <SearchableSelect
+                            v-if="prop.searchable || prop.allowCustomValue"
+                            v-model="node.data.config[prop.name]"
+                            :options="prop.options"
+                            :allow-custom-value="!!prop.allowCustomValue"
+                            :placeholder="prop.placeholder || (prop.allowCustomValue ? 'Select or type...' : 'Search...')"
+                          />
+                          <select
+                            v-else
+                            v-model="node.data.config[prop.name]"
+                          >
+                            <option
+                              v-for="opt in prop.options"
+                              :key="opt.value"
+                              :value="opt.value"
+                            >
+                              {{ optionDisplayName(opt) }}
+                            </option>
+                          </select>
+                          <button
+                            type="button"
+                            class="btn-fx-toggle"
+                            title="Use an expression"
+                            @click="enterExprMode('p:'+prop.name, () => node.data.config[prop.name] = '')"
+                          >
+                            ƒx
+                          </button>
+                        </div>
+                      </template>
+                      <template v-else-if="prop.type === 'multiOptions'">
+                        <label>{{ prop.displayName }}</label>
+                        <ExprInput
+                          v-if="isExprMode('p:'+prop.name, node.data.config[prop.name])"
+                          v-model="node.data.config[prop.name]"
+                          :resolve="resolveExpression"
+                          placeholder="Expression returning a list…"
+                          @revert="exitExprMode('p:'+prop.name, () => node.data.config[prop.name] = [])"
+                        />
+                        <div
+                          v-else
+                          class="field-with-fx"
+                          @drop.prevent="dropToExpr($event, 'p:'+prop.name, v => node.data.config[prop.name] = v)"
+                          @dragover.prevent
+                        >
+                          <div class="multi-options-field">
+                            <div class="mo-selected-tags">
+                              <span
+                                v-for="(val, idx) in (node.data.config[prop.name] || [])"
+                                :key="val"
+                                class="mo-tag"
+                              >
+                                {{ getOptionLabel(prop, val) }}
+                                <button
+                                  class="mo-tag-remove"
+                                  type="button"
+                                  @click="node.data.config[prop.name].splice(idx, 1)"
+                                >✕</button>
+                              </span>
+                            </div>
+                            <SearchableSelect
+                              :model-value="''"
+                              :options="(prop.options || []).filter(o => !(node.data.config[prop.name] || []).includes(o.value))"
+                              :placeholder="prop.placeholder || `Search ${prop.displayName.toLowerCase()}...`"
+                              @update:model-value="(v) => { if (v) { if (!node.data.config[prop.name]) node.data.config[prop.name] = []; node.data.config[prop.name].push(v); } }"
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            class="btn-fx-toggle"
+                            title="Use an expression"
+                            @click="enterExprMode('p:'+prop.name, () => node.data.config[prop.name] = '')"
+                          >
+                            ƒx
+                          </button>
+                        </div>
+                      </template>
+                      <template v-else-if="prop.type === 'credential'">
+                        <label class="field-label">{{ prop.displayName }}</label>
+                        <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px;">
+                          <select
+                            v-model="node.data.config[prop.name]"
+                            style="flex:1; margin-bottom:0;"
+                          >
+                            <option value="">
+                              -- None --
+                            </option>
+                            <option
+                              v-for="cred in getCredentialsForService(prop.service)"
+                              :key="cred.id"
+                              :value="cred.id"
+                            >
+                              {{ cred.name }}
+                            </option>
+                          </select>
+                          <button
+                            v-if="prop.service === 'facebook'"
+                            type="button"
+                            class="btn"
+                            :disabled="fbConnecting"
+                            style="flex-shrink:0; background:#1877F2 !important; border-color:#1877F2 !important; color:#fff !important;"
+                            title="Log in with Facebook and save each Page you manage as a credential"
+                            @click="connectFacebook"
+                          >
+                            {{ fbConnecting ? 'Connecting…' : '+ Connect' }}
+                          </button>
+                        </div>
+                      </template>
+                      <template v-else-if="prop.typeOptions?.rows">
+                        <label>{{ prop.displayName }}</label>
+                        <div class="input-with-preview">
+                          <textarea 
+                            v-model="node.data.config[prop.name]" 
+                            :rows="prop.typeOptions.rows" 
+                            :class="{ 'has-expression': hasExpression(node.data.config[prop.name]), 'focused-exp': isFieldFocused({ name: prop.name }) }"
+                            placeholder="Drop variables here..." 
+                            @drop.prevent="onDrop($event, prop.name)"
+                            @dragover.prevent
+                            @focus="handleFocus($event, { name: prop.name })"
+                            @blur="handleBlur"
+                          />
+                          <button
+                            type="button"
+                            class="btn-expand-input"
+                            title="Expand to view full value"
+                            @click="openExpandedInput(prop.displayName, node.data.config[prop.name], v => node.data.config[prop.name] = v)"
+                          >
+                            <svg
+                              viewBox="0 0 24 24"
+                              width="13"
+                              height="13"
+                            ><path
+                              fill="currentColor"
+                              d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"
+                            /></svg>
+                          </button>
+
+                          <!-- Bottom Dropdown Preview -->
+                          <Transition name="fade">
+                            <div 
+                              v-if="isFieldFocused({ name: prop.name }) && hasExpression(node.data.config[prop.name])" 
+                              class="nd-dropdown-preview"
+                              @mousedown="keepPreview = true"
+                              @mouseup="releasePreview"
+                              @mouseleave="releasePreview"
+                            >
+                              <div class="fp-header">
+                                <span>RESULT</span>
+                              </div>
+                              <div class="fp-body">
+                                {{ focusedValue || (focusedValue === '' ? '(Empty String)' : '(Waiting for data...)') }}
+                              </div>
+                            </div>
+                          </Transition>
+
+                          <!-- Persistent resolved value (n8n style) -->
+                          <div
+                            v-if="hasExpression(node.data.config[prop.name]) && !isFieldFocused({ name: prop.name })"
+                            class="exp-resolved"
+                          >
+                            <span class="exp-resolved-icon">=</span>
+                            <span class="exp-resolved-val">{{ inlineResolved(node.data.config[prop.name]) ?? '(run previous node to preview)' }}</span>
+                          </div>
+                        </div>
+                      </template>
+                      <template v-else-if="prop.type === 'fixedCollection'">
+                        <div class="collection-wrapper">
+                          <div class="collection-header">
+                            <label>{{ prop.displayName }}</label>
+                          </div>
+                          <div class="fixed-collection">
+                            <div class="fc-items">
+                              <div
+                                v-for="(item, idx) in (node.data.config[prop.name]?.parameters || [])"
+                                :key="idx"
+                                class="fc-item"
+                                :class="{ 'fc-item-dragging': isDraggingItem(prop.name, idx) }"
+                                style="flex-direction: column;"
+                                :draggable="isDragArmed(prop.name, idx)"
+                                @dragstart="onFcDragStart($event, prop.name, idx)"
+                                @dragover.prevent
+                                @drop.prevent="onFcDrop(prop.name, idx)"
+                                @dragend="disarmDrag"
+                              >
+                                <!-- Full-width rows (e.g. textareas). Use <template> so
                                sub-fields without a row textarea don't leave empty
                                flex children behind — those were injecting dead
                                vertical space (the fc-item column has a gap) and
                                spreading the rules far apart. -->
-                          <template v-for="subProp in prop.options" :key="'row-'+subProp.name">
-                            <div v-if="shouldShowProperty(subProp, item) && subProp.typeOptions?.rows" class="fc-sub-field" style="width: 100%;">
-
-                              <div class="input-with-preview">
-                                <textarea
-                                  v-model="item[subProp.name]"
-                                  :rows="subProp.typeOptions.rows"
-                                  :class="{ 'has-expression': hasExpression(item[subProp.name]), 'focused-exp': isFieldFocused({ collection: prop.name, index: idx, subName: subProp.name }) }"
-                                  :placeholder="subProp.placeholder || ''"
-                                  @drop.prevent="onDropCollection($event, prop.name, idx, subProp.name)"
-                                  @dragover.prevent
-                                  @focus="handleFocus($event, { collection: prop.name, index: idx, subName: subProp.name })"
-                                  @blur="handleBlur"
-                                ></textarea>
-                                <button type="button" class="btn-expand-input" title="Expand to view full value"
-                                  @click="openExpandedInput(subProp.displayName, item[subProp.name], v => item[subProp.name] = v)">
-                                  <svg viewBox="0 0 24 24" width="13" height="13"><path fill="currentColor" d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
-                                </button>
-                                <!-- Bottom Dropdown Preview -->
-                                <Transition name="fade">
-                                  <div 
-                                    v-if="isFieldFocused({ collection: prop.name, index: idx, subName: subProp.name }) && hasExpression(item[subProp.name])" 
-                                    class="nd-dropdown-preview"
-                                    @mousedown="keepPreview = true"
-                                    @mouseup="keepPreview = false"
-                                    @mouseleave="keepPreview = false"
+                                <template
+                                  v-for="subProp in prop.options"
+                                  :key="'row-'+subProp.name"
+                                >
+                                  <div
+                                    v-if="shouldShowProperty(subProp, item) && subProp.typeOptions?.rows"
+                                    class="fc-sub-field"
+                                    style="width: 100%;"
                                   >
-                                    <div class="fp-header"><span>RESULT</span></div>
-                                    <div class="fp-body">{{ focusedValue || (focusedValue === '' ? '(Empty String)' : '(Waiting for data...)') }}</div>
+                                    <div class="input-with-preview">
+                                      <textarea
+                                        v-model="item[subProp.name]"
+                                        :rows="subProp.typeOptions.rows"
+                                        :class="{ 'has-expression': hasExpression(item[subProp.name]), 'focused-exp': isFieldFocused({ collection: prop.name, index: idx, subName: subProp.name }) }"
+                                        :placeholder="subProp.placeholder || ''"
+                                        @drop.prevent="onDropCollection($event, prop.name, idx, subProp.name)"
+                                        @dragover.prevent
+                                        @focus="handleFocus($event, { collection: prop.name, index: idx, subName: subProp.name })"
+                                        @blur="handleBlur"
+                                      />
+                                      <button
+                                        type="button"
+                                        class="btn-expand-input"
+                                        title="Expand to view full value"
+                                        @click="openExpandedInput(subProp.displayName, item[subProp.name], v => item[subProp.name] = v)"
+                                      >
+                                        <svg
+                                          viewBox="0 0 24 24"
+                                          width="13"
+                                          height="13"
+                                        ><path
+                                          fill="currentColor"
+                                          d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"
+                                        /></svg>
+                                      </button>
+                                      <!-- Bottom Dropdown Preview -->
+                                      <Transition name="fade">
+                                        <div 
+                                          v-if="isFieldFocused({ collection: prop.name, index: idx, subName: subProp.name }) && hasExpression(item[subProp.name])" 
+                                          class="nd-dropdown-preview"
+                                          @mousedown="keepPreview = true"
+                                          @mouseup="keepPreview = false"
+                                          @mouseleave="keepPreview = false"
+                                        >
+                                          <div class="fp-header">
+                                            <span>RESULT</span>
+                                          </div>
+                                          <div class="fp-body">
+                                            {{ focusedValue || (focusedValue === '' ? '(Empty String)' : '(Waiting for data...)') }}
+                                          </div>
+                                        </div>
+                                      </Transition>
+                                    </div>
                                   </div>
-                                </Transition>
+                                </template>
+
+                                <!-- Inline grouped fields -->
+                                <div style="display: flex; gap: 8px; width: 100%; align-items: flex-start;">
+                                  <div
+                                    v-if="!isDynamicOutputCollection(prop.name)"
+                                    class="fc-drag-handle"
+                                  >
+                                    <label
+                                      v-if="idx === 0"
+                                      class="fc-header-label"
+                                      style="display: block; margin-bottom: 4px; visibility: hidden;"
+                                    >&nbsp;</label>
+                                    <span
+                                      class="fc-drag-grip"
+                                      title="Drag to reorder"
+                                      @mousedown="armDrag(prop.name, idx)"
+                                      @mouseup="disarmDrag()"
+                                    >⠿</span>
+                                  </div>
+                                  <div class="fc-item-fields">
+                                    <template
+                                      v-for="subProp in prop.options"
+                                      :key="'inline-'+subProp.name"
+                                    >
+                                      <div
+                                        v-if="shouldShowProperty(subProp, item) && !subProp.typeOptions?.rows"
+                                        class="fc-sub-field"
+                                        :class="{ 'fc-sub-nolabel': subProp.hideLabel, 'fc-sub-boolean': subProp.type === 'boolean' }"
+                                      >
+                                        <label
+                                          v-if="idx === 0 && !subProp.hideLabel"
+                                          class="fc-header-label"
+                                          :title="subProp.hint || subProp.displayName"
+                                          style="display: block; margin-bottom: 4px;"
+                                        >{{ subProp.displayName }}</label>
+                                        <div class="input-with-preview">
+                                          <template v-if="subProp.type === 'options'">
+                                            <ExprInput
+                                              v-if="isExprMode('fc:'+prop.name+':'+idx+':'+subProp.name, item[subProp.name])"
+                                              v-model="item[subProp.name]"
+                                              :resolve="resolveExpression"
+                                              placeholder="Expression…"
+                                              @revert="exitExprMode('fc:'+prop.name+':'+idx+':'+subProp.name, () => item[subProp.name] = '')"
+                                            />
+                                            <div
+                                              v-else
+                                              class="field-with-fx"
+                                              @drop.prevent="dropToExpr($event, 'fc:'+prop.name+':'+idx+':'+subProp.name, v => item[subProp.name] = v)"
+                                              @dragover.prevent
+                                            >
+                                              <SearchableSelect
+                                                v-if="subProp.searchable || subProp.allowCustomValue"
+                                                v-model="item[subProp.name]"
+                                                :options="filteredOptions(subProp, item)"
+                                                :allow-custom-value="!!subProp.allowCustomValue"
+                                                :placeholder="subProp.placeholder || (subProp.allowCustomValue ? 'Select or type...' : 'Search...')"
+                                              />
+                                              <select
+                                                v-else
+                                                v-model="item[subProp.name]"
+                                              >
+                                                <option
+                                                  v-for="opt in filteredOptions(subProp, item)"
+                                                  :key="opt.value"
+                                                  :value="opt.value"
+                                                >
+                                                  {{ optionDisplayName(opt) }}
+                                                </option>
+                                              </select>
+                                              <button
+                                                v-if="!subProp.noExpr"
+                                                type="button"
+                                                class="btn-fx-toggle"
+                                                title="Use an expression"
+                                                @click="enterExprMode('fc:'+prop.name+':'+idx+':'+subProp.name, () => item[subProp.name] = '')"
+                                              >
+                                                ƒx
+                                              </button>
+                                            </div>
+                                          </template>
+                                          <template v-else-if="subProp.type === 'boolean'">
+                                            <ExprInput
+                                              v-if="isExprMode('fc:'+prop.name+':'+idx+':'+subProp.name, item[subProp.name])"
+                                              v-model="item[subProp.name]"
+                                              :resolve="resolveExpression"
+                                              placeholder="Expression true/false…"
+                                              @revert="exitExprMode('fc:'+prop.name+':'+idx+':'+subProp.name, () => item[subProp.name] = false)"
+                                            />
+                                            <div
+                                              v-else
+                                              class="field-with-fx"
+                                              @drop.prevent="dropToExpr($event, 'fc:'+prop.name+':'+idx+':'+subProp.name, v => item[subProp.name] = v)"
+                                              @dragover.prevent
+                                            >
+                                              <div class="fc-toggle">
+                                                <label
+                                                  class="fc-toggle-switch"
+                                                  :title="subProp.displayName"
+                                                >
+                                                  <input
+                                                    v-model="item[subProp.name]"
+                                                    type="checkbox"
+                                                  >
+                                                  <span class="fc-toggle-slider" />
+                                                </label>
+                                              </div>
+                                              <button
+                                                v-if="!subProp.noExpr"
+                                                type="button"
+                                                class="btn-fx-toggle"
+                                                title="Use an expression"
+                                                @click="enterExprMode('fc:'+prop.name+':'+idx+':'+subProp.name, () => item[subProp.name] = '')"
+                                              >
+                                                ƒx
+                                              </button>
+                                            </div>
+                                          </template>
+                                          <input
+                                            v-else
+                                            v-model="item[subProp.name]"
+                                            :type="subProp.type === 'number' ? 'number' : 'text'"
+                                            :class="{ 'has-expression': hasExpression(item[subProp.name]), 'focused-exp': isFieldFocused({ collection: prop.name, index: idx, subName: subProp.name }) }"
+                                            :placeholder="subProp.placeholder || ''"
+                                            @drop.prevent="onDropCollection($event, prop.name, idx, subProp.name)"
+                                            @dragover.prevent
+                                            @focus="handleFocus($event, { collection: prop.name, index: idx, subName: subProp.name })"
+                                            @blur="handleBlur"
+                                          >
+                                          <button
+                                            v-if="subProp.type !== 'options' && subProp.type !== 'boolean'"
+                                            type="button"
+                                            class="btn-expand-input"
+                                            title="Expand to view full value"
+                                            @click="openExpandedInput(subProp.displayName, item[subProp.name], v => item[subProp.name] = v)"
+                                          >
+                                            <svg
+                                              viewBox="0 0 24 24"
+                                              width="13"
+                                              height="13"
+                                            ><path
+                                              fill="currentColor"
+                                              d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"
+                                            /></svg>
+                                          </button>
+                                          <!-- Bottom Dropdown Preview -->
+                                          <Transition name="fade">
+                                            <div 
+                                              v-if="isFieldFocused({ collection: prop.name, index: idx, subName: subProp.name }) && hasExpression(item[subProp.name])" 
+                                              class="nd-dropdown-preview"
+                                              @mousedown="keepPreview = true"
+                                              @mouseup="keepPreview = false"
+                                              @mouseleave="keepPreview = false"
+                                            >
+                                              <div class="fp-header">
+                                                <span>RESULT</span>
+                                              </div>
+                                              <div class="fp-body">
+                                                {{ focusedValue || (focusedValue === '' ? '(Empty String)' : '(Waiting for data...)') }}
+                                              </div>
+                                            </div>
+                                          </Transition>
+                                        </div>
+                                      </div>
+                                    </template>
+                                  </div>
+                                  <div class="fc-item-remove-col">
+                                    <label
+                                      v-if="idx === 0"
+                                      class="fc-header-label"
+                                      style="display: block; margin-bottom: 4px; visibility: hidden;"
+                                    >&nbsp;</label>
+                                    <button
+                                      class="btn-fc-remove"
+                                      type="button"
+                                      title="Remove item"
+                                      @click="removeCollectionItem(prop.name, idx)"
+                                    >
+                                      ✕
+                                    </button>
+                                  </div>
+                                </div> <!-- close the flex row wrapper -->
                               </div>
                             </div>
-                          </template>
-
-                          <!-- Inline grouped fields -->
-                          <div style="display: flex; gap: 8px; width: 100%; align-items: flex-start;">
-                            <div v-if="!isDynamicOutputCollection(prop.name)" class="fc-drag-handle">
-                              <label v-if="idx === 0" class="fc-header-label" style="display: block; margin-bottom: 4px; visibility: hidden;">&nbsp;</label>
-                              <span
-                                class="fc-drag-grip"
-                                title="Drag to reorder"
-                                @mousedown="armDrag(prop.name, idx)"
-                                @mouseup="disarmDrag()"
-                              >⠿</span>
-                            </div>
-                            <div class="fc-item-fields">
-                            <template v-for="subProp in prop.options" :key="'inline-'+subProp.name">
-                              <div v-if="shouldShowProperty(subProp, item) && !subProp.typeOptions?.rows" class="fc-sub-field" :class="{ 'fc-sub-nolabel': subProp.hideLabel, 'fc-sub-boolean': subProp.type === 'boolean' }">
-                                <label v-if="idx === 0 && !subProp.hideLabel" class="fc-header-label" :title="subProp.hint || subProp.displayName" style="display: block; margin-bottom: 4px;">{{ subProp.displayName }}</label>
-                                <div class="input-with-preview">
-                                  <template v-if="subProp.type === 'options'">
+                            <button
+                              class="btn-fc-add"
+                              type="button"
+                              @click="addCollectionItem(prop.name, prop.options)"
+                            >
+                              + {{ prop.placeholder || 'Add Item' }}
+                            </button>
+                          </div>
+                        </div>
+                      </template>
+                      <template v-else-if="prop.type === 'collection'">
+                        <div class="collection-wrapper">
+                          <div class="collection-header">
+                            <label>{{ prop.displayName }}</label>
+                          </div>
+                          <div
+                            v-if="node.data.config[prop.name]"
+                            class="collection-field"
+                          >
+                            <div class="cf-items">
+                              <div
+                                v-for="opt in prop.options"
+                                :key="opt.name"
+                                class="cf-item"
+                              >
+                                <template v-if="shouldShowProperty(opt, node.data.config[prop.name])">
+                                  <div
+                                    v-if="opt.type === 'boolean' && isExprMode('cf:'+prop.name+':'+opt.name, node.data.config[prop.name][opt.name])"
+                                    class="cf-row"
+                                  >
+                                    <label>{{ opt.displayName }}</label>
                                     <ExprInput
-                                      v-if="isExprMode('fc:'+prop.name+':'+idx+':'+subProp.name, item[subProp.name])"
-                                      v-model="item[subProp.name]"
-                                      :resolve="resolveExpression"
-                                      placeholder="Expression…"
-                                      @revert="exitExprMode('fc:'+prop.name+':'+idx+':'+subProp.name, () => item[subProp.name] = '')"
-                                    />
-                                    <div v-else class="field-with-fx" @drop.prevent="dropToExpr($event, 'fc:'+prop.name+':'+idx+':'+subProp.name, v => item[subProp.name] = v)" @dragover.prevent>
-                                      <SearchableSelect
-                                        v-if="subProp.searchable || subProp.allowCustomValue"
-                                        v-model="item[subProp.name]"
-                                        :options="filteredOptions(subProp, item)"
-                                        :allow-custom-value="!!subProp.allowCustomValue"
-                                        :placeholder="subProp.placeholder || (subProp.allowCustomValue ? 'Select or type...' : 'Search...')"
-                                      />
-                                      <select v-else v-model="item[subProp.name]">
-                                        <option v-for="opt in filteredOptions(subProp, item)" :key="opt.value" :value="opt.value">{{ optionDisplayName(opt) }}</option>
-                                      </select>
-                                      <button v-if="!subProp.noExpr" type="button" class="btn-fx-toggle" title="Use an expression" @click="enterExprMode('fc:'+prop.name+':'+idx+':'+subProp.name, () => item[subProp.name] = '')">ƒx</button>
-                                    </div>
-                                  </template>
-                                  <template v-else-if="subProp.type === 'boolean'">
-                                    <ExprInput
-                                      v-if="isExprMode('fc:'+prop.name+':'+idx+':'+subProp.name, item[subProp.name])"
-                                      v-model="item[subProp.name]"
+                                      v-model="node.data.config[prop.name][opt.name]"
                                       :resolve="resolveExpression"
                                       placeholder="Expression true/false…"
-                                      @revert="exitExprMode('fc:'+prop.name+':'+idx+':'+subProp.name, () => item[subProp.name] = false)"
+                                      @revert="exitExprMode('cf:'+prop.name+':'+opt.name, () => node.data.config[prop.name][opt.name] = false)"
                                     />
-                                    <div v-else class="field-with-fx" @drop.prevent="dropToExpr($event, 'fc:'+prop.name+':'+idx+':'+subProp.name, v => item[subProp.name] = v)" @dragover.prevent>
-                                      <div class="fc-toggle">
-                                        <label class="fc-toggle-switch" :title="subProp.displayName">
-                                          <input type="checkbox" v-model="item[subProp.name]" />
-                                          <span class="fc-toggle-slider"></span>
-                                        </label>
-                                      </div>
-                                      <button v-if="!subProp.noExpr" type="button" class="btn-fx-toggle" title="Use an expression" @click="enterExprMode('fc:'+prop.name+':'+idx+':'+subProp.name, () => item[subProp.name] = '')">ƒx</button>
-                                    </div>
-                                  </template>
-                                  <input
-                                    v-else
-                                    :type="subProp.type === 'number' ? 'number' : 'text'"
-                                    v-model="item[subProp.name]"
-                                    :class="{ 'has-expression': hasExpression(item[subProp.name]), 'focused-exp': isFieldFocused({ collection: prop.name, index: idx, subName: subProp.name }) }"
-                                    :placeholder="subProp.placeholder || ''"
-                                    @drop.prevent="onDropCollection($event, prop.name, idx, subProp.name)"
+                                  </div>
+                                  <div
+                                    v-else-if="opt.type === 'boolean'"
+                                    class="cf-row-boolean"
+                                    @drop.prevent="dropToExpr($event, 'cf:'+prop.name+':'+opt.name, v => node.data.config[prop.name][opt.name] = v)"
                                     @dragover.prevent
-                                    @focus="handleFocus($event, { collection: prop.name, index: idx, subName: subProp.name })"
-                                    @blur="handleBlur"
-                                  />
-                                  <button v-if="subProp.type !== 'options' && subProp.type !== 'boolean'" type="button" class="btn-expand-input" title="Expand to view full value"
-                                    @click="openExpandedInput(subProp.displayName, item[subProp.name], v => item[subProp.name] = v)">
-                                    <svg viewBox="0 0 24 24" width="13" height="13"><path fill="currentColor" d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
-                                  </button>
-                                  <!-- Bottom Dropdown Preview -->
-                                  <Transition name="fade">
-                                    <div 
-                                      v-if="isFieldFocused({ collection: prop.name, index: idx, subName: subProp.name }) && hasExpression(item[subProp.name])" 
-                                      class="nd-dropdown-preview"
-                                      @mousedown="keepPreview = true"
-                                      @mouseup="keepPreview = false"
-                                      @mouseleave="keepPreview = false"
+                                  >
+                                    <input
+                                      :id="prop.name + opt.name"
+                                      v-model="node.data.config[prop.name][opt.name]"
+                                      type="checkbox"
                                     >
-                                      <div class="fp-header"><span>RESULT</span></div>
-                                      <div class="fp-body">{{ focusedValue || (focusedValue === '' ? '(Empty String)' : '(Waiting for data...)') }}</div>
+                                    <label :for="prop.name + opt.name">{{ opt.displayName }}</label>
+                                    <button
+                                      type="button"
+                                      class="btn-fx-toggle cf-bool-fx"
+                                      title="Use an expression"
+                                      @click="enterExprMode('cf:'+prop.name+':'+opt.name, () => node.data.config[prop.name][opt.name] = '')"
+                                    >
+                                      ƒx
+                                    </button>
+                                  </div>
+                                  <div
+                                    v-else-if="opt.type === 'string'"
+                                    class="cf-row"
+                                  >
+                                    <label>{{ opt.displayName }}</label>
+                                    <div class="input-with-preview">
+                                      <input
+                                        v-model="node.data.config[prop.name][opt.name]"
+                                        type="text"
+                                        :placeholder="opt.placeholder || 'Drop variables here...'"
+                                        :class="{ 'has-expression': hasExpression(node.data.config[prop.name][opt.name]), 'focused-exp': isFieldFocused({ collectionField: prop.name, subName: opt.name }) }"
+                                        @drop.prevent="onDropCollectionField($event, prop.name, opt.name)"
+                                        @dragover.prevent
+                                        @focus="handleFocus($event, { collectionField: prop.name, subName: opt.name })"
+                                        @blur="handleBlur"
+                                      >
+                                      <Transition name="fade">
+                                        <div
+                                          v-if="isFieldFocused({ collectionField: prop.name, subName: opt.name }) && hasExpression(node.data.config[prop.name][opt.name])"
+                                          class="nd-dropdown-preview"
+                                          @mousedown="keepPreview = true"
+                                          @mouseup="releasePreview"
+                                          @mouseleave="releasePreview"
+                                        >
+                                          <div class="fp-header">
+                                            <span>RESULT</span>
+                                          </div>
+                                          <div class="fp-body">
+                                            {{ focusedValue || (focusedValue === '' ? '(Empty String)' : '(Waiting for data...)') }}
+                                          </div>
+                                        </div>
+                                      </Transition>
+                                      <div
+                                        v-if="hasExpression(node.data.config[prop.name][opt.name]) && !isFieldFocused({ collectionField: prop.name, subName: opt.name })"
+                                        class="exp-resolved"
+                                      >
+                                        <span class="exp-resolved-icon">=</span>
+                                        <span class="exp-resolved-val">{{ inlineResolved(node.data.config[prop.name][opt.name]) ?? '(run previous node to preview)' }}</span>
+                                      </div>
                                     </div>
-                                  </Transition>
-                                </div>
-                              </div>
-                            </template>
-                          </div>
-                          <div class="fc-item-remove-col">
-                            <label v-if="idx === 0" class="fc-header-label" style="display: block; margin-bottom: 4px; visibility: hidden;">&nbsp;</label>
-                            <button class="btn-fc-remove" type="button" @click="removeCollectionItem(prop.name, idx)" title="Remove item">✕</button>
-                          </div>
-                          </div> <!-- close the flex row wrapper -->
-                        </div>
-                      </div>
-                      <button class="btn-fc-add" type="button" @click="addCollectionItem(prop.name, prop.options)">+ {{ prop.placeholder || 'Add Item' }}</button>
-                    </div>
-                  </div>
-                </template>
-                  <template v-else-if="prop.type === 'collection'">
-                    <div class="collection-wrapper">
-                      <div class="collection-header">
-                        <label>{{ prop.displayName }}</label>
-                      </div>
-                      <div v-if="node.data.config[prop.name]" class="collection-field">
-                      <div class="cf-items">
-                        <div v-for="opt in prop.options" :key="opt.name" class="cf-item">
-                          <template v-if="shouldShowProperty(opt, node.data.config[prop.name])">
-                            <div v-if="opt.type === 'boolean' && isExprMode('cf:'+prop.name+':'+opt.name, node.data.config[prop.name][opt.name])" class="cf-row">
-                              <label>{{ opt.displayName }}</label>
-                              <ExprInput
-                                v-model="node.data.config[prop.name][opt.name]"
-                                :resolve="resolveExpression"
-                                placeholder="Expression true/false…"
-                                @revert="exitExprMode('cf:'+prop.name+':'+opt.name, () => node.data.config[prop.name][opt.name] = false)"
-                              />
-                            </div>
-                            <div v-else-if="opt.type === 'boolean'" class="cf-row-boolean" @drop.prevent="dropToExpr($event, 'cf:'+prop.name+':'+opt.name, v => node.data.config[prop.name][opt.name] = v)" @dragover.prevent>
-                              <input type="checkbox" v-model="node.data.config[prop.name][opt.name]" :id="prop.name + opt.name" />
-                              <label :for="prop.name + opt.name">{{ opt.displayName }}</label>
-                              <button type="button" class="btn-fx-toggle cf-bool-fx" title="Use an expression" @click="enterExprMode('cf:'+prop.name+':'+opt.name, () => node.data.config[prop.name][opt.name] = '')">ƒx</button>
-                            </div>
-                            <div v-else-if="opt.type === 'string'" class="cf-row">
-                              <label>{{ opt.displayName }}</label>
-                              <div class="input-with-preview">
-                                <input
-                                  type="text"
-                                  v-model="node.data.config[prop.name][opt.name]"
-                                  :placeholder="opt.placeholder || 'Drop variables here...'"
-                                  :class="{ 'has-expression': hasExpression(node.data.config[prop.name][opt.name]), 'focused-exp': isFieldFocused({ collectionField: prop.name, subName: opt.name }) }"
-                                  @drop.prevent="onDropCollectionField($event, prop.name, opt.name)"
-                                  @dragover.prevent
-                                  @focus="handleFocus($event, { collectionField: prop.name, subName: opt.name })"
-                                  @blur="handleBlur"
-                                />
-                                <Transition name="fade">
-                                  <div
-                                    v-if="isFieldFocused({ collectionField: prop.name, subName: opt.name }) && hasExpression(node.data.config[prop.name][opt.name])"
-                                    class="nd-dropdown-preview"
-                                    @mousedown="keepPreview = true"
-                                    @mouseup="releasePreview"
-                                    @mouseleave="releasePreview"
-                                  >
-                                    <div class="fp-header"><span>RESULT</span></div>
-                                    <div class="fp-body">{{ focusedValue || (focusedValue === '' ? '(Empty String)' : '(Waiting for data...)') }}</div>
                                   </div>
-                                </Transition>
-                                <div
-                                  v-if="hasExpression(node.data.config[prop.name][opt.name]) && !isFieldFocused({ collectionField: prop.name, subName: opt.name })"
-                                  class="exp-resolved"
-                                >
-                                  <span class="exp-resolved-icon">=</span>
-                                  <span class="exp-resolved-val">{{ inlineResolved(node.data.config[prop.name][opt.name]) ?? '(run previous node to preview)' }}</span>
-                                </div>
-                              </div>
-                            </div>
-                            <div v-else-if="opt.type === 'number'" class="cf-row">
-                              <label>{{ opt.displayName }}</label>
-                              <div class="input-with-preview">
-                                <input
-                                  :type="hasExpression(node.data.config[prop.name][opt.name]) ? 'text' : 'number'"
-                                  v-model="node.data.config[prop.name][opt.name]"
-                                  :placeholder="opt.placeholder || 'Drop variables here...'"
-                                  :class="{ 'has-expression': hasExpression(node.data.config[prop.name][opt.name]), 'focused-exp': isFieldFocused({ collectionField: prop.name, subName: opt.name }) }"
-                                  @drop.prevent="onDropCollectionField($event, prop.name, opt.name)"
-                                  @dragover.prevent
-                                  @focus="handleFocus($event, { collectionField: prop.name, subName: opt.name })"
-                                  @blur="handleBlur"
-                                />
-                                <Transition name="fade">
                                   <div
-                                    v-if="isFieldFocused({ collectionField: prop.name, subName: opt.name }) && hasExpression(node.data.config[prop.name][opt.name])"
-                                    class="nd-dropdown-preview"
-                                    @mousedown="keepPreview = true"
-                                    @mouseup="releasePreview"
-                                    @mouseleave="releasePreview"
+                                    v-else-if="opt.type === 'number'"
+                                    class="cf-row"
                                   >
-                                    <div class="fp-header"><span>RESULT</span></div>
-                                    <div class="fp-body">{{ focusedValue || (focusedValue === '' ? '(Empty String)' : '(Waiting for data...)') }}</div>
+                                    <label>{{ opt.displayName }}</label>
+                                    <div class="input-with-preview">
+                                      <input
+                                        v-model="node.data.config[prop.name][opt.name]"
+                                        :type="hasExpression(node.data.config[prop.name][opt.name]) ? 'text' : 'number'"
+                                        :placeholder="opt.placeholder || 'Drop variables here...'"
+                                        :class="{ 'has-expression': hasExpression(node.data.config[prop.name][opt.name]), 'focused-exp': isFieldFocused({ collectionField: prop.name, subName: opt.name }) }"
+                                        @drop.prevent="onDropCollectionField($event, prop.name, opt.name)"
+                                        @dragover.prevent
+                                        @focus="handleFocus($event, { collectionField: prop.name, subName: opt.name })"
+                                        @blur="handleBlur"
+                                      >
+                                      <Transition name="fade">
+                                        <div
+                                          v-if="isFieldFocused({ collectionField: prop.name, subName: opt.name }) && hasExpression(node.data.config[prop.name][opt.name])"
+                                          class="nd-dropdown-preview"
+                                          @mousedown="keepPreview = true"
+                                          @mouseup="releasePreview"
+                                          @mouseleave="releasePreview"
+                                        >
+                                          <div class="fp-header">
+                                            <span>RESULT</span>
+                                          </div>
+                                          <div class="fp-body">
+                                            {{ focusedValue || (focusedValue === '' ? '(Empty String)' : '(Waiting for data...)') }}
+                                          </div>
+                                        </div>
+                                      </Transition>
+                                      <div
+                                        v-if="hasExpression(node.data.config[prop.name][opt.name]) && !isFieldFocused({ collectionField: prop.name, subName: opt.name })"
+                                        class="exp-resolved"
+                                      >
+                                        <span class="exp-resolved-icon">=</span>
+                                        <span class="exp-resolved-val">{{ inlineResolved(node.data.config[prop.name][opt.name]) ?? '(run previous node to preview)' }}</span>
+                                      </div>
+                                    </div>
                                   </div>
-                                </Transition>
-                                <div
-                                  v-if="hasExpression(node.data.config[prop.name][opt.name]) && !isFieldFocused({ collectionField: prop.name, subName: opt.name })"
-                                  class="exp-resolved"
-                                >
-                                  <span class="exp-resolved-icon">=</span>
-                                  <span class="exp-resolved-val">{{ inlineResolved(node.data.config[prop.name][opt.name]) ?? '(run previous node to preview)' }}</span>
-                                </div>
+                                </template>
                               </div>
                             </div>
-                          </template>
+                          </div>
                         </div>
-                      </div>
-                    </div>
-                  </div>
-                </template>
-                  <template v-else-if="prop.type === 'inlineGroup'">
-                    <div class="collection-wrapper">
-                      <div class="fixed-collection" style="padding-top: 8px;">
-                        <div class="fc-items">
-                          <div class="fc-item">
-                            <div class="fc-item-fields">
-                              <template v-for="subProp in prop.options" :key="subProp.name">
-                                <div v-if="shouldShowProperty(subProp)" class="fc-sub-field" :class="{'field-full-row': subProp.typeOptions?.rows}">
-                                  <label class="fc-header-label" style="display: block; margin-bottom: 4px;">{{ subProp.displayName }}</label>
-                                  <div class="input-with-preview">
-                                  <template v-if="subProp.type === 'options'">
-                                    <ExprInput
-                                      v-if="isExprMode('p:'+subProp.name, node.data.config[subProp.name])"
-                                      v-model="node.data.config[subProp.name]"
-                                      :resolve="resolveExpression"
-                                      placeholder="Expression…"
-                                      @revert="exitExprMode('p:'+subProp.name, () => node.data.config[subProp.name] = '')"
-                                    />
-                                    <div v-else class="field-with-fx" @drop.prevent="dropToExpr($event, 'p:'+subProp.name, v => node.data.config[subProp.name] = v)" @dragover.prevent>
-                                      <SearchableSelect
-                                        v-if="subProp.searchable || subProp.allowCustomValue"
-                                        v-model="node.data.config[subProp.name]"
-                                        :options="subProp.options"
-                                        :allow-custom-value="!!subProp.allowCustomValue"
-                                        :placeholder="subProp.placeholder || (subProp.allowCustomValue ? 'Select or type...' : 'Search...')"
-                                      />
-                                      <select v-else v-model="node.data.config[subProp.name]">
-                                        <option v-for="opt in subProp.options" :key="opt.value" :value="opt.value">{{ optionDisplayName(opt) }}</option>
-                                      </select>
-                                      <button type="button" class="btn-fx-toggle" title="Use an expression" @click="enterExprMode('p:'+subProp.name, () => node.data.config[subProp.name] = '')">ƒx</button>
+                      </template>
+                      <template v-else-if="prop.type === 'inlineGroup'">
+                        <div class="collection-wrapper">
+                          <div
+                            class="fixed-collection"
+                            style="padding-top: 8px;"
+                          >
+                            <div class="fc-items">
+                              <div class="fc-item">
+                                <div class="fc-item-fields">
+                                  <template
+                                    v-for="subProp in prop.options"
+                                    :key="subProp.name"
+                                  >
+                                    <div
+                                      v-if="shouldShowProperty(subProp)"
+                                      class="fc-sub-field"
+                                      :class="{'field-full-row': subProp.typeOptions?.rows}"
+                                    >
+                                      <label
+                                        class="fc-header-label"
+                                        style="display: block; margin-bottom: 4px;"
+                                      >{{ subProp.displayName }}</label>
+                                      <div class="input-with-preview">
+                                        <template v-if="subProp.type === 'options'">
+                                          <ExprInput
+                                            v-if="isExprMode('p:'+subProp.name, node.data.config[subProp.name])"
+                                            v-model="node.data.config[subProp.name]"
+                                            :resolve="resolveExpression"
+                                            placeholder="Expression…"
+                                            @revert="exitExprMode('p:'+subProp.name, () => node.data.config[subProp.name] = '')"
+                                          />
+                                          <div
+                                            v-else
+                                            class="field-with-fx"
+                                            @drop.prevent="dropToExpr($event, 'p:'+subProp.name, v => node.data.config[subProp.name] = v)"
+                                            @dragover.prevent
+                                          >
+                                            <SearchableSelect
+                                              v-if="subProp.searchable || subProp.allowCustomValue"
+                                              v-model="node.data.config[subProp.name]"
+                                              :options="subProp.options"
+                                              :allow-custom-value="!!subProp.allowCustomValue"
+                                              :placeholder="subProp.placeholder || (subProp.allowCustomValue ? 'Select or type...' : 'Search...')"
+                                            />
+                                            <select
+                                              v-else
+                                              v-model="node.data.config[subProp.name]"
+                                            >
+                                              <option
+                                                v-for="opt in subProp.options"
+                                                :key="opt.value"
+                                                :value="opt.value"
+                                              >
+                                                {{ optionDisplayName(opt) }}
+                                              </option>
+                                            </select>
+                                            <button
+                                              type="button"
+                                              class="btn-fx-toggle"
+                                              title="Use an expression"
+                                              @click="enterExprMode('p:'+subProp.name, () => node.data.config[subProp.name] = '')"
+                                            >
+                                              ƒx
+                                            </button>
+                                          </div>
+                                        </template>
+                                        <ExprInput
+                                          v-else-if="subProp.type === 'dateTime' && isExprMode('p:'+subProp.name, node.data.config[subProp.name])"
+                                          v-model="node.data.config[subProp.name]"
+                                          :resolve="resolveExpression"
+                                          placeholder="Expression returning a date/time…"
+                                          @revert="exitExprMode('p:'+subProp.name, () => node.data.config[subProp.name] = '')"
+                                        />
+                                        <div
+                                          v-else-if="subProp.type === 'dateTime'"
+                                          class="datetime-field"
+                                          @drop.prevent="dropToExpr($event, 'p:'+subProp.name, v => node.data.config[subProp.name] = v)"
+                                          @dragover.prevent
+                                        >
+                                          <div class="field-with-fx">
+                                            <input
+                                              type="datetime-local"
+                                              step="1"
+                                              :value="isoToLocal(node.data.config[subProp.name])"
+                                              @change="e => node.data.config[subProp.name] = localToIso(e.target.value)"
+                                            >
+                                            <button
+                                              type="button"
+                                              class="btn-fx-toggle"
+                                              title="Use an expression"
+                                              @click="enterExprMode('p:'+subProp.name, () => node.data.config[subProp.name] = '')"
+                                            >
+                                              ƒx
+                                            </button>
+                                          </div>
+                                          <span
+                                            v-if="node.data.config[subProp.name]"
+                                            class="datetime-iso-hint"
+                                          >{{ node.data.config[subProp.name] }}</span>
+                                        </div>
+                                        <input
+                                          v-else
+                                          v-model="node.data.config[subProp.name]"
+                                          :type="subProp.type === 'number' ? 'number' : 'text'"
+                                          :class="{ 'has-expression': hasExpression(node.data.config[subProp.name]), 'focused-exp': isFieldFocused({ name: subProp.name }) }"
+                                          :placeholder="subProp.placeholder || ''"
+                                          @drop.prevent="onDrop($event, subProp.name)"
+                                          @dragover.prevent
+                                          @focus="handleFocus($event, { name: subProp.name })"
+                                          @blur="handleBlur"
+                                        >
+                                        <button
+                                          v-if="subProp.type !== 'options' && subProp.type !== 'dateTime'"
+                                          type="button"
+                                          class="btn-expand-input"
+                                          title="Expand to view full value"
+                                          @click="openExpandedInput(subProp.displayName, node.data.config[subProp.name], v => node.data.config[subProp.name] = v)"
+                                        >
+                                          <svg
+                                            viewBox="0 0 24 24"
+                                            width="13"
+                                            height="13"
+                                          ><path
+                                            fill="currentColor"
+                                            d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"
+                                          /></svg>
+                                        </button>
+                                        <Transition name="fade">
+                                          <div 
+                                            v-if="isFieldFocused({ name: subProp.name }) && hasExpression(node.data.config[subProp.name])" 
+                                            class="nd-dropdown-preview"
+                                            @mousedown="keepPreview = true"
+                                            @mouseup="keepPreview = false"
+                                            @mouseleave="keepPreview = false"
+                                          >
+                                            <div class="fp-header">
+                                              <span>RESULT</span>
+                                            </div>
+                                            <div class="fp-body">
+                                              {{ focusedValue || (focusedValue === '' ? '(Empty String)' : '(Waiting for data...)') }}
+                                            </div>
+                                          </div>
+                                        </Transition>
+                                      </div>
                                     </div>
                                   </template>
-                                  <ExprInput
-                                    v-else-if="subProp.type === 'dateTime' && isExprMode('p:'+subProp.name, node.data.config[subProp.name])"
-                                    v-model="node.data.config[subProp.name]"
-                                    :resolve="resolveExpression"
-                                    placeholder="Expression returning a date/time…"
-                                    @revert="exitExprMode('p:'+subProp.name, () => node.data.config[subProp.name] = '')"
-                                  />
-                                  <div v-else-if="subProp.type === 'dateTime'" class="datetime-field" @drop.prevent="dropToExpr($event, 'p:'+subProp.name, v => node.data.config[subProp.name] = v)" @dragover.prevent>
-                                    <div class="field-with-fx">
-                                      <input
-                                        type="datetime-local"
-                                        step="1"
-                                        :value="isoToLocal(node.data.config[subProp.name])"
-                                        @change="e => node.data.config[subProp.name] = localToIso(e.target.value)"
-                                      />
-                                      <button type="button" class="btn-fx-toggle" title="Use an expression" @click="enterExprMode('p:'+subProp.name, () => node.data.config[subProp.name] = '')">ƒx</button>
-                                    </div>
-                                    <span v-if="node.data.config[subProp.name]" class="datetime-iso-hint">{{ node.data.config[subProp.name] }}</span>
-                                  </div>
-                                  <input
-                                    v-else
-                                    :type="subProp.type === 'number' ? 'number' : 'text'"
-                                    v-model="node.data.config[subProp.name]"
-                                    :class="{ 'has-expression': hasExpression(node.data.config[subProp.name]), 'focused-exp': isFieldFocused({ name: subProp.name }) }"
-                                    :placeholder="subProp.placeholder || ''"
-                                    @drop.prevent="onDrop($event, subProp.name)"
-                                    @dragover.prevent
-                                    @focus="handleFocus($event, { name: subProp.name })"
-                                    @blur="handleBlur"
-                                  />
-                                  <button v-if="subProp.type !== 'options' && subProp.type !== 'dateTime'" type="button" class="btn-expand-input" title="Expand to view full value"
-                                    @click="openExpandedInput(subProp.displayName, node.data.config[subProp.name], v => node.data.config[subProp.name] = v)">
-                                    <svg viewBox="0 0 24 24" width="13" height="13"><path fill="currentColor" d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
-                                  </button>
-                                    <Transition name="fade">
-                                      <div 
-                                        v-if="isFieldFocused({ name: subProp.name }) && hasExpression(node.data.config[subProp.name])" 
-                                        class="nd-dropdown-preview"
-                                        @mousedown="keepPreview = true"
-                                        @mouseup="keepPreview = false"
-                                        @mouseleave="keepPreview = false"
-                                      >
-                                        <div class="fp-header"><span>RESULT</span></div>
-                                        <div class="fp-body">{{ focusedValue || (focusedValue === '' ? '(Empty String)' : '(Waiting for data...)') }}</div>
-                                      </div>
-                                    </Transition>
-                                  </div>
                                 </div>
-                              </template>
+                              </div>
                             </div>
                           </div>
                         </div>
-                      </div>
-                    </div>
-                  </template>
-                  <template v-else-if="prop.type === 'dateTime'">
-                    <label>📅 {{ prop.displayName }}</label>
-                    <ExprInput
-                      v-if="isExprMode('p:'+prop.name, node.data.config[prop.name])"
-                      v-model="node.data.config[prop.name]"
-                      :resolve="resolveExpression"
-                      placeholder="Expression returning a date/time…"
-                      @revert="exitExprMode('p:'+prop.name, () => node.data.config[prop.name] = '')"
-                    />
-                    <div v-else class="datetime-field" @drop.prevent="dropToExpr($event, 'p:'+prop.name, v => node.data.config[prop.name] = v)" @dragover.prevent>
-                      <div class="field-with-fx">
-                        <input
-                          type="datetime-local"
-                          step="1"
-                          :value="isoToLocal(node.data.config[prop.name])"
-                          @change="e => node.data.config[prop.name] = localToIso(e.target.value)"
+                      </template>
+                      <template v-else-if="prop.type === 'dateTime'">
+                        <label>📅 {{ prop.displayName }}</label>
+                        <ExprInput
+                          v-if="isExprMode('p:'+prop.name, node.data.config[prop.name])"
+                          v-model="node.data.config[prop.name]"
+                          :resolve="resolveExpression"
+                          placeholder="Expression returning a date/time…"
+                          @revert="exitExprMode('p:'+prop.name, () => node.data.config[prop.name] = '')"
                         />
-                        <button type="button" class="btn-fx-toggle" title="Use an expression" @click="enterExprMode('p:'+prop.name, () => node.data.config[prop.name] = '')">ƒx</button>
-                      </div>
-                      <span v-if="node.data.config[prop.name]" class="datetime-iso-hint">{{ node.data.config[prop.name] }}</span>
-                    </div>
-                  </template>
-                  <template v-else-if="prop.type === 'stringList'">
-                    <label>{{ prop.displayName }}</label>
-                    <div class="string-list">
-                      <div
-                        v-for="(item, idx) in (Array.isArray(node.data.config[prop.name]) ? node.data.config[prop.name] : [])"
-                        :key="idx"
-                        class="string-list-row"
-                      >
+                        <div
+                          v-else
+                          class="datetime-field"
+                          @drop.prevent="dropToExpr($event, 'p:'+prop.name, v => node.data.config[prop.name] = v)"
+                          @dragover.prevent
+                        >
+                          <div class="field-with-fx">
+                            <input
+                              type="datetime-local"
+                              step="1"
+                              :value="isoToLocal(node.data.config[prop.name])"
+                              @change="e => node.data.config[prop.name] = localToIso(e.target.value)"
+                            >
+                            <button
+                              type="button"
+                              class="btn-fx-toggle"
+                              title="Use an expression"
+                              @click="enterExprMode('p:'+prop.name, () => node.data.config[prop.name] = '')"
+                            >
+                              ƒx
+                            </button>
+                          </div>
+                          <span
+                            v-if="node.data.config[prop.name]"
+                            class="datetime-iso-hint"
+                          >{{ node.data.config[prop.name] }}</span>
+                        </div>
+                      </template>
+                      <template v-else-if="prop.type === 'stringList'">
+                        <label>{{ prop.displayName }}</label>
+                        <div class="string-list">
+                          <div
+                            v-for="(item, idx) in (Array.isArray(node.data.config[prop.name]) ? node.data.config[prop.name] : [])"
+                            :key="idx"
+                            class="string-list-row"
+                          >
+                            <div class="input-with-preview">
+                              <input
+                                v-model="node.data.config[prop.name][idx]"
+                                type="text"
+                                :class="{ 'has-expression': hasExpression(node.data.config[prop.name][idx]) }"
+                                :placeholder="prop.placeholder || 'Enter a value'"
+                                @drop.prevent="onDropStringList($event, prop.name, idx)"
+                                @dragover.prevent
+                              >
+                              <div
+                                v-if="hasExpression(node.data.config[prop.name][idx])"
+                                class="exp-resolved"
+                              >
+                                <span class="exp-resolved-icon">=</span>
+                                <span class="exp-resolved-val">{{ inlineResolved(node.data.config[prop.name][idx]) ?? '(run previous node to preview)' }}</span>
+                              </div>
+                            </div>
+                            <button
+                              class="btn-fc-remove"
+                              type="button"
+                              title="Remove"
+                              @click="removeStringListItem(prop.name, idx)"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                          <button
+                            class="btn-fc-add"
+                            type="button"
+                            @click="addStringListItem(prop.name)"
+                          >
+                            + {{ prop.addLabel || 'Add' }}
+                          </button>
+                        </div>
+                      </template>
+                      <template v-else-if="prop.type === 'string' || prop.type === 'number'">
+                        <label>{{ prop.displayName }}</label>
                         <div class="input-with-preview">
                           <input
+                            v-model="node.data.config[prop.name]"
                             type="text"
-                            v-model="node.data.config[prop.name][idx]"
-                            :class="{ 'has-expression': hasExpression(node.data.config[prop.name][idx]) }"
-                            :placeholder="prop.placeholder || 'Enter a value'"
-                            @drop.prevent="onDropStringList($event, prop.name, idx)"
+                            :class="{ 'has-expression': hasExpression(node.data.config[prop.name]), 'focused-exp': isFieldFocused({ name: prop.name }) }"
+                            placeholder="Drop variables here..."
+                            @drop.prevent="onDrop($event, prop.name)"
                             @dragover.prevent
-                          />
+                            @focus="handleFocus($event, { name: prop.name })"
+                            @blur="handleBlur"
+                          >
+                          <button
+                            type="button"
+                            class="btn-expand-input"
+                            title="Expand to view full value"
+                            @click="openExpandedInput(prop.displayName, node.data.config[prop.name], v => node.data.config[prop.name] = v)"
+                          >
+                            <svg
+                              viewBox="0 0 24 24"
+                              width="13"
+                              height="13"
+                            ><path
+                              fill="currentColor"
+                              d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"
+                            /></svg>
+                          </button>
+
+                          <!-- Bottom Dropdown Preview -->
+                          <Transition name="fade">
+                            <div 
+                              v-if="isFieldFocused({ name: prop.name }) && hasExpression(node.data.config[prop.name])" 
+                              class="nd-dropdown-preview"
+                              @mousedown="keepPreview = true"
+                              @mouseup="releasePreview"
+                              @mouseleave="releasePreview"
+                            >
+                              <div class="fp-header">
+                                <span>RESULT</span>
+                              </div>
+                              <div class="fp-body">
+                                {{ focusedValue || (focusedValue === '' ? '(Empty String)' : '(Waiting for data...)') }}
+                              </div>
+                            </div>
+                          </Transition>
+
+                          <!-- Persistent resolved value (n8n style) -->
                           <div
-                            v-if="hasExpression(node.data.config[prop.name][idx])"
+                            v-if="hasExpression(node.data.config[prop.name]) && !isFieldFocused({ name: prop.name })"
                             class="exp-resolved"
                           >
                             <span class="exp-resolved-icon">=</span>
-                            <span class="exp-resolved-val">{{ inlineResolved(node.data.config[prop.name][idx]) ?? '(run previous node to preview)' }}</span>
+                            <span class="exp-resolved-val">{{ inlineResolved(node.data.config[prop.name]) ?? '(run previous node to preview)' }}</span>
                           </div>
                         </div>
-                        <button class="btn-fc-remove" type="button" @click="removeStringListItem(prop.name, idx)" title="Remove">✕</button>
-                      </div>
-                      <button class="btn-fc-add" type="button" @click="addStringListItem(prop.name)">+ {{ prop.addLabel || 'Add' }}</button>
+                      </template>
                     </div>
-                  </template>
-                  <template v-else-if="prop.type === 'string' || prop.type === 'number'">
-                    <label>{{ prop.displayName }}</label>
-                    <div class="input-with-preview">
-                      <input
-                        type="text"
-                        v-model="node.data.config[prop.name]"
-                        :class="{ 'has-expression': hasExpression(node.data.config[prop.name]), 'focused-exp': isFieldFocused({ name: prop.name }) }"
-                        @drop.prevent="onDrop($event, prop.name)"
-                        @dragover.prevent
-                        @focus="handleFocus($event, { name: prop.name })"
-                        @blur="handleBlur"
-                        placeholder="Drop variables here..."
-                      />
-                      <button type="button" class="btn-expand-input" title="Expand to view full value"
-                        @click="openExpandedInput(prop.displayName, node.data.config[prop.name], v => node.data.config[prop.name] = v)">
-                        <svg viewBox="0 0 24 24" width="13" height="13"><path fill="currentColor" d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
-                      </button>
 
-                      <!-- Bottom Dropdown Preview -->
-                      <Transition name="fade">
-                        <div 
-                          v-if="isFieldFocused({ name: prop.name }) && hasExpression(node.data.config[prop.name])" 
-                          class="nd-dropdown-preview"
-                          @mousedown="keepPreview = true"
-                          @mouseup="releasePreview"
-                          @mouseleave="releasePreview"
-                        >
-                          <div class="fp-header"><span>RESULT</span></div>
-                          <div class="fp-body">{{ focusedValue || (focusedValue === '' ? '(Empty String)' : '(Waiting for data...)') }}</div>
-                        </div>
-                      </Transition>
-
-                      <!-- Persistent resolved value (n8n style) -->
-                      <div
-                        v-if="hasExpression(node.data.config[prop.name]) && !isFieldFocused({ name: prop.name })"
-                        class="exp-resolved"
+                    <!-- Webhook URL Display — rendered right after the Trigger Type field so the URL never sits above the trigger selector -->
+                    <div
+                      v-if="prop.name === 'type' && node.data.config.type === 'webhook'"
+                      class="form-row webhook-url-row"
+                    >
+                      <label
+                        class="field-label"
+                        style="color: var(--teal)"
+                        title="Send a POST request with JSON data to this URL to trigger the workflow."
                       >
-                        <span class="exp-resolved-icon">=</span>
-                        <span class="exp-resolved-val">{{ inlineResolved(node.data.config[prop.name]) ?? '(run previous node to preview)' }}</span>
+                        Unique Webhook URL
+                        <span
+                          class="info-icon"
+                          style="opacity: 0.5; font-size: 10px; cursor: help;"
+                        >ⓘ</span>
+                      </label>
+                      <div class="webhook-url-input-group">
+                        <input
+                          type="text"
+                          :value="webhookUrl"
+                          readonly
+                        >
+                        <button
+                          class="btn-copy-url"
+                          title="Copy URL"
+                          @click="copyWebhookUrl"
+                        >
+                          <svg
+                            viewBox="0 0 24 24"
+                            width="16"
+                            height="16"
+                          ><path
+                            fill="currentColor"
+                            d="M16 1H4C2.9 1 2 1.9 2 3v14h2V3h12V1zm3 4H8C6.9 5 6 5.9 6 7v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"
+                          /></svg>
+                        </button>
+                      </div>
+                    </div>
+                    <div
+                      v-if="prop.name === 'type' && node.data.config.type === 'github'"
+                      class="form-row webhook-url-row"
+                    >
+                      <label
+                        class="field-label"
+                        style="color: var(--teal)"
+                        title="Paste this URL into your repo → Settings → Webhooks. Content type: application/json."
+                      >
+                        GitHub Webhook URL
+                        <span
+                          class="info-icon"
+                          style="opacity: 0.5; font-size: 10px; cursor: help;"
+                        >ⓘ</span>
+                      </label>
+                      <div class="webhook-url-input-group">
+                        <input
+                          type="text"
+                          :value="githubWebhookUrl"
+                          readonly
+                        >
+                        <button
+                          class="btn-copy-url"
+                          title="Copy URL"
+                          @click="copyGithubWebhookUrl"
+                        >
+                          <svg
+                            viewBox="0 0 24 24"
+                            width="16"
+                            height="16"
+                          ><path
+                            fill="currentColor"
+                            d="M16 1H4C2.9 1 2 1.9 2 3v14h2V3h12V1zm3 4H8C6.9 5 6 5.9 6 7v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"
+                          /></svg>
+                        </button>
                       </div>
                     </div>
                   </template>
                 </div>
-
-                <!-- Webhook URL Display — rendered right after the Trigger Type field so the URL never sits above the trigger selector -->
-                <div v-if="prop.name === 'type' && node.data.config.type === 'webhook'" class="form-row webhook-url-row">
-                  <label class="field-label" style="color: var(--teal)" title="Send a POST request with JSON data to this URL to trigger the workflow.">
-                    Unique Webhook URL
-                    <span class="info-icon" style="opacity: 0.5; font-size: 10px; cursor: help;">ⓘ</span>
-                  </label>
-                  <div class="webhook-url-input-group">
-                    <input type="text" :value="webhookUrl" readonly />
-                    <button @click="copyWebhookUrl" class="btn-copy-url" title="Copy URL">
-                      <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M16 1H4C2.9 1 2 1.9 2 3v14h2V3h12V1zm3 4H8C6.9 5 6 5.9 6 7v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
-                    </button>
+                <div
+                  v-else
+                  class="settings-form"
+                >
+                  <div class="form-row row-boolean-field">
+                    <label class="field-label">Enabled</label>
+                    <div class="toggle-field">
+                      <label class="toggle-switch">
+                        <input
+                          v-model="node.data.enabled"
+                          type="checkbox"
+                          @change="onSettingsChange"
+                        >
+                        <span class="toggle-track"><span class="toggle-thumb" /></span>
+                      </label>
+                      <span class="toggle-label">{{ node.data.enabled !== false ? 'Node Enabled' : 'Node Disabled' }}</span>
+                    </div>
                   </div>
-                </div>
-                <div v-if="prop.name === 'type' && node.data.config.type === 'github'" class="form-row webhook-url-row">
-                  <label class="field-label" style="color: var(--teal)" title="Paste this URL into your repo → Settings → Webhooks. Content type: application/json.">
-                    GitHub Webhook URL
-                    <span class="info-icon" style="opacity: 0.5; font-size: 10px; cursor: help;">ⓘ</span>
-                  </label>
-                  <div class="webhook-url-input-group">
-                    <input type="text" :value="githubWebhookUrl" readonly />
-                    <button @click="copyGithubWebhookUrl" class="btn-copy-url" title="Copy URL">
-                      <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M16 1H4C2.9 1 2 1.9 2 3v14h2V3h12V1zm3 4H8C6.9 5 6 5.9 6 7v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
-                    </button>
+                  <div class="form-row row-boolean-field">
+                    <label class="field-label">Output</label>
+                    <div class="toggle-field">
+                      <label class="toggle-switch">
+                        <input
+                          v-model="node.data.alwaysOutputData"
+                          type="checkbox"
+                          @change="onSettingsChange"
+                        >
+                        <span class="toggle-track"><span class="toggle-thumb" /></span>
+                      </label>
+                      <span class="toggle-label">{{ node.data.alwaysOutputData ? 'Always Output Data' : 'Only on Success' }}</span>
+                    </div>
                   </div>
-                </div>
-              </template>
-            </div>
-            <div v-else class="settings-form">
-              <div class="form-row row-boolean-field">
-                <label class="field-label">Enabled</label>
-                <div class="toggle-field">
-                  <label class="toggle-switch">
-                    <input type="checkbox" v-model="node.data.enabled" @change="onSettingsChange" />
-                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                  </label>
-                  <span class="toggle-label">{{ node.data.enabled !== false ? 'Node Enabled' : 'Node Disabled' }}</span>
-                </div>
-              </div>
-              <div class="form-row row-boolean-field">
-                <label class="field-label">Output</label>
-                <div class="toggle-field">
-                  <label class="toggle-switch">
-                    <input type="checkbox" v-model="node.data.alwaysOutputData" @change="onSettingsChange" />
-                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                  </label>
-                  <span class="toggle-label">{{ node.data.alwaysOutputData ? 'Always Output Data' : 'Only on Success' }}</span>
-                </div>
-              </div>
-              <div class="form-row row-boolean-field">
-                <label class="field-label">On Fail</label>
-                <div class="toggle-field">
-                  <label class="toggle-switch">
-                    <input type="checkbox" v-model="node.data.continueOnFail" @change="onSettingsChange" />
-                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                  </label>
-                  <span class="toggle-label">{{ node.data.continueOnFail ? 'Continue On Fail' : 'Stop On Fail' }}</span>
-                </div>
-              </div>
-              <div class="form-row row-number">
-                <label class="field-label">Retry On Fail</label>
-                <input type="number" min="0" max="100" v-model.number="node.data.retries" @change="onSettingsChange" placeholder="0" />
-                <span class="field-hint">Extra attempts after the first failure (0 = no retry). Triggers, Wait, Loop and branch nodes never retry.</span>
-              </div>
-              <div class="form-row row-number" v-if="node.data.retries > 0">
-                <label class="field-label">Retry Wait (ms)</label>
-                <input type="number" min="0" v-model.number="node.data.retryWaitMs" @change="onSettingsChange" placeholder="0" />
-              </div>
-              <div class="form-row row-options" v-if="node.data.retries > 0">
-                <label class="field-label">Backoff</label>
-                <select v-model="node.data.retryBackoff" @change="onSettingsChange">
-                  <option value="fixed">Fixed wait</option>
-                  <option value="exponential">Exponential (doubles each attempt)</option>
-                </select>
-              </div>
-              <div class="form-row row-boolean-field" v-if="node.data && node.data.config">
-                <label class="field-label">Loop Items</label>
-                <div class="toggle-field">
-                  <label class="toggle-switch">
-                    <input type="checkbox" v-model="node.data.config.execute_once" @change="onSettingsChange" />
-                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                  </label>
-                  <span class="toggle-label">{{ node.data.config.execute_once ? 'Run Once (aggregate all items)' : 'Run Per Item' }}</span>
-                </div>
-              </div>
-              <!-- Pinned data (A4): manual runs use the saved output instead of
+                  <div class="form-row row-boolean-field">
+                    <label class="field-label">On Fail</label>
+                    <div class="toggle-field">
+                      <label class="toggle-switch">
+                        <input
+                          v-model="node.data.continueOnFail"
+                          type="checkbox"
+                          @change="onSettingsChange"
+                        >
+                        <span class="toggle-track"><span class="toggle-thumb" /></span>
+                      </label>
+                      <span class="toggle-label">{{ node.data.continueOnFail ? 'Continue On Fail' : 'Stop On Fail' }}</span>
+                    </div>
+                  </div>
+                  <div class="form-row row-number">
+                    <label class="field-label">Retry On Fail</label>
+                    <input
+                      v-model.number="node.data.retries"
+                      type="number"
+                      min="0"
+                      max="100"
+                      placeholder="0"
+                      @change="onSettingsChange"
+                    >
+                    <span class="field-hint">Extra attempts after the first failure (0 = no retry). Triggers, Wait, Loop and branch nodes never retry.</span>
+                  </div>
+                  <div
+                    v-if="node.data.retries > 0"
+                    class="form-row row-number"
+                  >
+                    <label class="field-label">Retry Wait (ms)</label>
+                    <input
+                      v-model.number="node.data.retryWaitMs"
+                      type="number"
+                      min="0"
+                      placeholder="0"
+                      @change="onSettingsChange"
+                    >
+                  </div>
+                  <div
+                    v-if="node.data.retries > 0"
+                    class="form-row row-options"
+                  >
+                    <label class="field-label">Backoff</label>
+                    <select
+                      v-model="node.data.retryBackoff"
+                      @change="onSettingsChange"
+                    >
+                      <option value="fixed">
+                        Fixed wait
+                      </option>
+                      <option value="exponential">
+                        Exponential (doubles each attempt)
+                      </option>
+                    </select>
+                  </div>
+                  <div
+                    v-if="node.data && node.data.config"
+                    class="form-row row-boolean-field"
+                  >
+                    <label class="field-label">Loop Items</label>
+                    <div class="toggle-field">
+                      <label class="toggle-switch">
+                        <input
+                          v-model="node.data.config.execute_once"
+                          type="checkbox"
+                          @change="onSettingsChange"
+                        >
+                        <span class="toggle-track"><span class="toggle-thumb" /></span>
+                      </label>
+                      <span class="toggle-label">{{ node.data.config.execute_once ? 'Run Once (aggregate all items)' : 'Run Per Item' }}</span>
+                    </div>
+                  </div>
+                  <!-- Pinned data (A4): manual runs use the saved output instead of
                    executing the node. Production/trigger runs always execute. -->
-              <div class="form-row row-boolean-field">
-                <label class="field-label">Pinned Data</label>
-                <div class="toggle-field" style="flex-direction:column; align-items:flex-start; gap:6px;">
-                  <template v-if="node.data.pinnedData != null">
-                    <span class="toggle-label" style="color:#a78bfa;">Pinned — manual runs use saved data, not executing</span>
-                    <button class="btn-curl-import" @click="unpinOutput">Unpin</button>
-                  </template>
-                  <template v-else>
-                    <button class="btn-curl-import" :disabled="!nodeResult || nodeResult.output == null" @click="pinOutput">Pin output</button>
-                    <span class="field-hint">Saves this node's last output so manual runs skip execution and reuse it. Run the node first.</span>
-                  </template>
+                  <div class="form-row row-boolean-field">
+                    <label class="field-label">Pinned Data</label>
+                    <div
+                      class="toggle-field"
+                      style="flex-direction:column; align-items:flex-start; gap:6px;"
+                    >
+                      <template v-if="node.data.pinnedData != null">
+                        <span
+                          class="toggle-label"
+                          style="color:#a78bfa;"
+                        >Pinned — manual runs use saved data, not executing</span>
+                        <button
+                          class="btn-curl-import"
+                          @click="unpinOutput"
+                        >
+                          Unpin
+                        </button>
+                      </template>
+                      <template v-else>
+                        <button
+                          class="btn-curl-import"
+                          :disabled="!nodeResult || nodeResult.output == null"
+                          @click="pinOutput"
+                        >
+                          Pin output
+                        </button>
+                        <span class="field-hint">Saves this node's last output so manual runs skip execution and reuse it. Run the node first.</span>
+                      </template>
+                    </div>
+                  </div>
                 </div>
               </div>
-            </div>
-          </div>
 
-          <!-- Expanded input editor — overlays the PARAMETERS column only, so the
+              <!-- Expanded input editor — overlays the PARAMETERS column only, so the
                INPUT column stays visible and you can still drag expressions from
                upstream nodes straight into this larger editor. -->
-          <Transition name="fade">
-            <div v-if="expandedInput" class="nd-expand-panel">
-              <header class="nd-expand-head">
-                <span class="nd-expand-title" :title="expandedInput.title">{{ expandedInput.title }}</span>
-                <button class="nd-expand-close" @click="closeExpandedInput" title="Close (Esc)">✕</button>
-              </header>
-              <div class="nd-expand-body">
-                <textarea
-                  ref="expandedInputRef"
-                  class="nd-expand-textarea"
-                  :class="{ 'has-expression': hasExpression(expandedInput.value) }"
-                  :value="expandedInput.value"
-                  @input="updateExpandedInput"
-                  @drop.prevent="onExpandedDrop"
-                  @dragover.prevent
-                  @keydown.esc="closeExpandedInput"
-                  placeholder="Edit the full value here — drag fields from the INPUT panel to insert expressions."
-                  spellcheck="false"
-                ></textarea>
-              </div>
-              <footer class="nd-expand-foot">
-                <button class="btn-import" @click="closeExpandedInput">Done</button>
-              </footer>
-            </div>
-          </Transition>
-        </section>
+              <Transition name="fade">
+                <div
+                  v-if="expandedInput"
+                  class="nd-expand-panel"
+                >
+                  <header class="nd-expand-head">
+                    <span
+                      class="nd-expand-title"
+                      :title="expandedInput.title"
+                    >{{ expandedInput.title }}</span>
+                    <button
+                      class="nd-expand-close"
+                      title="Close (Esc)"
+                      @click="closeExpandedInput"
+                    >
+                      ✕
+                    </button>
+                  </header>
+                  <div class="nd-expand-body">
+                    <textarea
+                      ref="expandedInputRef"
+                      class="nd-expand-textarea"
+                      :class="{ 'has-expression': hasExpression(expandedInput.value) }"
+                      :value="expandedInput.value"
+                      placeholder="Edit the full value here — drag fields from the INPUT panel to insert expressions."
+                      spellcheck="false"
+                      @input="updateExpandedInput"
+                      @drop.prevent="onExpandedDrop"
+                      @dragover.prevent
+                      @keydown.esc="closeExpandedInput"
+                    />
+                  </div>
+                  <footer class="nd-expand-foot">
+                    <button
+                      class="btn-import"
+                      @click="closeExpandedInput"
+                    >
+                      Done
+                    </button>
+                  </footer>
+                </div>
+              </Transition>
+            </section>
 
-        <!-- Right Resizer -->
-        <div class="nd-resizer" @mousedown="startResize('right', $event)">
-          <div class="resizer-handle"></div>
-        </div>
-
-        <!-- COLUMN: OUTPUT -->
-        <section class="nd-col nd-col-right" :style="{ width: panelWidths.right + 'px' }">
-          <div class="col-header" :class="{ 'col-header-error': nodeResult?.error }">
-            <span class="col-title">OUTPUT <span v-if="nodeResult?.error" class="error-badge">ERROR</span></span>
-            <div class="col-toggles">
-              <button :class="{ active: outputMode === 'schema' }" @click="outputMode = 'schema'">Schema</button>
-              <button :class="{ active: outputMode === 'table' }" @click="outputMode = 'table'">Table</button>
-              <button :class="{ active: outputMode === 'json' }" @click="outputMode = 'json'">JSON</button>
-            </div>
-          </div>
-          <div class="col-content">
-            <!-- Node Error View -->
-            <div v-if="errorDisplay" class="node-error-view">
-              <div class="error-view-header">
-                <div class="error-view-msg">{{ errorDisplay.message || 'Execution Failed' }}</div>
-              </div>
-              <div class="error-view-body">
-                <p v-if="errorDisplay.description" class="error-view-desc">{{ errorDisplay.description }}</p>
-                
-                <details class="error-details-expand">
-                  <summary>View raw error details</summary>
-                  <pre class="error-stack">{{ errorDisplay.stack || errorDisplay.message }}</pre>
-                </details>
-                
-                <button class="btn-copy-error" @click="copyErrorDetails">
-                  <svg viewBox="0 0 24 24" width="14" height="14" style="margin-right: 6px;"><path fill="currentColor" d="M16 1H4C2.9 1 2 1.9 2 3v14h2V3h12V1zm3 4H8C6.9 5 6 5.9 6 7v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
-                  Copy Error Details
-                </button>
-              </div>
+            <!-- Right Resizer -->
+            <div
+              class="nd-resizer"
+              @mousedown="startResize('right', $event)"
+            >
+              <div class="resizer-handle" />
             </div>
 
-            <!-- Output Data View -->
-            <div v-else-if="nodeResult?.output || nodeResult?.file" class="output-data">
-              <div class="dn-head" style="display: flex; justify-content: space-between; width: 100%;">
-                <span class="dn-meta success-meta">✓ Execution Successful</span>
-                <button v-if="nodeResult?.output" class="btn-copy-output" @click="copyOutput" title="Copy Output to Clipboard">
-                  <svg viewBox="0 0 24 24" width="14" height="14" style="margin-right: 4px;"><path fill="currentColor" d="M16 1H4C2.9 1 2 1.9 2 3v14h2V3h12V1zm3 4H8C6.9 5 6 5.9 6 7v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
-                  Copy
-                </button>
+            <!-- COLUMN: OUTPUT -->
+            <section
+              class="nd-col nd-col-right"
+              :style="{ width: panelWidths.right + 'px' }"
+            >
+              <div
+                class="col-header"
+                :class="{ 'col-header-error': nodeResult?.error }"
+              >
+                <span class="col-title">OUTPUT <span
+                  v-if="nodeResult?.error"
+                  class="error-badge"
+                >ERROR</span></span>
+                <div class="col-toggles">
+                  <button
+                    :class="{ active: outputMode === 'schema' }"
+                    @click="outputMode = 'schema'"
+                  >
+                    Schema
+                  </button>
+                  <button
+                    :class="{ active: outputMode === 'table' }"
+                    @click="outputMode = 'table'"
+                  >
+                    Table
+                  </button>
+                  <button
+                    :class="{ active: outputMode === 'json' }"
+                    @click="outputMode = 'json'"
+                  >
+                    JSON
+                  </button>
+                </div>
               </div>
-              <div class="dn-body">
-                <!-- Binary File Download -->
-                <div v-if="nodeResult?.file" class="binary-file-info">
-                  <div class="file-card">
-                    <div class="file-card-icon">
-                      <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zM6 20V4h7v5h5v11H6z"/></svg>
+              <div class="col-content">
+                <!-- Node Error View -->
+                <div
+                  v-if="errorDisplay"
+                  class="node-error-view"
+                >
+                  <div class="error-view-header">
+                    <div class="error-view-msg">
+                      {{ errorDisplay.message || 'Execution Failed' }}
                     </div>
-                    <div class="file-card-details">
-                      <div class="file-card-name">{{ nodeResult.file.original_name }}</div>
-                      <div class="file-card-meta">
-                        {{ nodeResult.file.mime_type }} • {{ (nodeResult.file.size / 1024).toFixed(1) }} KB
+                  </div>
+                  <div class="error-view-body">
+                    <p
+                      v-if="errorDisplay.description"
+                      class="error-view-desc"
+                    >
+                      {{ errorDisplay.description }}
+                    </p>
+                
+                    <details class="error-details-expand">
+                      <summary>View raw error details</summary>
+                      <pre class="error-stack">{{ errorDisplay.stack || errorDisplay.message }}</pre>
+                    </details>
+                
+                    <button
+                      class="btn-copy-error"
+                      @click="copyErrorDetails"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        width="14"
+                        height="14"
+                        style="margin-right: 6px;"
+                      ><path
+                        fill="currentColor"
+                        d="M16 1H4C2.9 1 2 1.9 2 3v14h2V3h12V1zm3 4H8C6.9 5 6 5.9 6 7v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"
+                      /></svg>
+                      Copy Error Details
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Output Data View -->
+                <div
+                  v-else-if="nodeResult?.output || nodeResult?.file"
+                  class="output-data"
+                >
+                  <div
+                    class="dn-head"
+                    style="display: flex; justify-content: space-between; width: 100%;"
+                  >
+                    <span class="dn-meta success-meta">✓ Execution Successful</span>
+                    <button
+                      v-if="nodeResult?.output"
+                      class="btn-copy-output"
+                      title="Copy Output to Clipboard"
+                      @click="copyOutput"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        width="14"
+                        height="14"
+                        style="margin-right: 4px;"
+                      ><path
+                        fill="currentColor"
+                        d="M16 1H4C2.9 1 2 1.9 2 3v14h2V3h12V1zm3 4H8C6.9 5 6 5.9 6 7v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"
+                      /></svg>
+                      Copy
+                    </button>
+                  </div>
+                  <div class="dn-body">
+                    <!-- Binary File Download -->
+                    <div
+                      v-if="nodeResult?.file"
+                      class="binary-file-info"
+                    >
+                      <div class="file-card">
+                        <div class="file-card-icon">
+                          <svg
+                            viewBox="0 0 24 24"
+                            width="24"
+                            height="24"
+                          ><path
+                            fill="currentColor"
+                            d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zM6 20V4h7v5h5v11H6z"
+                          /></svg>
+                        </div>
+                        <div class="file-card-details">
+                          <div class="file-card-name">
+                            {{ nodeResult.file.original_name }}
+                          </div>
+                          <div class="file-card-meta">
+                            {{ nodeResult.file.mime_type }} • {{ (nodeResult.file.size / 1024).toFixed(1) }} KB
+                          </div>
+                        </div>
+                        <a
+                          :href="'/api/download?path=' + encodeURIComponent(nodeResult.file.local_path) + '&api_key=' + encodeURIComponent(masterKey)"
+                          class="btn-download-action"
+                          download
+                        >
+                          <svg
+                            viewBox="0 0 24 24"
+                            width="16"
+                            height="16"
+                            style="margin-right: 6px;"
+                          ><path
+                            fill="currentColor"
+                            d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"
+                          /></svg>
+                          Download
+                        </a>
                       </div>
                     </div>
-                    <a :href="'/api/download?path=' + encodeURIComponent(nodeResult.file.local_path) + '&api_key=' + encodeURIComponent(masterKey)" class="btn-download-action" download>
-                      <svg viewBox="0 0 24 24" width="16" height="16" style="margin-right: 6px;"><path fill="currentColor" d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
-                      Download
-                    </a>
-                  </div>
-                </div>
 
-                <pre v-if="outputMode === 'json' && nodeResult?.output" class="data-json">{{ formatOutput(nodeResult.output) }}</pre>
-                <div v-else-if="outputMode === 'table'" class="output-table">
-                  <table>
-                    <tr v-for="(item, idx) in tableData" :key="idx">
-                      <td v-for="(v, k) in item" :key="k"><b>{{ k }}:</b> {{ v }}</td>
-                    </tr>
-                  </table>
-                </div>
-                <div v-else class="data-tree">
-                  <div 
-                    v-for="field in getSchema(nodeResult.output)" 
-                    :key="field.fullPath" 
-                    class="dt-row"
-                    draggable="true"
-                    @dragstart="onDragStart($event, node.data.label, field.fullPath)"
-                   >
-                    <span class="dt-type" :class="field.type">{{ field.type === 'string' ? 'T' : (field.type === 'number' ? '#' : (field.type === 'boolean' ? '✓' : '{}')) }}</span>
-                    <span class="dt-key">{{ field.key }}</span>
-                    <span class="dt-val">{{ field.value }}</span>
+                    <pre
+                      v-if="outputMode === 'json' && nodeResult?.output"
+                      class="data-json"
+                    >{{ formatOutput(nodeResult.output) }}</pre>
+                    <div
+                      v-else-if="outputMode === 'table'"
+                      class="output-table"
+                    >
+                      <table>
+                        <tr
+                          v-for="(item, idx) in tableData"
+                          :key="idx"
+                        >
+                          <td
+                            v-for="(v, k) in item"
+                            :key="k"
+                          >
+                            <b>{{ k }}:</b> {{ v }}
+                          </td>
+                        </tr>
+                      </table>
+                    </div>
+                    <div
+                      v-else
+                      class="data-tree"
+                    >
+                      <div 
+                        v-for="field in getSchema(nodeResult.output)" 
+                        :key="field.fullPath" 
+                        class="dt-row"
+                        draggable="true"
+                        @dragstart="onDragStart($event, node.data.label, field.fullPath)"
+                      >
+                        <span
+                          class="dt-type"
+                          :class="field.type"
+                        >{{ field.type === 'string' ? 'T' : (field.type === 'number' ? '#' : (field.type === 'boolean' ? '✓' : '{}')) }}</span>
+                        <span class="dt-key">{{ field.key }}</span>
+                        <span class="dt-val">{{ field.value }}</span>
+                      </div>
+                    </div>
                   </div>
+                </div>
+                <div
+                  v-else
+                  class="data-empty"
+                >
+                  Execute this node to see output data
                 </div>
               </div>
-            </div>
-            <div v-else class="data-empty">
-              Execute this node to see output data
-            </div>
+            </section>
           </div>
-        </section>
-      </div>
-    </div>
+        </div>
       </div>
 
       <!-- cURL Import Modal -->
       <Teleport to="body">
-        <div v-if="showCurlModal" class="curl-modal-overlay" @click.self="showCurlModal = false">
+        <div
+          v-if="showCurlModal"
+          class="curl-modal-overlay"
+          @click.self="showCurlModal = false"
+        >
           <div class="curl-modal">
             <header>
               <h3>Import cURL</h3>
-              <button @click="showCurlModal = false">✕</button>
+              <button @click="showCurlModal = false">
+                ✕
+              </button>
             </header>
             <div class="modal-body">
-              <p>Paste a cURL command — including one copied straight from your browser's
-                 DevTools (“Copy as cURL”). Method, URL, headers, auth and body are detected
-                 and filled in for you.</p>
+              <p>
+                Paste a cURL command — including one copied straight from your browser's
+                DevTools (“Copy as cURL”). Method, URL, headers, auth and body are detected
+                and filled in for you.
+              </p>
               <textarea
                 v-model="curlInput"
                 placeholder="curl -X POST https://api.example.com/v1/items \
@@ -2886,11 +3707,22 @@ onUnmounted(() => {
                 spellcheck="false"
                 @keydown.ctrl.enter="importCurl"
                 @keydown.meta.enter="importCurl"
-              ></textarea>
+              />
             </div>
             <footer>
-              <button class="btn-cancel" @click="showCurlModal = false">Cancel</button>
-              <button class="btn-import" @click="importCurl" :disabled="!curlInput">Import</button>
+              <button
+                class="btn-cancel"
+                @click="showCurlModal = false"
+              >
+                Cancel
+              </button>
+              <button
+                class="btn-import"
+                :disabled="!curlInput"
+                @click="importCurl"
+              >
+                Import
+              </button>
             </footer>
           </div>
         </div>

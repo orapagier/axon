@@ -769,11 +769,7 @@ fn tool_from_spec(spec: &ActionSpec) -> Tool {
     });
     let input_schema = schema.as_object().cloned().unwrap_or_default();
 
-    Tool {
-        name: spec.tool.into(),
-        description: spec.description.into(),
-        input_schema: Arc::new(input_schema),
-    }
+    Tool::new(spec.tool, spec.description, Arc::new(input_schema))
 }
 
 async fn call_action(

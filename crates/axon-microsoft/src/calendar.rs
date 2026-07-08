@@ -266,7 +266,10 @@ pub async fn update_event(
     // the event's times change; untouched-time patches leave it alone.
     if start.is_some() || end.is_some() {
         let all_day = start.map(|s| date_only(s).is_some()).unwrap_or(true)
-            && end.as_deref().map(|e| date_only(e).is_some()).unwrap_or(true);
+            && end
+                .as_deref()
+                .map(|e| date_only(e).is_some())
+                .unwrap_or(true);
         patch["isAllDay"] = json!(all_day);
     }
     let resp: Value = state
@@ -503,9 +506,15 @@ mod tests {
     #[test]
     fn all_day_end_bumps_to_exclusive_next_day() {
         // start == end → one-day event needs end = next day (same rule as Google)
-        assert_eq!(fix_all_day_end("2026-07-05", "2026-07-05"), Some("2026-07-06".into()));
+        assert_eq!(
+            fix_all_day_end("2026-07-05", "2026-07-05"),
+            Some("2026-07-06".into())
+        );
         assert_eq!(fix_all_day_end("2026-07-05", "2026-07-06"), None);
-        assert_eq!(fix_all_day_end("2026-07-05T09:00:00", "2026-07-05T09:00:00"), None);
+        assert_eq!(
+            fix_all_day_end("2026-07-05T09:00:00", "2026-07-05T09:00:00"),
+            None
+        );
         assert_eq!(
             fix_all_day_end("July 5, 2026", "July 5, 2026"),
             Some("2026-07-06".into())

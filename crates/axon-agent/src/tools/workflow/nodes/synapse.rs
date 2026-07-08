@@ -180,7 +180,10 @@ async fn fetch_oauth2_token(config: &Value) -> Result<String, String> {
                     format!("token endpoint returned {status}: {desc}")
                 })?
                 .to_string();
-            let expires_in = body.get("expires_in").and_then(|v| v.as_i64()).unwrap_or(3600);
+            let expires_in = body
+                .get("expires_in")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(3600);
             (token, now + expires_in * 1000)
         }
     };
@@ -195,7 +198,10 @@ async fn fetch_oauth2_token(config: &Value) -> Result<String, String> {
 /// user has already connected in Axon. Tokens are auto-refreshed by the
 /// respective auth module. Bridges to the shared `axon_core::AppState` that the
 /// in-process MCP backend owns (where OAuth tokens live).
-async fn resolve_connected_account_token(state: &AppState, provider: &str) -> Result<String, String> {
+async fn resolve_connected_account_token(
+    state: &AppState,
+    provider: &str,
+) -> Result<String, String> {
     let core = state
         .mcp
         .inprocess_state()

@@ -160,7 +160,7 @@ function onMouseLeave() {
         @mouseleave="onMouseLeave"
       >
         <!-- Small dot shown at rest so the connection is discoverable -->
-        <div class="focus-handle"></div>
+        <div class="focus-handle" />
 
         <!-- Minimal +/× controls. Kept small visually but the hit area is
              generous (transparent padding around each button) so they stay

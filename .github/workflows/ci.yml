@@ -24,11 +24,10 @@ jobs:
         run: cargo test --workspace
 
   deny:
-    # Informational for now: the first enforcement run surfaced a real advisory
-    # backlog (russh CryptoVec, rustls/webpki CVEs, unmaintained rustls-pemfile
-    # and paste, RSA Marvin attack, rmcp DNS rebinding). Flip to blocking after
-    # a dedicated dependency-upgrade pass clears it.
-    continue-on-error: true
+    # Blocking: the dependency-upgrade pass (russh, rmcp, quick-xml, anyhow, ...)
+    # cleared the advisory backlog. Remaining findings with no available fix
+    # (rsa Marvin attack, a few unmaintained transitive crates) are tracked as
+    # explicit exceptions in deny.toml rather than silently ignored here.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -48,4 +47,9 @@ jobs:
           cache-dependency-path: axon-ui/package-lock.json
       - run: npm ci
       - run: npm test
+      # Informational for now: eslint-plugin-vue's recommended set surfaced a
+      # real pre-existing backlog (81 vue/no-mutating-props in NodeDetails.vue
+      # — direct mutation of the `node` prop). Tighten once that's cleared;
+      # `|| true` keeps this from failing the job in the meantime.
+      - run: npm run lint || true
       - run: npm run build

@@ -1121,7 +1121,7 @@ mod tests {
     fn coerce_text_picks_natural_scalar() {
         assert_eq!(coerce_text(Some(&json!("30"))), json!(30));
         assert_eq!(coerce_text(Some(&json!("-5"))), json!(-5));
-        assert_eq!(coerce_text(Some(&json!("3.14"))), json!(3.14));
+        assert_eq!(coerce_text(Some(&json!("3.5"))), json!(3.5));
         assert_eq!(coerce_text(Some(&json!("true"))), json!(true));
         assert_eq!(coerce_text(Some(&json!("false"))), json!(false));
         assert_eq!(coerce_text(Some(&json!("null"))), json!(null));

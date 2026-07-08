@@ -21,58 +21,54 @@ impl BusinessService {
     pub fn tool_list() -> Vec<Tool> {
         vec![
             // ── Notes (local Markdown file store) ─────────────────────────
-            Tool { name: "note_create".into(),  description: "Create a local Markdown note with a title and content. Returns the note ID.".into(),       input_schema: schema!({"title":{"type":"string"},"content":{"type":"string"},"tags":{"type":"array","items":{"type":"string"}}}, ["title","content"]) },
-            Tool { name: "note_list".into(),    description: "List all local notes (id, title, created, tags).".into(),                                   input_schema: schema!({"tag":{"type":"string","description":"Filter by tag"}}, []) },
-            Tool { name: "note_get".into(),     description: "Get a note by ID.".into(),                                                                  input_schema: schema!({"id":{"type":"string"}}, ["id"]) },
-            Tool { name: "note_update".into(),  description: "Update a note's title or content.".into(),                                                  input_schema: schema!({"id":{"type":"string"},"title":{"type":"string"},"content":{"type":"string"},"tags":{"type":"array","items":{"type":"string"}}}, ["id"]) },
-            Tool { name: "note_delete".into(),  description: "Delete a note by ID.".into(),                                                               input_schema: schema!({"id":{"type":"string"}}, ["id"]) },
-            Tool { name: "note_search".into(),  description: "Search notes by keyword in title or content.".into(),                                       input_schema: schema!({"query":{"type":"string"}}, ["query"]) },
-            Tool { name: "note_export".into(),  description: "Export a note as a Markdown string.".into(),                                                input_schema: schema!({"id":{"type":"string"}}, ["id"]) },
+            Tool::new("note_create", "Create a local Markdown note with a title and content. Returns the note ID.", schema!({"title":{"type":"string"},"content":{"type":"string"},"tags":{"type":"array","items":{"type":"string"}}}, ["title","content"])),
+            Tool::new("note_list", "List all local notes (id, title, created, tags).", schema!({"tag":{"type":"string","description":"Filter by tag"}}, [])),
+            Tool::new("note_get", "Get a note by ID.", schema!({"id":{"type":"string"}}, ["id"])),
+            Tool::new("note_update", "Update a note's title or content.", schema!({"id":{"type":"string"},"title":{"type":"string"},"content":{"type":"string"},"tags":{"type":"array","items":{"type":"string"}}}, ["id"])),
+            Tool::new("note_delete", "Delete a note by ID.", schema!({"id":{"type":"string"}}, ["id"])),
+            Tool::new("note_search", "Search notes by keyword in title or content.", schema!({"query":{"type":"string"}}, ["query"])),
+            Tool::new("note_export", "Export a note as a Markdown string.", schema!({"id":{"type":"string"}}, ["id"])),
 
             // ── Tasks ─────────────────────────────────────────────────────
-            Tool { name: "task_create".into(),  description: "Create a local task with title, optional due date and priority.".into(),                   input_schema: schema!({"title":{"type":"string"},"description":{"type":"string"},"due_date":{"type":"string","description":"YYYY-MM-DD"},"priority":{"type":"string","enum":["low","medium","high"],"default":"medium"},"tags":{"type":"array","items":{"type":"string"}}}, ["title"]) },
-            Tool { name: "task_list".into(),    description: "List tasks. Filter by status (open|done|all) and/or priority.".into(),                     input_schema: schema!({"status":{"type":"string","enum":["open","done","all"],"default":"open"},"priority":{"type":"string"},"tag":{"type":"string"}}, []) },
-            Tool { name: "task_get".into(),     description: "Get a task by ID.".into(),                                                                  input_schema: schema!({"id":{"type":"string"}}, ["id"]) },
-            Tool { name: "task_complete".into(),description: "Mark a task as completed.".into(),                                                          input_schema: schema!({"id":{"type":"string"}}, ["id"]) },
-            Tool { name: "task_update".into(),  description: "Update a task's fields.".into(),                                                            input_schema: schema!({"id":{"type":"string"},"title":{"type":"string"},"description":{"type":"string"},"due_date":{"type":"string"},"priority":{"type":"string","enum":["low","medium","high"]}}, ["id"]) },
-            Tool { name: "task_delete".into(),  description: "Delete a task by ID.".into(),                                                               input_schema: schema!({"id":{"type":"string"}}, ["id"]) },
-            Tool { name: "task_overdue".into(), description: "List all overdue (past due date, still open) tasks.".into(),                                input_schema: schema!({}, []) },
+            Tool::new("task_create", "Create a local task with title, optional due date and priority.", schema!({"title":{"type":"string"},"description":{"type":"string"},"due_date":{"type":"string","description":"YYYY-MM-DD"},"priority":{"type":"string","enum":["low","medium","high"],"default":"medium"},"tags":{"type":"array","items":{"type":"string"}}}, ["title"])),
+            Tool::new("task_list", "List tasks. Filter by status (open|done|all) and/or priority.", schema!({"status":{"type":"string","enum":["open","done","all"],"default":"open"},"priority":{"type":"string"},"tag":{"type":"string"}}, [])),
+            Tool::new("task_get", "Get a task by ID.", schema!({"id":{"type":"string"}}, ["id"])),
+            Tool::new("task_complete", "Mark a task as completed.", schema!({"id":{"type":"string"}}, ["id"])),
+            Tool::new("task_update", "Update a task's fields.", schema!({"id":{"type":"string"},"title":{"type":"string"},"description":{"type":"string"},"due_date":{"type":"string"},"priority":{"type":"string","enum":["low","medium","high"]}}, ["id"])),
+            Tool::new("task_delete", "Delete a task by ID.", schema!({"id":{"type":"string"}}, ["id"])),
+            Tool::new("task_overdue", "List all overdue (past due date, still open) tasks.", schema!({}, [])),
 
             // ── Contacts (local address book) ─────────────────────────────
-            Tool { name: "contact_create".into(), description: "Add a contact to the local address book.".into(),                                        input_schema: schema!({"name":{"type":"string"},"email":{"type":"string"},"phone":{"type":"string"},"company":{"type":"string"},"title":{"type":"string"},"notes":{"type":"string"},"tags":{"type":"array","items":{"type":"string"}}}, ["name"]) },
-            Tool { name: "contact_list".into(),   description: "List local contacts.".into(),                                                             input_schema: schema!({"tag":{"type":"string"}}, []) },
-            Tool { name: "contact_get".into(),    description: "Get a contact by ID.".into(),                                                             input_schema: schema!({"id":{"type":"string"}}, ["id"]) },
-            Tool { name: "contact_search".into(), description: "Search contacts by name, email, company, or phone.".into(),                               input_schema: schema!({"query":{"type":"string"}}, ["query"]) },
-            Tool { name: "contact_update".into(), description: "Update a contact's details.".into(),                                                      input_schema: schema!({"id":{"type":"string"},"name":{"type":"string"},"email":{"type":"string"},"phone":{"type":"string"},"company":{"type":"string"},"title":{"type":"string"},"notes":{"type":"string"}}, ["id"]) },
-            Tool { name: "contact_delete".into(), description: "Delete a contact.".into(),                                                                input_schema: schema!({"id":{"type":"string"}}, ["id"]) },
+            Tool::new("contact_create", "Add a contact to the local address book.", schema!({"name":{"type":"string"},"email":{"type":"string"},"phone":{"type":"string"},"company":{"type":"string"},"title":{"type":"string"},"notes":{"type":"string"},"tags":{"type":"array","items":{"type":"string"}}}, ["name"])),
+            Tool::new("contact_list", "List local contacts.", schema!({"tag":{"type":"string"}}, [])),
+            Tool::new("contact_get", "Get a contact by ID.", schema!({"id":{"type":"string"}}, ["id"])),
+            Tool::new("contact_search", "Search contacts by name, email, company, or phone.", schema!({"query":{"type":"string"}}, ["query"])),
+            Tool::new("contact_update", "Update a contact's details.", schema!({"id":{"type":"string"},"name":{"type":"string"},"email":{"type":"string"},"phone":{"type":"string"},"company":{"type":"string"},"title":{"type":"string"},"notes":{"type":"string"}}, ["id"])),
+            Tool::new("contact_delete", "Delete a contact.", schema!({"id":{"type":"string"}}, ["id"])),
 
             // ── Date / Time ───────────────────────────────────────────────
-            Tool { name: "datetime_now".into(),       description: "Get the current date and time in a given timezone (e.g. 'Asia/Manila', 'UTC'). Defaults to 'Asia/Manila'.".into(),         input_schema: schema!({"timezone":{"type":"string","default":"Asia/Manila"}}, []) },
-            Tool { name: "datetime_convert".into(),   description: "Convert a datetime string from one timezone to another.".into(),                                input_schema: schema!({"datetime":{"type":"string","description":"ISO 8601"},"from_tz":{"type":"string"},"to_tz":{"type":"string"}}, ["datetime","from_tz","to_tz"]) },
-            Tool { name: "datetime_diff".into(),      description: "Calculate the difference between two ISO 8601 datetimes in days, hours, and minutes.".into(),  input_schema: schema!({"start":{"type":"string"},"end":{"type":"string"}}, ["start","end"]) },
-            Tool { name: "datetime_add".into(),       description: "Add or subtract time from a date. unit: days|hours|minutes|weeks|months.".into(),               input_schema: schema!({"datetime":{"type":"string","description":"ISO 8601 or YYYY-MM-DD"},"amount":{"type":"integer"},"unit":{"type":"string","enum":["minutes","hours","days","weeks","months"]}}, ["datetime","amount","unit"]) },
-            Tool { name: "datetime_format".into(),    description: "Format a datetime string into a human-readable format.".into(),                                 input_schema: schema!({"datetime":{"type":"string"},"format":{"type":"string","description":"strftime pattern, e.g. %B %d %Y or use 'human'"}}, ["datetime"]) },
+            Tool::new("datetime_now", "Get the current date and time in a given timezone (e.g. 'Asia/Manila', 'UTC'). Defaults to 'Asia/Manila'.", schema!({"timezone":{"type":"string","default":"Asia/Manila"}}, [])),
+            Tool::new("datetime_convert", "Convert a datetime string from one timezone to another.", schema!({"datetime":{"type":"string","description":"ISO 8601"},"from_tz":{"type":"string"},"to_tz":{"type":"string"}}, ["datetime","from_tz","to_tz"])),
+            Tool::new("datetime_diff", "Calculate the difference between two ISO 8601 datetimes in days, hours, and minutes.", schema!({"start":{"type":"string"},"end":{"type":"string"}}, ["start","end"])),
+            Tool::new("datetime_add", "Add or subtract time from a date. unit: days|hours|minutes|weeks|months.", schema!({"datetime":{"type":"string","description":"ISO 8601 or YYYY-MM-DD"},"amount":{"type":"integer"},"unit":{"type":"string","enum":["minutes","hours","days","weeks","months"]}}, ["datetime","amount","unit"])),
+            Tool::new("datetime_format", "Format a datetime string into a human-readable format.", schema!({"datetime":{"type":"string"},"format":{"type":"string","description":"strftime pattern, e.g. %B %d %Y or use 'human'"}}, ["datetime"])),
 
             // ── Text Utilities ────────────────────────────────────────────
-            Tool { name: "text_word_count".into(),    description: "Count words, characters, sentences, and paragraphs in text.".into(),                           input_schema: schema!({"text":{"type":"string"}}, ["text"]) },
-            Tool { name: "text_summarize_lines".into(),description: "Extract the first N lines or sentences from text as a quick summary.".into(),                 input_schema: schema!({"text":{"type":"string"},"lines":{"type":"integer","default":5}}, ["text"]) },
-            Tool { name: "text_extract_emails".into(),description: "Extract all email addresses found in a block of text.".into(),                                 input_schema: schema!({"text":{"type":"string"}}, ["text"]) },
-            Tool { name: "text_extract_urls".into(),  description: "Extract all URLs found in a block of text.".into(),                                            input_schema: schema!({"text":{"type":"string"}}, ["text"]) },
-            Tool { name: "text_slugify".into(),       description: "Convert text to a URL-safe slug (e.g. 'Hello World!' → 'hello-world').".into(),                input_schema: schema!({"text":{"type":"string"}}, ["text"]) },
-            Tool { name: "text_template".into(),      description: "Fill a template string with key-value substitutions. Template vars use {{key}} syntax.".into(),input_schema: schema!({"template":{"type":"string"},"vars":{"type":"object","description":"Key-value pairs to substitute"}}, ["template","vars"]) },
+            Tool::new("text_word_count", "Count words, characters, sentences, and paragraphs in text.", schema!({"text":{"type":"string"}}, ["text"])),
+            Tool::new("text_summarize_lines", "Extract the first N lines or sentences from text as a quick summary.", schema!({"text":{"type":"string"},"lines":{"type":"integer","default":5}}, ["text"])),
+            Tool::new("text_extract_emails", "Extract all email addresses found in a block of text.", schema!({"text":{"type":"string"}}, ["text"])),
+            Tool::new("text_extract_urls", "Extract all URLs found in a block of text.", schema!({"text":{"type":"string"}}, ["text"])),
+            Tool::new("text_slugify", "Convert text to a URL-safe slug (e.g. 'Hello World!' → 'hello-world').", schema!({"text":{"type":"string"}}, ["text"])),
+            Tool::new("text_template", "Fill a template string with key-value substitutions. Template vars use {{key}} syntax.", schema!({"template":{"type":"string"},"vars":{"type":"object","description":"Key-value pairs to substitute"}}, ["template","vars"])),
 
             // ── Web ───────────────────────────────────────────────────────
-            Tool {
-                name: "web_request".into(),
-                description: "Make an HTTP/HTTPS request to an external API or website. Similar to n8n HTTP Request node.".into(),
-                input_schema: schema!({
+            Tool::new("web_request", "Make an HTTP/HTTPS request to an external API or website. Similar to n8n HTTP Request node.", schema!({
                     "url": {"type":"string", "description":"The full URL to request"},
                     "method": {"type":"string", "enum":["GET","POST","PUT","DELETE","PATCH","HEAD"], "default":"GET"},
                     "headers": {"type":"object", "description":"Custom HTTP headers"},
                     "query": {"type":"object", "description":"Query parameters to append to the URL"},
                     "body": {"type":"any", "description":"JSON body for POST/PUT requests"}
-                }, ["url"])
-            },
+                }, ["url"])),
         ]
     }
 

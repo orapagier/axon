@@ -286,21 +286,33 @@ mod tests {
 
     #[test]
     fn coerce_enum_last_resort_is_last_option() {
-        let allowed = vec!["positive".to_string(), "negative".to_string(), "neutral".to_string()];
+        let allowed = vec![
+            "positive".to_string(),
+            "negative".to_string(),
+            "neutral".to_string(),
+        ];
         let m = map(json!({}));
         assert_eq!(coerce_enum(&m, "label", &allowed), "neutral");
     }
 
     #[test]
     fn coerce_enum_from_text_finds_label_in_prose() {
-        let allowed = vec!["positive".to_string(), "negative".to_string(), "neutral".to_string()];
+        let allowed = vec![
+            "positive".to_string(),
+            "negative".to_string(),
+            "neutral".to_string(),
+        ];
         let text = "this message reads as fairly negative overall.".to_ascii_lowercase();
         assert_eq!(coerce_enum_from_text(&text, &allowed), "negative");
     }
 
     #[test]
     fn coerce_enum_from_text_falls_back_to_last_option() {
-        let allowed = vec!["positive".to_string(), "negative".to_string(), "neutral".to_string()];
+        let allowed = vec![
+            "positive".to_string(),
+            "negative".to_string(),
+            "neutral".to_string(),
+        ];
         let text = "totally unrelated text with no matching option".to_ascii_lowercase();
         assert_eq!(coerce_enum_from_text(&text, &allowed), "neutral");
     }

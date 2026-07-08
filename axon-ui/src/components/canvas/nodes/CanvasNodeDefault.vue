@@ -80,16 +80,29 @@ function onActivate(event) {
     @mouseleave="showTooltip = false"
   >
     <div class="node-icon-wrapper">
-      <img v-if="isImageUrl(nodeIcon)" :src="nodeIcon" class="node-icon-img" />
-      <span v-else class="node-icon-main">{{ nodeIcon }}</span>
+      <img
+        v-if="isImageUrl(nodeIcon)"
+        :src="nodeIcon"
+        class="node-icon-img"
+      >
+      <span
+        v-else
+        class="node-icon-main"
+      >{{ nodeIcon }}</span>
     </div>
 
-    <CanvasNodeStatusIcons v-if="!isDisabled" class="status-icons" />
+    <CanvasNodeStatusIcons
+      v-if="!isDisabled"
+      class="status-icons"
+    />
 
     <!-- Disabled strike-through -->
-    <div v-if="isDisabled" class="disabled-strike"></div>
+    <div
+      v-if="isDisabled"
+      class="disabled-strike"
+    />
 
-    <slot name="handles"></slot>
+    <slot name="handles" />
   </div>
 </template>
 

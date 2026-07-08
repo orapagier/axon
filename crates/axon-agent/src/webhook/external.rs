@@ -109,11 +109,17 @@ fn build_custom_response(resp: WebhookHttpResponse) -> Response {
     let headers = out.headers_mut();
     for (name, value) in resp.headers {
         let Ok(name) = axum::http::header::HeaderName::from_bytes(name.as_bytes()) else {
-            tracing::warn!("Respond to Webhook: invalid header name '{}', skipped", name);
+            tracing::warn!(
+                "Respond to Webhook: invalid header name '{}', skipped",
+                name
+            );
             continue;
         };
         let Ok(value) = axum::http::header::HeaderValue::from_str(&value) else {
-            tracing::warn!("Respond to Webhook: invalid value for header '{}', skipped", name);
+            tracing::warn!(
+                "Respond to Webhook: invalid value for header '{}', skipped",
+                name
+            );
             continue;
         };
         headers.insert(name, value);
@@ -149,8 +155,7 @@ pub async fn handle_external_webhook(
         match WorkflowEngine::run_in_background_for_webhook(&workflow_id, &state, Some(payload)) {
             Ok((run_id, rx)) => {
                 let timeout = state.settings.workflow_webhook_respond_timeout_secs();
-                return match tokio::time::timeout(std::time::Duration::from_secs(timeout), rx)
-                    .await
+                return match tokio::time::timeout(std::time::Duration::from_secs(timeout), rx).await
                 {
                     Ok(Ok(resp)) => build_custom_response(resp),
                     // Channel closed: the run ended (or suspended on a durable
@@ -174,7 +179,10 @@ pub async fn handle_external_webhook(
                     workflow_id,
                     e
                 );
-                return (StatusCode::OK, Json(json!({ "ok": false, "error": e.to_string() })))
+                return (
+                    StatusCode::OK,
+                    Json(json!({ "ok": false, "error": e.to_string() })),
+                )
                     .into_response();
             }
         }

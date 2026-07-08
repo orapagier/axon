@@ -212,7 +212,10 @@ mod tests {
     fn min_and_max_over_numeric_values() {
         let input = json!([{ "p": 5 }, { "p": "x" }, { "p": 2 }, { "p": 9 }]);
         let out = execute(
-            &cfg(vec![agg("min", "p", "lo"), agg("max", "p", "hi")], json!({})),
+            &cfg(
+                vec![agg("min", "p", "lo"), agg("max", "p", "hi")],
+                json!({}),
+            ),
             &input,
         )
         .unwrap();
@@ -226,7 +229,10 @@ mod tests {
         let input = json!([{ "email": "a@x" }, { "email": "b@x" }, { "name": "no email" }]);
         let out = execute(
             &cfg(
-                vec![agg("count", "", "items"), agg("count", "email", "with_email")],
+                vec![
+                    agg("count", "", "items"),
+                    agg("count", "email", "with_email"),
+                ],
                 json!({}),
             ),
             &input,
@@ -299,7 +305,10 @@ mod tests {
     fn empty_numeric_set_yields_null_avg_and_zero_sum() {
         let input = json!([{ "x": "not a number" }]);
         let out = execute(
-            &cfg(vec![agg("avg", "x", "avg"), agg("sum", "x", "sum")], json!({})),
+            &cfg(
+                vec![agg("avg", "x", "avg"), agg("sum", "x", "sum")],
+                json!({}),
+            ),
             &input,
         )
         .unwrap();
@@ -311,7 +320,10 @@ mod tests {
     fn array_path_unwraps_wrapper() {
         let input = json!({ "rows": [{ "v": 3 }, { "v": 7 }] });
         let out = execute(
-            &cfg(vec![agg("sum", "v", "total")], json!({ "arrayPath": "rows" })),
+            &cfg(
+                vec![agg("sum", "v", "total")],
+                json!({ "arrayPath": "rows" }),
+            ),
             &input,
         )
         .unwrap();

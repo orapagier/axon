@@ -386,15 +386,26 @@ onUnmounted(() => {
     <div class="page-header-container">
       <div class="page-header">
         <h1>Services</h1>
-        <p class="page-desc">Manage your connections to external tools, databases, and authentication providers.</p>
+        <p class="page-desc">
+          Manage your connections to external tools, databases, and authentication providers.
+        </p>
       </div>
-      <button class="btn btn-primary" @click="load">
+      <button
+        class="btn btn-primary"
+        @click="load"
+      >
         <span style="margin-right:8px">↻</span> Refresh
       </button>
     </div>
     <!-- Credentials -->
-    <div class="premium-card collapsible" :class="{ collapsed: collapsed.credentials }">
-      <div class="card-header-row" @click="collapsed.credentials = !collapsed.credentials">
+    <div
+      class="premium-card collapsible"
+      :class="{ collapsed: collapsed.credentials }"
+    >
+      <div
+        class="card-header-row"
+        @click="collapsed.credentials = !collapsed.credentials"
+      >
         <div class="card-title-group">
           <span class="collapse-icon">{{ collapsed.credentials ? '▶' : '▼' }}</span>
           <h2>Credentials</h2>
@@ -404,35 +415,65 @@ onUnmounted(() => {
       
       <div class="card-content">
         <div class="action-bar-modern">
-          <button class="btn btn-premium-action" @click.stop="credModal = true">
+          <button
+            class="btn btn-premium-action"
+            @click.stop="credModal = true"
+          >
             <span class="plus-icon">+</span> Add Secure Credential
           </button>
         </div>
         
         <div class="service-list">
-          <div v-for="c in credentials" :key="c.id" class="service-item">
+          <div
+            v-for="c in credentials"
+            :key="c.id"
+            class="service-item"
+          >
             <div class="service-name-row">
               <div class="service-name-group">
-                <span class="service-icon-sm" v-html="CATEGORY_META.credentials.icon"></span>
+                <span
+                  class="service-icon-sm"
+                  v-html="CATEGORY_META.credentials.icon"
+                />
                 <span class="service-name">{{ c.name }}</span>
                 <span class="tag-pill">{{ c.service }}</span>
               </div>
               <div class="service-actions">
-                <button class="btn btn-sm btn-ghost" :disabled="testingCred === c.id" @click="testCredential(c.id)">
+                <button
+                  class="btn btn-sm btn-ghost"
+                  :disabled="testingCred === c.id"
+                  @click="testCredential(c.id)"
+                >
                   {{ testingCred === c.id ? 'Testing…' : 'Test' }}
                 </button>
-                <button class="btn btn-sm btn-danger" @click="deleteCredential(c.id)">Delete</button>
+                <button
+                  class="btn btn-sm btn-danger"
+                  @click="deleteCredential(c.id)"
+                >
+                  Delete
+                </button>
               </div>
             </div>
           </div>
-          <div v-if="credentials.length === 0" class="empty-state">No credentials configured.</div>
+          <div
+            v-if="credentials.length === 0"
+            class="empty-state"
+          >
+            No credentials configured.
+          </div>
         </div>
       </div>
     </div>
 
     <!-- MCP Servers -->
-    <div class="premium-card collapsible" :class="{ collapsed: collapsed.mcp }">
-      <div class="card-header-row" @click="collapsed.mcp = !collapsed.mcp">
+    <div
+      class="premium-card collapsible"
+      :class="{ collapsed: collapsed.mcp }"
+    >
+      <div
+        class="card-header-row"
+        @click="collapsed.mcp = !collapsed.mcp"
+      >
         <div class="card-title-group">
           <span class="collapse-icon">{{ collapsed.mcp ? '▶' : '▼' }}</span>
           <h2>MCP Servers</h2>
@@ -442,35 +483,64 @@ onUnmounted(() => {
       
       <div class="card-content">
         <div class="action-bar-modern">
-          <button class="btn btn-premium-action" @click.stop="mcpModal = true">
+          <button
+            class="btn btn-premium-action"
+            @click.stop="mcpModal = true"
+          >
             <span class="plus-icon">+</span> Connect MCP Server
           </button>
         </div>
         
         <div class="service-list">
-          <div v-for="name in mcpServers" :key="name" class="service-item">
+          <div
+            v-for="name in mcpServers"
+            :key="name"
+            class="service-item"
+          >
             <div class="service-name-row">
               <div class="service-name-group">
-                <span class="service-icon-sm" v-html="CATEGORY_META.mcp.icon"></span>
+                <span
+                  class="service-icon-sm"
+                  v-html="CATEGORY_META.mcp.icon"
+                />
                 <span class="service-name">{{ name }}</span>
-                <Pill type="ok" text="Connected" />
+                <Pill
+                  type="ok"
+                  text="Connected"
+                />
               </div>
               <div class="service-actions">
-                <button class="btn btn-sm btn-danger" @click="disconnectMcp(name)">Disconnect</button>
+                <button
+                  class="btn btn-sm btn-danger"
+                  @click="disconnectMcp(name)"
+                >
+                  Disconnect
+                </button>
               </div>
             </div>
             <div class="service-meta-line">
               {{ mcpTools.filter((t) => t.source?.server_name === name).length }} dynamic tools available
             </div>
           </div>
-          <div v-if="mcpServers.length === 0" class="empty-state">No MCP servers connected.</div>
+          <div
+            v-if="mcpServers.length === 0"
+            class="empty-state"
+          >
+            No MCP servers connected.
+          </div>
         </div>
       </div>
     </div>
 
     <!-- SSH Servers -->
-    <div class="premium-card collapsible" :class="{ collapsed: collapsed.ssh }">
-      <div class="card-header-row" @click="collapsed.ssh = !collapsed.ssh">
+    <div
+      class="premium-card collapsible"
+      :class="{ collapsed: collapsed.ssh }"
+    >
+      <div
+        class="card-header-row"
+        @click="collapsed.ssh = !collapsed.ssh"
+      >
         <div class="card-title-group">
           <span class="collapse-icon">{{ collapsed.ssh ? '▶' : '▼' }}</span>
           <h2>SSH Servers</h2>
@@ -480,33 +550,64 @@ onUnmounted(() => {
       
       <div class="card-content">
         <div class="action-bar-modern">
-          <button class="btn btn-premium-action" @click.stop="sshModal = true">
+          <button
+            class="btn btn-premium-action"
+            @click.stop="sshModal = true"
+          >
             <span class="plus-icon">+</span> Register SSH Server
           </button>
         </div>
         
         <div class="service-list">
-          <div v-for="s in sshServers" :key="s.name" class="service-item">
+          <div
+            v-for="s in sshServers"
+            :key="s.name"
+            class="service-item"
+          >
             <div class="service-name-row">
               <div class="service-name-group">
-                <span class="service-icon-sm" v-html="CATEGORY_META.ssh.icon"></span>
+                <span
+                  class="service-icon-sm"
+                  v-html="CATEGORY_META.ssh.icon"
+                />
                 <span class="service-name">{{ s.name }}</span>
-                <Pill type="ok" text="Configured" />
+                <Pill
+                  type="ok"
+                  text="Configured"
+                />
               </div>
               <div class="service-actions">
-                <button class="btn btn-sm btn-danger" @click="deleteSsh(s.name)">Remove</button>
+                <button
+                  class="btn btn-sm btn-danger"
+                  @click="deleteSsh(s.name)"
+                >
+                  Remove
+                </button>
               </div>
             </div>
-            <div class="service-meta-line">{{ s.username }}@{{ s.ip }}:{{ s.port }} · {{ s.auth_type }}</div>
+            <div class="service-meta-line">
+              {{ s.username }}@{{ s.ip }}:{{ s.port }} · {{ s.auth_type }}
+            </div>
           </div>
-          <div v-if="sshServers.length === 0" class="empty-state">No SSH servers configured.</div>
+          <div
+            v-if="sshServers.length === 0"
+            class="empty-state"
+          >
+            No SSH servers configured.
+          </div>
         </div>
       </div>
     </div>
 
     <!-- Web Search / Tavily -->
-    <div class="premium-card collapsible" :class="{ collapsed: collapsed.ws }">
-      <div class="card-header-row" @click="collapsed.ws = !collapsed.ws">
+    <div
+      class="premium-card collapsible"
+      :class="{ collapsed: collapsed.ws }"
+    >
+      <div
+        class="card-header-row"
+        @click="collapsed.ws = !collapsed.ws"
+      >
         <div class="card-title-group">
           <span class="collapse-icon">{{ collapsed.ws ? '▶' : '▼' }}</span>
           <h2>Web Search</h2>
@@ -516,35 +617,77 @@ onUnmounted(() => {
       
       <div class="card-content">
         <div class="action-bar-modern gap-12">
-          <button class="btn btn-premium-action" @click.stop="showAddWs">
+          <button
+            class="btn btn-premium-action"
+            @click.stop="showAddWs"
+          >
             <span class="plus-icon">+</span> Add Tavily Account
           </button>
-          <button class="btn btn-ghost" style="border-radius:12px;" @click.stop="resetWsQuotas">Reset Quotas</button>
+          <button
+            class="btn btn-ghost"
+            style="border-radius:12px;"
+            @click.stop="resetWsQuotas"
+          >
+            Reset Quotas
+          </button>
         </div>
         
         <div class="service-list">
-          <div v-for="a in wsAccounts" :key="a.id" class="service-item">
+          <div
+            v-for="a in wsAccounts"
+            :key="a.id"
+            class="service-item"
+          >
             <div class="service-name-row">
               <div class="service-name-group">
-                <span class="service-icon-sm" v-html="CATEGORY_META.ws.icon"></span>
+                <span
+                  class="service-icon-sm"
+                  v-html="CATEGORY_META.ws.icon"
+                />
                 <span class="service-name">{{ a.name }}</span>
-                <Pill :type="a.enabled ? 'ok' : 'err'" :text="a.enabled ? 'Enabled' : 'Exhausted'" />
+                <Pill
+                  :type="a.enabled ? 'ok' : 'err'"
+                  :text="a.enabled ? 'Enabled' : 'Exhausted'"
+                />
               </div>
               <div class="service-actions">
-                <button class="btn btn-sm btn-ghost" @click="showEditWs(a)">Edit</button>
-                <button class="btn btn-sm btn-danger" @click="deleteWs(a.id)">Delete</button>
+                <button
+                  class="btn btn-sm btn-ghost"
+                  @click="showEditWs(a)"
+                >
+                  Edit
+                </button>
+                <button
+                  class="btn btn-sm btn-danger"
+                  @click="deleteWs(a.id)"
+                >
+                  Delete
+                </button>
               </div>
             </div>
-            <div class="service-meta-line">Priority {{ a.priority }} · {{ a.queries_this_month }} queries this cycle</div>
+            <div class="service-meta-line">
+              Priority {{ a.priority }} · {{ a.queries_this_month }} queries this cycle
+            </div>
           </div>
-          <div v-if="wsAccounts.length === 0" class="empty-state">No Tavily accounts configured.</div>
+          <div
+            v-if="wsAccounts.length === 0"
+            class="empty-state"
+          >
+            No Tavily accounts configured.
+          </div>
         </div>
       </div>
     </div>
 
     <!-- Messaging Platforms -->
-    <div class="premium-card collapsible" :class="{ collapsed: collapsed.messaging }">
-      <div class="card-header-row" @click="collapsed.messaging = !collapsed.messaging">
+    <div
+      class="premium-card collapsible"
+      :class="{ collapsed: collapsed.messaging }"
+    >
+      <div
+        class="card-header-row"
+        @click="collapsed.messaging = !collapsed.messaging"
+      >
         <div class="card-title-group">
           <span class="collapse-icon">{{ collapsed.messaging ? '▶' : '▼' }}</span>
           <h2>Messaging Platforms</h2>
@@ -554,10 +697,17 @@ onUnmounted(() => {
       
       <div class="card-content">
         <div class="service-list">
-          <div v-for="p in PLATFORMS" :key="p.id" class="service-item">
+          <div
+            v-for="p in PLATFORMS"
+            :key="p.id"
+            class="service-item"
+          >
             <div class="service-name-row">
               <div class="service-name-group">
-                <span class="service-icon-sm" v-html="p.icon"></span>
+                <span
+                  class="service-icon-sm"
+                  v-html="p.icon"
+                />
                 <span class="service-name">{{ p.name }}</span>
                 <Pill
                   :type="isMessagingConnected(p) ? 'ok' : (isMessagingConfigured(p) ? 'info' : 'muted')"
@@ -567,22 +717,29 @@ onUnmounted(() => {
               <div class="service-actions">
                 <button
                   class="btn btn-sm btn-ghost"
-                  @click="reconnectMessaging(p)"
                   :disabled="!isMessagingConfigured(p)"
+                  @click="reconnectMessaging(p)"
                 >
                   {{ isMessagingConnected(p) ? 'Restart' : 'Connect' }}
                 </button>
               </div>
             </div>
-            <div class="service-meta-line">{{ p.desc }}</div>
+            <div class="service-meta-line">
+              {{ p.desc }}
+            </div>
             <div class="inline-token-row">
               <input
-                type="password"
                 v-model="messagingTokens[p.id]"
+                type="password"
                 class="token-input-compact"
                 placeholder="Paste bot token…"
-              />
-              <button class="btn btn-sm btn-ghost" @click="saveMessagingToken(p)">Save</button>
+              >
+              <button
+                class="btn btn-sm btn-ghost"
+                @click="saveMessagingToken(p)"
+              >
+                Save
+              </button>
             </div>
           </div>
         </div>
@@ -590,8 +747,14 @@ onUnmounted(() => {
     </div>
 
     <!-- Authentication -->
-    <div class="premium-card collapsible" :class="{ collapsed: collapsed.auth }">
-      <div class="card-header-row" @click="collapsed.auth = !collapsed.auth">
+    <div
+      class="premium-card collapsible"
+      :class="{ collapsed: collapsed.auth }"
+    >
+      <div
+        class="card-header-row"
+        @click="collapsed.auth = !collapsed.auth"
+      >
         <div class="card-title-group">
           <span class="collapse-icon">{{ collapsed.auth ? '▶' : '▼' }}</span>
           <h2>Authentication</h2>
@@ -601,18 +764,36 @@ onUnmounted(() => {
       
       <div class="card-content">
         <div class="service-list">
-          <div v-for="(meta, id) in AUTH_METADATA" :key="id" class="service-item">
+          <div
+            v-for="(meta, id) in AUTH_METADATA"
+            :key="id"
+            class="service-item"
+          >
             <div class="service-name-row">
               <div class="service-name-group">
-                <span class="service-icon-sm" v-html="meta.icon"></span>
+                <span
+                  class="service-icon-sm"
+                  v-html="meta.icon"
+                />
                 <span class="service-name">{{ meta.name }}</span>
-                <Pill :type="authStatus[id]?.authenticated ? 'ok' : 'muted'" :text="authStatus[id]?.authenticated ? 'Connected' : 'Not connected'" />
+                <Pill
+                  :type="authStatus[id]?.authenticated ? 'ok' : 'muted'"
+                  :text="authStatus[id]?.authenticated ? 'Connected' : 'Not connected'"
+                />
               </div>
               <div class="service-actions">
-                <button v-if="!authStatus[id]?.authenticated" class="btn btn-sm btn-ghost" @click="connectAuth(id)">
+                <button
+                  v-if="!authStatus[id]?.authenticated"
+                  class="btn btn-sm btn-ghost"
+                  @click="connectAuth(id)"
+                >
                   Connect
                 </button>
-                <button v-else class="btn btn-sm btn-danger" @click="disconnectAuth(id)">
+                <button
+                  v-else
+                  class="btn btn-sm btn-danger"
+                  @click="disconnectAuth(id)"
+                >
                   Disconnect
                 </button>
               </div>
@@ -634,103 +815,211 @@ onUnmounted(() => {
   <!-- MODALS -->
 
   <!-- MCP Modal -->
-  <Modal v-model="mcpModal" title="Connect MCP Server">
+  <Modal
+    v-model="mcpModal"
+    title="Connect MCP Server"
+  >
     <div class="form-container">
       <div class="form-group-modern">
         <label>Name</label>
-        <input type="text" v-model="mcpForm.name" class="premium-input" placeholder="e.g. Local Tools" />
+        <input
+          v-model="mcpForm.name"
+          type="text"
+          class="premium-input"
+          placeholder="e.g. Local Tools"
+        >
       </div>
       <div class="form-group-modern">
         <label>URL</label>
-        <input type="text" v-model="mcpForm.url" class="premium-input" placeholder="http://localhost:8000" />
+        <input
+          v-model="mcpForm.url"
+          type="text"
+          class="premium-input"
+          placeholder="http://localhost:8000"
+        >
       </div>
       <div class="form-group-modern">
         <label>API Key / Token (Optional)</label>
-        <input type="password" v-model="mcpForm.api_key" class="premium-input" placeholder="••••••••••••••••" />
+        <input
+          v-model="mcpForm.api_key"
+          type="password"
+          class="premium-input"
+          placeholder="••••••••••••••••"
+        >
       </div>
     </div>
     <div class="modal-actions-modern">
-      <button class="btn btn-ghost" @click="mcpModal = false">Cancel</button>
-      <button class="btn btn-save" @click="connectMcp">Connect Server</button>
+      <button
+        class="btn btn-ghost"
+        @click="mcpModal = false"
+      >
+        Cancel
+      </button>
+      <button
+        class="btn btn-save"
+        @click="connectMcp"
+      >
+        Connect Server
+      </button>
     </div>
   </Modal>
 
   <!-- SSH Modal -->
-  <Modal v-model="sshModal" title="Add SSH Server">
+  <Modal
+    v-model="sshModal"
+    title="Add SSH Server"
+  >
     <div class="form-container">
       <div class="form-group-modern">
         <label>Server Name</label>
-        <input type="text" v-model="sshForm.name" class="premium-input" placeholder="e.g. prod-db-1" />
+        <input
+          v-model="sshForm.name"
+          type="text"
+          class="premium-input"
+          placeholder="e.g. prod-db-1"
+        >
       </div>
       
       <div class="form-row-modern">
         <div class="form-group-modern flex-2">
           <label>IP / Hostname</label>
-          <input type="text" v-model="sshForm.ip" class="premium-input" placeholder="192.168.1.1" />
+          <input
+            v-model="sshForm.ip"
+            type="text"
+            class="premium-input"
+            placeholder="192.168.1.1"
+          >
         </div>
         <div class="form-group-modern flex-1">
           <label>Port</label>
-          <input type="number" v-model="sshForm.port" class="premium-input" />
+          <input
+            v-model="sshForm.port"
+            type="number"
+            class="premium-input"
+          >
         </div>
       </div>
       
       <div class="form-group-modern">
         <label>Username</label>
-        <input type="text" v-model="sshForm.username" class="premium-input" placeholder="root" />
+        <input
+          v-model="sshForm.username"
+          type="text"
+          class="premium-input"
+          placeholder="root"
+        >
       </div>
       
       <div class="form-group-modern">
         <label>Auth Type</label>
-        <select v-model="sshForm.auth_type" class="premium-input select-input">
-          <option value="key">SSH Key Pair</option>
-          <option value="password">Password</option>
+        <select
+          v-model="sshForm.auth_type"
+          class="premium-input select-input"
+        >
+          <option value="key">
+            SSH Key Pair
+          </option>
+          <option value="password">
+            Password
+          </option>
         </select>
       </div>
       
-      <div v-if="sshForm.auth_type === 'key'" class="auth-details">
+      <div
+        v-if="sshForm.auth_type === 'key'"
+        class="auth-details"
+      >
         <div class="form-group-modern">
           <label>Private Key (PEM/OpenSSH)</label>
-          <textarea v-model="sshForm.private_key" class="premium-input textarea-input code-font" rows="4" placeholder="-----BEGIN OPENSSH PRIVATE KEY..."></textarea>
+          <textarea
+            v-model="sshForm.private_key"
+            class="premium-input textarea-input code-font"
+            rows="4"
+            placeholder="-----BEGIN OPENSSH PRIVATE KEY..."
+          />
         </div>
         <div class="form-group-modern">
           <label>Public Key (Optional)</label>
-          <textarea v-model="sshForm.public_key" class="premium-input textarea-input code-font" rows="2"></textarea>
+          <textarea
+            v-model="sshForm.public_key"
+            class="premium-input textarea-input code-font"
+            rows="2"
+          />
         </div>
       </div>
       
-      <div v-else class="form-group-modern auth-details">
+      <div
+        v-else
+        class="form-group-modern auth-details"
+      >
         <label>Password</label>
-        <input type="password" v-model="sshForm.password" class="premium-input" placeholder="••••••••••••••••" />
+        <input
+          v-model="sshForm.password"
+          type="password"
+          class="premium-input"
+          placeholder="••••••••••••••••"
+        >
       </div>
     </div>
     
     <div class="modal-actions-modern">
-      <button class="btn btn-ghost" @click="sshModal = false">Cancel</button>
-      <button class="btn btn-save" @click="saveSsh">Save Server</button>
+      <button
+        class="btn btn-ghost"
+        @click="sshModal = false"
+      >
+        Cancel
+      </button>
+      <button
+        class="btn btn-save"
+        @click="saveSsh"
+      >
+        Save Server
+      </button>
     </div>
   </Modal>
 
   <!-- Web Search Modal -->
-  <Modal v-model="wsModal" :title="wsEditing ? 'Edit Account' : 'Add Tavily Account'">
+  <Modal
+    v-model="wsModal"
+    :title="wsEditing ? 'Edit Account' : 'Add Tavily Account'"
+  >
     <div class="form-container">
       <div class="form-group-modern">
         <label>Account Name</label>
-        <input type="text" v-model="wsForm.name" class="premium-input" placeholder="e.g. Tavily Personal" />
+        <input
+          v-model="wsForm.name"
+          type="text"
+          class="premium-input"
+          placeholder="e.g. Tavily Personal"
+        >
       </div>
       <div class="form-group-modern">
         <label>Tavily API Key</label>
-        <input type="password" v-model="wsForm.api_key" class="premium-input" placeholder="tvly-..." />
+        <input
+          v-model="wsForm.api_key"
+          type="password"
+          class="premium-input"
+          placeholder="tvly-..."
+        >
       </div>
       <div class="form-row-modern align-center">
         <div class="form-group-modern flex-1 mb-0">
           <label>Priority</label>
-          <input type="number" v-model="wsForm.priority" min="1" class="premium-input" />
+          <input
+            v-model="wsForm.priority"
+            type="number"
+            min="1"
+            class="premium-input"
+          >
         </div>
         <div class="form-group-modern flex-1 mb-0 check-group">
           <label class="checkbox-label">
             <span class="custom-checkbox">
-              <input type="checkbox" v-model="wsForm.enabled" />
-              <span class="checkmark"></span>
+              <input
+                v-model="wsForm.enabled"
+                type="checkbox"
+              >
+              <span class="checkmark" />
             </span>
             Enabled
           </label>
@@ -738,35 +1027,99 @@ onUnmounted(() => {
       </div>
     </div>
     <div class="modal-actions-modern">
-      <button class="btn btn-ghost" @click="wsModal = false">Cancel</button>
-      <button class="btn btn-save" @click="saveWs">Save Account</button>
+      <button
+        class="btn btn-ghost"
+        @click="wsModal = false"
+      >
+        Cancel
+      </button>
+      <button
+        class="btn btn-save"
+        @click="saveWs"
+      >
+        Save Account
+      </button>
     </div>
   </Modal>
 
   <!-- Credential Modal -->
-  <Modal v-model="credModal" title="Add Credential">
+  <Modal
+    v-model="credModal"
+    title="Add Credential"
+  >
     <div class="form-container">
       <div class="form-group-modern">
         <label>Name</label>
-        <input type="text" v-model="credForm.name" class="premium-input" placeholder="e.g. My Prod Bot Token" />
+        <input
+          v-model="credForm.name"
+          type="text"
+          class="premium-input"
+          placeholder="e.g. My Prod Bot Token"
+        >
       </div>
       <div class="form-group-modern">
         <label>Service (Platform)</label>
-        <input type="text" v-model="credForm.service" class="premium-input" placeholder="e.g. telegram" />
+        <input
+          v-model="credForm.service"
+          type="text"
+          class="premium-input"
+          placeholder="e.g. telegram"
+        >
       </div>
       <div class="form-group-modern">
         <label>Fields</label>
-        <div v-for="(field, index) in credForm.fields" :key="index" style="display:flex;gap:10px;margin-bottom:8px;align-items:center;">
-          <input type="text" v-model="field.key" class="premium-input" placeholder="Key (e.g. access_token)" style="flex:1" />
-          <input type="text" v-model="field.value" class="premium-input" placeholder="Value" style="flex:2" />
-          <button class="btn btn-sm btn-ghost" @click="credForm.fields.splice(index, 1)" style="flex-shrink:0;">✕</button>
+        <div
+          v-for="(field, index) in credForm.fields"
+          :key="index"
+          style="display:flex;gap:10px;margin-bottom:8px;align-items:center;"
+        >
+          <input
+            v-model="field.key"
+            type="text"
+            class="premium-input"
+            placeholder="Key (e.g. access_token)"
+            style="flex:1"
+          >
+          <!-- password, not text: these fields hold credential secrets
+               (access_token, api_key, private_key, ...) and were previously
+               rendered in plaintext while being typed. -->
+          <input
+            v-model="field.value"
+            type="password"
+            class="premium-input"
+            placeholder="Value"
+            style="flex:2"
+          >
+          <button
+            class="btn btn-sm btn-ghost"
+            style="flex-shrink:0;"
+            @click="credForm.fields.splice(index, 1)"
+          >
+            ✕
+          </button>
         </div>
-        <button class="btn btn-sm btn-ghost" @click="credForm.fields.push({ key: '', value: '' })" style="width:100%">+ Add Field</button>
+        <button
+          class="btn btn-sm btn-ghost"
+          style="width:100%"
+          @click="credForm.fields.push({ key: '', value: '' })"
+        >
+          + Add Field
+        </button>
       </div>
     </div>
     <div class="modal-actions-modern">
-      <button class="btn btn-ghost" @click="credModal = false">Cancel</button>
-      <button class="btn btn-save" @click="saveCredential">Save</button>
+      <button
+        class="btn btn-ghost"
+        @click="credModal = false"
+      >
+        Cancel
+      </button>
+      <button
+        class="btn btn-save"
+        @click="saveCredential"
+      >
+        Save
+      </button>
     </div>
   </Modal>
 </template>

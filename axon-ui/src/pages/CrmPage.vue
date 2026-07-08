@@ -408,13 +408,38 @@ onMounted(loadDashboard)
     <div class="page-header-container">
       <div class="page-header">
         <h1>CRM</h1>
-        <p class="page-desc">Leads, deals, organizations, and activity — the agent's customer data.</p>
+        <p class="page-desc">
+          Leads, deals, organizations, and activity — the agent's customer data.
+        </p>
       </div>
       <div class="header-actions">
-        <button v-if="tab === 'leads'" class="btn btn-save" @click="openLeadCreate">New Lead</button>
-        <button v-if="tab === 'deals'" class="btn btn-save" @click="openDealCreate()">New Deal</button>
-        <button v-if="tab === 'orgs'" class="btn btn-save" @click="openOrgCreate">New Organization</button>
-        <button class="btn btn-ghost" @click="reloadTab">Refresh</button>
+        <button
+          v-if="tab === 'leads'"
+          class="btn btn-save"
+          @click="openLeadCreate"
+        >
+          New Lead
+        </button>
+        <button
+          v-if="tab === 'deals'"
+          class="btn btn-save"
+          @click="openDealCreate()"
+        >
+          New Deal
+        </button>
+        <button
+          v-if="tab === 'orgs'"
+          class="btn btn-save"
+          @click="openOrgCreate"
+        >
+          New Organization
+        </button>
+        <button
+          class="btn btn-ghost"
+          @click="reloadTab"
+        >
+          Refresh
+        </button>
       </div>
     </div>
 
@@ -432,49 +457,94 @@ onMounted(loadDashboard)
 
     <!-- ── Dashboard ─────────────────────────────────────────────────────── -->
     <template v-if="tab === 'dashboard'">
-      <div v-if="!dash" class="empty-state">Loading dashboard…</div>
+      <div
+        v-if="!dash"
+        class="empty-state"
+      >
+        Loading dashboard…
+      </div>
       <template v-else>
         <div class="stat-tiles">
           <div class="premium-card stat-tile">
-            <div class="stat-value">{{ dash.totals.organizations }}</div>
-            <div class="stat-label">Organizations</div>
+            <div class="stat-value">
+              {{ dash.totals.organizations }}
+            </div>
+            <div class="stat-label">
+              Organizations
+            </div>
           </div>
           <div class="premium-card stat-tile">
-            <div class="stat-value">{{ dash.totals.leads }}</div>
-            <div class="stat-label">Leads</div>
+            <div class="stat-value">
+              {{ dash.totals.leads }}
+            </div>
+            <div class="stat-label">
+              Leads
+            </div>
           </div>
           <div class="premium-card stat-tile">
-            <div class="stat-value">{{ dash.totals.deals }}</div>
-            <div class="stat-label">Deals</div>
+            <div class="stat-value">
+              {{ dash.totals.deals }}
+            </div>
+            <div class="stat-label">
+              Deals
+            </div>
           </div>
           <div class="premium-card stat-tile">
-            <div class="stat-value">{{ dash.totals.recent_activities }}</div>
-            <div class="stat-label">Activities ({{ dash.parameters.activity_window_days }}d)</div>
+            <div class="stat-value">
+              {{ dash.totals.recent_activities }}
+            </div>
+            <div class="stat-label">
+              Activities ({{ dash.parameters.activity_window_days }}d)
+            </div>
           </div>
         </div>
 
         <div class="dash-grid">
           <section class="premium-card">
             <div class="card-header-row no-collapse">
-              <div class="card-title-group"><h2>Pipeline Health</h2></div>
-              <span v-if="pipeline" class="card-summary">win rate {{ pipeline.win_rate_pct }}%</span>
+              <div class="card-title-group">
+                <h2>Pipeline Health</h2>
+              </div>
+              <span
+                v-if="pipeline"
+                class="card-summary"
+              >win rate {{ pipeline.win_rate_pct }}%</span>
             </div>
             <div class="card-content kv-list">
-              <div class="kv-row"><span>Active pipeline</span><strong>{{ fmtTotals(dash.pipeline.active_pipeline_value) }}</strong></div>
-              <div class="kv-row"><span>Weighted (by probability)</span><strong>{{ fmtTotals(dash.pipeline.weighted_pipeline_value) }}</strong></div>
-              <div class="kv-row"><span>Stale leads / deals ({{ dash.parameters.stale_days }}d)</span><strong>{{ dash.pipeline.stale_leads }} / {{ dash.pipeline.stale_deals }}</strong></div>
-              <div class="kv-row"><span>Overdue deals</span><strong>{{ dash.pipeline.overdue_deals_count }}</strong></div>
-              <div class="kv-row"><span>Closing within {{ dash.parameters.closing_within_days }}d</span><strong>{{ dash.pipeline.closing_soon_count }}</strong></div>
+              <div class="kv-row">
+                <span>Active pipeline</span><strong>{{ fmtTotals(dash.pipeline.active_pipeline_value) }}</strong>
+              </div>
+              <div class="kv-row">
+                <span>Weighted (by probability)</span><strong>{{ fmtTotals(dash.pipeline.weighted_pipeline_value) }}</strong>
+              </div>
+              <div class="kv-row">
+                <span>Stale leads / deals ({{ dash.parameters.stale_days }}d)</span><strong>{{ dash.pipeline.stale_leads }} / {{ dash.pipeline.stale_deals }}</strong>
+              </div>
+              <div class="kv-row">
+                <span>Overdue deals</span><strong>{{ dash.pipeline.overdue_deals_count }}</strong>
+              </div>
+              <div class="kv-row">
+                <span>Closing within {{ dash.parameters.closing_within_days }}d</span><strong>{{ dash.pipeline.closing_soon_count }}</strong>
+              </div>
             </div>
           </section>
 
           <section class="premium-card">
             <div class="card-header-row no-collapse">
-              <div class="card-title-group"><h2>Lead Status Mix</h2></div>
+              <div class="card-title-group">
+                <h2>Lead Status Mix</h2>
+              </div>
             </div>
             <div class="card-content kv-list">
-              <div v-for="s in dash.lead_status_counts" :key="s.key" class="kv-row">
-                <span><Pill :type="leadStatusType(s.key)" :text="s.key.toUpperCase()" /></span>
+              <div
+                v-for="s in dash.lead_status_counts"
+                :key="s.key"
+                class="kv-row"
+              >
+                <span><Pill
+                  :type="leadStatusType(s.key)"
+                  :text="s.key.toUpperCase()"
+                /></span>
                 <strong>{{ s.count }}</strong>
               </div>
             </div>
@@ -482,10 +552,16 @@ onMounted(loadDashboard)
 
           <section class="premium-card">
             <div class="card-header-row no-collapse">
-              <div class="card-title-group"><h2>Stage Rollup</h2></div>
+              <div class="card-title-group">
+                <h2>Stage Rollup</h2>
+              </div>
             </div>
             <div class="card-content kv-list">
-              <div v-for="s in dash.deal_stage_rollup" :key="s.stage" class="kv-row">
+              <div
+                v-for="s in dash.deal_stage_rollup"
+                :key="s.stage"
+                class="kv-row"
+              >
                 <span>{{ s.stage }} ({{ s.count }})</span>
                 <strong>{{ fmtTotals(s.total_value) }}</strong>
               </div>
@@ -494,12 +570,27 @@ onMounted(loadDashboard)
 
           <section class="premium-card">
             <div class="card-header-row no-collapse">
-              <div class="card-title-group"><h2>Closing Soon</h2></div>
+              <div class="card-title-group">
+                <h2>Closing Soon</h2>
+              </div>
               <span class="card-summary">{{ dash.closing_soon_deals.length }}</span>
             </div>
-            <div v-if="!dash.closing_soon_deals.length" class="card-content empty-state">Nothing closing soon.</div>
-            <div v-else class="card-content mini-list">
-              <button v-for="d in dash.closing_soon_deals" :key="d.id" class="mini-row" @click="openDrawer('deal', d.id)">
+            <div
+              v-if="!dash.closing_soon_deals.length"
+              class="card-content empty-state"
+            >
+              Nothing closing soon.
+            </div>
+            <div
+              v-else
+              class="card-content mini-list"
+            >
+              <button
+                v-for="d in dash.closing_soon_deals"
+                :key="d.id"
+                class="mini-row"
+                @click="openDrawer('deal', d.id)"
+              >
                 <span class="mini-title">{{ d.title }}</span>
                 <span class="mini-meta">{{ fmtMoney(d.amount, d.currency) }} · {{ fmtDate(d.expected_close) }}</span>
               </button>
@@ -508,12 +599,27 @@ onMounted(loadDashboard)
 
           <section class="premium-card">
             <div class="card-header-row no-collapse">
-              <div class="card-title-group"><h2>Stale Deals</h2></div>
+              <div class="card-title-group">
+                <h2>Stale Deals</h2>
+              </div>
               <span class="card-summary">&gt; {{ dash.parameters.stale_days }}d untouched</span>
             </div>
-            <div v-if="!dash.stale_deals.length" class="card-content empty-state">No stale deals.</div>
-            <div v-else class="card-content mini-list">
-              <button v-for="d in dash.stale_deals" :key="d.id" class="mini-row" @click="openDrawer('deal', d.id)">
+            <div
+              v-if="!dash.stale_deals.length"
+              class="card-content empty-state"
+            >
+              No stale deals.
+            </div>
+            <div
+              v-else
+              class="card-content mini-list"
+            >
+              <button
+                v-for="d in dash.stale_deals"
+                :key="d.id"
+                class="mini-row"
+                @click="openDrawer('deal', d.id)"
+              >
                 <span class="mini-title">{{ d.title }}</span>
                 <span class="mini-meta">{{ d.stage }} · updated {{ timeAgo(d.updated_at) }}</span>
               </button>
@@ -531,38 +637,88 @@ onMounted(loadDashboard)
           class="premium-input search-input"
           placeholder="Search name, email, company, notes, tags…"
           @keyup.enter="loadLeads"
-        />
-        <select v-model="leadStatus" class="premium-input slim-select" @change="loadLeads">
-          <option value="All">All statuses</option>
-          <option v-for="s in LEAD_STATUSES" :key="s" :value="s">{{ s }}</option>
+        >
+        <select
+          v-model="leadStatus"
+          class="premium-input slim-select"
+          @change="loadLeads"
+        >
+          <option value="All">
+            All statuses
+          </option>
+          <option
+            v-for="s in LEAD_STATUSES"
+            :key="s"
+            :value="s"
+          >
+            {{ s }}
+          </option>
         </select>
         <span class="filter-count">{{ leadTotal }} lead(s)</span>
       </div>
 
       <section class="premium-card table-card">
-        <div v-if="!leads.length" class="empty-state">No leads found. Create one or adjust the filter.</div>
-        <div v-else class="table-scroll">
+        <div
+          v-if="!leads.length"
+          class="empty-state"
+        >
+          No leads found. Create one or adjust the filter.
+        </div>
+        <div
+          v-else
+          class="table-scroll"
+        >
           <table class="crm-table">
             <thead>
               <tr>
-                <th>Name</th><th>Email</th><th>Company</th><th>Status</th><th>Source</th><th>Updated</th><th></th>
+                <th>Name</th><th>Email</th><th>Company</th><th>Status</th><th>Source</th><th>Updated</th><th />
               </tr>
             </thead>
             <tbody>
-              <tr v-for="l in leads" :key="l.id">
-                <td class="clickable strong" @click="openDrawer('lead', l.id)">{{ l.name }}</td>
+              <tr
+                v-for="l in leads"
+                :key="l.id"
+              >
+                <td
+                  class="clickable strong"
+                  @click="openDrawer('lead', l.id)"
+                >
+                  {{ l.name }}
+                </td>
                 <td>{{ l.email || '—' }}</td>
                 <td>{{ l.company || '—' }}</td>
                 <td>
-                  <select class="premium-input slim-select" :value="l.status" @change="setLeadStatus(l, $event.target.value)">
-                    <option v-for="s in LEAD_STATUSES" :key="s" :value="s">{{ s }}</option>
+                  <select
+                    class="premium-input slim-select"
+                    :value="l.status"
+                    @change="setLeadStatus(l, $event.target.value)"
+                  >
+                    <option
+                      v-for="s in LEAD_STATUSES"
+                      :key="s"
+                      :value="s"
+                    >
+                      {{ s }}
+                    </option>
                   </select>
                 </td>
                 <td>{{ l.source || '—' }}</td>
-                <td class="muted-cell">{{ timeAgo(l.updated_at) }}</td>
+                <td class="muted-cell">
+                  {{ timeAgo(l.updated_at) }}
+                </td>
                 <td class="row-actions">
-                  <button class="btn btn-sm btn-ghost" @click="openLeadEdit(l.id)">Edit</button>
-                  <button class="btn btn-sm btn-danger" @click="archiveRecord('lead', l.id)">Archive</button>
+                  <button
+                    class="btn btn-sm btn-ghost"
+                    @click="openLeadEdit(l.id)"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    class="btn btn-sm btn-danger"
+                    @click="archiveRecord('lead', l.id)"
+                  >
+                    Archive
+                  </button>
                 </td>
               </tr>
             </tbody>
@@ -579,30 +735,57 @@ onMounted(loadDashboard)
           class="premium-input search-input"
           placeholder="Search deal titles, notes, tags…"
           @keyup.enter="loadDeals"
-        />
+        >
         <span class="filter-count">{{ dealTotal }} deal(s)</span>
       </div>
 
       <div class="kanban">
-        <div v-for="stage in DEAL_STAGES" :key="stage" class="kanban-col">
+        <div
+          v-for="stage in DEAL_STAGES"
+          :key="stage"
+          class="kanban-col"
+        >
           <div class="kanban-head">
             <span class="kanban-stage">{{ stage }}</span>
             <span class="kanban-meta">{{ stageMeta(stage).count }} · {{ fmtTotals(stageMeta(stage).total_value) }}</span>
           </div>
           <div class="kanban-cards">
-            <div v-if="!dealsByStage[stage].length" class="kanban-empty">—</div>
-            <div v-for="d in dealsByStage[stage]" :key="d.id" class="kanban-card" @click="openDrawer('deal', d.id)">
-              <div class="kanban-title">{{ d.title }}</div>
-              <div class="kanban-amount">{{ fmtMoney(d.amount, d.currency) }}</div>
+            <div
+              v-if="!dealsByStage[stage].length"
+              class="kanban-empty"
+            >
+              —
+            </div>
+            <div
+              v-for="d in dealsByStage[stage]"
+              :key="d.id"
+              class="kanban-card"
+              @click="openDrawer('deal', d.id)"
+            >
+              <div class="kanban-title">
+                {{ d.title }}
+              </div>
+              <div class="kanban-amount">
+                {{ fmtMoney(d.amount, d.currency) }}
+              </div>
               <div class="kanban-foot">
-                <span v-if="d.expected_close" class="kanban-close">closes {{ fmtDate(d.expected_close) }}</span>
+                <span
+                  v-if="d.expected_close"
+                  class="kanban-close"
+                >closes {{ fmtDate(d.expected_close) }}</span>
                 <select
                   class="premium-input slim-select"
                   :value="d.stage"
                   @click.stop
                   @change="setDealStage(d, $event.target.value)"
                 >
-                  <option v-for="s in DEAL_STAGES" :key="s" :value="s">{{ s }}</option>
+                  <option
+                    v-for="s in DEAL_STAGES"
+                    :key="s"
+                    :value="s"
+                  >
+                    {{ s }}
+                  </option>
                 </select>
               </div>
             </div>
@@ -619,27 +802,55 @@ onMounted(loadDashboard)
           class="premium-input search-input"
           placeholder="Search name, industry, country, website…"
           @keyup.enter="loadOrgs"
-        />
+        >
         <span class="filter-count">{{ orgTotal }} organization(s)</span>
       </div>
 
       <section class="premium-card table-card">
-        <div v-if="!orgs.length" class="empty-state">No organizations found.</div>
-        <div v-else class="table-scroll">
+        <div
+          v-if="!orgs.length"
+          class="empty-state"
+        >
+          No organizations found.
+        </div>
+        <div
+          v-else
+          class="table-scroll"
+        >
           <table class="crm-table">
             <thead>
-              <tr><th>Name</th><th>Industry</th><th>Website</th><th>Email</th><th>Updated</th><th></th></tr>
+              <tr><th>Name</th><th>Industry</th><th>Website</th><th>Email</th><th>Updated</th><th /></tr>
             </thead>
             <tbody>
-              <tr v-for="o in orgs" :key="o.id">
-                <td class="clickable strong" @click="openDrawer('org', o.id)">{{ o.name }}</td>
+              <tr
+                v-for="o in orgs"
+                :key="o.id"
+              >
+                <td
+                  class="clickable strong"
+                  @click="openDrawer('org', o.id)"
+                >
+                  {{ o.name }}
+                </td>
                 <td>{{ o.industry || '—' }}</td>
                 <td>{{ o.website || '—' }}</td>
                 <td>{{ o.email || '—' }}</td>
-                <td class="muted-cell">{{ timeAgo(o.updated_at) }}</td>
+                <td class="muted-cell">
+                  {{ timeAgo(o.updated_at) }}
+                </td>
                 <td class="row-actions">
-                  <button class="btn btn-sm btn-ghost" @click="openOrgEdit(o.id)">Edit</button>
-                  <button class="btn btn-sm btn-danger" @click="archiveRecord('org', o.id)">Archive</button>
+                  <button
+                    class="btn btn-sm btn-ghost"
+                    @click="openOrgEdit(o.id)"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    class="btn btn-sm btn-danger"
+                    @click="archiveRecord('org', o.id)"
+                  >
+                    Archive
+                  </button>
                 </td>
               </tr>
             </tbody>
@@ -651,19 +862,44 @@ onMounted(loadDashboard)
     <!-- ── Archived ──────────────────────────────────────────────────────── -->
     <template v-else-if="tab === 'archived'">
       <section class="premium-card table-card">
-        <div v-if="!archived.length" class="empty-state">No archived records.</div>
-        <div v-else class="table-scroll">
+        <div
+          v-if="!archived.length"
+          class="empty-state"
+        >
+          No archived records.
+        </div>
+        <div
+          v-else
+          class="table-scroll"
+        >
           <table class="crm-table">
             <thead>
-              <tr><th>Type</th><th>Record</th><th>Archived</th><th></th></tr>
+              <tr><th>Type</th><th>Record</th><th>Archived</th><th /></tr>
             </thead>
             <tbody>
-              <tr v-for="a in archived" :key="`${a.entity_type}-${a.id}`">
-                <td><Pill type="muted" :text="a.entity_type.toUpperCase()" /></td>
-                <td class="strong">{{ a.label }}</td>
-                <td class="muted-cell">{{ timeAgo(a.deleted_at) }}</td>
+              <tr
+                v-for="a in archived"
+                :key="`${a.entity_type}-${a.id}`"
+              >
+                <td>
+                  <Pill
+                    type="muted"
+                    :text="a.entity_type.toUpperCase()"
+                  />
+                </td>
+                <td class="strong">
+                  {{ a.label }}
+                </td>
+                <td class="muted-cell">
+                  {{ timeAgo(a.deleted_at) }}
+                </td>
                 <td class="row-actions">
-                  <button class="btn btn-sm btn-save" @click="restoreRecord(a.entity_type, a.id)">Restore</button>
+                  <button
+                    class="btn btn-sm btn-save"
+                    @click="restoreRecord(a.entity_type, a.id)"
+                  >
+                    Restore
+                  </button>
                 </td>
               </tr>
             </tbody>
@@ -676,9 +912,18 @@ onMounted(loadDashboard)
   <!-- ── Record drawer ───────────────────────────────────────────────────── -->
   <Teleport to="body">
     <Transition name="drawer-fade">
-      <div v-if="drawer.open" class="drawer-overlay" @click.self="closeDrawer">
+      <div
+        v-if="drawer.open"
+        class="drawer-overlay"
+        @click.self="closeDrawer"
+      >
         <aside class="drawer">
-          <div v-if="drawer.loading || !drawer.data" class="empty-state">Loading record…</div>
+          <div
+            v-if="drawer.loading || !drawer.data"
+            class="empty-state"
+          >
+            Loading record…
+          </div>
           <template v-else>
             <div class="drawer-head">
               <div class="drawer-title-group">
@@ -693,37 +938,90 @@ onMounted(loadDashboard)
                   :type="dealStageType(drawer.data.entity.stage)"
                   :text="drawer.data.entity.stage.toUpperCase()"
                 />
-                <Pill v-else type="info" text="ORGANIZATION" />
+                <Pill
+                  v-else
+                  type="info"
+                  text="ORGANIZATION"
+                />
               </div>
               <div class="drawer-actions">
-                <button v-if="drawer.type === 'lead'" class="btn btn-sm btn-primary" @click="openDealCreate(drawer.id)">New Deal</button>
-                <button class="btn btn-sm btn-ghost" @click="editDrawerRecord">Edit</button>
-                <button class="btn btn-sm btn-danger" @click="archiveRecord(drawer.type, drawer.id)">Archive</button>
-                <button class="btn btn-sm btn-ghost" @click="closeDrawer">Close</button>
+                <button
+                  v-if="drawer.type === 'lead'"
+                  class="btn btn-sm btn-primary"
+                  @click="openDealCreate(drawer.id)"
+                >
+                  New Deal
+                </button>
+                <button
+                  class="btn btn-sm btn-ghost"
+                  @click="editDrawerRecord"
+                >
+                  Edit
+                </button>
+                <button
+                  class="btn btn-sm btn-danger"
+                  @click="archiveRecord(drawer.type, drawer.id)"
+                >
+                  Archive
+                </button>
+                <button
+                  class="btn btn-sm btn-ghost"
+                  @click="closeDrawer"
+                >
+                  Close
+                </button>
               </div>
             </div>
 
             <div class="drawer-body">
               <div class="kv-list drawer-fields">
                 <template v-if="drawer.type === 'lead'">
-                  <div class="kv-row"><span>Email</span><strong>{{ drawer.data.entity.email || '—' }}</strong></div>
-                  <div class="kv-row"><span>Company</span><strong>{{ drawer.data.entity.company || '—' }}</strong></div>
-                  <div class="kv-row"><span>Deals</span><strong>{{ drawer.data.summary.deal_count }}</strong></div>
+                  <div class="kv-row">
+                    <span>Email</span><strong>{{ drawer.data.entity.email || '—' }}</strong>
+                  </div>
+                  <div class="kv-row">
+                    <span>Company</span><strong>{{ drawer.data.entity.company || '—' }}</strong>
+                  </div>
+                  <div class="kv-row">
+                    <span>Deals</span><strong>{{ drawer.data.summary.deal_count }}</strong>
+                  </div>
                 </template>
                 <template v-else-if="drawer.type === 'deal'">
-                  <div class="kv-row"><span>Amount</span><strong>{{ fmtMoney(drawer.data.entity.amount, drawer.data.entity.currency) }}</strong></div>
-                  <div class="kv-row"><span>Probability</span><strong>{{ drawer.data.entity.probability ?? '—' }}<span v-if="drawer.data.entity.probability != null">%</span></strong></div>
-                  <div class="kv-row"><span>Expected close</span><strong>{{ fmtDate(drawer.data.entity.expected_close) }}</strong></div>
+                  <div class="kv-row">
+                    <span>Amount</span><strong>{{ fmtMoney(drawer.data.entity.amount, drawer.data.entity.currency) }}</strong>
+                  </div>
+                  <div class="kv-row">
+                    <span>Probability</span><strong>{{ drawer.data.entity.probability ?? '—' }}<span v-if="drawer.data.entity.probability != null">%</span></strong>
+                  </div>
+                  <div class="kv-row">
+                    <span>Expected close</span><strong>{{ fmtDate(drawer.data.entity.expected_close) }}</strong>
+                  </div>
                 </template>
                 <template v-else>
-                  <div class="kv-row"><span>Industry</span><strong>{{ drawer.data.entity.industry || '—' }}</strong></div>
-                  <div class="kv-row"><span>Website</span><strong>{{ drawer.data.entity.website || '—' }}</strong></div>
-                  <div class="kv-row"><span>Leads / Deals</span><strong>{{ drawer.data.summary.lead_count }} / {{ drawer.data.summary.deal_count }}</strong></div>
+                  <div class="kv-row">
+                    <span>Industry</span><strong>{{ drawer.data.entity.industry || '—' }}</strong>
+                  </div>
+                  <div class="kv-row">
+                    <span>Website</span><strong>{{ drawer.data.entity.website || '—' }}</strong>
+                  </div>
+                  <div class="kv-row">
+                    <span>Leads / Deals</span><strong>{{ drawer.data.summary.lead_count }} / {{ drawer.data.summary.deal_count }}</strong>
+                  </div>
                 </template>
-                <div class="kv-row"><span>Updated</span><strong>{{ timeAgo(drawer.data.entity.updated_at) }}</strong></div>
-                <div v-if="(drawer.data.entity.tags || []).length" class="kv-row">
+                <div class="kv-row">
+                  <span>Updated</span><strong>{{ timeAgo(drawer.data.entity.updated_at) }}</strong>
+                </div>
+                <div
+                  v-if="(drawer.data.entity.tags || []).length"
+                  class="kv-row"
+                >
                   <span>Tags</span>
-                  <span class="tag-list"><Pill v-for="t in drawer.data.entity.tags" :key="t" type="muted" :text="t" /></span>
+                  <span class="tag-list"><Pill
+                    v-for="t in drawer.data.entity.tags"
+                    :key="t"
+                    type="muted"
+                    :text="t"
+                  /></span>
                 </div>
               </div>
 
@@ -775,15 +1073,35 @@ onMounted(loadDashboard)
 
               <div class="drawer-section">
                 <h3>Activity Timeline</h3>
-                <div v-if="!drawer.data.recent_activities.length" class="empty-state slim">No activity yet.</div>
-                <div v-else class="timeline">
-                  <div v-for="a in drawer.data.recent_activities" :key="a.id" class="timeline-item">
+                <div
+                  v-if="!drawer.data.recent_activities.length"
+                  class="empty-state slim"
+                >
+                  No activity yet.
+                </div>
+                <div
+                  v-else
+                  class="timeline"
+                >
+                  <div
+                    v-for="a in drawer.data.recent_activities"
+                    :key="a.id"
+                    class="timeline-item"
+                  >
                     <div class="timeline-head">
-                      <Pill type="info" :text="a.kind.toUpperCase()" />
+                      <Pill
+                        type="info"
+                        :text="a.kind.toUpperCase()"
+                      />
                       <span class="timeline-title">{{ a.title }}</span>
                       <span class="timeline-time">{{ timeAgo(a.occurred_at) }}</span>
                     </div>
-                    <p v-if="a.body" class="timeline-body">{{ a.body }}</p>
+                    <p
+                      v-if="a.body"
+                      class="timeline-body"
+                    >
+                      {{ a.body }}
+                    </p>
                   </div>
                 </div>
               </div>
@@ -792,14 +1110,38 @@ onMounted(loadDashboard)
                 <h3>Log Activity</h3>
                 <div class="act-form">
                   <div class="act-form-row">
-                    <select v-model="actForm.kind" class="premium-input slim-select">
-                      <option v-for="k in ACTIVITY_KINDS" :key="k" :value="k">{{ k }}</option>
+                    <select
+                      v-model="actForm.kind"
+                      class="premium-input slim-select"
+                    >
+                      <option
+                        v-for="k in ACTIVITY_KINDS"
+                        :key="k"
+                        :value="k"
+                      >
+                        {{ k }}
+                      </option>
                     </select>
-                    <input v-model="actForm.title" class="premium-input" placeholder="Short summary" @keyup.enter="logActivity" />
+                    <input
+                      v-model="actForm.title"
+                      class="premium-input"
+                      placeholder="Short summary"
+                      @keyup.enter="logActivity"
+                    >
                   </div>
-                  <textarea v-model="actForm.body" rows="2" class="premium-input textarea-input" placeholder="Details (optional)"></textarea>
+                  <textarea
+                    v-model="actForm.body"
+                    rows="2"
+                    class="premium-input textarea-input"
+                    placeholder="Details (optional)"
+                  />
                   <div class="act-form-actions">
-                    <button class="btn btn-sm btn-save" @click="logActivity">Log</button>
+                    <button
+                      class="btn btn-sm btn-save"
+                      @click="logActivity"
+                    >
+                      Log
+                    </button>
                   </div>
                 </div>
               </div>
@@ -811,86 +1153,293 @@ onMounted(loadDashboard)
   </Teleport>
 
   <!-- ── Lead modal ──────────────────────────────────────────────────────── -->
-  <Modal v-model="leadModalOpen" :title="editingLeadId ? 'Edit Lead' : 'New Lead'" max-width="560px">
+  <Modal
+    v-model="leadModalOpen"
+    :title="editingLeadId ? 'Edit Lead' : 'New Lead'"
+    max-width="560px"
+  >
     <div class="form-container">
       <div class="form-grid">
-        <div class="form-group-modern"><label>Name *</label><input v-model="leadForm.name" class="premium-input" /></div>
-        <div class="form-group-modern"><label>Email</label><input v-model="leadForm.email" class="premium-input" /></div>
-        <div class="form-group-modern"><label>Phone</label><input v-model="leadForm.phone" class="premium-input" /></div>
-        <div class="form-group-modern"><label>Company</label><input v-model="leadForm.company" class="premium-input" /></div>
+        <div class="form-group-modern">
+          <label>Name *</label><input
+            v-model="leadForm.name"
+            class="premium-input"
+          >
+        </div>
+        <div class="form-group-modern">
+          <label>Email</label><input
+            v-model="leadForm.email"
+            class="premium-input"
+          >
+        </div>
+        <div class="form-group-modern">
+          <label>Phone</label><input
+            v-model="leadForm.phone"
+            class="premium-input"
+          >
+        </div>
+        <div class="form-group-modern">
+          <label>Company</label><input
+            v-model="leadForm.company"
+            class="premium-input"
+          >
+        </div>
         <div class="form-group-modern">
           <label>Status</label>
-          <select v-model="leadForm.status" class="premium-input select-input">
-            <option v-for="s in LEAD_STATUSES" :key="s" :value="s">{{ s }}</option>
+          <select
+            v-model="leadForm.status"
+            class="premium-input select-input"
+          >
+            <option
+              v-for="s in LEAD_STATUSES"
+              :key="s"
+              :value="s"
+            >
+              {{ s }}
+            </option>
           </select>
         </div>
-        <div class="form-group-modern"><label>Source</label><input v-model="leadForm.source" class="premium-input" placeholder="Website, Referral…" /></div>
+        <div class="form-group-modern">
+          <label>Source</label><input
+            v-model="leadForm.source"
+            class="premium-input"
+            placeholder="Website, Referral…"
+          >
+        </div>
       </div>
-      <div class="form-group-modern"><label>Tags (comma-separated)</label><input v-model="leadForm.tags" class="premium-input" /></div>
-      <div class="form-group-modern"><label>Notes</label><textarea v-model="leadForm.notes" rows="3" class="premium-input textarea-input"></textarea></div>
+      <div class="form-group-modern">
+        <label>Tags (comma-separated)</label><input
+          v-model="leadForm.tags"
+          class="premium-input"
+        >
+      </div>
+      <div class="form-group-modern">
+        <label>Notes</label><textarea
+          v-model="leadForm.notes"
+          rows="3"
+          class="premium-input textarea-input"
+        />
+      </div>
     </div>
     <div class="modal-actions-modern">
-      <button class="btn btn-ghost" @click="leadModalOpen = false">Cancel</button>
-      <button class="btn btn-save" @click="saveLead">{{ editingLeadId ? 'Save Changes' : 'Create Lead' }}</button>
+      <button
+        class="btn btn-ghost"
+        @click="leadModalOpen = false"
+      >
+        Cancel
+      </button>
+      <button
+        class="btn btn-save"
+        @click="saveLead"
+      >
+        {{ editingLeadId ? 'Save Changes' : 'Create Lead' }}
+      </button>
     </div>
   </Modal>
 
   <!-- ── Deal modal ──────────────────────────────────────────────────────── -->
-  <Modal v-model="dealModalOpen" :title="editingDealId ? 'Edit Deal' : 'New Deal'" max-width="560px">
+  <Modal
+    v-model="dealModalOpen"
+    :title="editingDealId ? 'Edit Deal' : 'New Deal'"
+    max-width="560px"
+  >
     <div class="form-container">
-      <div class="form-group-modern"><label>Title *</label><input v-model="dealForm.title" class="premium-input" /></div>
+      <div class="form-group-modern">
+        <label>Title *</label><input
+          v-model="dealForm.title"
+          class="premium-input"
+        >
+      </div>
       <div class="form-grid">
-        <div class="form-group-modern"><label>Amount</label><input v-model="dealForm.amount" type="number" min="0" step="0.01" class="premium-input" /></div>
-        <div class="form-group-modern"><label>Currency</label><input v-model="dealForm.currency" class="premium-input" placeholder="USD" /></div>
+        <div class="form-group-modern">
+          <label>Amount</label><input
+            v-model="dealForm.amount"
+            type="number"
+            min="0"
+            step="0.01"
+            class="premium-input"
+          >
+        </div>
+        <div class="form-group-modern">
+          <label>Currency</label><input
+            v-model="dealForm.currency"
+            class="premium-input"
+            placeholder="USD"
+          >
+        </div>
         <div class="form-group-modern">
           <label>Stage</label>
-          <select v-model="dealForm.stage" class="premium-input select-input">
-            <option v-for="s in DEAL_STAGES" :key="s" :value="s">{{ s }}</option>
+          <select
+            v-model="dealForm.stage"
+            class="premium-input select-input"
+          >
+            <option
+              v-for="s in DEAL_STAGES"
+              :key="s"
+              :value="s"
+            >
+              {{ s }}
+            </option>
           </select>
         </div>
-        <div class="form-group-modern"><label>Probability (%)</label><input v-model="dealForm.probability" type="number" min="0" max="100" class="premium-input" /></div>
+        <div class="form-group-modern">
+          <label>Probability (%)</label><input
+            v-model="dealForm.probability"
+            type="number"
+            min="0"
+            max="100"
+            class="premium-input"
+          >
+        </div>
         <div class="form-group-modern">
           <label>Contact (lead) {{ editingDealId ? '' : '*' }}</label>
-          <select v-model="dealForm.contact_id" class="premium-input select-input">
-            <option value="" disabled>Select a lead…</option>
-            <option v-for="l in leads" :key="l.id" :value="l.id">{{ l.name }}{{ l.company ? ` — ${l.company}` : '' }}</option>
+          <select
+            v-model="dealForm.contact_id"
+            class="premium-input select-input"
+          >
+            <option
+              value=""
+              disabled
+            >
+              Select a lead…
+            </option>
+            <option
+              v-for="l in leads"
+              :key="l.id"
+              :value="l.id"
+            >
+              {{ l.name }}{{ l.company ? ` — ${l.company}` : '' }}
+            </option>
           </select>
         </div>
-        <div class="form-group-modern"><label>Expected close</label><input v-model="dealForm.expected_close" type="date" class="premium-input" /></div>
+        <div class="form-group-modern">
+          <label>Expected close</label><input
+            v-model="dealForm.expected_close"
+            type="date"
+            class="premium-input"
+          >
+        </div>
       </div>
-      <div class="form-group-modern"><label>Tags (comma-separated)</label><input v-model="dealForm.tags" class="premium-input" /></div>
-      <div class="form-group-modern"><label>Notes</label><textarea v-model="dealForm.notes" rows="3" class="premium-input textarea-input"></textarea></div>
+      <div class="form-group-modern">
+        <label>Tags (comma-separated)</label><input
+          v-model="dealForm.tags"
+          class="premium-input"
+        >
+      </div>
+      <div class="form-group-modern">
+        <label>Notes</label><textarea
+          v-model="dealForm.notes"
+          rows="3"
+          class="premium-input textarea-input"
+        />
+      </div>
     </div>
     <div class="modal-actions-modern">
-      <button class="btn btn-ghost" @click="dealModalOpen = false">Cancel</button>
-      <button class="btn btn-save" @click="saveDeal">{{ editingDealId ? 'Save Changes' : 'Create Deal' }}</button>
+      <button
+        class="btn btn-ghost"
+        @click="dealModalOpen = false"
+      >
+        Cancel
+      </button>
+      <button
+        class="btn btn-save"
+        @click="saveDeal"
+      >
+        {{ editingDealId ? 'Save Changes' : 'Create Deal' }}
+      </button>
     </div>
   </Modal>
 
   <!-- ── Org modal ───────────────────────────────────────────────────────── -->
-  <Modal v-model="orgModalOpen" :title="editingOrgId ? 'Edit Organization' : 'New Organization'" max-width="560px">
+  <Modal
+    v-model="orgModalOpen"
+    :title="editingOrgId ? 'Edit Organization' : 'New Organization'"
+    max-width="560px"
+  >
     <div class="form-container">
-      <div class="form-group-modern"><label>Name *</label><input v-model="orgForm.name" class="premium-input" /></div>
+      <div class="form-group-modern">
+        <label>Name *</label><input
+          v-model="orgForm.name"
+          class="premium-input"
+        >
+      </div>
       <div class="form-grid">
-        <div class="form-group-modern"><label>Website</label><input v-model="orgForm.website" class="premium-input" /></div>
-        <div class="form-group-modern"><label>Industry</label><input v-model="orgForm.industry" class="premium-input" /></div>
+        <div class="form-group-modern">
+          <label>Website</label><input
+            v-model="orgForm.website"
+            class="premium-input"
+          >
+        </div>
+        <div class="form-group-modern">
+          <label>Industry</label><input
+            v-model="orgForm.industry"
+            class="premium-input"
+          >
+        </div>
         <div class="form-group-modern">
           <label>Size</label>
-          <select v-model="orgForm.size" class="premium-input select-input">
-            <option value="">—</option>
-            <option v-for="s in ['1-10', '11-50', '51-200', '201-1000', '1000+']" :key="s" :value="s">{{ s }}</option>
+          <select
+            v-model="orgForm.size"
+            class="premium-input select-input"
+          >
+            <option value="">
+              —
+            </option>
+            <option
+              v-for="s in ['1-10', '11-50', '51-200', '201-1000', '1000+']"
+              :key="s"
+              :value="s"
+            >
+              {{ s }}
+            </option>
           </select>
         </div>
-        <div class="form-group-modern"><label>Country</label><input v-model="orgForm.country" class="premium-input" /></div>
-        <div class="form-group-modern"><label>Phone</label><input v-model="orgForm.phone" class="premium-input" /></div>
-        <div class="form-group-modern"><label>Email</label><input v-model="orgForm.email" class="premium-input" /></div>
+        <div class="form-group-modern">
+          <label>Country</label><input
+            v-model="orgForm.country"
+            class="premium-input"
+          >
+        </div>
+        <div class="form-group-modern">
+          <label>Phone</label><input
+            v-model="orgForm.phone"
+            class="premium-input"
+          >
+        </div>
+        <div class="form-group-modern">
+          <label>Email</label><input
+            v-model="orgForm.email"
+            class="premium-input"
+          >
+        </div>
       </div>
-      <div class="form-group-modern"><label>Tags (comma-separated)</label><input v-model="orgForm.tags" class="premium-input" /></div>
-      <div class="form-group-modern"><label>Notes</label><textarea v-model="orgForm.notes" rows="3" class="premium-input textarea-input"></textarea></div>
+      <div class="form-group-modern">
+        <label>Tags (comma-separated)</label><input
+          v-model="orgForm.tags"
+          class="premium-input"
+        >
+      </div>
+      <div class="form-group-modern">
+        <label>Notes</label><textarea
+          v-model="orgForm.notes"
+          rows="3"
+          class="premium-input textarea-input"
+        />
+      </div>
     </div>
     <div class="modal-actions-modern">
-      <button class="btn btn-ghost" @click="orgModalOpen = false">Cancel</button>
-      <button class="btn btn-save" @click="saveOrg">{{ editingOrgId ? 'Save Changes' : 'Create Organization' }}</button>
+      <button
+        class="btn btn-ghost"
+        @click="orgModalOpen = false"
+      >
+        Cancel
+      </button>
+      <button
+        class="btn btn-save"
+        @click="saveOrg"
+      >
+        {{ editingOrgId ? 'Save Changes' : 'Create Organization' }}
+      </button>
     </div>
   </Modal>
 </template>

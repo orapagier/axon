@@ -152,6 +152,13 @@ use axon::{
 async fn main() -> anyhow::Result<()> {
     load_env_files();
 
+    // AXON_LOG_FORMAT=json switches to structured JSON log lines (one object
+    // per line, easy to ship to a log aggregator) — gated behind an env var so
+    // local `cargo run` output stays human-readable by default.
+    let json_logs = std::env::var("AXON_LOG_FORMAT")
+        .map(|v| v.eq_ignore_ascii_case("json"))
+        .unwrap_or(false);
+
     if let Ok(otlp_endpoint) = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT") {
         use opentelemetry_otlp::WithExportConfig;
         opentelemetry::global::set_text_map_propagator(
@@ -168,16 +175,35 @@ async fn main() -> anyhow::Result<()> {
             .expect("Failed to initialize OTLP tracer");
 
         use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-        let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+        let env_filter = tracing_subscriber::EnvFilter::from_default_env()
+            .add_directive("axon=info".parse()?)
+            .add_directive("tower_http=info".parse()?);
 
-        tracing_subscriber::registry()
-            .with(
+        // `OpenTelemetryLayer` is generic over the subscriber stack below it, so
+        // it can't be built once and shared across both branches (json vs.
+        // plain fmt layer are different concrete types) — built fresh in each
+        // branch instead, off a cloned tracer handle.
+        if json_logs {
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(tracing_subscriber::fmt::layer().json())
+                .with(tracing_opentelemetry::layer().with_tracer(tracer.clone()))
+                .init();
+        } else {
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(tracing_subscriber::fmt::layer())
+                .with(tracing_opentelemetry::layer().with_tracer(tracer))
+                .init();
+        }
+    } else if json_logs {
+        tracing_subscriber::fmt()
+            .json()
+            .with_env_filter(
                 tracing_subscriber::EnvFilter::from_default_env()
                     .add_directive("axon=info".parse()?)
                     .add_directive("tower_http=info".parse()?),
             )
-            .with(tracing_subscriber::fmt::layer())
-            .with(telemetry)
             .init();
     } else {
         tracing_subscriber::fmt()
@@ -248,6 +274,22 @@ async fn main() -> anyhow::Result<()> {
         .min_idle(Some(1))
         .build(manager)
         .context("create SQLite pool")?;
+    // axon.db holds encrypted credentials, OAuth tokens, and CRM PII (via
+    // crm.db) — same 0600-owner-only treatment as tokens.json/credentials.json
+    // (axon_core::storage). WAL/SHM siblings carry the same data in-flight.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for suffix in ["", "-wal", "-shm"] {
+            let p = std::path::PathBuf::from(format!("{}{}", cfg.db_path, suffix));
+            if p.exists() {
+                if let Err(e) = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600))
+                {
+                    tracing::warn!("Failed to chmod 0600 {}: {}", p.display(), e);
+                }
+            }
+        }
+    }
     {
         let conn = pool.get().context("get DB connection")?;
         axon::db::init(&conn).context("initialize database")?;
@@ -497,6 +539,34 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    // Scheduled local backups (axon.db + crm.db): local, on-instance snapshots —
+    // NOT off-site disaster recovery on their own. Runs immediately on boot,
+    // then daily, same interval-tick pattern as the retention sweep above.
+    let backup_db = state.db.clone();
+    let backup_settings = state.settings.clone();
+    let backup_axon_db_path = std::path::PathBuf::from(cfg.db_path.clone());
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(24 * 3600));
+        loop {
+            interval.tick().await;
+            if !backup_settings.backup_enabled() {
+                tracing::debug!("Backup sweep disabled (backup.enabled=false)");
+                continue;
+            }
+            let retention_days = backup_settings.backup_retention_days();
+            match axon::maintenance::run_backup(
+                backup_db.clone(),
+                backup_axon_db_path.clone(),
+                retention_days,
+            )
+            .await
+            {
+                Ok(stats) => tracing::info!("Backup sweep: {}", stats),
+                Err(e) => tracing::warn!("Backup sweep failed: {:#}", e),
+            }
+        }
+    });
+
     // ── Workflow Agent Processor ──────────────────────────────────────────────
     // This consumer breaks the circular dependency between WorkflowEngine and Agent
     // by handling agent tasks asynchronously when a workflow completes.
@@ -607,16 +677,37 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Axon ready ✓");
 
     let shutdown_signal = async {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("failed to install Ctrl+C handler");
+        let ctrl_c = async {
+            tokio::signal::ctrl_c()
+                .await
+                .expect("failed to install Ctrl+C handler");
+        };
+        #[cfg(unix)]
+        let terminate = async {
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("failed to install SIGTERM handler")
+                .recv()
+                .await;
+        };
+        #[cfg(not(unix))]
+        let terminate = std::future::pending::<()>();
+        tokio::select! {
+            _ = ctrl_c => {},
+            _ = terminate => {},
+        }
         tracing::info!("Shutdown signal received. Shutting down gracefully...");
     };
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal)
-        .await
-        .context("serve")?;
+    // with_connect_info: the rate-limiting layer's SmartIpKeyExtractor falls
+    // back to the raw peer IP when no forwarded-for header is present, which
+    // needs ConnectInfo<SocketAddr> plumbed through from the listener.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal)
+    .await
+    .context("serve")?;
 
     opentelemetry::global::shutdown_tracer_provider();
     Ok(())

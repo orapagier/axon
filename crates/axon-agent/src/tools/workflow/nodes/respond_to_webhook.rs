@@ -48,8 +48,8 @@ pub(crate) enum ResponseBody {
 static RESPONDERS: Lazy<Mutex<HashMap<String, oneshot::Sender<WebhookHttpResponse>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
-fn responders() -> std::sync::MutexGuard<'static, HashMap<String, oneshot::Sender<WebhookHttpResponse>>>
-{
+fn responders(
+) -> std::sync::MutexGuard<'static, HashMap<String, oneshot::Sender<WebhookHttpResponse>>> {
     RESPONDERS.lock().unwrap_or_else(|p| p.into_inner())
 }
 
@@ -331,7 +331,12 @@ mod tests {
         let (tx, mut rx) = oneshot::channel();
         register("run-resp-1", tx);
 
-        let out = execute(&json!({"statusCode": 202}), &json!({"ok": true}), "run-resp-1").unwrap();
+        let out = execute(
+            &json!({"statusCode": 202}),
+            &json!({"ok": true}),
+            "run-resp-1",
+        )
+        .unwrap();
         assert_eq!(out["responded"], json!(true));
         assert_eq!(out["statusCode"], json!(202));
 

@@ -140,8 +140,11 @@ mod tests {
     #[test]
     fn keeps_items_matching_a_numeric_condition() {
         let input = json!([{ "age": 15 }, { "age": 30 }, { "age": 18 }, { "age": 40 }]);
-        let out = execute(&cfg(vec![cond("age", "number", "gt", json!("18"))], json!({})), &input)
-            .unwrap();
+        let out = execute(
+            &cfg(vec![cond("age", "number", "gt", json!("18"))], json!({})),
+            &input,
+        )
+        .unwrap();
         assert_eq!(out, json!([{ "age": 30 }, { "age": 40 }]));
     }
 
@@ -223,7 +226,10 @@ mod tests {
             { "user": { "role": "guest" } },
         ]);
         let out = execute(
-            &cfg(vec![cond("user.role", "string", "equals", json!("admin"))], json!({})),
+            &cfg(
+                vec![cond("user.role", "string", "equals", json!("admin"))],
+                json!({}),
+            ),
             &input,
         )
         .unwrap();
@@ -235,7 +241,10 @@ mod tests {
     fn empty_field_tests_scalar_item() {
         let input = json!(["apple", "banana", "avocado"]);
         let out = execute(
-            &cfg(vec![cond("", "string", "startsWith", json!("a"))], json!({})),
+            &cfg(
+                vec![cond("", "string", "startsWith", json!("a"))],
+                json!({}),
+            ),
             &input,
         )
         .unwrap();
@@ -247,7 +256,10 @@ mod tests {
     fn exists_operator_drops_items_missing_the_field() {
         let input = json!([{ "email": "a@x.com" }, { "name": "no email" }]);
         let out = execute(
-            &cfg(vec![cond("email", "string", "exists", Value::Null)], json!({})),
+            &cfg(
+                vec![cond("email", "string", "exists", Value::Null)],
+                json!({}),
+            ),
             &input,
         )
         .unwrap();
@@ -274,8 +286,11 @@ mod tests {
     // Null input → empty array, never an error.
     #[test]
     fn null_input_yields_empty_array() {
-        let out = execute(&cfg(vec![cond("a", "string", "exists", Value::Null)], json!({})), &Value::Null)
-            .unwrap();
+        let out = execute(
+            &cfg(vec![cond("a", "string", "exists", Value::Null)], json!({})),
+            &Value::Null,
+        )
+        .unwrap();
         assert_eq!(out, json!([]));
     }
 

@@ -698,12 +698,12 @@ defineExpose({
 <template>
   <div
     class="canvas-container"
+    tabindex="0"
     @drop="onDrop"
     @dragover.prevent="onDragOver"
     @keydown="handleKeyDown"
     @pointermove="trackPointer"
     @pointerdown="trackPointer"
-    tabindex="0"
   >
     <!-- connect-on-click=false: Vue Flow's native click-to-connect arms connectionClickStartHandle
          on every handle click and is never cleared by our custom "click + to add a node" flow (which
@@ -792,7 +792,10 @@ defineExpose({
       </defs>
 
       <!-- Custom Background -->
-      <CanvasBackground :viewport="viewport" :striped="readOnly" />
+      <CanvasBackground
+        :viewport="viewport"
+        :striped="readOnly"
+      />
 
       <!-- Minimap (n8n-style fade in/out) -->
       <Transition name="minimap">

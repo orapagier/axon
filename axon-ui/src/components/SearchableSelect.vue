@@ -175,19 +175,29 @@ function onEnter() {
   <div class="searchable-select">
     <input
       ref="inputRef"
-      type="text"
       v-model="searchTerm"
+      type="text"
       :placeholder="placeholder"
+      class="ss-input"
       @focus="open"
       @blur="close"
       @keydown.enter.prevent="onEnter"
-      class="ss-input"
-    />
+    >
     <span class="ss-arrow">▼</span>
 
     <Teleport to="body">
-      <div v-if="isOpen" class="ss-dropdown" :class="{ 'ss-drop-up': dropUp }" :style="dropdownStyle">
-        <div v-if="filteredOptions.length === 0" class="ss-no-results">No matches found</div>
+      <div
+        v-if="isOpen"
+        class="ss-dropdown"
+        :class="{ 'ss-drop-up': dropUp }"
+        :style="dropdownStyle"
+      >
+        <div
+          v-if="filteredOptions.length === 0"
+          class="ss-no-results"
+        >
+          No matches found
+        </div>
         <div
           v-for="opt in filteredOptions"
           :key="opt.value"
@@ -195,8 +205,15 @@ function onEnter() {
           :class="{ 'ss-selected': opt.value === modelValue }"
           @mousedown.prevent="selectOption(opt.value, opt.name)"
         >
-          <div class="ss-option-main">{{ opt.name }}</div>
-          <div v-if="opt.description" class="ss-option-description">{{ opt.description }}</div>
+          <div class="ss-option-main">
+            {{ opt.name }}
+          </div>
+          <div
+            v-if="opt.description"
+            class="ss-option-description"
+          >
+            {{ opt.description }}
+          </div>
         </div>
       </div>
     </Teleport>

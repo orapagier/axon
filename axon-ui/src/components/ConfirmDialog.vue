@@ -16,14 +16,22 @@ function onModalChange(open) {
 <template>
   <Modal
     :model-value="!!confirmState"
-    @update:modelValue="onModalChange"
     :title="confirmState?.title"
     max-width="420px"
+    @update:model-value="onModalChange"
   >
     <template v-if="confirmState">
-      <p class="confirm-message">{{ confirmState.message }}</p>
+      <p class="confirm-message">
+        {{ confirmState.message }}
+      </p>
       <div class="modal-actions">
-        <button class="btn btn-ghost" type="button" @click="respond(false)">{{ confirmState.cancelText }}</button>
+        <button
+          class="btn btn-ghost"
+          type="button"
+          @click="respond(false)"
+        >
+          {{ confirmState.cancelText }}
+        </button>
         <button
           :class="['btn', confirmState.danger ? 'btn-danger' : 'btn-primary']"
           type="button"

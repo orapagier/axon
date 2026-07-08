@@ -995,7 +995,7 @@ pub fn trigger_tool_definition() -> ToolDefinition {
 
 // ── Utility ───────────────────────────────────────────────────────────────────
 
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }

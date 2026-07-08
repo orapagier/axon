@@ -176,11 +176,23 @@ onMounted(load)
     <div class="page-header-container">
       <div class="page-header">
         <h1>Tasks</h1>
-        <p class="page-desc">Manage automated cron jobs in one place.</p>
+        <p class="page-desc">
+          Manage automated cron jobs in one place.
+        </p>
       </div>
       <div class="header-actions">
-        <button class="btn btn-save" @click="showJobCreate">New Job</button>
-        <button class="btn btn-ghost" @click="load">Refresh</button>
+        <button
+          class="btn btn-save"
+          @click="showJobCreate"
+        >
+          New Job
+        </button>
+        <button
+          class="btn btn-ghost"
+          @click="load"
+        >
+          Refresh
+        </button>
       </div>
     </div>
 
@@ -193,23 +205,74 @@ onMounted(load)
           <span class="card-summary">{{ jobs.length }} active</span>
         </div>
 
-        <div v-if="jobs.length === 0" class="empty-state">No scheduled jobs found. Create one to automate tasks.</div>
-        <div v-else class="service-list">
-          <div v-for="j in jobs" :key="j.id" class="service-item job-row" :class="{ disabled: j.status === 'paused' }">
+        <div
+          v-if="jobs.length === 0"
+          class="empty-state"
+        >
+          No scheduled jobs found. Create one to automate tasks.
+        </div>
+        <div
+          v-else
+          class="service-list"
+        >
+          <div
+            v-for="j in jobs"
+            :key="j.id"
+            class="service-item job-row"
+            :class="{ disabled: j.status === 'paused' }"
+          >
             <div class="service-info">
               <div class="service-name-row">
                 <div class="service-name-group">
                   <span class="service-name">{{ j.name }}</span>
-                  <Pill v-if="j.created_by === 'agent'" type="info" text="AGENT-CREATED" />
-                  <Pill :type="jobStatusType(j.status)" :text="j.status.toUpperCase()" />
-                  <Pill v-if="j.platform !== 'dashboard'" type="info" :text="j.platform.toUpperCase()" />
+                  <Pill
+                    v-if="j.created_by === 'agent'"
+                    type="info"
+                    text="AGENT-CREATED"
+                  />
+                  <Pill
+                    :type="jobStatusType(j.status)"
+                    :text="j.status.toUpperCase()"
+                  />
+                  <Pill
+                    v-if="j.platform !== 'dashboard'"
+                    type="info"
+                    :text="j.platform.toUpperCase()"
+                  />
                 </div>
                 <div class="service-actions">
-                  <button class="btn btn-sm btn-primary" @click="runJobNow(j)">Run</button>
-                  <button class="btn btn-sm btn-ghost" @click="showJobEdit(j)">Edit</button>
-                  <button v-if="j.status === 'active'" class="btn btn-sm btn-ghost" @click="pauseJob(j)">Pause</button>
-                  <button v-if="j.status === 'paused'" class="btn btn-sm btn-save" @click="resumeJob(j)">Resume</button>
-                  <button class="btn btn-sm btn-danger" @click="removeJob(j)">Delete</button>
+                  <button
+                    class="btn btn-sm btn-primary"
+                    @click="runJobNow(j)"
+                  >
+                    Run
+                  </button>
+                  <button
+                    class="btn btn-sm btn-ghost"
+                    @click="showJobEdit(j)"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    v-if="j.status === 'active'"
+                    class="btn btn-sm btn-ghost"
+                    @click="pauseJob(j)"
+                  >
+                    Pause
+                  </button>
+                  <button
+                    v-if="j.status === 'paused'"
+                    class="btn btn-sm btn-save"
+                    @click="resumeJob(j)"
+                  >
+                    Resume
+                  </button>
+                  <button
+                    class="btn btn-sm btn-danger"
+                    @click="removeJob(j)"
+                  >
+                    Delete
+                  </button>
                 </div>
               </div>
 
@@ -220,8 +283,12 @@ onMounted(load)
               </div>
 
               <div class="job-task-preview">
-                <div class="preview-label">Task Instruction</div>
-                <p class="task-text">{{ j.task }}</p>
+                <div class="preview-label">
+                  Task Instruction
+                </div>
+                <p class="task-text">
+                  {{ j.task }}
+                </p>
               </div>
 
               <div class="job-stats-meta">
@@ -236,15 +303,28 @@ onMounted(load)
     </div>
   </div>
 
-  <Modal v-model="jobModalOpen" :title="editingJobId ? `Edit Job: ${jobForm.name}` : 'Create Scheduled Job'">
+  <Modal
+    v-model="jobModalOpen"
+    :title="editingJobId ? `Edit Job: ${jobForm.name}` : 'Create Scheduled Job'"
+  >
     <div class="form-container">
       <div class="form-group-modern">
         <label>Job Name</label>
-        <input type="text" v-model="jobForm.name" class="premium-input" placeholder="e.g. Daily Summary" />
+        <input
+          v-model="jobForm.name"
+          type="text"
+          class="premium-input"
+          placeholder="e.g. Daily Summary"
+        >
       </div>
       <div class="form-group-modern">
         <label>Task / Instruction</label>
-        <textarea v-model="jobForm.task" rows="3" class="premium-input textarea-input" placeholder="What should the agent do?"></textarea>
+        <textarea
+          v-model="jobForm.task"
+          rows="3"
+          class="premium-input textarea-input"
+          placeholder="What should the agent do?"
+        />
       </div>
 
       <div class="schedule-builder">
@@ -253,72 +333,176 @@ onMounted(load)
         <div class="builder-grid">
           <div class="form-group-modern">
             <label>Trigger Mode</label>
-            <select v-model="scheduleMode" class="premium-input select-input">
-              <option value="minutes">Minutes</option>
-              <option value="hours">Hours</option>
-              <option value="days">Days</option>
-              <option value="weekly">Weekly</option>
-              <option value="custom">Custom (Cron)</option>
+            <select
+              v-model="scheduleMode"
+              class="premium-input select-input"
+            >
+              <option value="minutes">
+                Minutes
+              </option>
+              <option value="hours">
+                Hours
+              </option>
+              <option value="days">
+                Days
+              </option>
+              <option value="weekly">
+                Weekly
+              </option>
+              <option value="custom">
+                Custom (Cron)
+              </option>
             </select>
           </div>
 
-          <div v-if="['minutes', 'days'].includes(scheduleMode)" class="form-group-modern">
+          <div
+            v-if="['minutes', 'days'].includes(scheduleMode)"
+            class="form-group-modern"
+          >
             <label>{{ scheduleMode.charAt(0).toUpperCase() + scheduleMode.slice(1) }} Between</label>
-            <input type="number" v-model="scheduleValue" class="premium-input" min="1" />
+            <input
+              v-model="scheduleValue"
+              type="number"
+              class="premium-input"
+              min="1"
+            >
           </div>
 
-          <div v-if="scheduleMode === 'hours'" class="form-group-modern">
+          <div
+            v-if="scheduleMode === 'hours'"
+            class="form-group-modern"
+          >
             <label>Hours Between</label>
-            <input type="number" v-model="scheduleValue" class="premium-input" min="1" />
+            <input
+              v-model="scheduleValue"
+              type="number"
+              class="premium-input"
+              min="1"
+            >
           </div>
 
-          <div v-if="scheduleMode === 'hours'" class="form-group-modern">
+          <div
+            v-if="scheduleMode === 'hours'"
+            class="form-group-modern"
+          >
             <label>At Minute</label>
-            <input type="number" v-model="scheduleMinute" class="premium-input" min="0" max="59" />
+            <input
+              v-model="scheduleMinute"
+              type="number"
+              class="premium-input"
+              min="0"
+              max="59"
+            >
           </div>
 
-          <div v-if="scheduleMode === 'weekly'" class="form-group-modern">
+          <div
+            v-if="scheduleMode === 'weekly'"
+            class="form-group-modern"
+          >
             <label>Day</label>
-            <select v-model="scheduleWeeklyDay" class="premium-input select-input">
-              <option value="MON">Monday</option>
-              <option value="TUE">Tuesday</option>
-              <option value="WED">Wednesday</option>
-              <option value="THU">Thursday</option>
-              <option value="FRI">Friday</option>
-              <option value="SAT">Saturday</option>
-              <option value="SUN">Sunday</option>
+            <select
+              v-model="scheduleWeeklyDay"
+              class="premium-input select-input"
+            >
+              <option value="MON">
+                Monday
+              </option>
+              <option value="TUE">
+                Tuesday
+              </option>
+              <option value="WED">
+                Wednesday
+              </option>
+              <option value="THU">
+                Thursday
+              </option>
+              <option value="FRI">
+                Friday
+              </option>
+              <option value="SAT">
+                Saturday
+              </option>
+              <option value="SUN">
+                Sunday
+              </option>
             </select>
           </div>
 
-          <div v-if="['days', 'weekly'].includes(scheduleMode)" class="form-group-modern">
+          <div
+            v-if="['days', 'weekly'].includes(scheduleMode)"
+            class="form-group-modern"
+          >
             <label>At Hour</label>
-            <input type="number" v-model="scheduleHour" class="premium-input" min="0" max="23" />
+            <input
+              v-model="scheduleHour"
+              type="number"
+              class="premium-input"
+              min="0"
+              max="23"
+            >
           </div>
 
-          <div v-if="['days', 'weekly'].includes(scheduleMode)" class="form-group-modern">
+          <div
+            v-if="['days', 'weekly'].includes(scheduleMode)"
+            class="form-group-modern"
+          >
             <label>At Minute</label>
-            <input type="number" v-model="scheduleMinute" class="premium-input" min="0" max="59" />
+            <input
+              v-model="scheduleMinute"
+              type="number"
+              class="premium-input"
+              min="0"
+              max="59"
+            >
           </div>
 
-          <div v-if="scheduleMode === 'custom'" class="form-group-modern span-2">
+          <div
+            v-if="scheduleMode === 'custom'"
+            class="form-group-modern span-2"
+          >
             <label>Custom Cron Expression</label>
-            <input type="text" v-model="scheduleCustom" class="premium-input" placeholder="e.g. 0 0 9 * * *" />
+            <input
+              v-model="scheduleCustom"
+              type="text"
+              class="premium-input"
+              placeholder="e.g. 0 0 9 * * *"
+            >
           </div>
         </div>
       </div>
 
       <div class="form-group-modern">
         <label>Generated Cron Preview</label>
-        <input type="text" :value="generatedCron" disabled class="premium-input mono muted-input" />
+        <input
+          type="text"
+          :value="generatedCron"
+          disabled
+          class="premium-input mono muted-input"
+        >
       </div>
       <div class="form-group-modern">
         <label>Stop Condition (Result contains)</label>
-        <input type="text" v-model="jobForm.stop_condition" class="premium-input" placeholder="Optional: stop if output contains this text" />
+        <input
+          v-model="jobForm.stop_condition"
+          type="text"
+          class="premium-input"
+          placeholder="Optional: stop if output contains this text"
+        >
       </div>
     </div>
     <div class="modal-actions-modern">
-      <button class="btn btn-ghost" @click="jobModalOpen = false">Cancel</button>
-      <button class="btn btn-save" @click="saveJob">{{ editingJobId ? 'Save Changes' : 'Schedule' }}</button>
+      <button
+        class="btn btn-ghost"
+        @click="jobModalOpen = false"
+      >
+        Cancel
+      </button>
+      <button
+        class="btn btn-save"
+        @click="saveJob"
+      >
+        {{ editingJobId ? 'Save Changes' : 'Schedule' }}
+      </button>
     </div>
   </Modal>
 </template>

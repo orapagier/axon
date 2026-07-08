@@ -136,6 +136,12 @@ const MIGRATIONS: &[Migration] = &[
         sql: include_str!("migrations/0018_model_origin.sql"),
         tolerant_dup_column: true,
     },
+    Migration {
+        version: 19,
+        name: "ssh_host_key_fingerprint",
+        sql: include_str!("migrations/0019_ssh_host_key_fingerprint.sql"),
+        tolerant_dup_column: true,
+    },
 ];
 
 const SEED_SQL: &str = include_str!("seed.sql");

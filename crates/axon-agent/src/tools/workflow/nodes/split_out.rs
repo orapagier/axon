@@ -197,7 +197,11 @@ mod tests {
     #[test]
     fn all_other_fields_carries_siblings() {
         let input = json!({ "order": 7, "items": [{ "sku": "A" }, { "sku": "B" }] });
-        let out = execute(&cfg("items", json!({ "include": "allOtherFields" })), &input).unwrap();
+        let out = execute(
+            &cfg("items", json!({ "include": "allOtherFields" })),
+            &input,
+        )
+        .unwrap();
         assert_eq!(
             out,
             json!([{ "sku": "A", "order": 7 }, { "sku": "B", "order": 7 }])
@@ -209,7 +213,10 @@ mod tests {
     fn scalar_array_wraps_under_field_name() {
         let input = json!({ "tags": ["x", "y", "z"] });
         let out = execute(&cfg("tags", json!({})), &input).unwrap();
-        assert_eq!(out, json!([{ "tags": "x" }, { "tags": "y" }, { "tags": "z" }]));
+        assert_eq!(
+            out,
+            json!([{ "tags": "x" }, { "tags": "y" }, { "tags": "z" }])
+        );
     }
 
     // An explicit destination name overrides the default wrap key.
@@ -246,7 +253,11 @@ mod tests {
             { "g": 1, "items": [{ "n": "a" }, { "n": "b" }] },
             { "g": 2, "items": [{ "n": "c" }] },
         ]);
-        let out = execute(&cfg("items", json!({ "include": "allOtherFields" })), &input).unwrap();
+        let out = execute(
+            &cfg("items", json!({ "include": "allOtherFields" })),
+            &input,
+        )
+        .unwrap();
         assert_eq!(
             out,
             json!([
@@ -277,7 +288,11 @@ mod tests {
     #[test]
     fn element_wins_over_carried_field_on_conflict() {
         let input = json!({ "status": "order-level", "items": [{ "id": 1, "status": "item" }] });
-        let out = execute(&cfg("items", json!({ "include": "allOtherFields" })), &input).unwrap();
+        let out = execute(
+            &cfg("items", json!({ "include": "allOtherFields" })),
+            &input,
+        )
+        .unwrap();
         assert_eq!(out, json!([{ "id": 1, "status": "item" }]));
     }
 

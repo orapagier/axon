@@ -28,13 +28,26 @@ const isError = computed(() => props.data.execution?.status === 'error')
       error: isError 
     }"
   >
-    <div class="node-type-bar" style="background: var(--teal)"></div>
-    <div class="node-icon">⚡</div>
-    <div class="node-content">
-      <div class="node-label">{{ data.label || "Trigger" }}</div>
-      <div class="node-sublabel">{{ data.config?.type || "Manual" }}</div>
+    <div
+      class="node-type-bar"
+      style="background: var(--teal)"
+    />
+    <div class="node-icon">
+      ⚡
     </div>
-    <div v-if="data.execution?.status" class="status-indicator" :class="data.execution.status"></div>
+    <div class="node-content">
+      <div class="node-label">
+        {{ data.label || "Trigger" }}
+      </div>
+      <div class="node-sublabel">
+        {{ data.config?.type || "Manual" }}
+      </div>
+    </div>
+    <div
+      v-if="data.execution?.status"
+      class="status-indicator"
+      :class="data.execution.status"
+    />
     <Handle
       type="source"
       :position="Position.Right"

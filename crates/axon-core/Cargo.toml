@@ -15,5 +15,8 @@ dirs = "5.0"
 chrono = { version = "0.4", features = ["serde"] }
 url = "2.5"
 base64 = "0.22"
-rmcp = { version = "0.1", features = ["server"] }
+# Only rmcp::model types (Tool, CallToolResult, Content) are used — no server
+# transport, no ServerHandler — so default features (which pull in the
+# server-side HTTP transport CVE'd by RUSTSEC) are dropped entirely.
+rmcp = { version = "1", default-features = false }
 tracing = "0.1"

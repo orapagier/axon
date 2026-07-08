@@ -284,11 +284,23 @@ function cancelRename() {
 </script>
 
 <template>
-  <div :class="classes" :style="rootStyle" :data-node-id="id" :data-node-type="data.type">
+  <div
+    :class="classes"
+    :style="rootStyle"
+    :data-node-id="id"
+    :data-node-type="data.type"
+  >
     <div class="node-wrapper">
       <!-- Output Handles -->
-      <template v-for="source in mappedOutputs" :key="source.handleId">
-        <div class="handle-wrapper" :style="source.offset" :class="source.position">
+      <template
+        v-for="source in mappedOutputs"
+        :key="source.handleId"
+      >
+        <div
+          class="handle-wrapper"
+          :style="source.offset"
+          :class="source.position"
+        >
           <Handle
             :id="source.handleId"
             type="source"
@@ -307,7 +319,10 @@ function cancelRename() {
       </template>
 
       <!-- Input Handles -->
-      <template v-for="target in mappedInputs" :key="target.handleId">
+      <template
+        v-for="target in mappedInputs"
+        :key="target.handleId"
+      >
         <Handle
           :id="target.handleId"
           type="target"
@@ -344,8 +359,15 @@ function cancelRename() {
           title="Run this node"
           @click.stop="onRun"
         >
-          <svg viewBox="0 0 24 24" width="20" height="20">
-            <path fill="currentColor" d="M8 5v14l11-7z"/>
+          <svg
+            viewBox="0 0 24 24"
+            width="20"
+            height="20"
+          >
+            <path
+              fill="currentColor"
+              d="M8 5v14l11-7z"
+            />
           </svg>
         </button>
       </Transition>
@@ -362,11 +384,28 @@ function cancelRename() {
           :disabled="!!data.execution?.running"
           @click.stop="onRun"
         >
-          <svg v-if="!data.execution?.running" viewBox="0 0 24 24" width="20" height="20">
-            <path fill="currentColor" d="M8 5v14l11-7z"/>
+          <svg
+            v-if="!data.execution?.running"
+            viewBox="0 0 24 24"
+            width="20"
+            height="20"
+          >
+            <path
+              fill="currentColor"
+              d="M8 5v14l11-7z"
+            />
           </svg>
-          <svg v-else class="spin" viewBox="0 0 24 24" width="18" height="18">
-            <path fill="currentColor" d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/>
+          <svg
+            v-else
+            class="spin"
+            viewBox="0 0 24 24"
+            width="18"
+            height="18"
+          >
+            <path
+              fill="currentColor"
+              d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"
+            />
           </svg>
         </button>
       </Transition>
@@ -374,7 +413,10 @@ function cancelRename() {
 
     <!-- Node Name & Type (Outside the box) -->
     <div class="node-info-labels">
-      <div v-if="renaming" class="node-rename-wrapper">
+      <div
+        v-if="renaming"
+        class="node-rename-wrapper"
+      >
         <input
           ref="renameInput"
           v-model="tempName"
@@ -384,11 +426,18 @@ function cancelRename() {
           @keyup.esc="cancelRename"
           @click.stop
           @mousedown.stop
-        />
+        >
       </div>
       <template v-else>
-        <div class="node-label-main">{{ labelRef }}</div>
-        <div v-if="labelRef && labelRef !== nodeTypeName" class="node-type-label">{{ nodeTypeName }}</div>
+        <div class="node-label-main">
+          {{ labelRef }}
+        </div>
+        <div
+          v-if="labelRef && labelRef !== nodeTypeName"
+          class="node-type-label"
+        >
+          {{ nodeTypeName }}
+        </div>
       </template>
     </div>
   </div>

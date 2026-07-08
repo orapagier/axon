@@ -123,7 +123,12 @@ pub(crate) fn execute(config: &Value, input: &Value) -> Result<Value, String> {
                 .and_then(|v| v.as_str())
                 .unwrap_or("hex");
             let digest = hash_bytes(algorithm, value.as_bytes())?;
-            Ok(wrap(config, input, "hash", Value::String(encode(&digest, encoding))))
+            Ok(wrap(
+                config,
+                input,
+                "hash",
+                Value::String(encode(&digest, encoding)),
+            ))
         }
 
         "hmac" => {
@@ -138,7 +143,12 @@ pub(crate) fn execute(config: &Value, input: &Value) -> Result<Value, String> {
                 .and_then(|v| v.as_str())
                 .unwrap_or("hex");
             let digest = hmac_bytes(algorithm, secret.as_bytes(), value.as_bytes())?;
-            Ok(wrap(config, input, "hmac", Value::String(encode(&digest, encoding))))
+            Ok(wrap(
+                config,
+                input,
+                "hmac",
+                Value::String(encode(&digest, encoding)),
+            ))
         }
 
         "generateUuid" => {
@@ -231,7 +241,10 @@ mod tests {
         )
         .unwrap();
         let s = out["hash"].as_str().unwrap();
-        assert!(!s.contains('=') && !s.contains('+') && !s.contains('/'), "got {s}");
+        assert!(
+            !s.contains('=') && !s.contains('+') && !s.contains('/'),
+            "got {s}"
+        );
     }
 
     // Algorithm names normalize: "SHA-256" == "sha256".
@@ -310,7 +323,8 @@ mod tests {
     // An empty HMAC secret still produces a digest (valid, per HMAC).
     #[test]
     fn hmac_empty_secret_ok() {
-        let cfg = json!({ "operation": "hmac", "value": "data", "secret": "", "algorithm": "sha256" });
+        let cfg =
+            json!({ "operation": "hmac", "value": "data", "secret": "", "algorithm": "sha256" });
         let out = execute(&cfg, &Value::Null).unwrap();
         assert_eq!(out["hmac"].as_str().unwrap().len(), 64); // 32 bytes → 64 hex
     }

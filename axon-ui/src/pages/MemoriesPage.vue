@@ -88,27 +88,63 @@ onMounted(() => {
         </div>
 
         <div class="action-bar gap-12">
-          <button class="btn btn-ghost" @click="loadSTM">Refresh</button>
+          <button
+            class="btn btn-ghost"
+            @click="loadSTM"
+          >
+            Refresh
+          </button>
         </div>
 
         <div class="service-list">
-          <div v-for="r in stmRuns" :key="r.id" class="service-item run-item-row" :class="{ expanded: expandedRuns.has(r.id) }">
+          <div
+            v-for="r in stmRuns"
+            :key="r.id"
+            class="service-item run-item-row"
+            :class="{ expanded: expandedRuns.has(r.id) }"
+          >
             <div class="service-info">
-              <div class="service-name-row clickable" @click="toggleRun(r.id)">
+              <div
+                class="service-name-row clickable"
+                @click="toggleRun(r.id)"
+              >
                 <div class="service-name-group">
                   <span class="run-task-text">{{ String(r.task || 'No task description').slice(0, 100) }}</span>
                 </div>
                 <div class="service-actions run-actions-right">
-                  <Pill :type="statusType(r.status)" :text="r.status" />
-                  <Pill type="muted" :text="r.platform" />
+                  <Pill
+                    :type="statusType(r.status)"
+                    :text="r.status"
+                  />
+                  <Pill
+                    type="muted"
+                    :text="r.platform"
+                  />
                   <span class="time-text">{{ timeAgo(r.created_at) }}</span>
-                  <svg class="collapse-icon" :class="{ rotated: expandedRuns.has(r.id) }" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-                    <path d="m9 6 6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                  <svg
+                    class="collapse-icon"
+                    :class="{ rotated: expandedRuns.has(r.id) }"
+                    viewBox="0 0 24 24"
+                    width="14"
+                    height="14"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="m9 6 6 6-6 6"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
                   </svg>
                 </div>
               </div>
 
-              <div v-if="expandedRuns.has(r.id)" class="run-expanded-content">
+              <div
+                v-if="expandedRuns.has(r.id)"
+                class="run-expanded-content"
+              >
                 <div class="run-meta-grid">
                   <div class="meta-item">
                     <span class="meta-label">Iterations</span>
@@ -128,20 +164,40 @@ onMounted(() => {
                   </div>
                 </div>
 
-                <div v-if="r.result" class="run-result-box">
-                  <div class="box-label">Output Result</div>
+                <div
+                  v-if="r.result"
+                  class="run-result-box"
+                >
+                  <div class="box-label">
+                    Output Result
+                  </div>
                   <pre class="result-text">{{ String(r.result) }}</pre>
                 </div>
 
-                <button class="btn btn-sm btn-ghost trace-btn" @click="loadTrace(r.id)">
+                <button
+                  class="btn btn-sm btn-ghost trace-btn"
+                  @click="loadTrace(r.id)"
+                >
                   {{ loadedTraces[r.id] ? 'Refresh Trace' : 'Load Tool Trace' }}
                 </button>
 
-                <div v-if="loadedTraces[r.id]" class="trace-explorer">
-                  <div v-if="loadedTraces[r.id].iterations?.length" class="trace-section">
-                    <div class="section-header">ITERATION HISTORY</div>
+                <div
+                  v-if="loadedTraces[r.id]"
+                  class="trace-explorer"
+                >
+                  <div
+                    v-if="loadedTraces[r.id].iterations?.length"
+                    class="trace-section"
+                  >
+                    <div class="section-header">
+                      ITERATION HISTORY
+                    </div>
                     <div class="trace-timeline">
-                      <div v-for="it in loadedTraces[r.id].iterations" :key="it.iteration" class="trace-log-entry">
+                      <div
+                        v-for="it in loadedTraces[r.id].iterations"
+                        :key="it.iteration"
+                        class="trace-log-entry"
+                      >
                         <div class="entry-header">
                           <span class="entry-title">Iteration {{ it.iteration }}</span>
                           <span class="entry-meta">{{ it.duration_ms != null ? (it.duration_ms / 1000).toFixed(1) + 's' : '?s' }}</span>
@@ -153,27 +209,52 @@ onMounted(() => {
                     </div>
                   </div>
 
-                  <div v-if="loadedTraces[r.id].tool_calls?.length" class="trace-section">
-                    <div class="section-header">TOOL CALLS</div>
+                  <div
+                    v-if="loadedTraces[r.id].tool_calls?.length"
+                    class="trace-section"
+                  >
+                    <div class="section-header">
+                      TOOL CALLS
+                    </div>
                     <div class="tool-calls-list">
-                      <div v-for="(tc, i) in loadedTraces[r.id].tool_calls" :key="i" class="tool-call-entry">
+                      <div
+                        v-for="(tc, i) in loadedTraces[r.id].tool_calls"
+                        :key="i"
+                        class="tool-call-entry"
+                      >
                         <div class="entry-header">
                           <span class="tool-name">{{ tc.tool_name }}</span>
                           <div class="entry-actions">
                             <span class="entry-meta">{{ tc.duration_ms || 0 }}ms {{ tc.parallel ? 'parallel' : '' }}</span>
-                            <Pill :type="tc.error ? 'err' : 'ok'" :text="tc.error ? 'error' : 'ok'" />
+                            <Pill
+                              :type="tc.error ? 'err' : 'ok'"
+                              :text="tc.error ? 'error' : 'ok'"
+                            />
                           </div>
                         </div>
                         <div class="entry-body">
-                          <div v-if="tc.args" class="code-snippet">
-                            <div class="snippet-label">Arguments</div>
+                          <div
+                            v-if="tc.args"
+                            class="code-snippet"
+                          >
+                            <div class="snippet-label">
+                              Arguments
+                            </div>
                             <pre><code>{{ String(tc.args) }}</code></pre>
                           </div>
-                          <div v-if="tc.result" class="code-snippet result">
-                            <div class="snippet-label">Result</div>
+                          <div
+                            v-if="tc.result"
+                            class="code-snippet result"
+                          >
+                            <div class="snippet-label">
+                              Result
+                            </div>
                             <pre><code>{{ String(tc.result) }}</code></pre>
                           </div>
-                          <div v-if="tc.error" class="error-text">
+                          <div
+                            v-if="tc.error"
+                            class="error-text"
+                          >
                             Error: {{ tc.error }}
                           </div>
                         </div>
@@ -184,7 +265,12 @@ onMounted(() => {
               </div>
             </div>
           </div>
-          <div v-if="stmRuns.length === 0" class="empty-state">No short-term memories found.</div>
+          <div
+            v-if="stmRuns.length === 0"
+            class="empty-state"
+          >
+            No short-term memories found.
+          </div>
         </div>
       </section>
 
@@ -198,27 +284,67 @@ onMounted(() => {
 
         <div class="action-bar search-bar-row">
           <div class="search-input-group">
-            <svg class="search-icon-inside" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-              <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2" />
-              <path d="m16.5 16.5 4.5 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+            <svg
+              class="search-icon-inside"
+              viewBox="0 0 24 24"
+              width="14"
+              height="14"
+              aria-hidden="true"
+            >
+              <circle
+                cx="11"
+                cy="11"
+                r="7"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              />
+              <path
+                d="m16.5 16.5 4.5 4.5"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
             </svg>
             <input
+              v-model="ltmSearch"
               type="text"
               class="premium-input search-input-styled"
-              v-model="ltmSearch"
               placeholder="Search persistent knowledge..."
               @keydown.enter="searchLTM"
-            />
-            <button class="search-btn-styled" @click="searchLTM">Search</button>
+            >
+            <button
+              class="search-btn-styled"
+              @click="searchLTM"
+            >
+              Search
+            </button>
           </div>
-          <button class="btn btn-ghost" @click="loadLTM">Load Recent</button>
+          <button
+            class="btn btn-ghost"
+            @click="loadLTM"
+          >
+            Load Recent
+          </button>
         </div>
 
         <div class="service-list">
-          <div v-for="e in ltmEntries" :key="e.id" class="service-item memory-entry">
+          <div
+            v-for="e in ltmEntries"
+            :key="e.id"
+            class="service-item memory-entry"
+          >
             <div class="memory-top-row">
-              <div class="memory-content-text">{{ e.content }}</div>
-              <button class="btn btn-sm btn-ghost btn-icon delete-btn-top" @click="deleteMemory(e.id)">x</button>
+              <div class="memory-content-text">
+                {{ e.content }}
+              </div>
+              <button
+                class="btn btn-sm btn-ghost btn-icon delete-btn-top"
+                @click="deleteMemory(e.id)"
+              >
+                x
+              </button>
             </div>
             <div class="memory-meta-row">
               <span class="source-pill">{{ e.source || 'Unknown Source' }}</span>
@@ -230,7 +356,12 @@ onMounted(() => {
               </template>
             </div>
           </div>
-          <div v-if="ltmEntries.length === 0" class="empty-state">No knowledge entries found. Try searching or load recent.</div>
+          <div
+            v-if="ltmEntries.length === 0"
+            class="empty-state"
+          >
+            No knowledge entries found. Try searching or load recent.
+          </div>
         </div>
       </section>
     </div>

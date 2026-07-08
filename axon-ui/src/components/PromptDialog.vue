@@ -33,12 +33,17 @@ watch(
 <template>
   <Modal
     :model-value="!!promptState"
-    @update:modelValue="onModalChange"
     :title="promptState?.title"
     max-width="420px"
+    @update:model-value="onModalChange"
   >
     <template v-if="promptState">
-      <p v-if="promptState.message" class="prompt-message">{{ promptState.message }}</p>
+      <p
+        v-if="promptState.message"
+        class="prompt-message"
+      >
+        {{ promptState.message }}
+      </p>
       <input
         ref="inputEl"
         v-model="promptState.value"
@@ -46,10 +51,22 @@ watch(
         class="premium-input"
         :placeholder="promptState.placeholder"
         @keydown.enter="submit"
-      />
+      >
       <div class="modal-actions">
-        <button class="btn btn-ghost" type="button" @click="respond(null)">{{ promptState.cancelText }}</button>
-        <button class="btn btn-primary" type="button" @click="submit">{{ promptState.confirmText }}</button>
+        <button
+          class="btn btn-ghost"
+          type="button"
+          @click="respond(null)"
+        >
+          {{ promptState.cancelText }}
+        </button>
+        <button
+          class="btn btn-primary"
+          type="button"
+          @click="submit"
+        >
+          {{ promptState.confirmText }}
+        </button>
       </div>
     </template>
   </Modal>

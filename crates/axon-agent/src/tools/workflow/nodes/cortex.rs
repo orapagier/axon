@@ -66,7 +66,11 @@ async fn resolve_media_to_image_block(media: &Value) -> Result<ContentBlock, Str
         image::load_from_memory(&bytes)
             .map_err(|e| format!("Media at '{}' does not look like a valid image: {}", raw, e))?;
         let media_type = content_type
-            .or_else(|| image::guess_format(&bytes).ok().map(|f| f.to_mime_type().to_string()))
+            .or_else(|| {
+                image::guess_format(&bytes)
+                    .ok()
+                    .map(|f| f.to_mime_type().to_string())
+            })
             .unwrap_or_else(|| "application/octet-stream".to_string());
         return Ok(ContentBlock::Image {
             media_type,
@@ -86,7 +90,11 @@ async fn resolve_media_to_image_block(media: &Value) -> Result<ContentBlock, Str
         image::load_from_memory(&bytes)
             .map_err(|e| format!("Media does not look like a valid image: {}", e))?;
         let media_type = declared_mime
-            .or_else(|| image::guess_format(&bytes).ok().map(|f| f.to_mime_type().to_string()))
+            .or_else(|| {
+                image::guess_format(&bytes)
+                    .ok()
+                    .map(|f| f.to_mime_type().to_string())
+            })
             .unwrap_or_else(|| "image/jpeg".to_string());
         return Ok(ContentBlock::Image {
             media_type,
@@ -96,11 +104,20 @@ async fn resolve_media_to_image_block(media: &Value) -> Result<ContentBlock, Str
 
     // Otherwise: a local file path (e.g. binary.local_path from an upstream
     // HTTP/staging node).
-    let bytes = std::fs::read(&raw).map_err(|e| format!("Failed to read media file '{}': {}", raw, e))?;
-    image::load_from_memory(&bytes)
-        .map_err(|e| format!("Media file '{}' does not look like a valid image: {}", raw, e))?;
+    let bytes =
+        std::fs::read(&raw).map_err(|e| format!("Failed to read media file '{}': {}", raw, e))?;
+    image::load_from_memory(&bytes).map_err(|e| {
+        format!(
+            "Media file '{}' does not look like a valid image: {}",
+            raw, e
+        )
+    })?;
     let media_type = declared_mime
-        .or_else(|| image::guess_format(&bytes).ok().map(|f| f.to_mime_type().to_string()))
+        .or_else(|| {
+            image::guess_format(&bytes)
+                .ok()
+                .map(|f| f.to_mime_type().to_string())
+        })
         .unwrap_or_else(|| "image/jpeg".to_string());
     Ok(ContentBlock::Image {
         media_type,
@@ -201,8 +218,7 @@ pub(crate) fn execute_cortex_node<'a>(
             let Some(model_name) = selected_model.as_deref() else {
                 return Err("Cortex node (Image mode): a Model is required — pick a model tagged role=\"image_model\" (auto-select is not available for images).".to_string());
             };
-            match crate::router::model_router::model_role_by_name(&state.router, model_name).await
-            {
+            match crate::router::model_router::model_role_by_name(&state.router, model_name).await {
                 Some(role) if role == "image_model" => {}
                 Some(other) => {
                     return Err(format!(

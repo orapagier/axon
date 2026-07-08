@@ -158,21 +158,51 @@ onMounted(load)
     <div class="page-header-container">
       <div class="page-header">
         <h1>Models</h1>
-        <p class="page-desc">Manage your AI providers and monitor rate limits.</p>
+        <p class="page-desc">
+          Manage your AI providers and monitor rate limits.
+        </p>
       </div>
       <div class="header-actions">
-        <button class="btn btn-ghost" @click="enableAll">⚡ Enable All</button>
-        <button class="btn btn-ghost" @click="disableAll">⏸ Disable All</button>
-        <button class="btn btn-save" @click="showAdd">+ Add Model</button>
-        <button class="btn btn-ghost" @click="load">↻ Refresh</button>
+        <button
+          class="btn btn-ghost"
+          @click="enableAll"
+        >
+          ⚡ Enable All
+        </button>
+        <button
+          class="btn btn-ghost"
+          @click="disableAll"
+        >
+          ⏸ Disable All
+        </button>
+        <button
+          class="btn btn-save"
+          @click="showAdd"
+        >
+          + Add Model
+        </button>
+        <button
+          class="btn btn-ghost"
+          @click="load"
+        >
+          ↻ Refresh
+        </button>
       </div>
     </div>
 
-    <div v-if="models.length === 0" class="empty-state-container">
-      <div class="empty-state">No models configured. Add one to get started.</div>
+    <div
+      v-if="models.length === 0"
+      class="empty-state-container"
+    >
+      <div class="empty-state">
+        No models configured. Add one to get started.
+      </div>
     </div>
     
-    <div v-else class="models-list">
+    <div
+      v-else
+      class="models-list"
+    >
       <div class="premium-card">
         <div class="card-header-row no-collapse">
           <div class="card-title-group">
@@ -180,17 +210,29 @@ onMounted(load)
           </div>
           <div class="fleet-summary">
             <span class="fleet-total">{{ summary.total }} configured</span>
-            <span class="fleet-stat" :class="{ dim: summary.healthy === 0 }">
-              <i class="dot ok"></i>{{ summary.healthy }} healthy
+            <span
+              class="fleet-stat"
+              :class="{ dim: summary.healthy === 0 }"
+            >
+              <i class="dot ok" />{{ summary.healthy }} healthy
             </span>
-            <span class="fleet-stat" :class="{ dim: summary.rateLimited === 0 }">
-              <i class="dot warn"></i>{{ summary.rateLimited }} rate limited
+            <span
+              class="fleet-stat"
+              :class="{ dim: summary.rateLimited === 0 }"
+            >
+              <i class="dot warn" />{{ summary.rateLimited }} rate limited
             </span>
-            <span class="fleet-stat" :class="{ dim: summary.unavailable === 0 }">
-              <i class="dot err"></i>{{ summary.unavailable }} unavailable
+            <span
+              class="fleet-stat"
+              :class="{ dim: summary.unavailable === 0 }"
+            >
+              <i class="dot err" />{{ summary.unavailable }} unavailable
             </span>
-            <span class="fleet-stat" :class="{ dim: summary.disabled === 0 }">
-              <i class="dot muted"></i>{{ summary.disabled }} disabled
+            <span
+              class="fleet-stat"
+              :class="{ dim: summary.disabled === 0 }"
+            >
+              <i class="dot muted" />{{ summary.disabled }} disabled
             </span>
           </div>
         </div>
@@ -206,14 +248,29 @@ onMounted(load)
               <div class="service-name-row">
                 <div class="service-name-group">
                   <span class="service-name">{{ m.name }}</span>
-                  <Pill v-if="m.enabled === false" type="muted" text="Disabled" />
-                  <Pill :type="statusType(m.status)" :text="m.status" />
+                  <Pill
+                    v-if="m.enabled === false"
+                    type="muted"
+                    text="Disabled"
+                  />
+                  <Pill
+                    :type="statusType(m.status)"
+                    :text="m.status"
+                  />
                   <template v-if="m.role">
-                    <Pill type="info" :text="m.role.toUpperCase()" />
+                    <Pill
+                      type="info"
+                      :text="m.role.toUpperCase()"
+                    />
                   </template>
                 </div>
                 <div class="service-actions">
-                  <button class="btn btn-sm btn-ghost" @click="showEdit(m)">Edit</button>
+                  <button
+                    class="btn btn-sm btn-ghost"
+                    @click="showEdit(m)"
+                  >
+                    Edit
+                  </button>
                   <button
                     v-if="m.consecutive_errors > 0 || (m.status && m.status !== 'available')"
                     class="btn btn-sm btn-ghost"
@@ -221,10 +278,18 @@ onMounted(load)
                   >
                     Reset
                   </button>
-                  <button class="btn btn-sm btn-ghost" @click="toggle(m)">
+                  <button
+                    class="btn btn-sm btn-ghost"
+                    @click="toggle(m)"
+                  >
                     {{ m.enabled === false ? 'Enable' : 'Disable' }}
                   </button>
-                  <button class="btn btn-sm btn-danger" @click="remove(m)">✕</button>
+                  <button
+                    class="btn btn-sm btn-danger"
+                    @click="remove(m)"
+                  >
+                    ✕
+                  </button>
                 </div>
               </div>
 
@@ -244,9 +309,18 @@ onMounted(load)
                 </template>
               </div>
 
-              <div v-if="getPct(m) !== null" class="rate-limit-row">
-                <div class="premium-progress" :title="`${m.rl_snapshot.tokens_remaining_per_min} / ${m.rl_snapshot.tokens_limit_per_min} tokens remaining`">
-                  <div class="progress-fill" :style="{ width: getPct(m) + '%' }"></div>
+              <div
+                v-if="getPct(m) !== null"
+                class="rate-limit-row"
+              >
+                <div
+                  class="premium-progress"
+                  :title="`${m.rl_snapshot.tokens_remaining_per_min} / ${m.rl_snapshot.tokens_limit_per_min} tokens remaining`"
+                >
+                  <div
+                    class="progress-fill"
+                    :style="{ width: getPct(m) + '%' }"
+                  />
                 </div>
                 <span class="rate-limit-pct">{{ getPct(m) }}% left</span>
               </div>
@@ -264,60 +338,127 @@ onMounted(load)
   >
     <div class="model-modal-body">
       <div class="form-container">
-      <div class="form-row-modern">
-        <div class="form-group-modern flex-1">
-          <label>Internal Name</label>
-          <input type="text" v-model="form.name" :disabled="editing" class="premium-input" placeholder="e.g. gpt-4-prod" />
+        <div class="form-row-modern">
+          <div class="form-group-modern flex-1">
+            <label>Internal Name</label>
+            <input
+              v-model="form.name"
+              type="text"
+              :disabled="editing"
+              class="premium-input"
+              placeholder="e.g. gpt-4-prod"
+            >
+          </div>
+          <div class="form-group-modern flex-1">
+            <label>Provider</label>
+            <select
+              v-model="form.provider"
+              class="premium-input select-input"
+            >
+              <option
+                v-for="p in PROVIDERS"
+                :key="p.value"
+                :value="p.value"
+              >
+                {{ p.label }}
+              </option>
+            </select>
+          </div>
         </div>
-        <div class="form-group-modern flex-1">
-          <label>Provider</label>
-          <select v-model="form.provider" class="premium-input select-input">
-            <option v-for="p in PROVIDERS" :key="p.value" :value="p.value">{{ p.label }}</option>
-          </select>
+        <div class="form-group-modern">
+          <label>Model ID</label>
+          <input
+            v-model="form.model_id"
+            type="text"
+            class="premium-input"
+            placeholder="e.g. gpt-4o"
+          >
         </div>
-      </div>
-      <div class="form-group-modern">
-        <label>Model ID</label>
-        <input type="text" v-model="form.model_id" class="premium-input" placeholder="e.g. gpt-4o" />
-      </div>
-      <div class="form-group-modern">
-        <label>API Key</label>
-        <input type="password" v-model="form.api_key" class="premium-input" placeholder="••••••••••••••••" />
-      </div>
-      <div class="form-group-modern">
-        <label>Base URL (Optional)</label>
-        <input type="text" v-model="form.base_url" class="premium-input" placeholder="https://api.openai.com/v1" />
-      </div>
-      <div class="form-row-modern">
-        <div class="form-group-modern flex-1">
-          <label>Priority</label>
-          <input type="number" v-model="form.priority" class="premium-input" />
+        <div class="form-group-modern">
+          <label>API Key</label>
+          <input
+            v-model="form.api_key"
+            type="password"
+            class="premium-input"
+            placeholder="••••••••••••••••"
+          >
         </div>
-        <div class="form-group-modern flex-1">
-          <label>Role</label>
-          <select v-model="form.role" class="premium-input select-input">
-            <option value="">General</option>
-            <optgroup label="Specialists">
-              <option value="router">Router (cron / tool select)</option>
-              <option value="tool_writer">Tool Writer</option>
-              <option value="quality_checker">Quality Checker</option>
-              <option value="memory_compressor">Memory Compressor</option>
-              <option value="watcher">Watcher</option>
-              <option value="image_model">Image Model (vision)</option>
-            </optgroup>
-            <option value="paid_model">Paid Fallback</option>
-          </select>
+        <div class="form-group-modern">
+          <label>Base URL (Optional)</label>
+          <input
+            v-model="form.base_url"
+            type="text"
+            class="premium-input"
+            placeholder="https://api.openai.com/v1"
+          >
         </div>
-      </div>
-      <div class="form-group-modern">
-        <label>Max Tokens</label>
-        <input type="number" v-model="form.max_tokens" class="premium-input" />
-      </div>
+        <div class="form-row-modern">
+          <div class="form-group-modern flex-1">
+            <label>Priority</label>
+            <input
+              v-model="form.priority"
+              type="number"
+              class="premium-input"
+            >
+          </div>
+          <div class="form-group-modern flex-1">
+            <label>Role</label>
+            <select
+              v-model="form.role"
+              class="premium-input select-input"
+            >
+              <option value="">
+                General
+              </option>
+              <optgroup label="Specialists">
+                <option value="router">
+                  Router (cron / tool select)
+                </option>
+                <option value="tool_writer">
+                  Tool Writer
+                </option>
+                <option value="quality_checker">
+                  Quality Checker
+                </option>
+                <option value="memory_compressor">
+                  Memory Compressor
+                </option>
+                <option value="watcher">
+                  Watcher
+                </option>
+                <option value="image_model">
+                  Image Model (vision)
+                </option>
+              </optgroup>
+              <option value="paid_model">
+                Paid Fallback
+              </option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group-modern">
+          <label>Max Tokens</label>
+          <input
+            v-model="form.max_tokens"
+            type="number"
+            class="premium-input"
+          >
+        </div>
       </div>
     </div>
     <div class="modal-actions-modern">
-      <button class="btn btn-ghost" @click="modalOpen = false">Cancel</button>
-      <button class="btn btn-save" @click="save">Save Model</button>
+      <button
+        class="btn btn-ghost"
+        @click="modalOpen = false"
+      >
+        Cancel
+      </button>
+      <button
+        class="btn btn-save"
+        @click="save"
+      >
+        Save Model
+      </button>
     </div>
   </Modal>
 </template>

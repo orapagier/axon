@@ -297,9 +297,21 @@ mod tests {
 
     #[test]
     fn coerce_enum_from_text_finds_each_axis_in_prose() {
-        let categories = vec!["support".to_string(), "sales".to_string(), "other".to_string()];
-        let priorities = vec!["urgent".to_string(), "normal".to_string(), "low".to_string()];
-        let intents = vec!["question".to_string(), "complaint".to_string(), "other".to_string()];
+        let categories = vec![
+            "support".to_string(),
+            "sales".to_string(),
+            "other".to_string(),
+        ];
+        let priorities = vec![
+            "urgent".to_string(),
+            "normal".to_string(),
+            "low".to_string(),
+        ];
+        let intents = vec![
+            "question".to_string(),
+            "complaint".to_string(),
+            "other".to_string(),
+        ];
         let text = "the text was classified as a sales-related question with normal priority."
             .to_ascii_lowercase();
         assert_eq!(coerce_enum_from_text(&text, &categories), "sales");

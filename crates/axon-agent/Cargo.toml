@@ -17,8 +17,14 @@ futures             = "0.3"
 # shares one rustls stack; http2 + charset restore the defaults we still want.
 reqwest             = { version = "0.12", default-features = false, features = ["json", "stream", "multipart", "cookies", "gzip", "brotli", "deflate", "http2", "charset", "rustls-tls"] }
 axum                = { version = "0.7",  features = ["macros", "ws", "multipart"] }
-tower               = "0.4"
-tower-http          = { version = "0.5",  features = ["fs", "cors"] }
+# 0.5 matches what axum 0.7 already pulls in transitively (was 0.4, an unused
+# direct pin that just meant two copies of `tower` in the tree).
+tower               = "0.5"
+tower-http          = { version = "0.6",  features = ["fs", "cors", "trace"] }
+# Rate limiting for the unauthenticated routes (/webhook/*, /health, /ready) —
+# the routes protected/require_auth doesn't cover. axum feature gives the
+# GovernorLayer tower::Layer impl; no tonic/gRPC needed.
+tower_governor      = { version = "0.5",  features = ["tracing"] }
 serde               = { version = "1",    features = ["derive"] }
 serde_json          = "1"
 toml                = "0.8"
@@ -32,7 +38,7 @@ once_cell           = "1"
 anyhow              = "1"
 thiserror           = "1"
 tracing             = "0.1"
-tracing-subscriber  = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-subscriber  = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 uuid                = { version = "1",   features = ["v4"] }
 chrono              = { version = "0.4", features = ["serde"] }
 async-trait         = "0.1"
@@ -40,8 +46,10 @@ sha2                = "0.10"
 hmac                = "0.12"
 hex                 = "0.4"
 mime_guess          = "2"
-russh               = "0.45"
-russh-keys          = "0.45"
+# default-features off drops aws-lc-rs (its aws-lc-sys build needs NASM, which
+# isn't guaranteed present on dev machines or deploy targets); ring needs only
+# a C compiler, which the workspace already requires (rusqlite bundled, etc).
+russh               = { version = "0.60.3", default-features = false, features = ["ring", "rsa", "flate2"] }
 base64              = "0.22"
 urlencoding = "2.1.3"
 reqwest-eventsource = "0.6.0"
@@ -85,7 +93,7 @@ calamine = { version = "0.36", default-features = false, features = ["dates"] }
 # Markdown→HTML rendering uses pulldown-cmark; HTML→Markdown reuses `scraper`
 # (already in tree for 2.3) walking its DOM, which needs `ego-tree` (scraper's
 # own tree crate, already pulled in transitively — just naming it directly).
-quick-xml      = { version = "0.36", default-features = false, features = ["escape-html"] }
+quick-xml      = { version = "0.41", default-features = false, features = ["escape-html"] }
 pulldown-cmark = { version = "0.12", default-features = false, features = ["html"] }
 ego-tree       = "0.11"
 
@@ -103,7 +111,7 @@ flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 feed-rs = "2.4"
 
 # In-process MCP integration services (Google/Microsoft/Facebook/Instagram/CRM).
-rmcp           = { version = "0.1", features = ["server"] }
+rmcp           = { version = "1", default-features = false }
 axon-core      = { path = "../axon-core" }
 axon-google    = { path = "../axon-google" }
 axon-microsoft = { path = "../axon-microsoft" }

@@ -47,15 +47,29 @@ onMounted(load)
     <div class="page-header-container">
       <div class="page-header">
         <h1>Tools</h1>
-        <p class="page-desc">Explore and manage available tools from internal and external sources.</p>
+        <p class="page-desc">
+          Explore and manage available tools from internal and external sources.
+        </p>
       </div>
       <div class="header-actions">
-        <button class="btn btn-save" @click="reload">Reload Tools</button>
+        <button
+          class="btn btn-save"
+          @click="reload"
+        >
+          Reload Tools
+        </button>
       </div>
     </div>
 
-    <div v-if="sections.length" class="tools-grid">
-      <section v-for="section in sections" :key="section.key" class="premium-card">
+    <div
+      v-if="sections.length"
+      class="tools-grid"
+    >
+      <section
+        v-for="section in sections"
+        :key="section.key"
+        class="premium-card"
+      >
         <div class="card-header-row no-collapse">
           <div class="card-title-group">
             <h2>{{ section.title }}</h2>
@@ -64,23 +78,43 @@ onMounted(load)
         </div>
 
         <div class="service-list">
-          <div v-for="t in section.tools" :key="t.name" class="service-item tool-row" :class="{ disabled: !t.enabled }">
+          <div
+            v-for="t in section.tools"
+            :key="t.name"
+            class="service-item tool-row"
+            :class="{ disabled: !t.enabled }"
+          >
             <div class="service-info">
               <div class="service-name-row">
                 <div class="service-name-group">
                   <span class="service-name">{{ t.name }}</span>
-                  <Pill :type="t.enabled ? 'ok' : 'muted'" :text="t.enabled ? 'Enabled' : 'Disabled'" />
+                  <Pill
+                    :type="t.enabled ? 'ok' : 'muted'"
+                    :text="t.enabled ? 'Enabled' : 'Disabled'"
+                  />
                 </div>
                 <div class="service-actions">
-                  <button class="btn btn-sm btn-ghost" @click="toggleTool(t)">
+                  <button
+                    class="btn btn-sm btn-ghost"
+                    @click="toggleTool(t)"
+                  >
                     {{ t.enabled ? 'Disable' : 'Enable' }}
                   </button>
                 </div>
               </div>
-              <p class="service-meta description">{{ t.description }}</p>
+              <p class="service-meta description">
+                {{ t.description }}
+              </p>
 
-              <div v-if="t.required?.length" class="tool-tags-row">
-                <span v-for="r in t.required" :key="r" class="tool-tag">{{ r }}</span>
+              <div
+                v-if="t.required?.length"
+                class="tool-tags-row"
+              >
+                <span
+                  v-for="r in t.required"
+                  :key="r"
+                  class="tool-tag"
+                >{{ r }}</span>
               </div>
             </div>
           </div>
@@ -88,8 +122,13 @@ onMounted(load)
       </section>
     </div>
 
-    <div v-else class="empty-state-container">
-      <div class="empty-state">No tools loaded. Try reloading your tool directories.</div>
+    <div
+      v-else
+      class="empty-state-container"
+    >
+      <div class="empty-state">
+        No tools loaded. Try reloading your tool directories.
+      </div>
     </div>
   </div>
 </template>

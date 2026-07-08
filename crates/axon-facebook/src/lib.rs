@@ -21,50 +21,50 @@ impl FacebookService {
     pub fn tool_list() -> Vec<Tool> {
         vec![
             // Auth
-            Tool { name: "facebook_auth_url".into(),           description: "Get the Facebook OAuth URL. Open it in a browser to grant Page access.".into(),       input_schema: schema!({}, []) },
-            Tool { name: "facebook_instagram_auth_url".into(), description: "Get the Instagram OAuth URL. Open it in a browser to grant Instagram access.".into(),       input_schema: schema!({}, []) },
-            Tool { name: "facebook_exchange_code".into(),      description: "Exchange Facebook/Instagram OAuth code for a long-lived token.".into(),                    input_schema: schema!({"code":{"type":"string"},"service":{"type":"string"}}, ["code"]) },
-            Tool { name: "facebook_connect_url".into(),        description: "Get the OAuth URL for connecting a Page as a reusable credential (multi-account).".into(),    input_schema: schema!({}, []) },
-            Tool { name: "facebook_exchange_code_pages".into(),description: "Exchange an OAuth code for the list of Pages the user manages, each with its own Page token.".into(), input_schema: schema!({"code":{"type":"string"}}, ["code"]) },
-            Tool { name: "facebook_auth_status".into(),        description: "Check Facebook and Instagram authentication status.".into(),                                        input_schema: schema!({}, []) },
-            Tool { name: "facebook_revoke".into(),        description: "Delete stored Facebook and Instagram tokens.".into(),                                input_schema: schema!({}, []) },
-            Tool { name: "facebook_debug_token".into(),   description: "Inspect the current token (expiry, scopes, app_id).".into(),                 input_schema: schema!({}, []) },
+            Tool::new("facebook_auth_url", "Get the Facebook OAuth URL. Open it in a browser to grant Page access.", schema!({}, [])),
+            Tool::new("facebook_instagram_auth_url", "Get the Instagram OAuth URL. Open it in a browser to grant Instagram access.", schema!({}, [])),
+            Tool::new("facebook_exchange_code", "Exchange Facebook/Instagram OAuth code for a long-lived token.", schema!({"code":{"type":"string"},"service":{"type":"string"}}, ["code"])),
+            Tool::new("facebook_connect_url", "Get the OAuth URL for connecting a Page as a reusable credential (multi-account).", schema!({}, [])),
+            Tool::new("facebook_exchange_code_pages", "Exchange an OAuth code for the list of Pages the user manages, each with its own Page token.", schema!({"code":{"type":"string"}}, ["code"])),
+            Tool::new("facebook_auth_status", "Check Facebook and Instagram authentication status.", schema!({}, [])),
+            Tool::new("facebook_revoke", "Delete stored Facebook and Instagram tokens.", schema!({}, [])),
+            Tool::new("facebook_debug_token", "Inspect the current token (expiry, scopes, app_id).", schema!({}, [])),
 
             // Page
-            Tool { name: "fb_get_page".into(),    description: "Get Facebook Page info: name, about, fans, website, contact, hours.".into(),                  input_schema: schema!({}, []) },
-            Tool { name: "fb_update_page".into(), description: "Update Facebook Page fields (about, description, phone, website).".into(),                    input_schema: schema!({"about":{"type":"string"},"description":{"type":"string"},"phone":{"type":"string"},"website":{"type":"string"}}, []) },
+            Tool::new("fb_get_page", "Get Facebook Page info: name, about, fans, website, contact, hours.", schema!({}, [])),
+            Tool::new("fb_update_page", "Update Facebook Page fields (about, description, phone, website).", schema!({"about":{"type":"string"},"description":{"type":"string"},"phone":{"type":"string"},"website":{"type":"string"}}, [])),
 
             // Posts
-            Tool { name: "fb_list_posts".into(),                  description: "List published posts on the Facebook Page. Use this when asked what is posted on the Page.".into(),                          input_schema: schema!({"limit":{"type":"integer","default":10},"after":{"type":"string","description":"Pagination cursor"}}, []) },
-            Tool { name: "fb_get_post".into(),                    description: "Get a single Facebook post with engagement stats.".into(),                   input_schema: schema!({"post_id":{"type":"string"}}, ["post_id"]) },
-            Tool { name: "fb_create_post".into(),                 description: "Create a text post on the Facebook Page.".into(),                            input_schema: schema!({"message":{"type":"string"},"link":{"type":"string"}}, ["message"]) },
-            Tool { name: "fb_create_post_with_image".into(),      description: "Create a Facebook post with an image from an absolute local file path or public HTTP URL.".into(),      input_schema: schema!({"message":{"type":"string"},"image_url_or_path":{"type":"string"}}, ["message","image_url_or_path"]) },
-            Tool { name: "fb_create_post_with_video".into(),      description: "Create a Facebook post with a video from an absolute local file path or public HTTP URL.".into(),       input_schema: schema!({"message":{"type":"string"},"video_url_or_path":{"type":"string"}}, ["message","video_url_or_path"]) },
-            Tool { name: "fb_update_post".into(),                 description: "Edit the message of an existing Facebook post.".into(),                      input_schema: schema!({"post_id":{"type":"string"},"message":{"type":"string"}}, ["post_id","message"]) },
-            Tool { name: "fb_delete_post".into(),                 description: "Delete a Facebook post.".into(),                                             input_schema: schema!({"post_id":{"type":"string"}}, ["post_id"]) },
-            Tool { name: "fb_get_scheduled_posts".into(),         description: "List scheduled (unpublished) posts on the Facebook Page.".into(),            input_schema: schema!({"limit":{"type":"integer","default":10}}, []) },
-            Tool { name: "fb_schedule_post".into(),               description: "Create a scheduled post. publish_time is a Unix timestamp.".into(),          input_schema: schema!({"message":{"type":"string"},"publish_time":{"type":"integer","description":"Unix timestamp (future)"}}, ["message","publish_time"]) },
+            Tool::new("fb_list_posts", "List published posts on the Facebook Page. Use this when asked what is posted on the Page.", schema!({"limit":{"type":"integer","default":10},"after":{"type":"string","description":"Pagination cursor"}}, [])),
+            Tool::new("fb_get_post", "Get a single Facebook post with engagement stats.", schema!({"post_id":{"type":"string"}}, ["post_id"])),
+            Tool::new("fb_create_post", "Create a text post on the Facebook Page.", schema!({"message":{"type":"string"},"link":{"type":"string"}}, ["message"])),
+            Tool::new("fb_create_post_with_image", "Create a Facebook post with an image from an absolute local file path or public HTTP URL.", schema!({"message":{"type":"string"},"image_url_or_path":{"type":"string"}}, ["message","image_url_or_path"])),
+            Tool::new("fb_create_post_with_video", "Create a Facebook post with a video from an absolute local file path or public HTTP URL.", schema!({"message":{"type":"string"},"video_url_or_path":{"type":"string"}}, ["message","video_url_or_path"])),
+            Tool::new("fb_update_post", "Edit the message of an existing Facebook post.", schema!({"post_id":{"type":"string"},"message":{"type":"string"}}, ["post_id","message"])),
+            Tool::new("fb_delete_post", "Delete a Facebook post.", schema!({"post_id":{"type":"string"}}, ["post_id"])),
+            Tool::new("fb_get_scheduled_posts", "List scheduled (unpublished) posts on the Facebook Page.", schema!({"limit":{"type":"integer","default":10}}, [])),
+            Tool::new("fb_schedule_post", "Create a scheduled post. publish_time is a Unix timestamp.", schema!({"message":{"type":"string"},"publish_time":{"type":"integer","description":"Unix timestamp (future)"}}, ["message","publish_time"])),
 
             // Comments
-            Tool { name: "fb_list_comments".into(),   description: "List comments on a post, photo, or video.".into(),                                       input_schema: schema!({"object_id":{"type":"string"},"limit":{"type":"integer","default":10}}, ["object_id"]) },
-            Tool { name: "fb_recent_comments".into(), description: "Get recent comments across your latest posts. No post ID needed — checks your most recent posts automatically.".into(), input_schema: schema!({"post_count":{"type":"integer","default":5,"description":"Number of recent posts to check"},"comment_limit":{"type":"integer","default":10,"description":"Max comments per post"}}, []) },
-            Tool { name: "fb_reply_to_comment".into(),description: "Reply to a Facebook comment.".into(),                                                    input_schema: schema!({"comment_id":{"type":"string"},"message":{"type":"string"}}, ["comment_id","message"]) },
-            Tool { name: "fb_get_comment".into(),     description: "Get a Facebook comment by ID.".into(),                                                   input_schema: schema!({"comment_id":{"type":"string"}}, ["comment_id"]) },
-            Tool { name: "fb_delete_comment".into(),  description: "Delete a Facebook comment.".into(),                                                      input_schema: schema!({"comment_id":{"type":"string"}}, ["comment_id"]) },
-            Tool { name: "fb_hide_comment".into(),    description: "Hide or unhide a Facebook comment.".into(),                                              input_schema: schema!({"comment_id":{"type":"string"},"hide":{"type":"boolean","default":true}}, ["comment_id"]) },
-            Tool { name: "fb_like_object".into(),     description: "Like a Facebook post, comment, or photo.".into(),                                        input_schema: schema!({"object_id":{"type":"string"}}, ["object_id"]) },
-            Tool { name: "fb_react_object".into(),     description: "React to a Facebook object.".into(),                                                     input_schema: schema!({"object_id":{"type":"string"},"reaction_type":{"type":"string","description":"Reaction type: like, love, haha, wow, sad, angry"}}, ["object_id"]) },
-            Tool { name: "fb_unreact_object".into(),  description: "Remove reaction from a Facebook post, comment, or photo.".into(),    input_schema: schema!({"object_id":{"type":"string"},"reaction_type":{"type":"string","description":"Reaction type to remove: like, love, haha, wow, sad, angry"}}, ["object_id"]) },
+            Tool::new("fb_list_comments", "List comments on a post, photo, or video.", schema!({"object_id":{"type":"string"},"limit":{"type":"integer","default":10}}, ["object_id"])),
+            Tool::new("fb_recent_comments", "Get recent comments across your latest posts. No post ID needed — checks your most recent posts automatically.", schema!({"post_count":{"type":"integer","default":5,"description":"Number of recent posts to check"},"comment_limit":{"type":"integer","default":10,"description":"Max comments per post"}}, [])),
+            Tool::new("fb_reply_to_comment", "Reply to a Facebook comment.", schema!({"comment_id":{"type":"string"},"message":{"type":"string"}}, ["comment_id","message"])),
+            Tool::new("fb_get_comment", "Get a Facebook comment by ID.", schema!({"comment_id":{"type":"string"}}, ["comment_id"])),
+            Tool::new("fb_delete_comment", "Delete a Facebook comment.", schema!({"comment_id":{"type":"string"}}, ["comment_id"])),
+            Tool::new("fb_hide_comment", "Hide or unhide a Facebook comment.", schema!({"comment_id":{"type":"string"},"hide":{"type":"boolean","default":true}}, ["comment_id"])),
+            Tool::new("fb_like_object", "Like a Facebook post, comment, or photo.", schema!({"object_id":{"type":"string"}}, ["object_id"])),
+            Tool::new("fb_react_object", "React to a Facebook object.", schema!({"object_id":{"type":"string"},"reaction_type":{"type":"string","description":"Reaction type: like, love, haha, wow, sad, angry"}}, ["object_id"])),
+            Tool::new("fb_unreact_object", "Remove reaction from a Facebook post, comment, or photo.", schema!({"object_id":{"type":"string"},"reaction_type":{"type":"string","description":"Reaction type to remove: like, love, haha, wow, sad, angry"}}, ["object_id"])),
 
             // Insights
-            Tool { name: "fb_page_insights".into(), description: "Get Page analytics: views, engagement, follows. period: day|week|days_28.".into(), input_schema: schema!({"metric":{"type":"string","default":"page_views,page_post_engagements,page_daily_follows"},"period":{"type":"string","default":"day"},"since":{"type":"string","description":"YYYY-MM-DD"},"until":{"type":"string","description":"YYYY-MM-DD"}}, []) },
-            Tool { name: "fb_post_insights".into(), description: "Get analytics for a specific Facebook post.".into(),                                       input_schema: schema!({"post_id":{"type":"string"}}, ["post_id"]) },
+            Tool::new("fb_page_insights", "Get Page analytics: views, engagement, follows. period: day|week|days_28.", schema!({"metric":{"type":"string","default":"page_views,page_post_engagements,page_daily_follows"},"period":{"type":"string","default":"day"},"since":{"type":"string","description":"YYYY-MM-DD"},"until":{"type":"string","description":"YYYY-MM-DD"}}, [])),
+            Tool::new("fb_post_insights", "Get analytics for a specific Facebook post.", schema!({"post_id":{"type":"string"}}, ["post_id"])),
 
             // Messaging
-            Tool { name: "fb_list_messenger_chats".into(),       description: "List Facebook Messenger inbox chats for the Page. Use this when asked to check Messenger or the Page inbox.".into(),                             input_schema: schema!({"limit":{"type":"integer","default":10},"unread_only":{"type":"boolean","default":true,"description":"Only return chats that have unread messages"}}, []) },
-            Tool { name: "fb_get_messenger_chat".into(),         description: "Get the message history inside a specific Messenger chat.".into(),                          input_schema: schema!({"conversation_id":{"type":"string"},"limit":{"type":"integer","default":10}}, ["conversation_id"]) },
-            Tool { name: "fb_send_message".into(),             description: "Send a Messenger text message to a user by their PSID.".into(),                 input_schema: schema!({"recipient_id":{"type":"string","description":"User PSID"},"message":{"type":"string"}}, ["recipient_id","message"]) },
-            Tool { name: "fb_send_message_image".into(),       description: "Send an image via Messenger. MUST be a public HTTP URL, local files are NOT supported here.".into(),                                           input_schema: schema!({"recipient_id":{"type":"string"},"image_url":{"type":"string"}}, ["recipient_id","image_url"]) },
+            Tool::new("fb_list_messenger_chats", "List Facebook Messenger inbox chats for the Page. Use this when asked to check Messenger or the Page inbox.", schema!({"limit":{"type":"integer","default":10},"unread_only":{"type":"boolean","default":true,"description":"Only return chats that have unread messages"}}, [])),
+            Tool::new("fb_get_messenger_chat", "Get the message history inside a specific Messenger chat.", schema!({"conversation_id":{"type":"string"},"limit":{"type":"integer","default":10}}, ["conversation_id"])),
+            Tool::new("fb_send_message", "Send a Messenger text message to a user by their PSID.", schema!({"recipient_id":{"type":"string","description":"User PSID"},"message":{"type":"string"}}, ["recipient_id","message"])),
+            Tool::new("fb_send_message_image", "Send an image via Messenger. MUST be a public HTTP URL, local files are NOT supported here.", schema!({"recipient_id":{"type":"string"},"image_url":{"type":"string"}}, ["recipient_id","image_url"])),
         ]
     }
 

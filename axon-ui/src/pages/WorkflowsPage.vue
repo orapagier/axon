@@ -2315,23 +2315,40 @@ onUnmounted(() => {
 <template>
   <div class="workflow-explorer">
     <!-- Legacy sidebar kept disabled in favor of the dropdown selector -->
-    <aside v-if="false" class="workflow-sidebar">
+    <aside
+      v-if="false"
+      class="workflow-sidebar"
+    >
       <div class="sidebar-header">
         <div class="sidebar-header-copy">
           <span class="sidebar-kicker">Builder</span>
           <h2>Workflows</h2>
         </div>
         <div class="sidebar-header-actions">
-          <button class="btn btn-xs btn-success" @click="createNew">New</button>
+          <button
+            class="btn btn-xs btn-success"
+            @click="createNew"
+          >
+            New
+          </button>
           <button
             v-if="!isWorkflowSidebarCollapsed"
             class="workflow-sidebar-toggle"
             type="button"
-            @click="toggleWorkflowSidebar"
             :title="isWorkflowSidebarCollapsed ? 'Show workflows' : 'Hide workflows'"
+            @click="toggleWorkflowSidebar"
           >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M6 5v14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+            <svg
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path
+                d="M6 5v14"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+              />
               <path
                 :d="isWorkflowSidebarCollapsed ? 'M11 8l4 4-4 4' : 'M15 8l-4 4 4 4'"
                 fill="none"
@@ -2352,15 +2369,25 @@ onUnmounted(() => {
           :class="{ active: selectedWorkflow?.id === wf.id }"
           @click="selectWorkflow(wf)"
         >
-          <div class="wf-dot" :class="wf.last_status"></div>
+          <div
+            class="wf-dot"
+            :class="wf.last_status"
+          />
           <div class="wf-info">
-            <div class="wf-name">{{ wf.name }}</div>
+            <div class="wf-name">
+              {{ wf.name }}
+            </div>
             <div class="wf-meta">
               {{ wf.trigger_type }} • {{ wf.nodes?.length || 0 }} neurons
             </div>
           </div>
         </button>
-        <div v-if="workflows.length === 0" class="empty-sidebar">No workflows</div>
+        <div
+          v-if="workflows.length === 0"
+          class="empty-sidebar"
+        >
+          No workflows
+        </div>
       </div>
     </aside>
 
@@ -2369,20 +2396,26 @@ onUnmounted(() => {
       <template v-if="selectedWorkflow">
         <header class="workflow-toolbar">
           <div class="toolbar-left">
-            <div ref="workflowMenuRef" class="workflow-menu">
+            <div
+              ref="workflowMenuRef"
+              class="workflow-menu"
+            >
               <button
                 class="workflow-menu-trigger"
                 type="button"
-                @click.stop="toggleWorkflowMenu"
                 :aria-expanded="isWorkflowMenuOpen ? 'true' : 'false'"
                 title="Choose workflow"
+                @click.stop="toggleWorkflowMenu"
               >
                 <span class="workflow-menu-trigger-label">{{ selectedWorkflow?.name || 'Choose workflow' }}</span>
                 <span class="workflow-menu-trigger-icon">{{ isWorkflowMenuOpen ? '-' : '+' }}</span>
               </button>
 
               <Transition name="scale-fade">
-                <div v-if="isWorkflowMenuOpen" class="workflow-menu-panel">
+                <div
+                  v-if="isWorkflowMenuOpen"
+                  class="workflow-menu-panel"
+                >
                   <div class="workflow-menu-header">
                     <span class="workflow-menu-kicker">Workflows</span>
                   </div>
@@ -2392,7 +2425,7 @@ onUnmounted(() => {
                     type="text"
                     class="workflow-menu-search"
                     placeholder="Search workflows..."
-                  />
+                  >
                   <div class="workflow-menu-list">
                     <button
                       v-for="wf in filteredWorkflows"
@@ -2402,71 +2435,186 @@ onUnmounted(() => {
                       type="button"
                       @click="selectWorkflow(wf)"
                     >
-                      <div class="wf-dot" :class="wf.last_status"></div>
+                      <div
+                        class="wf-dot"
+                        :class="wf.last_status"
+                      />
                       <div class="workflow-menu-copy">
-                        <div class="workflow-menu-name">{{ wf.name }}</div>
-                        <div class="workflow-menu-meta">{{ wf.trigger_type }} | {{ wf.nodes?.length || 0 }} nodes</div>
+                        <div class="workflow-menu-name">
+                          {{ wf.name }}
+                        </div>
+                        <div class="workflow-menu-meta">
+                          {{ wf.trigger_type }} | {{ wf.nodes?.length || 0 }} nodes
+                        </div>
                       </div>
                     </button>
-                    <div v-if="filteredWorkflows.length === 0" class="workflow-menu-empty">No workflows found</div>
+                    <div
+                      v-if="filteredWorkflows.length === 0"
+                      class="workflow-menu-empty"
+                    >
+                      No workflows found
+                    </div>
                   </div>
                 </div>
               </Transition>
             </div>
-            <button class="btn btn-sm btn-success" type="button" @click="createNew">New</button>
+            <button
+              class="btn btn-sm btn-success"
+              type="button"
+              @click="createNew"
+            >
+              New
+            </button>
             <input
               v-model="wfName"
               type="text"
               class="wf-title-input"
               placeholder="Workflow Name"
               @change="save({ silent: true })"
-            />
+            >
           </div>
           <div class="toolbar-right">
-            <div ref="wfSettingsRef" class="wf-settings-wrap" style="position:relative;">
-              <button class="btn btn-sm workflow-action-btn btn-neutral" title="Workflow settings" @click.stop="showWfSettings = !showWfSettings">⚙</button>
+            <div
+              ref="wfSettingsRef"
+              class="wf-settings-wrap"
+              style="position:relative;"
+            >
+              <button
+                class="btn btn-sm workflow-action-btn btn-neutral"
+                title="Workflow settings"
+                @click.stop="showWfSettings = !showWfSettings"
+              >
+                ⚙
+              </button>
               <Transition name="scale-fade">
-                <div v-if="showWfSettings" class="wf-settings-pop" @click.stop>
-                  <div class="wf-settings-title">Workflow Settings</div>
+                <div
+                  v-if="showWfSettings"
+                  class="wf-settings-pop"
+                  @click.stop
+                >
+                  <div class="wf-settings-title">
+                    Workflow Settings
+                  </div>
                   <label class="wf-settings-label">On failure, run workflow</label>
-                  <select v-model="wfErrorWorkflowId" class="wf-settings-select" @change="save({ silent: true })">
-                    <option :value="null">— Global default —</option>
-                    <option v-for="w in errorHandlerOptions" :key="w.id" :value="w.id">{{ w.name }}</option>
+                  <select
+                    v-model="wfErrorWorkflowId"
+                    class="wf-settings-select"
+                    @change="save({ silent: true })"
+                  >
+                    <option :value="null">
+                      — Global default —
+                    </option>
+                    <option
+                      v-for="w in errorHandlerOptions"
+                      :key="w.id"
+                      :value="w.id"
+                    >
+                      {{ w.name }}
+                    </option>
                   </select>
-                  <div class="wf-settings-hint">Runs the chosen workflow's Nociceptor trigger when this one errors. Build a handler by adding a Stimulus neuron with trigger type “Nociceptor”.</div>
-                  <div class="wf-settings-divider"></div>
+                  <div class="wf-settings-hint">
+                    Runs the chosen workflow's Nociceptor trigger when this one errors. Build a handler by adding a Stimulus neuron with trigger type “Nociceptor”.
+                  </div>
+                  <div class="wf-settings-divider" />
                   <label class="wf-settings-label">Backup &amp; share</label>
                   <div class="wf-settings-actions">
-                    <button class="btn btn-sm btn-neutral" @click="exportWorkflow">Export JSON</button>
-                    <button class="btn btn-sm btn-neutral" @click="triggerImport">Import JSON</button>
+                    <button
+                      class="btn btn-sm btn-neutral"
+                      @click="exportWorkflow"
+                    >
+                      Export JSON
+                    </button>
+                    <button
+                      class="btn btn-sm btn-neutral"
+                      @click="triggerImport"
+                    >
+                      Import JSON
+                    </button>
                   </div>
-                  <div class="wf-settings-hint">Export bundles nodes, edges &amp; pins (never secrets). Imported workflows arrive disabled — re-map credentials, then enable.</div>
-                  <div class="wf-settings-divider"></div>
+                  <div class="wf-settings-hint">
+                    Export bundles nodes, edges &amp; pins (never secrets). Imported workflows arrive disabled — re-map credentials, then enable.
+                  </div>
+                  <div class="wf-settings-divider" />
                   <label class="wf-settings-label">Version history</label>
                   <div class="wf-settings-actions">
-                    <button class="btn btn-sm btn-neutral" @click="loadVersions">View versions</button>
+                    <button
+                      class="btn btn-sm btn-neutral"
+                      @click="loadVersions"
+                    >
+                      View versions
+                    </button>
                   </div>
-                  <div class="wf-settings-hint">Every save snapshots the prior state. Restore an earlier version (the current one is saved first, so it's undoable).</div>
+                  <div class="wf-settings-hint">
+                    Every save snapshots the prior state. Restore an earlier version (the current one is saved first, so it's undoable).
+                  </div>
                 </div>
               </Transition>
-              <input ref="importFileRef" type="file" accept="application/json,.json" style="display:none" @change="importWorkflow" />
+              <input
+                ref="importFileRef"
+                type="file"
+                accept="application/json,.json"
+                style="display:none"
+                @change="importWorkflow"
+              >
             </div>
-            <button v-if="isExecuting" class="btn btn-sm workflow-action-btn btn-danger" @click="stopWorkflow">Stop</button>
-            <button class="btn btn-sm workflow-action-btn btn-danger" @click="removeWorkflow">Delete</button>
-            <button class="btn btn-sm workflow-action-btn btn-neutral" @click.stop="loadHistory">History</button>
-            <button class="btn btn-sm workflow-action-btn btn-primary" @click="runActive()">Run</button>
-            <button class="btn btn-sm workflow-action-btn btn-success" @click="save">Save</button>
+            <button
+              v-if="isExecuting"
+              class="btn btn-sm workflow-action-btn btn-danger"
+              @click="stopWorkflow"
+            >
+              Stop
+            </button>
+            <button
+              class="btn btn-sm workflow-action-btn btn-danger"
+              @click="removeWorkflow"
+            >
+              Delete
+            </button>
+            <button
+              class="btn btn-sm workflow-action-btn btn-neutral"
+              @click.stop="loadHistory"
+            >
+              History
+            </button>
+            <button
+              class="btn btn-sm workflow-action-btn btn-primary"
+              @click="runActive()"
+            >
+              Run
+            </button>
+            <button
+              class="btn btn-sm workflow-action-btn btn-success"
+              @click="save"
+            >
+              Save
+            </button>
           </div>
         </header>
 
         <div class="canvas-wrapper">
           <!-- Collapsible Node Picker (n8n-style) -->
-          <div ref="nodePickerRef" class="node-picker-container" :class="{ open: isNodePickerOpen }">
+          <div
+            ref="nodePickerRef"
+            class="node-picker-container"
+            :class="{ open: isNodePickerOpen }"
+          >
             <Transition name="scale-fade">
-              <div v-if="isNodePickerOpen" class="floating-palette">
-                <div class="palette-label">Neurons</div>
+              <div
+                v-if="isNodePickerOpen"
+                class="floating-palette"
+              >
+                <div class="palette-label">
+                  Neurons
+                </div>
                 <div class="palette-search">
-                  <input ref="nodeSearchInputRef" type="text" v-model="nodeSearchQuery" @blur="nodeSearchQuery = ''" placeholder="Search neurons..." class="palette-search-input" />
+                  <input
+                    ref="nodeSearchInputRef"
+                    v-model="nodeSearchQuery"
+                    type="text"
+                    placeholder="Search neurons..."
+                    class="palette-search-input"
+                    @blur="nodeSearchQuery = ''"
+                  >
                 </div>
                 <div class="palette-list">
                   <div
@@ -2478,11 +2626,20 @@ onUnmounted(() => {
                     @mousedown="addNodeFromPalette(nt.name)"
                   >
                     <span>
-                      <img v-if="isImageUrl(nt.icon)" :src="nt.icon" class="palette-icon-img" />
+                      <img
+                        v-if="isImageUrl(nt.icon)"
+                        :src="nt.icon"
+                        class="palette-icon-img"
+                      >
                       <template v-else>{{ nt.icon }}</template>
                     </span> {{ nt.displayName }}
                   </div>
-                  <div v-if="filteredNodeTypes.length === 0" class="palette-empty">No neurons found</div>
+                  <div
+                    v-if="filteredNodeTypes.length === 0"
+                    class="palette-empty"
+                  >
+                    No neurons found
+                  </div>
                 </div>
               </div>
             </Transition>
@@ -2490,8 +2647,8 @@ onUnmounted(() => {
             <button 
               v-if="!isNodePickerOpen"
               class="node-picker-trigger" 
-              @click.stop="isNodePickerOpen = !isNodePickerOpen"
               title="Add Neuron"
+              @click.stop="isNodePickerOpen = !isNodePickerOpen"
             >
               <span class="plus-icon">＋</span>
             </button>
@@ -2499,8 +2656,8 @@ onUnmounted(() => {
 
           <!-- n8n-style Workflow Canvas -->
           <WorkflowCanvas
-            class="workflow-canvas-surface"
             ref="canvasRef"
+            class="workflow-canvas-surface"
             :nodes="nodes"
             :edges="edges"
             :executing="isExecuting"
@@ -2536,24 +2693,42 @@ onUnmounted(() => {
               :style="{ top: `${contextMenuPos.y}px`, left: `${contextMenuPos.x}px` }"
               @click.stop
             >
-              <div class="context-item" @click="handleContextExecute">
+              <div
+                class="context-item"
+                @click="handleContextExecute"
+              >
                 <span class="c-icon">▶</span> Run Node
               </div>
-              <div class="context-divider"></div>
-              <div class="context-item" @click="handleContextSettings">
+              <div class="context-divider" />
+              <div
+                class="context-item"
+                @click="handleContextSettings"
+              >
                 <span class="c-icon">⚙</span> Settings
               </div>
-              <div class="context-item" @click="handleContextReplace">
+              <div
+                class="context-item"
+                @click="handleContextReplace"
+              >
                 <span class="c-icon">⇄</span> Replace
               </div>
-              <div class="context-item" @click="handleContextRename">
+              <div
+                class="context-item"
+                @click="handleContextRename"
+              >
                 <span class="c-icon">✏</span> Rename
               </div>
-              <div class="context-divider"></div>
-              <div class="context-item" @click="handleContextCopy">
+              <div class="context-divider" />
+              <div
+                class="context-item"
+                @click="handleContextCopy"
+              >
                 <span class="c-icon">❐</span> Copy
               </div>
-              <div class="context-item delete" @click="handleContextDelete">
+              <div
+                class="context-item delete"
+                @click="handleContextDelete"
+              >
                 <span class="c-icon">🗑</span> Delete
               </div>
             </div>
@@ -2586,68 +2761,157 @@ onUnmounted(() => {
 
           <!-- Run History Overlay -->
           <Transition name="slide-rtl">
-            <div v-if="showHistory" ref="historyRef" class="side-panel history-panel">
+            <div
+              v-if="showHistory"
+              ref="historyRef"
+              class="side-panel history-panel"
+            >
               <div class="panel-header">
                 <h3>Execution History</h3>
-                <button class="close-btn" @click="showHistory = false">✕</button>
+                <button
+                  class="close-btn"
+                  @click="showHistory = false"
+                >
+                  ✕
+                </button>
               </div>
               <div class="panel-body">
-                <div v-for="(r, i) in (expandedRuns[wfId] || [])" :key="i" class="history-item" :class="r.status">
-                  <div class="history-item-header" @click="collapsedRuns[i] = !collapsedRuns[i]">
+                <div
+                  v-for="(r, i) in (expandedRuns[wfId] || [])"
+                  :key="i"
+                  class="history-item"
+                  :class="r.status"
+                >
+                  <div
+                    class="history-item-header"
+                    @click="collapsedRuns[i] = !collapsedRuns[i]"
+                  >
                     <span class="collapse-icon">{{ collapsedRuns[i] ? '▸' : '▾' }}</span>
-                    <div class="h-meta">{{ timeAgo(r.started_at) }} • <span class="h-status">{{ r.status }}</span></div>
-                    <button class="btn btn-icon btn-pin-history" title="Pin Data to Editor" @click.stop="loadHistoryToEditor(r)">
+                    <div class="h-meta">
+                      {{ timeAgo(r.started_at) }} • <span class="h-status">{{ r.status }}</span>
+                    </div>
+                    <button
+                      class="btn btn-icon btn-pin-history"
+                      title="Pin Data to Editor"
+                      @click.stop="loadHistoryToEditor(r)"
+                    >
                       📌 Pin
                     </button>
                   </div>
                   
                   <Transition name="fade">
-                    <div v-if="!collapsedRuns[i]" class="history-item-details">
-                      <div v-for="(nr, ni) in (r.node_results || [])" :key="ni" class="h-node">
-                        <div class="h-node-name">{{ nr.node_name }}</div>
-                        <div class="h-node-out">{{ nodeOutput(nr) }}</div>
+                    <div
+                      v-if="!collapsedRuns[i]"
+                      class="history-item-details"
+                    >
+                      <div
+                        v-for="(nr, ni) in (r.node_results || [])"
+                        :key="ni"
+                        class="h-node"
+                      >
+                        <div class="h-node-name">
+                          {{ nr.node_name }}
+                        </div>
+                        <div class="h-node-out">
+                          {{ nodeOutput(nr) }}
+                        </div>
                       </div>
                     </div>
                   </Transition>
                 </div>
-                <div v-if="!expandedRuns[wfId] || expandedRuns[wfId].length === 0" class="empty">No runs yet</div>
+                <div
+                  v-if="!expandedRuns[wfId] || expandedRuns[wfId].length === 0"
+                  class="empty"
+                >
+                  No runs yet
+                </div>
               </div>
             </div>
           </Transition>
 
           <!-- Version History Overlay (B1) -->
           <Transition name="slide-rtl">
-            <div v-if="showVersions" class="side-panel history-panel">
+            <div
+              v-if="showVersions"
+              class="side-panel history-panel"
+            >
               <div class="panel-header">
                 <h3>Version History</h3>
-                <button class="close-btn" @click="showVersions = false">✕</button>
+                <button
+                  class="close-btn"
+                  @click="showVersions = false"
+                >
+                  ✕
+                </button>
               </div>
               <div class="panel-body">
-                <div v-if="versionsLoading" class="empty">Loading…</div>
-                <div v-for="v in versions" :key="v.version" class="history-item">
-                  <div class="history-item-header" style="cursor:default;">
+                <div
+                  v-if="versionsLoading"
+                  class="empty"
+                >
+                  Loading…
+                </div>
+                <div
+                  v-for="v in versions"
+                  :key="v.version"
+                  class="history-item"
+                >
+                  <div
+                    class="history-item-header"
+                    style="cursor:default;"
+                  >
                     <div class="h-meta">
                       v{{ v.version }} • {{ timeAgo(v.created_at) }}
-                      <span v-if="v.label" class="h-status">🏷 {{ v.label }}</span>
+                      <span
+                        v-if="v.label"
+                        class="h-status"
+                      >🏷 {{ v.label }}</span>
                     </div>
                     <div style="display:flex; gap:4px;">
-                      <button class="btn btn-icon" title="Label / keep" @click.stop="labelVersion(v)">🏷</button>
-                      <button class="btn btn-icon" title="Restore this version" @click.stop="restoreVersion(v)">↩ Restore</button>
+                      <button
+                        class="btn btn-icon"
+                        title="Label / keep"
+                        @click.stop="labelVersion(v)"
+                      >
+                        🏷
+                      </button>
+                      <button
+                        class="btn btn-icon"
+                        title="Restore this version"
+                        @click.stop="restoreVersion(v)"
+                      >
+                        ↩ Restore
+                      </button>
                     </div>
                   </div>
                 </div>
-                <div v-if="!versionsLoading && versions.length === 0" class="empty">No saved versions yet</div>
+                <div
+                  v-if="!versionsLoading && versions.length === 0"
+                  class="empty"
+                >
+                  No saved versions yet
+                </div>
               </div>
             </div>
           </Transition>
         </div>
       </template>
 
-      <div v-else class="workflow-empty-state">
-        <div class="empty-icon">📂</div>
+      <div
+        v-else
+        class="workflow-empty-state"
+      >
+        <div class="empty-icon">
+          📂
+        </div>
         <h3>Select a workflow to start editing</h3>
         <p>Or create a new one using the button in the sidebar.</p>
-        <button class="btn btn-primary" @click="createNew">Create New Workflow</button>
+        <button
+          class="btn btn-primary"
+          @click="createNew"
+        >
+          Create New Workflow
+        </button>
       </div>
     </main>
   </div>

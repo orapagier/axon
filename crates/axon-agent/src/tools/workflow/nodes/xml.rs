@@ -91,7 +91,7 @@ fn read_attrs(e: &BytesStart) -> Result<Map<String, Value>, String> {
         let attr = attr.map_err(|e| format!("XML: attribute parse error: {e}"))?;
         let key = tag_name(attr.key.local_name().as_ref())?;
         let value = attr
-            .unescape_value()
+            .normalized_value(quick_xml::XmlVersion::Implicit1_0)
             .map_err(|e| format!("XML: attribute unescape error: {e}"))?
             .into_owned();
         m.insert(key, Value::String(value));
@@ -157,8 +157,26 @@ fn parse_element(reader: &mut Reader<&[u8]>, attrs: Map<String, Value>) -> Resul
                 children.push((name, build_value(child_attrs, String::new(), Vec::new())));
             }
             Event::Text(t) => {
-                let decoded = t.unescape().map_err(|e| format!("XML: parse error: {e}"))?;
+                // Entity/char refs (`&amp;`, `&#38;`) now arrive as separate
+                // `GeneralRef` events (quick-xml 0.41+), so Text content here
+                // never contains an escape sequence — no unescape needed.
+                let decoded = t.decode().map_err(|e| format!("XML: parse error: {e}"))?;
                 text.push_str(&decoded);
+            }
+            Event::GeneralRef(r) => {
+                if let Some(ch) = r
+                    .resolve_char_ref()
+                    .map_err(|e| format!("XML: parse error: {e}"))?
+                {
+                    text.push(ch);
+                } else {
+                    let name = r.decode().map_err(|e| format!("XML: parse error: {e}"))?;
+                    let resolved =
+                        quick_xml::escape::resolve_predefined_entity(&name).ok_or_else(|| {
+                            format!("XML: parse error: unrecognized entity reference '&{name};'")
+                        })?;
+                    text.push_str(resolved);
+                }
             }
             Event::CData(c) => {
                 text.push_str(&String::from_utf8_lossy(&c.into_inner()));
@@ -176,7 +194,12 @@ fn parse_element(reader: &mut Reader<&[u8]>, attrs: Map<String, Value>) -> Resul
 /// which reads the document off disk/base64 rather than a config expression.
 pub(crate) fn parse_document(xml_str: &str) -> Result<Value, String> {
     let mut reader = Reader::from_str(xml_str);
-    reader.config_mut().trim_text(true);
+    // trim_text(true) trims each Text *event* independently, which — since
+    // entity refs now split one logical text run into multiple Text events
+    // (quick-xml 0.41+) — eats the space on either side of an entity
+    // ("Tom &amp; Jerry" -> "Tom" + "&" + "Jerry", losing both spaces).
+    // Leading/trailing whitespace of the whole element is still stripped by
+    // `build_value`'s final `text.trim()`, so nothing is lost by leaving this off.
 
     loop {
         match reader

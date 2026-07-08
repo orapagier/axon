@@ -163,7 +163,10 @@ mod tests {
         assert_eq!(arr[0]["guid"], json!("https://example.test/first"));
         assert_eq!(arr[0]["categories"], json!(["rust", "backend"]));
         assert!(arr[0]["pubDate"].as_str().unwrap().contains("2025"));
-        assert!(arr[0]["isoDate"].as_str().unwrap().starts_with("2025-01-06"));
+        assert!(arr[0]["isoDate"]
+            .as_str()
+            .unwrap()
+            .starts_with("2025-01-06"));
     }
 
     // Atom entries map authors→creator and content→content (HTML body kept as-is).

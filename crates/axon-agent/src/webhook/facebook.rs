@@ -117,16 +117,15 @@ pub async fn fb_event(
     let creds = load_fb_creds();
 
     // HMAC signature validation
-    if !creds.app_secret.is_empty() {
-        let sig_header = headers
-            .get("x-hub-signature-256")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
+    let sig_header = headers
+        .get("x-hub-signature-256")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
 
-        if !verify_signature(&creds.app_secret, &body, sig_header) {
-            tracing::warn!("FB webhook: invalid HMAC signature");
-            return StatusCode::UNAUTHORIZED;
-        }
+    if !crate::webhook::signature::verify_meta_signature("FB", &creds.app_secret, &body, sig_header)
+    {
+        tracing::warn!("FB webhook: invalid HMAC signature");
+        return StatusCode::UNAUTHORIZED;
     }
 
     // Parse payload
@@ -534,27 +533,6 @@ async fn dispatch_facebook_workflows(
             tracing::error!("FB dispatch: failed to start workflow {workflow_id}: {e}");
         }
     }
-}
-
-// ── HMAC-SHA256 Signature Verification ───────────────────────────────────────
-
-fn verify_signature(app_secret: &str, body: &[u8], sig_header: &str) -> bool {
-    use hmac::{Hmac, Mac};
-    use sha2::Sha256;
-
-    let expected = match sig_header.strip_prefix("sha256=") {
-        Some(hex) => hex,
-        None => return false,
-    };
-
-    let mut mac = match Hmac::<Sha256>::new_from_slice(app_secret.as_bytes()) {
-        Ok(m) => m,
-        Err(_) => return false,
-    };
-    mac.update(body);
-
-    let computed = hex::encode(mac.finalize().into_bytes());
-    computed == expected
 }
 
 // ── Query notifications (used by internal tool) ──────────────────────────────

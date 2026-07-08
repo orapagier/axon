@@ -5,6 +5,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::time::Duration;
+use tracing::Instrument;
 
 // Per-node executors live in submodules; the engine's `execute_node_by_type`
 // dispatches to them. `nodes` is a child module so it can reach this module's
@@ -1131,15 +1132,22 @@ impl WorkflowEngine {
         single_node: bool,
         external_run_id: Option<String>,
     ) -> anyhow::Result<WorkflowRunResult> {
+        // Computed here (not left to run_inner's own fallback) so the span
+        // below always carries the real run id, including the freshly-generated
+        // case — every log line for this run's lifetime carries it automatically.
+        let run_id = external_run_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let span =
+            tracing::info_span!("workflow_run", run_id = %run_id, workflow_id = %workflow_id);
         Self::run_inner(
             workflow_id,
             state,
             trigger_source,
             target_node_id,
             single_node,
-            external_run_id,
+            Some(run_id),
             None,
         )
+        .instrument(span)
         .await
     }
 
@@ -1693,8 +1701,12 @@ impl WorkflowEngine {
                 // ancestors are never re-added to `ordered_results`. Merge reads
                 // this directly; every other node type flattens it via
                 // `primary_input` to resolve its primary input.
-                let direct_inputs =
-                    direct_predecessor_outputs(&current_id, &edges, &ordered_results, &node_results);
+                let direct_inputs = direct_predecessor_outputs(
+                    &current_id,
+                    &edges,
+                    &ordered_results,
+                    &node_results,
+                );
 
                 let (result, attempts): (Result<Value, String>, u32) = if can_iterate {
                     if let Some(source_node_id) = iteration_source_id {
@@ -2959,8 +2971,10 @@ impl WorkflowEngine {
                         return;
                     }
                 };
+                let span = tracing::info_span!("workflow_run", run_id = %rid, workflow_id = %wf);
                 if let Err(e) =
                     Self::run_inner(&wf, &s, &src, None, false, Some(rid.clone()), Some(resume))
+                        .instrument(span)
                         .await
                 {
                     tracing::error!("Resumed workflow run {} failed: {}", rid, e);
@@ -3137,8 +3151,11 @@ impl WorkflowEngine {
                     return;
                 }
             };
+            let span = tracing::info_span!("workflow_run", run_id = %rid, workflow_id = %wf);
             if let Err(e) =
-                Self::run_inner(&wf, &s, &src, None, false, Some(rid.clone()), Some(resume)).await
+                Self::run_inner(&wf, &s, &src, None, false, Some(rid.clone()), Some(resume))
+                    .instrument(span)
+                    .await
             {
                 tracing::error!("Resumed workflow run {} failed: {}", rid, e);
                 if let Ok(conn) = s.db.get() {
@@ -4374,7 +4391,12 @@ mod multi_input_plumbing_tests {
             nr("b", 2, "success", json!({ "side": "right" })),
             nr("merge", 3, "success", json!({})), // the merge itself, ignored
         ];
-        let out = direct_predecessor_outputs("merge", &edges, &results, &std::collections::HashMap::new());
+        let out = direct_predecessor_outputs(
+            "merge",
+            &edges,
+            &results,
+            &std::collections::HashMap::new(),
+        );
         assert_eq!(out["input_main_0"], vec![json!({ "side": "left" })]);
         assert_eq!(out["input_main_1"], vec![json!({ "side": "right" })]);
     }
@@ -4396,7 +4418,12 @@ mod multi_input_plumbing_tests {
                 json!({ "skipped": true, "reason": "Branch not taken" }),
             ),
         ];
-        let out = direct_predecessor_outputs("merge", &edges, &results, &std::collections::HashMap::new());
+        let out = direct_predecessor_outputs(
+            "merge",
+            &edges,
+            &results,
+            &std::collections::HashMap::new(),
+        );
         assert_eq!(out["input_main_0"], vec![json!({ "kept": true })]);
         assert!(
             !out.contains_key("input_main_1"),
@@ -4415,7 +4442,12 @@ mod multi_input_plumbing_tests {
         ];
         // `stale` has an edge but produced no result this run (cache-only).
         let results = vec![nr("a", 1, "success", json!({ "kept": true }))];
-        let out = direct_predecessor_outputs("merge", &edges, &results, &std::collections::HashMap::new());
+        let out = direct_predecessor_outputs(
+            "merge",
+            &edges,
+            &results,
+            &std::collections::HashMap::new(),
+        );
         assert_eq!(out["input_main_0"], vec![json!({ "kept": true })]);
         assert!(!out.contains_key("input_main_1"));
     }
@@ -4429,7 +4461,10 @@ mod multi_input_plumbing_tests {
         let edges = vec![edge("a", "merge", Some("input_main_0"))];
         let results: Vec<NodeResult> = vec![]; // nothing ran this run except the target
         let mut cache = std::collections::HashMap::new();
-        cache.insert("a".to_string(), nr("a", 1, "success", json!({ "cached": true })));
+        cache.insert(
+            "a".to_string(),
+            nr("a", 1, "success", json!({ "cached": true })),
+        );
         let out = direct_predecessor_outputs("merge", &edges, &results, &cache);
         assert_eq!(out["input_main_0"], vec![json!({ "cached": true })]);
     }
@@ -4467,7 +4502,12 @@ mod multi_input_plumbing_tests {
             nr("late", 5, "success", json!({ "n": 2 })),
             nr("early", 1, "success", json!({ "n": 1 })),
         ];
-        let out = direct_predecessor_outputs("merge", &edges, &results, &std::collections::HashMap::new());
+        let out = direct_predecessor_outputs(
+            "merge",
+            &edges,
+            &results,
+            &std::collections::HashMap::new(),
+        );
         assert_eq!(
             out["input_main_0"],
             vec![json!({ "n": 1 }), json!({ "n": 2 })],
@@ -4485,7 +4525,12 @@ mod multi_input_plumbing_tests {
             nr("a", 1, "success", json!({ "a": 1 })),
             nr("b", 2, "success", json!({ "b": 2 })),
         ];
-        let out = direct_predecessor_outputs("merge", &edges, &results, &std::collections::HashMap::new());
+        let out = direct_predecessor_outputs(
+            "merge",
+            &edges,
+            &results,
+            &std::collections::HashMap::new(),
+        );
         assert_eq!(
             out["input_main_0"],
             vec![json!({ "a": 1 }), json!({ "b": 2 })]

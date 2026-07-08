@@ -1089,12 +1089,12 @@ pub(crate) async fn run_inner(
         // model's thinking_mode opts in. Applied only on the capable/correction
         // phase where deeper planning pays off. Set "off" to disable.
         let reasoning_cfg = state.settings.get_str("agent.reasoning_effort", "medium");
-        let reasoning_effort = if !reasoning_cfg.is_empty() && reasoning_cfg != "off" && is_complex_turn
-        {
-            Some(reasoning_cfg)
-        } else {
-            None
-        };
+        let reasoning_effort =
+            if !reasoning_cfg.is_empty() && reasoning_cfg != "off" && is_complex_turn {
+                Some(reasoning_cfg)
+            } else {
+                None
+            };
         // After a false refusal, force the model to actually call a tool instead
         // of re-pleading via prompt — but only when tools are available.
         let tool_choice = if force_tool_use_next && !filtered.is_empty() {

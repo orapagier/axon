@@ -221,7 +221,10 @@ pub(crate) fn execute(config: &Value, input: &Value) -> Result<Value, String> {
 
         "addSubtract" => {
             let dt = parse_in_tz(config, "value", &tz)?;
-            let unit = config.get("unit").and_then(|v| v.as_str()).unwrap_or("days");
+            let unit = config
+                .get("unit")
+                .and_then(|v| v.as_str())
+                .unwrap_or("days");
             let amount = config
                 .get("duration")
                 .map(|v| val_to_number(v).unwrap_or(0.0))
@@ -234,9 +237,10 @@ pub(crate) fn execute(config: &Value, input: &Value) -> Result<Value, String> {
                 "quarters" => shift_months(&dt, (signed * 3.0).round() as i64),
                 "months" => shift_months(&dt, signed.round() as i64),
                 _ => {
-                    let secs = unit_seconds(unit)
-                        .ok_or_else(|| format!("Unknown unit: {unit}"))?;
-                    dt.checked_add_signed(Duration::milliseconds((signed * secs * 1000.0).round() as i64))
+                    let secs = unit_seconds(unit).ok_or_else(|| format!("Unknown unit: {unit}"))?;
+                    dt.checked_add_signed(Duration::milliseconds(
+                        (signed * secs * 1000.0).round() as i64
+                    ))
                 }
             }
             .ok_or_else(|| "Date arithmetic overflowed".to_string())?;
@@ -248,14 +252,16 @@ pub(crate) fn execute(config: &Value, input: &Value) -> Result<Value, String> {
         "diff" => {
             let start = parse_in_tz(config, "startDate", &tz)?;
             let end = parse_in_tz(config, "endDate", &tz)?;
-            let unit = config.get("unit").and_then(|v| v.as_str()).unwrap_or("days");
+            let unit = config
+                .get("unit")
+                .and_then(|v| v.as_str())
+                .unwrap_or("days");
             let value = match unit {
                 "months" => json!(full_months_between(&start, &end)),
                 "quarters" => json!(full_months_between(&start, &end) / 3),
                 "years" => json!(full_months_between(&start, &end) / 12),
                 _ => {
-                    let secs = unit_seconds(unit)
-                        .ok_or_else(|| format!("Unknown unit: {unit}"))?;
+                    let secs = unit_seconds(unit).ok_or_else(|| format!("Unknown unit: {unit}"))?;
                     let ms = end.signed_duration_since(start).num_milliseconds() as f64;
                     json!(ms / 1000.0 / secs)
                 }
@@ -265,7 +271,10 @@ pub(crate) fn execute(config: &Value, input: &Value) -> Result<Value, String> {
 
         "extract" => {
             let dt = parse_in_tz(config, "value", &tz)?;
-            let part = config.get("part").and_then(|v| v.as_str()).unwrap_or("year");
+            let part = config
+                .get("part")
+                .and_then(|v| v.as_str())
+                .unwrap_or("year");
             let out = extract_part(&dt, part)?;
             Ok(wrap(config, input, part, out))
         }

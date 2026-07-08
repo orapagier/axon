@@ -31,7 +31,12 @@ function onEdgeClick(evt) {
 </script>
 
 <template>
-  <BaseEdge :id="id" :path="path[0]" :marker-end="markerEnd" :style="style" />
+  <BaseEdge
+    :id="id"
+    :path="path[0]"
+    :marker-end="markerEnd"
+    :style="style"
+  />
 
   <EdgeLabelRenderer>
     <div
@@ -42,7 +47,10 @@ function onEdgeClick(evt) {
       }"
       class="nodrag nopan"
     >
-      <button class="edge-button" @click="onEdgeClick">
+      <button
+        class="edge-button"
+        @click="onEdgeClick"
+      >
         <span class="plus-icon">+</span>
       </button>
     </div>

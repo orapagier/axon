@@ -3,6 +3,20 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!--
+    Narrows the blast radius of an XSS: the dashboard stores its master key in
+    localStorage (lib/api.js), so without a CSP a successful injection could
+    freely exfiltrate it to any origin. script-src stays strict ('self' only);
+    style-src allows 'unsafe-inline' because Vue's :style bindings (canvas node
+    positioning, etc.) render as inline style attributes — a real requirement,
+    not laziness, and a far smaller XSS vector than inline script. connect-src
+    covers same-origin fetch/XHR plus the dashboard's WebSocket chat (ws:/wss:).
+    frame-ancestors is deliberately omitted: browsers ignore it when set via
+    <meta> (silently, or as a console warning) — it only takes effect as a
+    real HTTP response header, which a reverse proxy (see deploy/Caddyfile.example)
+    would need to add.
+  -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self';" />
   <title>Axon Agent</title>
   <link rel="icon" type="image/png" href="/favicon.png" />
 </head>

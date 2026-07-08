@@ -1,14 +1,31 @@
 use super::{api, media, ws};
 use crate::state::AppState;
-use axum::{routing::get, Router};
+use axum::{extract::State, http::StatusCode, routing::get, Router};
+use std::sync::Arc;
+use tower_governor::{
+    governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor, GovernorLayer,
+};
 use tower_http::services::{ServeDir, ServeFile};
 
 async fn health_check() -> &'static str {
     "OK"
 }
 
-async fn ready_check() -> &'static str {
-    "READY"
+/// Readiness probe: unlike `/health` (liveness — "is the process alive"),
+/// this actually checks the dependency that matters most — can we still
+/// reach the database — so a load balancer stops routing traffic here
+/// instead of piling up requests against a wedged DB pool.
+async fn ready_check(State(state): State<AppState>) -> impl axum::response::IntoResponse {
+    let db = state.db.clone();
+    let probe = tokio::task::spawn_blocking(move || {
+        db.get()?.query_row("SELECT 1", [], |_| Ok(()))?;
+        anyhow::Ok(())
+    });
+
+    match tokio::time::timeout(std::time::Duration::from_secs(2), probe).await {
+        Ok(Ok(Ok(()))) => (StatusCode::OK, "READY"),
+        _ => (StatusCode::SERVICE_UNAVAILABLE, "NOT READY"),
+    }
 }
 
 pub fn build_router(state: AppState) -> Router {
@@ -265,7 +282,28 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/health", get(crate::observability::health_json))
         .layer(axum::middleware::from_fn(super::auth::require_auth));
 
-    Router::new()
+    // Rate limiting: scoped to the routes require_auth doesn't cover (no master
+    // key to already gate abuse) — health/readiness probes and every inbound
+    // webhook. Per-IP token bucket; generous enough not to choke a legitimate
+    // burst (Facebook/WhatsApp/GitHub redelivery, an LB's health poller) while
+    // still bounding a flood. `protected` and the other public routes
+    // (/auth/callback, /media/*, /ws, static assets) are deliberately not
+    // wrapped — they're either already auth-gated or not attacker-facing in
+    // the same way.
+    let governor_conf = Arc::new(
+        GovernorConfigBuilder::default()
+            .per_second(4)
+            .burst_size(30)
+            // Deploys typically sit behind the Caddy reverse proxy (see
+            // deploy/Caddyfile.example) — the raw peer IP would be Caddy's
+            // loopback address, collapsing every client into one bucket.
+            // SmartIpKeyExtractor reads X-Forwarded-For/X-Real-IP/Forwarded
+            // first and only falls back to peer IP when none are present.
+            .key_extractor(SmartIpKeyExtractor)
+            .finish()
+            .expect("static rate-limit config (per_second/burst_size > 0) is always valid"),
+    );
+    let rate_limited = Router::new()
         .route("/health", get(health_check))
         .route("/ready", get(ready_check))
         // Public webhook endpoints (no auth — Facebook can't authenticate)
@@ -307,6 +345,12 @@ pub fn build_router(state: AppState) -> Router {
             get(crate::webhook::external::handle_reject)
                 .post(crate::webhook::external::handle_reject),
         )
+        .layer(GovernorLayer {
+            config: governor_conf,
+        });
+
+    Router::new()
+        .merge(rate_limited)
         // OAuth callback — Google/Microsoft/Facebook redirect here after login
         .route("/auth/:service/callback", get(api::oauth_callback))
         // Temporary local-media for Instagram publishing (Meta fetches these;
@@ -328,6 +372,11 @@ pub fn build_router(state: AppState) -> Router {
         // server-to-server. A permissive policy only invited cross-origin
         // requests from arbitrary sites.
         .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024))
+        // Automatic per-request span (method, URI, matched route, status,
+        // latency) around every request — the missing piece for correlating
+        // log lines to a single request, especially once AXON_LOG_FORMAT=json
+        // is on and lines are consumed by a log aggregator.
+        .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)
 }
 

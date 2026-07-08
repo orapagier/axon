@@ -322,8 +322,32 @@ pub async fn whatsapp_webhook_verify(
 
 pub async fn whatsapp_webhook_messages(
     State(state): State<AppState>,
-    Json(payload): Json<Value>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
 ) -> impl axum::response::IntoResponse {
+    let creds = crate::webhook::facebook::load_fb_creds();
+    let sig_header = headers
+        .get("x-hub-signature-256")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if !crate::webhook::signature::verify_meta_signature(
+        "WhatsApp",
+        &creds.app_secret,
+        &body,
+        sig_header,
+    ) {
+        tracing::warn!("WhatsApp webhook: invalid HMAC signature");
+        return axum::http::StatusCode::UNAUTHORIZED;
+    }
+
+    let payload: Value = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!("WhatsApp webhook: invalid JSON: {}", e);
+            return axum::http::StatusCode::BAD_REQUEST;
+        }
+    };
+
     let workflows = {
         let Ok(conn) = state.db.get() else {
             return axum::http::StatusCode::INTERNAL_SERVER_ERROR;

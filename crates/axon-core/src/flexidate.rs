@@ -66,13 +66,7 @@ const DATE_PATTERNS: &[&str] = &[
 /// fraction, so the first entry covers plain `HH:MM:SS`. There are no
 /// bare-hour `%I%p` entries because chrono needs a minute to resolve a time;
 /// normalization rewrites "3pm" to "3:00PM" instead.
-const TIME_PATTERNS: &[&str] = &[
-    "%H:%M:%S%.f",
-    "%H:%M",
-    "%I:%M:%S %p",
-    "%I:%M %p",
-    "%I:%M%p",
-];
+const TIME_PATTERNS: &[&str] = &["%H:%M:%S%.f", "%H:%M", "%I:%M:%S %p", "%I:%M %p", "%I:%M%p"];
 
 /// Offset-carrying shapes that RFC 3339 parsing rejects: colonless offsets
 /// ("+0800"), a space before the offset, and JS `Date.toString()` ("GMT+0800",
@@ -89,8 +83,23 @@ const ZONED_PATTERNS: &[&str] = &[
 ];
 
 const WEEKDAYS: &[&str] = &[
-    "mon", "tue", "tues", "wed", "thu", "thur", "thurs", "fri", "sat", "sun", "monday", "tuesday",
-    "wednesday", "thursday", "friday", "saturday", "sunday",
+    "mon",
+    "tue",
+    "tues",
+    "wed",
+    "thu",
+    "thur",
+    "thurs",
+    "fri",
+    "sat",
+    "sun",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
 ];
 
 /// Parse any reasonable datetime representation. Returns `None` only when the
@@ -118,7 +127,9 @@ pub fn parse_flexible(input: &str) -> Option<FlexiDateTime> {
     // Bare Unix timestamp. Non-numeric strings fall through ("2026-07-05"
     // fails the f64 parse; "20260705" parses but sits below the epoch floor
     // and is caught by %Y%m%d later).
-    if s.chars().all(|c| c.is_ascii_digit() || matches!(c, '.' | '+' | '-')) {
+    if s.chars()
+        .all(|c| c.is_ascii_digit() || matches!(c, '.' | '+' | '-'))
+    {
         if let Some(f) = s.parse::<f64>().ok().and_then(epoch_to_flexi) {
             return Some(f);
         }
@@ -289,7 +300,10 @@ fn normalize_ampm(token: &str) -> String {
         "pm" | "p.m." | "p.m" => return "PM".into(),
         _ => {}
     }
-    if let Some(prefix) = lower.strip_suffix("am").or_else(|| lower.strip_suffix("pm")) {
+    if let Some(prefix) = lower
+        .strip_suffix("am")
+        .or_else(|| lower.strip_suffix("pm"))
+    {
         if !prefix.is_empty() && prefix.chars().all(|c| c.is_ascii_digit() || c == ':') {
             let split = token.len() - 2;
             let marker = token[split..].to_ascii_uppercase();
@@ -357,18 +371,36 @@ mod tests {
 
     #[test]
     fn naive_iso_and_sheets_style() {
-        assert_eq!(parse_flexible("2026-07-05T09:00:00"), Some(naive("2026-07-05T09:00:00")));
-        assert_eq!(parse_flexible("2026-07-05T09:00"), Some(naive("2026-07-05T09:00:00")));
-        assert_eq!(parse_flexible("2026-07-05 09:00:00"), Some(naive("2026-07-05T09:00:00")));
-        assert_eq!(parse_flexible("2026-07-05 09:00"), Some(naive("2026-07-05T09:00:00")));
+        assert_eq!(
+            parse_flexible("2026-07-05T09:00:00"),
+            Some(naive("2026-07-05T09:00:00"))
+        );
+        assert_eq!(
+            parse_flexible("2026-07-05T09:00"),
+            Some(naive("2026-07-05T09:00:00"))
+        );
+        assert_eq!(
+            parse_flexible("2026-07-05 09:00:00"),
+            Some(naive("2026-07-05T09:00:00"))
+        );
+        assert_eq!(
+            parse_flexible("2026-07-05 09:00"),
+            Some(naive("2026-07-05T09:00:00"))
+        );
     }
 
     #[test]
     fn slash_dates_prefer_month_first_but_accept_day_first() {
         assert_eq!(parse_flexible("07/05/2026"), Some(date("2026-07-05")));
         assert_eq!(parse_flexible("25/12/2026"), Some(date("2026-12-25")));
-        assert_eq!(parse_flexible("07/05/2026 3:00 PM"), Some(naive("2026-07-05T15:00:00")));
-        assert_eq!(parse_flexible("07/05/2026 15:00"), Some(naive("2026-07-05T15:00:00")));
+        assert_eq!(
+            parse_flexible("07/05/2026 3:00 PM"),
+            Some(naive("2026-07-05T15:00:00"))
+        );
+        assert_eq!(
+            parse_flexible("07/05/2026 15:00"),
+            Some(naive("2026-07-05T15:00:00"))
+        );
     }
 
     #[test]
@@ -417,7 +449,10 @@ mod tests {
 
     #[test]
     fn to_rfc3339_applies_default_offset_only_when_naive() {
-        assert_eq!(date("2026-07-05").to_rfc3339("+08:00"), "2026-07-05T00:00:00+08:00");
+        assert_eq!(
+            date("2026-07-05").to_rfc3339("+08:00"),
+            "2026-07-05T00:00:00+08:00"
+        );
         assert_eq!(
             naive("2026-07-05T09:00:00").to_rfc3339("+08:00"),
             "2026-07-05T09:00:00+08:00"

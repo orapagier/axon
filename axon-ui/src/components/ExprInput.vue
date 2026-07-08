@@ -60,19 +60,36 @@ function onDrop(e) {
       @dragover.prevent
       @focus="focused = true"
       @blur="focused = false"
-    />
-    <button type="button" class="btn-fx active" title="Use a fixed value" @click="emit('revert')">ƒx</button>
+    >
+    <button
+      type="button"
+      class="btn-fx active"
+      title="Use a fixed value"
+      @click="emit('revert')"
+    >
+      ƒx
+    </button>
 
     <!-- Focused RESULT popover -->
     <Transition name="fade">
-      <div v-if="focused && isExpr" class="nd-dropdown-preview">
-        <div class="fp-header"><span>RESULT</span></div>
-        <div class="fp-body">{{ resolved ?? '(Waiting for data…)' }}</div>
+      <div
+        v-if="focused && isExpr"
+        class="nd-dropdown-preview"
+      >
+        <div class="fp-header">
+          <span>RESULT</span>
+        </div>
+        <div class="fp-body">
+          {{ resolved ?? '(Waiting for data…)' }}
+        </div>
       </div>
     </Transition>
 
     <!-- Persistent resolved value (shown when not focused) -->
-    <div v-if="isExpr && !focused" class="exp-resolved">
+    <div
+      v-if="isExpr && !focused"
+      class="exp-resolved"
+    >
       <span class="exp-resolved-icon">=</span>
       <span class="exp-resolved-val">{{ resolved ?? '(run previous node to preview)' }}</span>
     </div>

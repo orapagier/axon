@@ -39,7 +39,10 @@ const scaledGap = computed(() => {
 </script>
 
 <template>
-  <div class="canvas-background" :class="{ striped: props.striped }">
+  <div
+    class="canvas-background"
+    :class="{ striped: props.striped }"
+  >
     <!-- Dots Pattern -->
     <svg
       class="dots-pattern"
@@ -65,7 +68,11 @@ const scaledGap = computed(() => {
           />
         </pattern>
       </defs>
-      <rect width="100%" height="100%" fill="url(#dotPattern)" />
+      <rect
+        width="100%"
+        height="100%"
+        fill="url(#dotPattern)"
+      />
     </svg>
 
     <!-- Grid Pattern (visible when zoomed in) -->
@@ -94,12 +101,23 @@ const scaledGap = computed(() => {
           />
         </pattern>
       </defs>
-      <rect width="100%" height="100%" fill="url(#gridPattern)" />
+      <rect
+        width="100%"
+        height="100%"
+        fill="url(#gridPattern)"
+      />
     </svg>
 
     <!-- Striped Pattern (for read-only mode) -->
-    <div v-if="striped" class="striped-overlay">
-      <svg width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
+    <div
+      v-if="striped"
+      class="striped-overlay"
+    >
+      <svg
+        width="100%"
+        height="100%"
+        xmlns="http://www.w3.org/2000/svg"
+      >
         <defs>
           <pattern
             id="stripePattern"
@@ -119,7 +137,11 @@ const scaledGap = computed(() => {
             />
           </pattern>
         </defs>
-        <rect width="100%" height="100%" fill="url(#stripePattern)" />
+        <rect
+          width="100%"
+          height="100%"
+          fill="url(#stripePattern)"
+        />
       </svg>
     </div>
   </div>

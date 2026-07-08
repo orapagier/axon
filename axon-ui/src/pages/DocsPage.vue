@@ -840,8 +840,13 @@ onBeforeUnmount(() => {
                 v-model="searchQuery"
                 type="text"
                 placeholder="Search pages, endpoints, workflows, tasks, settings..."
-              />
-              <button type="button" class="btn docs-clear-btn" @click="clearSearch" :disabled="!searchQuery">
+              >
+              <button
+                type="button"
+                class="btn docs-clear-btn"
+                :disabled="!searchQuery"
+                @click="clearSearch"
+              >
                 Clear
               </button>
             </div>
@@ -852,7 +857,10 @@ onBeforeUnmount(() => {
               <span v-else>{{ DOC_SECTIONS.length }} total sections</span>
             </div>
 
-            <div v-if="searchTokens.length && quickJumpSections.length" class="docs-jump-chips">
+            <div
+              v-if="searchTokens.length && quickJumpSections.length"
+              class="docs-jump-chips"
+            >
               <button
                 v-for="section in quickJumpSections"
                 :key="`jump-${section.id}`"
@@ -901,39 +909,73 @@ onBeforeUnmount(() => {
                 <p>{{ section.summary }}</p>
               </div>
               <div class="docs-tag-row">
-                <span v-for="tag in section.tags" :key="`${section.id}-${tag}`" class="docs-tag">
+                <span
+                  v-for="tag in section.tags"
+                  :key="`${section.id}-${tag}`"
+                  class="docs-tag"
+                >
                   {{ tag }}
                 </span>
               </div>
             </header>
 
             <div class="docs-section-body">
-              <template v-for="(block, blockIndex) in section.blocks" :key="`${section.id}-${blockIndex}`">
-                <p v-if="block.type === 'paragraph'" class="docs-paragraph">{{ block.text }}</p>
+              <template
+                v-for="(block, blockIndex) in section.blocks"
+                :key="`${section.id}-${blockIndex}`"
+              >
+                <p
+                  v-if="block.type === 'paragraph'"
+                  class="docs-paragraph"
+                >
+                  {{ block.text }}
+                </p>
 
-                <div v-else-if="block.type === 'bullet'" class="docs-bullet-block">
-                  <h3 v-if="block.title">{{ block.title }}</h3>
+                <div
+                  v-else-if="block.type === 'bullet'"
+                  class="docs-bullet-block"
+                >
+                  <h3 v-if="block.title">
+                    {{ block.title }}
+                  </h3>
                   <ul>
-                    <li v-for="(item, itemIndex) in block.items" :key="`${section.id}-${blockIndex}-${itemIndex}`">
+                    <li
+                      v-for="(item, itemIndex) in block.items"
+                      :key="`${section.id}-${blockIndex}-${itemIndex}`"
+                    >
                       {{ item }}
                     </li>
                   </ul>
                 </div>
 
-                <div v-else-if="block.type === 'table'" class="docs-table-block">
-                  <h3 v-if="block.title">{{ block.title }}</h3>
+                <div
+                  v-else-if="block.type === 'table'"
+                  class="docs-table-block"
+                >
+                  <h3 v-if="block.title">
+                    {{ block.title }}
+                  </h3>
                   <div class="docs-table-wrap">
                     <table>
                       <thead>
                         <tr>
-                          <th v-for="(column, columnIndex) in block.columns" :key="`${section.id}-${blockIndex}-head-${columnIndex}`">
+                          <th
+                            v-for="(column, columnIndex) in block.columns"
+                            :key="`${section.id}-${blockIndex}-head-${columnIndex}`"
+                          >
                             {{ column }}
                           </th>
                         </tr>
                       </thead>
                       <tbody>
-                        <tr v-for="(row, rowIndex) in block.rows" :key="`${section.id}-${blockIndex}-row-${rowIndex}`">
-                          <td v-for="(cell, cellIndex) in row" :key="`${section.id}-${blockIndex}-row-${rowIndex}-cell-${cellIndex}`">
+                        <tr
+                          v-for="(row, rowIndex) in block.rows"
+                          :key="`${section.id}-${blockIndex}-row-${rowIndex}`"
+                        >
+                          <td
+                            v-for="(cell, cellIndex) in row"
+                            :key="`${section.id}-${blockIndex}-row-${rowIndex}-cell-${cellIndex}`"
+                          >
                             {{ cell }}
                           </td>
                         </tr>
@@ -942,12 +984,20 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
 
-                <div v-else-if="block.type === 'code'" class="docs-code-block">
-                  <h3 v-if="block.title">{{ block.title }}</h3>
+                <div
+                  v-else-if="block.type === 'code'"
+                  class="docs-code-block"
+                >
+                  <h3 v-if="block.title">
+                    {{ block.title }}
+                  </h3>
                   <pre><code>{{ block.code }}</code></pre>
                 </div>
 
-                <div v-else-if="block.type === 'note'" class="docs-note-block">
+                <div
+                  v-else-if="block.type === 'note'"
+                  class="docs-note-block"
+                >
                   {{ block.text }}
                 </div>
               </template>
@@ -955,10 +1005,19 @@ onBeforeUnmount(() => {
           </article>
         </template>
 
-        <section v-else class="docs-empty-state">
+        <section
+          v-else
+          class="docs-empty-state"
+        >
           <h2>No matching sections</h2>
           <p>Try broader keywords, shorter terms, or clear search to browse the complete guide.</p>
-          <button type="button" class="btn docs-clear-btn" @click="clearSearch">Reset Search</button>
+          <button
+            type="button"
+            class="btn docs-clear-btn"
+            @click="clearSearch"
+          >
+            Reset Search
+          </button>
         </section>
       </div>
     </section>

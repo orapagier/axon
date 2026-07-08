@@ -82,22 +82,48 @@ function fullTime(ts) {
 </script>
 
 <template>
-  <div class="notif-bell" ref="rootEl">
+  <div
+    ref="rootEl"
+    class="notif-bell"
+  >
     <button
       class="shell-icon-btn notif-trigger"
       type="button"
-      @click="toggleOpen"
       title="Notifications"
+      @click="toggleOpen"
     >
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M6 10a6 6 0 1 1 12 0c0 3.4 1 5.2 1.8 6.2.3.4 0 1-.5 1H4.7c-.5 0-.8-.6-.5-1C5 15.2 6 13.4 6 10Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
-        <path d="M9.5 19.5a2.5 2.5 0 0 0 5 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+      <svg
+        viewBox="0 0 24 24"
+        aria-hidden="true"
+      >
+        <path
+          d="M6 10a6 6 0 1 1 12 0c0 3.4 1 5.2 1.8 6.2.3.4 0 1-.5 1H4.7c-.5 0-.8-.6-.5-1C5 15.2 6 13.4 6 10Z"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        />
+        <path
+          d="M9.5 19.5a2.5 2.5 0 0 0 5 0"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+        />
       </svg>
-      <span v-if="unreadCount > 0" class="notif-badge">{{ badgeLabel }}</span>
+      <span
+        v-if="unreadCount > 0"
+        class="notif-badge"
+      >{{ badgeLabel }}</span>
     </button>
 
     <Transition name="notif-pop">
-      <div v-if="open" class="notif-panel" role="menu">
+      <div
+        v-if="open"
+        class="notif-panel"
+        role="menu"
+      >
         <div class="notif-panel-header">
           <span class="notif-panel-title">Notifications</span>
           <div class="notif-panel-actions">
@@ -120,11 +146,17 @@ function fullTime(ts) {
           </div>
         </div>
 
-        <div v-if="notifications.length === 0" class="notif-empty">
+        <div
+          v-if="notifications.length === 0"
+          class="notif-empty"
+        >
           No notifications yet.
         </div>
 
-        <div v-else class="notif-list">
+        <div
+          v-else
+          class="notif-list"
+        >
           <div
             v-for="n in notifications"
             :key="n.id"
@@ -132,9 +164,14 @@ function fullTime(ts) {
             :class="{ unread: !n.read, error: !n.ok }"
             @click="openNotification(n)"
           >
-            <span class="notif-dot" aria-hidden="true"></span>
+            <span
+              class="notif-dot"
+              aria-hidden="true"
+            />
             <div class="notif-row-body">
-              <p class="notif-row-msg">{{ n.msg }}</p>
+              <p class="notif-row-msg">
+                {{ n.msg }}
+              </p>
               <span class="notif-row-time">{{ timeAgo(n.ts) }}</span>
             </div>
             <button
@@ -143,8 +180,17 @@ function fullTime(ts) {
               title="Delete"
               @click="removeOne($event, n.id)"
             >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M18 6 6 18M6 6l12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+              <svg
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <path
+                  d="M18 6 6 18M6 6l12 12"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                />
               </svg>
             </button>
           </div>
@@ -154,13 +200,20 @@ function fullTime(ts) {
 
     <Modal
       :model-value="!!activeNotification"
-      @update:modelValue="closeDetail"
       title="Notification"
       max-width="480px"
+      @update:model-value="closeDetail"
     >
       <template v-if="activeNotification">
-        <p class="notif-detail-time">{{ fullTime(activeNotification.ts) }}</p>
-        <p class="notif-detail-msg" :class="{ error: !activeNotification.ok }">{{ activeNotification.msg }}</p>
+        <p class="notif-detail-time">
+          {{ fullTime(activeNotification.ts) }}
+        </p>
+        <p
+          class="notif-detail-msg"
+          :class="{ error: !activeNotification.ok }"
+        >
+          {{ activeNotification.msg }}
+        </p>
       </template>
     </Modal>
   </div>

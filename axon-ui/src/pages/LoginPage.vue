@@ -40,25 +40,36 @@ async function handleLogin() {
   <div class="login-page">
     <div class="login-card premium-card">
       <div class="login-header">
-        <img src="/favicon.png" alt="Axon" class="login-logo" />
+        <img
+          src="/favicon.png"
+          alt="Axon"
+          class="login-logo"
+        >
         <h1>AXON</h1>
         <p>Secure access to your agent workspace</p>
       </div>
 
-      <form @submit.prevent="handleLogin" class="login-form">
+      <form
+        class="login-form"
+        @submit.prevent="handleLogin"
+      >
         <div class="form-group-modern">
           <label>Master Access Key</label>
           <input
-            type="password"
             v-model="masterKey"
+            type="password"
             class="premium-input"
             placeholder="Paste your master key"
             required
             autofocus
-          />
+          >
         </div>
 
-        <button type="submit" class="btn btn-save login-btn" :disabled="loading">
+        <button
+          type="submit"
+          class="btn btn-save login-btn"
+          :disabled="loading"
+        >
           {{ loading ? 'Authenticating...' : 'Enter Dashboard' }}
         </button>
       </form>

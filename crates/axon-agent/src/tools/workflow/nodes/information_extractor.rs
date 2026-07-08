@@ -345,10 +345,7 @@ mod tests {
     #[test]
     fn coerce_type_array_and_object_pass_through() {
         assert_eq!(coerce_type(json!([1, 2, 3]), "array"), json!([1, 2, 3]));
-        assert_eq!(
-            coerce_type(json!({ "a": 1 }), "object"),
-            json!({ "a": 1 })
-        );
+        assert_eq!(coerce_type(json!({ "a": 1 }), "object"), json!({ "a": 1 }));
     }
 
     #[test]

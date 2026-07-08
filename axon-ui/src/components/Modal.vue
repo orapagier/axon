@@ -46,12 +46,15 @@ onUnmounted(() => {
       <div
         v-if="modelValue"
         class="modal-overlay open"
-        @click="onOverlayClick"
         role="dialog"
         aria-modal="true"
         :aria-label="title"
+        @click="onOverlayClick"
       >
-        <div class="modal" :style="{ maxWidth: maxWidth }">
+        <div
+          class="modal"
+          :style="{ maxWidth: maxWidth }"
+        >
           <h3>{{ title }}</h3>
           <slot />
         </div>

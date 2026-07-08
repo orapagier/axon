@@ -470,15 +470,37 @@ watch(disabled, (newVal) => {
 <template>
   <div class="chat-workspace">
     <aside class="conv-pane">
-      <button class="conv-new" type="button" @click="newChat" title="Start a new conversation">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-          <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+      <button
+        class="conv-new"
+        type="button"
+        title="Start a new conversation"
+        @click="newChat"
+      >
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+          aria-hidden="true"
+        >
+          <path
+            d="M12 5v14M5 12h14"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+          />
         </svg>
         <span>New chat</span>
       </button>
 
       <div class="conv-list">
-        <p v-if="conversations.length === 0" class="conv-empty">No conversations yet.</p>
+        <p
+          v-if="conversations.length === 0"
+          class="conv-empty"
+        >
+          No conversations yet.
+        </p>
         <div
           v-for="c in conversations"
           :key="c.id"
@@ -489,8 +511,8 @@ watch(disabled, (newVal) => {
           <input
             v-if="renamingId === c.id"
             ref="renameEl"
-            class="conv-rename"
             v-model="renameText"
+            class="conv-rename"
             maxlength="60"
             @click.stop
             @dblclick.stop
@@ -498,21 +520,34 @@ watch(disabled, (newVal) => {
             @keydown.enter.prevent="commitRename(c)"
             @keydown.esc.prevent="cancelRename"
             @blur="commitRename(c)"
-          />
+          >
           <span
             v-else
             class="conv-title"
-            @dblclick.stop="startRename(c)"
             title="Double-click to rename"
+            @dblclick.stop="startRename(c)"
           >{{ c.title || 'New chat' }}</span>
           <button
             class="conv-del"
             type="button"
-            @click.stop="removeConversation(c.id)"
             title="Delete conversation"
+            @click.stop="removeConversation(c.id)"
           >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-              <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+              aria-hidden="true"
+            >
+              <path
+                d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"
+                stroke="currentColor"
+                stroke-width="1.7"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
             </svg>
           </button>
         </div>
@@ -520,10 +555,20 @@ watch(disabled, (newVal) => {
     </aside>
 
     <div class="chat-layout">
-      <div class="chat-messages" ref="messagesEl">
-        <div v-if="messages.length === 0" class="chat-welcome">
+      <div
+        ref="messagesEl"
+        class="chat-messages"
+      >
+        <div
+          v-if="messages.length === 0"
+          class="chat-welcome"
+        >
           <div class="chat-welcome-mark">
-            <img src="/favicon.png" alt="Axon" class="logo-img chat-logo" />
+            <img
+              src="/favicon.png"
+              alt="Axon"
+              class="logo-img chat-logo"
+            >
           </div>
           <p class="welcome-desc">
             Ask for research, debugging, automation, or ops work. Axon can coordinate the details while you stay focused on decisions.
@@ -541,29 +586,69 @@ watch(disabled, (newVal) => {
           </div>
         </div>
 
-        <template v-for="(msg, idx) in messages" :key="idx">
-          <div v-if="msg.role === 'trace'" v-show="msg.trace.length > 0" class="tool-trace">
-            <button class="trace-toggle" type="button" @click="msg.collapsed = !msg.collapsed">
-              <span class="trace-chevron" :class="{ open: !msg.collapsed }">▸</span>
+        <template
+          v-for="(msg, idx) in messages"
+          :key="idx"
+        >
+          <div
+            v-if="msg.role === 'trace'"
+            v-show="msg.trace.length > 0"
+            class="tool-trace"
+          >
+            <button
+              class="trace-toggle"
+              type="button"
+              @click="msg.collapsed = !msg.collapsed"
+            >
+              <span
+                class="trace-chevron"
+                :class="{ open: !msg.collapsed }"
+              >▸</span>
               Reasoning · {{ msg.trace.length }} step{{ msg.trace.length === 1 ? '' : 's' }}
             </button>
-            <div v-show="!msg.collapsed" class="trace-items">
-              <div v-for="(item, i) in msg.trace" :key="i" class="tool-trace-item">
+            <div
+              v-show="!msg.collapsed"
+              class="trace-items"
+            >
+              <div
+                v-for="(item, i) in msg.trace"
+                :key="i"
+                class="tool-trace-item"
+              >
                 <span :style="{ color: item.color }">{{ item.text }}</span>
               </div>
             </div>
           </div>
 
-          <div v-else-if="msg.role === 'user'" class="chat-msg user">
-            <div class="chat-bubble">{{ msg.text }}</div>
+          <div
+            v-else-if="msg.role === 'user'"
+            class="chat-msg user"
+          >
+            <div class="chat-bubble">
+              {{ msg.text }}
+            </div>
           </div>
 
-          <div v-else-if="msg.role === 'agent'" class="chat-msg agent">
+          <div
+            v-else-if="msg.role === 'agent'"
+            class="chat-msg agent"
+          >
             <div class="chat-bubble">
-              <span v-if="msg.thinking" class="thinking-indicator">{{ msg.status || 'Thinking...' }}</span>
-              <span class="chat-markdown" v-html="renderMarkdown(msg.text)"></span>
+              <span
+                v-if="msg.thinking"
+                class="thinking-indicator"
+              >{{ msg.status || 'Thinking...' }}</span>
+              <span
+                class="chat-markdown"
+                v-html="renderMarkdown(msg.text)"
+              />
             </div>
-            <div v-if="msg.meta" class="chat-meta">{{ msg.meta }}</div>
+            <div
+              v-if="msg.meta"
+              class="chat-meta"
+            >
+              {{ msg.meta }}
+            </div>
           </div>
         </template>
       </div>
@@ -571,28 +656,66 @@ watch(disabled, (newVal) => {
       <div class="chat-input-area">
         <div class="chat-input-floating">
           <textarea
-            class="chat-textarea premium-input"
             ref="inputEl"
             v-model="input"
-            @keydown="onKeydown"
+            class="chat-textarea premium-input"
             :disabled="disabled"
             placeholder="Message Axon..."
             rows="1"
-          ></textarea>
+            @keydown="onKeydown"
+          />
           <button
             class="btn-chat-send"
             :class="{ 'is-stop': disabled }"
-            @click="disabled ? stop() : send()"
             :disabled="!disabled && !input.trim()"
             :title="disabled ? 'Stop (Esc)' : 'Send (Enter)'"
+            @click="disabled ? stop() : send()"
           >
-            <svg v-if="!disabled" width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M22 2L11 13" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
-              <path d="M22 2L15 22L11 13L2 9L22 2Z" fill="currentColor" opacity="0.4" />
-              <path d="M22 2L15 22L11 13L2 9L22 2Z" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+            <svg
+              v-if="!disabled"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M22 2L11 13"
+                stroke="currentColor"
+                stroke-width="2.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <path
+                d="M22 2L15 22L11 13L2 9L22 2Z"
+                fill="currentColor"
+                opacity="0.4"
+              />
+              <path
+                d="M22 2L15 22L11 13L2 9L22 2Z"
+                stroke="currentColor"
+                stroke-width="2.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
             </svg>
-            <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-              <rect x="6" y="6" width="12" height="12" rx="2.5" fill="currentColor" />
+            <svg
+              v-else
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+              aria-hidden="true"
+            >
+              <rect
+                x="6"
+                y="6"
+                width="12"
+                height="12"
+                rx="2.5"
+                fill="currentColor"
+              />
             </svg>
           </button>
         </div>
