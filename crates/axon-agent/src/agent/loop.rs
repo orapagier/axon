@@ -1371,7 +1371,12 @@ pub(crate) async fn run_inner(
                         let mut final_output = strip_router_alert_footer(clean.trim());
                         if final_output.is_empty() {
                             final_output = "I wasn't able to fully verify this request after several attempts. Please rephrase or check the logs and try again.".to_string();
-                        } else {
+                        } else if ctx.platform != "workflow" {
+                            // Workflow nodes (Cortex, Classifier, etc.) feed their output
+                            // into other nodes or straight out to an integration — this
+                            // meta caveat has no reader there and just pollutes the data.
+                            // Only surface it to a human on the other end: dashboard chat
+                            // or a messaging gateway (Telegram/Discord/Slack/...).
                             final_output.push_str("\n\n(Note: I reached my self-correction limit, so this is my best-effort answer and some details may be unverified.)");
                         }
 
