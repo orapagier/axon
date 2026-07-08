@@ -821,6 +821,29 @@ impl ToolRegistry {
             .cloned()
             .collect()
     }
+    /// Enabled tools for a caller that supplies its own explicit allow-list
+    /// (currently: a Cortex node's `tools` picklist). An individually-named
+    /// pick overrides the [`NON_AGENT_INTERNAL_TOOLS`], [`WORKFLOW_ONLY_WRITE_TOOLS`],
+    /// and [`CRM_WRITE_TOOLS`] policy gates for that name only — naming a
+    /// specific write tool on a specific node *is* the deliberate, reviewable
+    /// decision those gates exist to require, unlike the open-ended chat agent
+    /// picking from the whole registry at its own discretion. Tools with no
+    /// dispatch arm ([`NON_DISPATCHABLE_TOOLS`]) stay excluded regardless,
+    /// since calling them always fails.
+    pub async fn all_enabled_for_allowed(&self, allowed: &[String]) -> Vec<ToolDefinition> {
+        self.tools
+            .read()
+            .await
+            .values()
+            .filter(|t| t.enabled)
+            .filter(|t| allowed.iter().any(|a| a == &t.name))
+            .filter(|t| {
+                !(t.source == ToolSource::Internal
+                    && NON_DISPATCHABLE_TOOLS.contains(&t.name.as_str()))
+            })
+            .cloned()
+            .collect()
+    }
     pub async fn get(&self, name: &str) -> Option<ToolDefinition> {
         self.tools.read().await.get(name).cloned()
     }
