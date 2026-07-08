@@ -3934,11 +3934,16 @@ small.form-desc {
 .fc-sub-field { flex: 1; min-width: 90px; }
 .fc-sub-field.field-full-row { flex-basis: 100%; width: 100%; }
 /* Boolean sub-fields (e.g. the Primary key / Required / Unique toggles in the
-   Hippocampus create-table column editor) only need room for the switch, so they
-   must not take an equal flex share like the text/select fields — that stretched
-   them wide and stranded the centered toggle away from its left-aligned header
-   label. Size them to their content and left-align the switch under the label. */
-.fc-sub-field.fc-sub-boolean { flex: 0 0 auto; min-width: 0; }
+   Hippocampus create-table column editor, or HTML Extract's Return Array) only
+   need room for the switch, so they must not take an equal flex share like the
+   text/select fields — that stretched them wide and stranded the centered
+   toggle away from its left-aligned header label. A *fixed* width (not
+   shrink-to-content) is deliberate: shrink-to-content measured the header
+   label — shown only on row 0 — so row 0's toggle column was 3x wider than
+   every row added afterward (no label to size against), which squeezed row
+   0's other fields narrower than the rest. A constant width keeps every row
+   the same size regardless of which one carries the label. */
+.fc-sub-field.fc-sub-boolean { flex: 0 0 104px; min-width: 0; }
 .fc-sub-field.fc-sub-boolean .field-with-fx { width: auto; }
 .fc-sub-field.fc-sub-boolean .fc-toggle { justify-content: flex-start; padding-left: 2px; }
 /* Pin single-line inputs, selects and the toggle box to one control height so the
