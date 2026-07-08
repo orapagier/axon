@@ -135,15 +135,11 @@ pub(crate) async fn build_run_context(
             }
         },
         async {
-            let all_tools = state
-                .tools
-                .all_enabled_for_agent(state.settings.crm_agent_write_tools())
-                .await;
             if let Some(ref allowed) = ctx.allowed_tools {
-                let filtered: Vec<_> = all_tools
-                    .into_iter()
-                    .filter(|t| allowed.contains(&t.name))
-                    .collect();
+                // An explicit per-node allow-list (e.g. a Cortex node's `tools`
+                // picklist) is resolved against the full registry, not the
+                // agent-gated one — see `all_enabled_for_allowed`.
+                let filtered = state.tools.all_enabled_for_allowed(allowed).await;
                 let mut info = serde_json::Map::new();
                 info.insert(
                     "tier".to_string(),
@@ -151,6 +147,10 @@ pub(crate) async fn build_run_context(
                 );
                 (filtered, serde_json::Value::Object(info))
             } else {
+                let all_tools = state
+                    .tools
+                    .all_enabled_for_agent(state.settings.crm_agent_write_tools())
+                    .await;
                 match state
                     .settings
                     .get_str("agent.tool_scope", "hybrid")
