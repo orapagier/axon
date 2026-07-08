@@ -2043,119 +2043,429 @@ pub async fn manage_webhook(
 
 // ── Tool definitions ──────────────────────────────────────────────────────────
 
-pub fn tool_definition() -> ToolDefinition {
+/// Fields shared by every text-capable send/edit operation: bot auth plus the
+/// formatting/reply knobs read by `apply_additional_fields`.
+fn common_message_fields() -> serde_json::Value {
+    serde_json::json!({
+        "access_token": {
+            "type": "string",
+            "description": "Telegram bot token from @BotFather"
+        },
+        "base_url": {
+            "type": "string",
+            "description": "Telegram Bot API base URL (default: https://api.telegram.org)"
+        },
+        "chat_id": {
+            "type": "string",
+            "description": "Target chat or channel ID"
+        },
+        "parse_mode": {
+            "type": "string",
+            "enum": ["Markdown", "HTML", "MarkdownV2"],
+            "default": "Markdown"
+        },
+        "append_attribution": {
+            "type": "boolean",
+            "description": "Append n8n attribution footer to messages",
+            "default": false
+        },
+        "instance_id": {
+            "type": "string",
+            "description": "n8n instance ID for attribution link"
+        },
+        "reply_markup": {
+            "type": "string",
+            "enum": ["none", "inlineKeyboard", "forceReply", "replyKeyboardRemove"],
+            "default": "none"
+        },
+        "inline_keyboard": {
+            "type": "object",
+            "description": "Inline keyboard definition ({rows:[{row:{buttons:[{text,additionalFields:{url|callback_data}}]}}]})"
+        },
+        "reply_to_message_id": { "type": "string" }
+    })
+}
+
+/// Merges `common_message_fields` with the operation-specific fields in `extra`.
+fn message_op_params(extra: serde_json::Value) -> serde_json::Value {
+    let mut base = common_message_fields();
+    if let (Some(base_map), serde_json::Value::Object(extra_map)) = (base.as_object_mut(), extra) {
+        base_map.extend(extra_map);
+    }
+    base
+}
+
+/// Media-send fields shared by photo/video/audio/document/animation/sticker:
+/// the URL-or-file_id reference plus the binary-upload alternative. Neither
+/// the reference field nor `binary_data`'s inputs are schema-`required` since
+/// either path satisfies the operation — the executor raises a clear error if
+/// neither is actually provided.
+fn media_fields(media_key: &str, media_desc: &str) -> serde_json::Value {
+    serde_json::json!({
+        media_key: { "type": "string", "description": media_desc },
+        "binary_data": {
+            "type": "boolean",
+            "description": "Upload file from binary data instead of URL/file_id"
+        },
+        "file_bytes": {
+            "type": "string",
+            "description": "Base64-encoded file bytes (requires binary_data=true)"
+        },
+        "file_name": { "type": "string" },
+        "mime_type": { "type": "string" },
+        "caption": { "type": "string" }
+    })
+}
+
+fn def(
+    name: &str,
+    description: &str,
+    parameters: serde_json::Value,
+    required: Vec<String>,
+) -> ToolDefinition {
     ToolDefinition {
-        name: "telegram".to_string(),
-        description: "Send messages, photos, documents, and other content via a Telegram bot. \
-             Manage chats and respond to callback queries."
-            .to_string(),
-        parameters: serde_json::json!({
-            "access_token": {
-                "type": "string",
-                "description": "Telegram bot token from @BotFather"
-            },
-            "base_url": {
-                "type": "string",
-                "description": "Telegram Bot API base URL (default: https://api.telegram.org)"
-            },
-            "resource": {
-                "type": "string",
-                "enum": ["message", "chat", "callback"],
-                "description": "Resource group"
-            },
-            "operation": {
-                "type": "string",
-                "enum": [
-                    "sendMessage", "sendPhoto", "sendVideo", "sendAudio",
-                    "sendDocument", "sendAnimation", "sendSticker", "sendLocation",
-                    "sendMediaGroup", "editMessageText", "deleteMessage",
-                    "pinChatMessage", "unpinChatMessage",
-                    "getChat", "getChatAdministrators", "getChatMember",
-                    "setChatTitle", "setChatDescription", "sendChatAction", "leaveChat",
-                    "answerQuery"
-                ],
-                "description": "Operation to perform"
-            },
-            "chat_id": {
-                "type": "string",
-                "description": "Target chat or channel ID"
-            },
-            "text": {
-                "type": "string",
-                "description": "Message text (supports Markdown)"
-            },
-            "parse_mode": {
-                "type": "string",
-                "enum": ["Markdown", "HTML", "MarkdownV2"],
-                "default": "Markdown"
-            },
-            "disable_web_page_preview": {
-                "type": "boolean",
-                "default": true
-            },
-            "append_attribution": {
-                "type": "boolean",
-                "description": "Append n8n attribution footer to messages",
-                "default": false
-            },
-            "instance_id": {
-                "type": "string",
-                "description": "n8n instance ID for attribution link"
-            },
-            "reply_markup": {
-                "type": "string",
-                "enum": ["none", "inlineKeyboard", "forceReply", "replyKeyboardRemove"],
-                "default": "none"
-            },
-            "inline_keyboard": {
-                "type": "object",
-                "description": "Inline keyboard definition ({rows:[{row:{buttons:[{text,additionalFields:{url|callback_data}}]}}]})"
-            },
-            "photo": { "type": "string", "description": "File ID or URL of photo" },
-            "video": { "type": "string", "description": "File ID or URL of video" },
-            "audio": { "type": "string", "description": "File ID or URL of audio" },
-            "document": { "type": "string", "description": "File ID or URL of document" },
-            "animation": { "type": "string", "description": "File ID or URL of animation/GIF" },
-            "sticker": { "type": "string", "description": "File ID or URL of sticker" },
-            "binary_data": {
-                "type": "boolean",
-                "description": "Upload file from binary data instead of URL/file_id"
-            },
-            "file_bytes": {
-                "type": "string",
-                "description": "Base64-encoded file bytes (requires binary_data=true)"
-            },
-            "file_name": { "type": "string" },
-            "mime_type": { "type": "string" },
-            "caption": { "type": "string" },
-            "latitude": { "type": "number" },
-            "longitude": { "type": "number" },
-            "media": {
-                "type": "array",
-                "description": "InputMedia array for sendMediaGroup"
-            },
-            "message_id": { "type": "integer" },
-            "user_id": { "type": "integer" },
-            "title": { "type": "string" },
-            "description": { "type": "string" },
-            "action": {
-                "type": "string",
-                "description": "Chat action type for sendChatAction (e.g. 'typing')"
-            },
-            "callback_query_id": { "type": "string" },
-            "show_alert": { "type": "boolean" },
-            "disable_notification": { "type": "boolean" },
-            "reply_to_message_id": { "type": "string" }
-        }),
-        required: vec![
-            "access_token".to_string(),
-            "resource".to_string(),
-            "operation".to_string(),
-        ],
+        name: name.to_string(),
+        description: description.to_string(),
+        parameters,
+        required,
         source: ToolSource::Internal,
         enabled: true,
+        // Every Telegram operation — including the "read" ones like getChat —
+        // touches the live chat channel the user talks to the agent through,
+        // so all of them are classified as mutating rather than relying on
+        // `derive_is_mutating`'s verb heuristic (which would miss `pin`/
+        // `unpin`/`answer`).
         is_mutating: true,
     }
+}
+
+/// Per-operation Telegram tools. Replaces the single monolithic `telegram`
+/// tool (one name, one `operation` enum covering all ~20 actions) so a
+/// Cortex node's `tools` picklist can grant exactly one action — e.g.
+/// `telegram_send_message` — without also granting `telegram_delete_message`,
+/// `telegram_set_chat_title`, `telegram_leave_chat`, etc. Dispatched by
+/// `execute_split_tool`, which bakes the matching resource/operation into the
+/// config and delegates to the same `execute_telegram_node` the
+/// workflow-canvas Telegram node uses — no duplicated business logic.
+pub fn split_tool_definitions() -> Vec<ToolDefinition> {
+    vec![
+        def(
+            "telegram_send_message",
+            "Send a text message via a Telegram bot.",
+            message_op_params(serde_json::json!({
+                "text": { "type": "string", "description": "Message text (supports Markdown)" },
+                "disable_web_page_preview": { "type": "boolean", "default": true }
+            })),
+            vec!["access_token".into(), "chat_id".into(), "text".into()],
+        ),
+        def(
+            "telegram_send_photo",
+            "Send a photo via a Telegram bot, from a URL/file_id or raw binary data.",
+            message_op_params(media_fields("photo", "File ID or URL of photo")),
+            vec!["access_token".into(), "chat_id".into()],
+        ),
+        def(
+            "telegram_send_video",
+            "Send a video via a Telegram bot, from a URL/file_id or raw binary data.",
+            message_op_params({
+                let mut p = media_fields("video", "File ID or URL of video");
+                p.as_object_mut().unwrap().extend(
+                    serde_json::json!({
+                        "duration": { "type": "integer" },
+                        "width": { "type": "integer" },
+                        "height": { "type": "integer" },
+                        "supports_streaming": { "type": "boolean" }
+                    })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                );
+                p
+            }),
+            vec!["access_token".into(), "chat_id".into()],
+        ),
+        def(
+            "telegram_send_audio",
+            "Send an audio file via a Telegram bot, from a URL/file_id or raw binary data.",
+            message_op_params({
+                let mut p = media_fields("audio", "File ID or URL of audio");
+                p.as_object_mut().unwrap().extend(
+                    serde_json::json!({
+                        "duration": { "type": "integer" },
+                        "performer": { "type": "string" },
+                        "title": { "type": "string" }
+                    })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                );
+                p
+            }),
+            vec!["access_token".into(), "chat_id".into()],
+        ),
+        def(
+            "telegram_send_document",
+            "Send a document/file via a Telegram bot, from a URL/file_id, a local file path, or raw binary data.",
+            message_op_params(media_fields("document", "File ID, URL, or local file path of the document")),
+            vec!["access_token".into(), "chat_id".into()],
+        ),
+        def(
+            "telegram_send_animation",
+            "Send an animation/GIF via a Telegram bot, from a URL/file_id or raw binary data.",
+            message_op_params({
+                let mut p = media_fields("animation", "File ID or URL of animation/GIF");
+                p.as_object_mut().unwrap().extend(
+                    serde_json::json!({
+                        "duration": { "type": "integer" },
+                        "width": { "type": "integer" },
+                        "height": { "type": "integer" }
+                    })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                );
+                p
+            }),
+            vec!["access_token".into(), "chat_id".into()],
+        ),
+        def(
+            "telegram_send_sticker",
+            "Send a sticker via a Telegram bot, from a URL/file_id or raw binary data.",
+            serde_json::json!({
+                "access_token": { "type": "string", "description": "Telegram bot token from @BotFather" },
+                "base_url": { "type": "string", "description": "Telegram Bot API base URL (default: https://api.telegram.org)" },
+                "chat_id": { "type": "string", "description": "Target chat or channel ID" },
+                "sticker": { "type": "string", "description": "File ID or URL of sticker" },
+                "binary_data": { "type": "boolean", "description": "Upload file from binary data instead of URL/file_id" },
+                "file_bytes": { "type": "string", "description": "Base64-encoded file bytes (requires binary_data=true)" },
+                "file_name": { "type": "string" },
+                "mime_type": { "type": "string" }
+            }),
+            vec!["access_token".into(), "chat_id".into()],
+        ),
+        def(
+            "telegram_send_location",
+            "Send a map location via a Telegram bot.",
+            serde_json::json!({
+                "access_token": { "type": "string", "description": "Telegram bot token from @BotFather" },
+                "base_url": { "type": "string", "description": "Telegram Bot API base URL (default: https://api.telegram.org)" },
+                "chat_id": { "type": "string", "description": "Target chat or channel ID" },
+                "latitude": { "type": "number" },
+                "longitude": { "type": "number" },
+                "live_period": { "type": "integer" },
+                "heading": { "type": "integer" },
+                "proximity_alert_radius": { "type": "integer" },
+                "reply_to_message_id": { "type": "string" }
+            }),
+            vec![
+                "access_token".into(),
+                "chat_id".into(),
+                "latitude".into(),
+                "longitude".into(),
+            ],
+        ),
+        def(
+            "telegram_send_media_group",
+            "Send an album of photos/videos as a single group via a Telegram bot.",
+            serde_json::json!({
+                "access_token": { "type": "string", "description": "Telegram bot token from @BotFather" },
+                "base_url": { "type": "string", "description": "Telegram Bot API base URL (default: https://api.telegram.org)" },
+                "chat_id": { "type": "string", "description": "Target chat or channel ID" },
+                "media": {
+                    "type": "array",
+                    "description": "InputMedia array: [{type, media, caption?}, ...]"
+                }
+            }),
+            vec!["access_token".into(), "chat_id".into(), "media".into()],
+        ),
+        def(
+            "telegram_edit_message",
+            "Edit the text of a previously sent Telegram message.",
+            message_op_params(serde_json::json!({
+                "message_id": { "type": "integer" },
+                "text": { "type": "string", "description": "New message text (supports Markdown)" },
+                "disable_web_page_preview": { "type": "boolean", "default": true }
+            })),
+            vec![
+                "access_token".into(),
+                "chat_id".into(),
+                "message_id".into(),
+                "text".into(),
+            ],
+        ),
+        def(
+            "telegram_delete_message",
+            "Delete a message via a Telegram bot.",
+            serde_json::json!({
+                "access_token": { "type": "string", "description": "Telegram bot token from @BotFather" },
+                "base_url": { "type": "string", "description": "Telegram Bot API base URL (default: https://api.telegram.org)" },
+                "chat_id": { "type": "string", "description": "Target chat or channel ID" },
+                "message_id": { "type": "integer" }
+            }),
+            vec!["access_token".into(), "chat_id".into(), "message_id".into()],
+        ),
+        def(
+            "telegram_pin_message",
+            "Pin a message in a chat via a Telegram bot.",
+            serde_json::json!({
+                "access_token": { "type": "string", "description": "Telegram bot token from @BotFather" },
+                "base_url": { "type": "string", "description": "Telegram Bot API base URL (default: https://api.telegram.org)" },
+                "chat_id": { "type": "string", "description": "Target chat or channel ID" },
+                "message_id": { "type": "integer" },
+                "disable_notification": { "type": "boolean" }
+            }),
+            vec!["access_token".into(), "chat_id".into(), "message_id".into()],
+        ),
+        def(
+            "telegram_unpin_message",
+            "Unpin a message in a chat via a Telegram bot. Omit message_id to unpin the most recent pinned message.",
+            serde_json::json!({
+                "access_token": { "type": "string", "description": "Telegram bot token from @BotFather" },
+                "base_url": { "type": "string", "description": "Telegram Bot API base URL (default: https://api.telegram.org)" },
+                "chat_id": { "type": "string", "description": "Target chat or channel ID" },
+                "message_id": { "type": "integer", "description": "Optional — omit to unpin the most recent pinned message" }
+            }),
+            vec!["access_token".into(), "chat_id".into()],
+        ),
+        def(
+            "telegram_get_chat",
+            "Get information about a Telegram chat.",
+            serde_json::json!({
+                "access_token": { "type": "string", "description": "Telegram bot token from @BotFather" },
+                "base_url": { "type": "string", "description": "Telegram Bot API base URL (default: https://api.telegram.org)" },
+                "chat_id": { "type": "string", "description": "Target chat or channel ID" }
+            }),
+            vec!["access_token".into(), "chat_id".into()],
+        ),
+        def(
+            "telegram_get_chat_administrators",
+            "List the administrators of a Telegram chat.",
+            serde_json::json!({
+                "access_token": { "type": "string", "description": "Telegram bot token from @BotFather" },
+                "base_url": { "type": "string", "description": "Telegram Bot API base URL (default: https://api.telegram.org)" },
+                "chat_id": { "type": "string", "description": "Target chat or channel ID" }
+            }),
+            vec!["access_token".into(), "chat_id".into()],
+        ),
+        def(
+            "telegram_get_chat_member",
+            "Get information about a specific member of a Telegram chat.",
+            serde_json::json!({
+                "access_token": { "type": "string", "description": "Telegram bot token from @BotFather" },
+                "base_url": { "type": "string", "description": "Telegram Bot API base URL (default: https://api.telegram.org)" },
+                "chat_id": { "type": "string", "description": "Target chat or channel ID" },
+                "user_id": { "type": "integer" }
+            }),
+            vec!["access_token".into(), "chat_id".into(), "user_id".into()],
+        ),
+        def(
+            "telegram_set_chat_title",
+            "Set the title of a Telegram chat/group.",
+            serde_json::json!({
+                "access_token": { "type": "string", "description": "Telegram bot token from @BotFather" },
+                "base_url": { "type": "string", "description": "Telegram Bot API base URL (default: https://api.telegram.org)" },
+                "chat_id": { "type": "string", "description": "Target chat or channel ID" },
+                "title": { "type": "string" }
+            }),
+            vec!["access_token".into(), "chat_id".into(), "title".into()],
+        ),
+        def(
+            "telegram_set_chat_description",
+            "Set the description of a Telegram chat/group.",
+            serde_json::json!({
+                "access_token": { "type": "string", "description": "Telegram bot token from @BotFather" },
+                "base_url": { "type": "string", "description": "Telegram Bot API base URL (default: https://api.telegram.org)" },
+                "chat_id": { "type": "string", "description": "Target chat or channel ID" },
+                "description": { "type": "string" }
+            }),
+            vec!["access_token".into(), "chat_id".into()],
+        ),
+        def(
+            "telegram_send_chat_action",
+            "Send a transient chat action (e.g. 'typing') via a Telegram bot.",
+            serde_json::json!({
+                "access_token": { "type": "string", "description": "Telegram bot token from @BotFather" },
+                "base_url": { "type": "string", "description": "Telegram Bot API base URL (default: https://api.telegram.org)" },
+                "chat_id": { "type": "string", "description": "Target chat or channel ID" },
+                "action": {
+                    "type": "string",
+                    "description": "typing | upload_photo | record_video | upload_video | record_audio | upload_audio | upload_document | find_location | record_video_note | upload_video_note",
+                    "default": "typing"
+                }
+            }),
+            vec!["access_token".into(), "chat_id".into()],
+        ),
+        def(
+            "telegram_leave_chat",
+            "Make the bot leave a Telegram chat/group.",
+            serde_json::json!({
+                "access_token": { "type": "string", "description": "Telegram bot token from @BotFather" },
+                "base_url": { "type": "string", "description": "Telegram Bot API base URL (default: https://api.telegram.org)" },
+                "chat_id": { "type": "string", "description": "Target chat or channel ID" }
+            }),
+            vec!["access_token".into(), "chat_id".into()],
+        ),
+        def(
+            "telegram_answer_callback_query",
+            "Answer a Telegram inline-keyboard callback query (dismisses the button's loading state, optionally shows a toast/alert).",
+            serde_json::json!({
+                "access_token": { "type": "string", "description": "Telegram bot token from @BotFather" },
+                "base_url": { "type": "string", "description": "Telegram Bot API base URL (default: https://api.telegram.org)" },
+                "callback_query_id": { "type": "string" },
+                "text": { "type": "string" },
+                "show_alert": { "type": "boolean" },
+                "url": { "type": "string" },
+                "cache_time": { "type": "integer" }
+            }),
+            vec!["access_token".into(), "callback_query_id".into()],
+        ),
+    ]
+}
+
+/// Maps a split per-operation agent tool name to its (resource, operation)
+/// pair for `execute_telegram_node`. The action is baked in here rather than
+/// model-supplied, so granting e.g. `telegram_send_message` on a Cortex node
+/// can never be steered (by a malformed or injected call) into `deleteMessage`.
+fn resource_operation_for(tool_name: &str) -> Option<(&'static str, &'static str)> {
+    Some(match tool_name {
+        "telegram_send_message" => ("message", "sendMessage"),
+        "telegram_send_photo" => ("message", "sendPhoto"),
+        "telegram_send_video" => ("message", "sendVideo"),
+        "telegram_send_audio" => ("message", "sendAudio"),
+        "telegram_send_document" => ("message", "sendDocument"),
+        "telegram_send_animation" => ("message", "sendAnimation"),
+        "telegram_send_sticker" => ("message", "sendSticker"),
+        "telegram_send_location" => ("message", "sendLocation"),
+        "telegram_send_media_group" => ("message", "sendMediaGroup"),
+        "telegram_edit_message" => ("message", "editMessageText"),
+        "telegram_delete_message" => ("message", "deleteMessage"),
+        "telegram_pin_message" => ("message", "pinChatMessage"),
+        "telegram_unpin_message" => ("message", "unpinChatMessage"),
+        "telegram_get_chat" => ("chat", "getChat"),
+        "telegram_get_chat_administrators" => ("chat", "getChatAdministrators"),
+        "telegram_get_chat_member" => ("chat", "getChatMember"),
+        "telegram_set_chat_title" => ("chat", "setChatTitle"),
+        "telegram_set_chat_description" => ("chat", "setChatDescription"),
+        "telegram_send_chat_action" => ("chat", "sendChatAction"),
+        "telegram_leave_chat" => ("chat", "leaveChat"),
+        "telegram_answer_callback_query" => ("callback", "answerQuery"),
+        _ => return None,
+    })
+}
+
+/// Agent-facing entry point for a split per-operation Telegram tool. Bakes the
+/// fixed resource/operation into the config, then delegates to the same
+/// `execute_telegram_node` the workflow-canvas Telegram node calls, so both
+/// paths stay byte-for-byte consistent.
+pub async fn execute_split_tool(tool_name: &str, config: &Value) -> Result<Value, String> {
+    let (resource, operation) = resource_operation_for(tool_name)
+        .ok_or_else(|| format!("Unknown Telegram tool '{tool_name}'"))?;
+    let mut config = config.clone();
+    if let Value::Object(ref mut map) = config {
+        map.insert("resource".into(), json!(resource));
+        map.insert("operation".into(), json!(operation));
+    }
+    execute_telegram_node(&config).await
 }
 
 pub fn trigger_tool_definition() -> ToolDefinition {
