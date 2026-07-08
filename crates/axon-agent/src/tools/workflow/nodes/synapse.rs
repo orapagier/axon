@@ -703,7 +703,9 @@ pub(crate) async fn execute_http_node(config: &Value, state: &AppState) -> Resul
         .unwrap_or(false)
     {
         return match tool.request(params).await {
-            Ok(resp) => serde_json::to_value(resp).map_err(|e| e.to_string()),
+            Ok(resp) => serde_json::to_value(resp)
+                .map_err(|e| e.to_string())
+                .and_then(|v| apply_css_extraction(config, v)),
             Err(e) => Err(e.to_string()),
         };
     }
