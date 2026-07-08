@@ -168,13 +168,21 @@ pub async fn call(
 
     let ollama_opts = options.temperature.map(|t| json!({ "temperature": t }));
 
+    // Omit for models that already rejected the field once this process
+    // (see the 400 handling below — mirrors openai_compat.rs's no_reasoning).
+    let think = if model.no_reasoning {
+        None
+    } else {
+        options.reasoning_effort.as_ref().map(|_| true)
+    };
+
     let payload = OllamaReq {
         model: model.model_id.clone(),
         messages: to_ollama_msgs(messages, system),
         stream: false,
         tools: ollama_tools,
         options: ollama_opts,
-        think: options.reasoning_effort.as_ref().map(|_| true),
+        think,
     };
 
     let mut client_builder = reqwest::Client::builder();
@@ -202,6 +210,34 @@ pub async fn call(
             .text()
             .await
             .unwrap_or_else(|_| "Unavailable".to_string());
+
+        // Some models (e.g. custom/fine-tuned GGUFs without a thinking-capable
+        // template) reject the `think` field outright with a 400. Strip it,
+        // remember this model can't take it, and retry once (recursion is
+        // bounded: no_reasoning makes the retried payload omit the field, so
+        // this branch can't re-trigger).
+        if status.as_u16() == 400 && think.is_some() && body.to_lowercase().contains("thinking") {
+            tracing::info!(
+                "Model '{}' rejected think param; retrying without it (flagged no_reasoning)",
+                model.name
+            );
+            model.no_reasoning = true;
+            return Box::pin(call(
+                model,
+                messages,
+                system,
+                tools,
+                _max_tokens,
+                ProviderCallOptions {
+                    stream_sink: None,
+                    temperature: options.temperature,
+                    tool_choice: options.tool_choice,
+                    reasoning_effort: None,
+                },
+            ))
+            .await;
+        }
+
         anyhow::bail!("Ollama Cloud API error ({}): {}", status, body);
     }
 
