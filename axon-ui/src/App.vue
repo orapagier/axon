@@ -5,6 +5,7 @@ import { confirmDialog } from './lib/confirm.js'
 import Toast from './components/Toast.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
 import PromptDialog from './components/PromptDialog.vue'
+import NotificationBell from './components/NotificationBell.vue'
 import LoginPage from './pages/LoginPage.vue'
 
 const PAGES = {
@@ -253,12 +254,7 @@ async function logout() {
         </div>
 
         <div class="shell-topbar-right">
-          <button class="shell-icon-btn shell-refresh-btn desktop-only" type="button" @click="reload" title="Refresh workspace">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M20 11a8 8 0 1 0 2 5.3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
-              <path d="M20 4v7h-7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-          </button>
+          <NotificationBell />
           <div class="shell-status-chip">
             <span class="ws-dot" :class="wsDotClass"></span>
             <span>{{ wsLabel }}</span>
