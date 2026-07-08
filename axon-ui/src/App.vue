@@ -2,7 +2,6 @@
 import { ref, computed, defineAsyncComponent, markRaw } from 'vue'
 import { wsStatus } from './lib/ws.js'
 import { confirmDialog } from './lib/confirm.js'
-import Toast from './components/Toast.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
 import PromptDialog from './components/PromptDialog.vue'
 import NotificationBell from './components/NotificationBell.vue'
@@ -283,7 +282,6 @@ async function logout() {
     </main>
   </div>
 
-  <Toast />
   <ConfirmDialog />
   <PromptDialog />
 </template>

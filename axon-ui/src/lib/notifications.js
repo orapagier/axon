@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 
-const STORAGE_KEY = 'AXON_NOTIFICATIONS'
+const STORAGE_KEY = 'AXON_NOTIFICATIONS_V2'
 const MAX_NOTIFICATIONS = 200
 
 function load() {
