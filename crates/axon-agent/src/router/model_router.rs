@@ -148,6 +148,18 @@ pub async fn has_available_role(router: &SharedRouter, role: &str) -> bool {
         .any(|m| m.role == role && m.enabled && m.is_available())
 }
 
+/// Look up a configured model's router role by name, for callers that need to
+/// validate a user-selected model before routing (e.g. the Cortex node's
+/// Image mode). `None` means no model with that name exists at all — distinct
+/// from `Some("")` (an existing general-pool model).
+pub async fn model_role_by_name(router: &SharedRouter, name: &str) -> Option<String> {
+    let g = router.lock().await;
+    g.models
+        .iter()
+        .find(|m| m.name == name)
+        .map(|m| m.role.clone())
+}
+
 impl RouterState {
     pub fn new(models: Vec<ModelRecord>) -> Self {
         let mut models = models;
@@ -477,6 +489,19 @@ pub async fn call_llm_with_options(
                 Err(_) => {}
             }
         }
+    }
+
+    if role == "image_model" {
+        // Vision requests must never silently fall back to a text-only
+        // general/paid model — at best that produces a confusing provider
+        // error, at worst (a provider adapter that drops images) it silently
+        // answers as if the image was never sent. Fail clearly instead.
+        anyhow::bail!(
+            "No available model tagged role=\"image_model\" could serve this request \
+             (none configured, or all configured image_model entries are \
+             disabled/rate-limited/erroring). Add or fix a vision-capable model \
+             with role = \"image_model\" on the Models page."
+        );
     }
 
     // Pass 1: general pool

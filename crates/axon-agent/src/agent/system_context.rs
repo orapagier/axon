@@ -9,7 +9,7 @@
 use crate::agent::r#loop::strip_router_alert_footer;
 use crate::agent::RunContext;
 use crate::memory::compressor::search_recent_observations;
-use crate::providers::types::{Message, MessageContent};
+use crate::providers::types::{ContentBlock, Message, MessageContent};
 use crate::state::AppState;
 use crate::tools::schema::ToolDefinition;
 
@@ -99,7 +99,15 @@ pub(crate) async fn build_run_context(
         .map(|m| m.role == "user" && matches!(&m.content, MessageContent::Text(t) if t == task))
         .unwrap_or(false);
     if !last_is_current_task {
-        messages.push(Message::user(task));
+        match ctx.image_content.clone() {
+            Some(img) => messages.push(Message::user_with_blocks(vec![
+                ContentBlock::Text {
+                    text: task.to_string(),
+                },
+                img,
+            ])),
+            None => messages.push(Message::user(task)),
+        }
     }
     if memory_enabled {
         match ctx.memory_window {

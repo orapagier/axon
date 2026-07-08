@@ -170,6 +170,10 @@ fn to_oai_msgs(messages: &[Message], system: &str) -> Vec<OaiMsg> {
                         .filter_map(|b| b.as_text())
                         .collect::<Vec<_>>()
                         .join("");
+                    let images: Vec<&ContentBlock> = blocks
+                        .iter()
+                        .filter(|b| matches!(b, ContentBlock::Image { .. }))
+                        .collect();
                     let tcs: Vec<OaiTc> = blocks
                         .iter()
                         .filter_map(|b| {
@@ -187,13 +191,34 @@ fn to_oai_msgs(messages: &[Message], system: &str) -> Vec<OaiMsg> {
                             }
                         })
                         .collect();
-                    out.push(OaiMsg {
-                        role: m.role.clone(),
-                        content: if text.is_empty() {
+                    let content = if images.is_empty() {
+                        if text.is_empty() {
                             Some(serde_json::Value::Null)
                         } else {
                             Some(json!(text))
-                        },
+                        }
+                    } else {
+                        // Vision format: `content` becomes an array of parts
+                        // instead of a plain string — an optional text part
+                        // followed by one `image_url` part per image, sent as
+                        // a `data:` URI so no provider-side fetch is needed.
+                        let mut parts: Vec<serde_json::Value> = Vec::new();
+                        if !text.is_empty() {
+                            parts.push(json!({"type": "text", "text": text}));
+                        }
+                        for blk in &images {
+                            if let ContentBlock::Image { media_type, data } = blk {
+                                parts.push(json!({
+                                    "type": "image_url",
+                                    "image_url": { "url": format!("data:{};base64,{}", media_type, data) }
+                                }));
+                            }
+                        }
+                        Some(json!(parts))
+                    };
+                    out.push(OaiMsg {
+                        role: m.role.clone(),
+                        content,
                         tool_calls: if tcs.is_empty() { None } else { Some(tcs) },
                         tool_call_id: None,
                         function_call: None,

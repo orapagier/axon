@@ -179,12 +179,11 @@ enabled     = true                     # optional (defaults to true)
 
 | Role | Used for |
 |------|---------|
-| `""` (empty) | General pool — the default for normal requests. |
-| `simple_tasks` | Fast/cheap model for conversational, no-tool, first-attempt replies. |
-| `complex_tasks` | Most capable model for tool use, corrections, and long runs. |
+| `""` (empty) | General pool — the default for every request, regardless of task complexity. |
 | `router` | The small model used to convert natural-language schedules to cron, etc. |
 | `quality_checker` | Secondary model that audits the main agent's output (see §6). |
 | `axon_node` | Model used by the "Axon" node inside Workflows. |
+| `image_model` | Vision-capable model for the Cortex node's Image mode. **Strict** — never falls back to general/paid_model. |
 | `paid_model` | **Last-resort** fallback, only tried after every free option is exhausted. |
 
 **`model_id` fallback chains:** a comma-separated `model_id` (e.g.

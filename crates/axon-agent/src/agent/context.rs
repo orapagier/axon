@@ -42,6 +42,18 @@ pub struct RunContext {
     /// instead of the task. Set by structured workflow nodes (Classifier).
     #[serde(default)]
     pub expects_structured_output: bool,
+    /// Forces model routing to a specific role for the ENTIRE run, bypassing
+    /// the agent loop's own general-pool routing. Set by workflow nodes that
+    /// need a specific model class end-to-end (the Cortex node's Image mode
+    /// sets this to `Some("image_model".into())` so a text-only general/paid
+    /// model can never silently receive an image it can't read).
+    #[serde(default)]
+    pub preferred_role: Option<String>,
+    /// Pre-resolved image content to prepend to the first user turn (Cortex
+    /// node, Image mode). Built by the node executor from the `media` config
+    /// field before `run_task` is called.
+    #[serde(default)]
+    pub image_content: Option<crate::providers::types::ContentBlock>,
 }
 
 impl RunContext {
@@ -74,6 +86,8 @@ impl RunContext {
             memory_window: None,
             isolated_memory: false,
             expects_structured_output: false,
+            preferred_role: None,
+            image_content: None,
         }
     }
 }

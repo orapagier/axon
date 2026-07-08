@@ -3206,13 +3206,12 @@ export const NODE_TYPES = {
                 default: '',
                 options: [
                     { name: 'General (blank keeps current on Update)', value: '' },
-                    { name: 'Simple Tasks (cheap / fast)', value: 'simple_tasks' },
-                    { name: 'Complex Tasks (capable)', value: 'complex_tasks' },
                     { name: 'Router (cron / tool select)', value: 'router' },
                     { name: 'Tool Writer', value: 'tool_writer' },
                     { name: 'Quality Checker', value: 'quality_checker' },
                     { name: 'Memory Compressor', value: 'memory_compressor' },
                     { name: 'Watcher', value: 'watcher' },
+                    { name: 'Image Model (vision)', value: 'image_model' },
                     { name: 'Paid Fallback', value: 'paid_model' },
                 ],
                 displayOptions: { show: { operation: ['add', 'update'] } },
@@ -3329,11 +3328,32 @@ export const NODE_TYPES = {
         description: 'Runs an AI agent on the input and dispatches its response to the active messaging platform',
         properties: [
             {
+                displayName: 'Mode',
+                name: 'mode',
+                type: 'options',
+                default: 'text',
+                options: [
+                    { name: 'Text', value: 'text' },
+                    { name: 'Image', value: 'image' },
+                ],
+                hint: 'Text: normal conversational/tool-using turn. Image: send one image to a vision-capable model — no auto-select, the Model field below must be tagged role="image_model".',
+            },
+            {
                 displayName: 'Model (Optional)',
                 name: 'model',
                 type: 'options',
                 default: '',
-                description: 'The specific model to use, or leave empty for auto-selection',
+                description: 'The specific model to use, or leave empty for auto-selection (Text mode only). Image mode requires a model tagged role="image_model" — no auto-select.',
+            },
+            {
+                displayName: 'Media (Image URL or Reference)',
+                name: 'media',
+                type: 'string',
+                default: '',
+                placeholder: '{{ $node["Synapse"].data.binary }}  or  https://example.com/photo.jpg',
+                hint: 'A literal image URL, or a workflow reference to an upstream node\'s output (base64 body or local_path). Required when Mode = Image.',
+                required: true,
+                displayOptions: { show: { mode: ['image'] } },
             },
             {
                 displayName: 'Tools (Optional)',

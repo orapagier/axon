@@ -1,5 +1,112 @@
+use crate::providers::types::ContentBlock;
 use crate::state::AppState;
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use once_cell::sync::Lazy;
 use serde_json::Value;
+
+static MEDIA_HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
+    reqwest::Client::builder()
+        .user_agent("axon-agent/1.0")
+        .build()
+        .expect("build shared media-fetch HTTP client")
+});
+
+/// Resolve the Cortex node's `media` config field (already expression-
+/// resolved by the workflow engine) into a provider-ready `ContentBlock::Image`.
+/// Accepts a literal http(s) URL, a raw/data-URI base64 string, a local file
+/// path, or the HTTP node's binary object shape `{ body, local_path, mime_type }`.
+async fn resolve_media_to_image_block(media: &Value) -> Result<ContentBlock, String> {
+    let (raw, declared_mime): (String, Option<String>) = match media {
+        Value::String(s) if !s.trim().is_empty() => (s.trim().to_string(), None),
+        Value::Object(obj) => {
+            let mime = obj
+                .get("mime_type")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            if let Some(body) = obj
+                .get("body")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+            {
+                (body.to_string(), mime)
+            } else if let Some(lp) = obj
+                .get("local_path")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+            {
+                (lp.to_string(), mime)
+            } else {
+                return Err("Media resolved to an object with neither 'body' nor 'local_path' — expected an image URL, base64 string, or an upstream node's binary output.".to_string());
+            }
+        }
+        _ => {
+            return Err(
+                "Media is empty. Provide an image URL or a reference to an upstream node's output (e.g. {{ $node[\"HttpNode\"].data.binary }})."
+                    .to_string(),
+            )
+        }
+    };
+
+    if raw.starts_with("http://") || raw.starts_with("https://") {
+        let resp = MEDIA_HTTP_CLIENT
+            .get(&raw)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to fetch media URL '{}': {}", raw, e))?;
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.split(';').next().unwrap_or(s).to_string());
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| format!("Failed to read media response body: {}", e))?
+            .to_vec();
+        image::load_from_memory(&bytes)
+            .map_err(|e| format!("Media at '{}' does not look like a valid image: {}", raw, e))?;
+        let media_type = content_type
+            .or_else(|| image::guess_format(&bytes).ok().map(|f| f.to_mime_type().to_string()))
+            .unwrap_or_else(|| "application/octet-stream".to_string());
+        return Ok(ContentBlock::Image {
+            media_type,
+            data: BASE64.encode(&bytes),
+        });
+    }
+
+    if crate::tools::image_tool::looks_like_base64_image(&raw) {
+        let b64_clean = raw
+            .find(',')
+            .map_or(raw.as_str(), |i| &raw[i + 1..])
+            .trim()
+            .to_string();
+        let bytes = BASE64
+            .decode(&b64_clean)
+            .map_err(|e| format!("Media base64 decode failed: {}", e))?;
+        image::load_from_memory(&bytes)
+            .map_err(|e| format!("Media does not look like a valid image: {}", e))?;
+        let media_type = declared_mime
+            .or_else(|| image::guess_format(&bytes).ok().map(|f| f.to_mime_type().to_string()))
+            .unwrap_or_else(|| "image/jpeg".to_string());
+        return Ok(ContentBlock::Image {
+            media_type,
+            data: b64_clean,
+        });
+    }
+
+    // Otherwise: a local file path (e.g. binary.local_path from an upstream
+    // HTTP/staging node).
+    let bytes = std::fs::read(&raw).map_err(|e| format!("Failed to read media file '{}': {}", raw, e))?;
+    image::load_from_memory(&bytes)
+        .map_err(|e| format!("Media file '{}' does not look like a valid image: {}", raw, e))?;
+    let media_type = declared_mime
+        .or_else(|| image::guess_format(&bytes).ok().map(|f| f.to_mime_type().to_string()))
+        .unwrap_or_else(|| "image/jpeg".to_string());
+    Ok(ContentBlock::Image {
+        media_type,
+        data: BASE64.encode(&bytes),
+    })
+}
 
 pub(crate) fn execute_cortex_node<'a>(
     config: &'a Value,
@@ -82,6 +189,45 @@ pub(crate) fn execute_cortex_node<'a>(
             );
         }
 
+        // Mode: "text" (default) or "image". Video is not supported — no
+        // configured provider path can accept video input today.
+        let mode = config
+            .get("mode")
+            .and_then(|v| v.as_str())
+            .unwrap_or("text")
+            .to_string();
+
+        let image_content: Option<ContentBlock> = if mode == "image" {
+            let Some(model_name) = selected_model.as_deref() else {
+                return Err("Cortex node (Image mode): a Model is required — pick a model tagged role=\"image_model\" (auto-select is not available for images).".to_string());
+            };
+            match crate::router::model_router::model_role_by_name(&state.router, model_name).await
+            {
+                Some(role) if role == "image_model" => {}
+                Some(other) => {
+                    return Err(format!(
+                        "Cortex node (Image mode): model '{}' is tagged role=\"{}\", not \"image_model\". Tag it role=\"image_model\" on the Models page, or pick a different model.",
+                        model_name,
+                        if other.is_empty() { "<general>" } else { &other }
+                    ));
+                }
+                None => {
+                    return Err(format!(
+                        "Cortex node (Image mode): model '{}' was not found.",
+                        model_name
+                    ))
+                }
+            }
+            let media_val = config.get("media").cloned().unwrap_or(Value::Null);
+            Some(
+                resolve_media_to_image_block(&media_val)
+                    .await
+                    .map_err(|e| format!("Cortex node (Image mode): {}", e))?,
+            )
+        } else {
+            None
+        };
+
         let system_prompt = if system_prompt_text.is_empty() {
             None
         } else {
@@ -110,6 +256,11 @@ pub(crate) fn execute_cortex_node<'a>(
         // long-term memory or the system-wide tool-observation log, and it does
         // not write its outputs back into that shared long-term store.
         ctx.isolated_memory = true;
+
+        if mode == "image" {
+            ctx.preferred_role = Some("image_model".to_string());
+            ctx.image_content = image_content;
+        }
 
         if !selected_tools.is_empty() {
             ctx.allowed_tools = Some(selected_tools);

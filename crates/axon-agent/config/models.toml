@@ -517,16 +517,13 @@ priority   = 9
 timeout_secs = 30
 enabled    = true
 
-# ── PHASE-AWARE ROLES (agent loop) ──────────────────────────────────────────
+# ── AGENT LOOP ROUTING (crates/axon-agent/src/agent/loop.rs) ────────────────
 #
-# The agent loop routes each turn to a role (crates/axon-agent/src/agent/loop.rs):
-#   complex_tasks — every tool-use turn, correction turn, and iteration > 1
-#                   (i.e. all planning and acting). Put ONE strong paid model
-#                   here: it is the single highest-leverage quality upgrade.
-#   simple_tasks  — first-turn conversational chit-chat, no tools. Cheap/fast.
-#
-# Both pools fall back to the general pool (role = "") when empty, so these
-# entries are optional and safe to add/remove at any time.
+# The main agent loop always routes through the general pool (role = ""),
+# then the cross-role sweep, then the paid_model fallback below — there is no
+# longer a role split by task complexity. Put your best general-purpose
+# model(s) at role = "". "agent.reasoning_effort" (a setting, not a role) is
+# applied automatically on any tool-using/correction turn regardless of role.
 #
 # Provider-agnostic: any provider works in any role.
 #   provider = "anthropic"  → native Anthropic API
@@ -544,38 +541,21 @@ enabled    = true
 #   "budget"   — older Claude models that take a thinking token budget
 #   "off"      — default; safe for models that reject the parameter
 #
-# Uncomment ONE of the complex_tasks templates and fill in your model:
+# role = "image_model": vision-capable models for the Cortex workflow node's
+# Image mode. STRICT — unlike the general pool, this role never falls back
+# to general/paid_model; if no image_model is available/healthy, the run
+# fails clearly instead of silently answering via a text-only model.
+# Supported providers today: anthropic, and any OpenAI-compatible provider.
+# Ollama vision models are not yet supported (images are silently dropped).
 
 # [[models]]
-# name       = "strong-complex-anthropic"
+# name       = "vision-anthropic"
 # provider   = "anthropic"
 # model_id   = "claude-haiku-4-5"
 # api_key    = "${ANTHROPIC_API_KEY}"
-# role       = "complex_tasks"
-# thinking_mode = "budget"
+# role       = "image_model"
 # priority   = 1
 # timeout_secs = 120
-# enabled    = true
-
-# [[models]]
-# name       = "strong-complex-openai-compat"
-# provider   = "openrouter"                      # any OpenAI-compatible provider
-# model_id   = "<paid-model-id>"
-# api_key    = "${YOUR_PROVIDER_API_KEY}"
-# base_url   = "https://openrouter.ai/api/v1"
-# role       = "complex_tasks"
-# priority   = 1
-# timeout_secs = 120
-# enabled    = true
-
-# [[models]]
-# name       = "fast-simple"
-# provider   = "google"
-# model_id   = "gemini-2.5-flash"
-# api_key    = "${GEMINI_API_KEY_ORAPARAMLEJ}"
-# role       = "simple_tasks"
-# priority   = 1
-# timeout_secs = 60
 # enabled    = true
 
 # ── PAID MODEL - ULTIMATE FALLBACK ─────────────────────────────────────────────

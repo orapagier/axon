@@ -202,6 +202,12 @@ impl Message {
             content: MessageContent::Blocks(blocks),
         }
     }
+    pub fn user_with_blocks(blocks: Vec<ContentBlock>) -> Self {
+        Message {
+            role: "user".into(),
+            content: MessageContent::Blocks(blocks),
+        }
+    }
 }
 
 /// How the model is allowed to use tools on a single call. Mapped to each

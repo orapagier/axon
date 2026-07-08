@@ -1420,7 +1420,7 @@ fn decode_base64_image(b64: &str) -> Result<image::DynamicImage> {
 
 /// Return true if `s` looks like raw base64 image data rather than a file path.
 /// Checks the leading magic-byte patterns once base64-decoded.
-fn looks_like_base64_image(s: &str) -> bool {
+pub(crate) fn looks_like_base64_image(s: &str) -> bool {
     // Common base64 prefixes for image formats:
     //   JPEG  Ã¢â€ â€™ /9j/
     //   PNG   Ã¢â€ â€™ iVBORw

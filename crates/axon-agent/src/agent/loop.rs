@@ -1047,29 +1047,19 @@ pub(crate) async fn run_inner(
         let iter_seed =
             base_route_seed.wrapping_add((iters as usize).wrapping_mul(0x9e3779b97f4a7c15_usize));
 
-        // Task-phase-aware role selection.
-        // The phase is derived from observable run state — no extra config needed.
-        //
-        // simple_tasks   → fast cheap model: conversational, no tools, first attempt
-        // complex_tasks  → capable model: any tool use, corrections, long runs
-        // ""             → general pool: unclassified, let the router decide
-        let preferred_role = if filtered.is_empty()
-            && is_conversational
-            && iters == 1
-            && guard_counts.qc_correction_count == 0
-        {
-            "simple_tasks"
-        } else if !filtered.is_empty()
+        // Reasoning-effort gate, decoupled from routing. Any tool-using
+        // iteration, iteration > 1, or any correction/claim-guard/nudge this
+        // run counts as a "complex" turn that deserves deeper reasoning.
+        let is_complex_turn = !filtered.is_empty()
             || iters > 1
             || guard_counts.qc_correction_count > 0
             || guard_counts.claim_guard_count > 0
-            || guard_counts.nudge_count > 0
-        {
-            // Corrections and tool-using iterations always deserve the most capable model.
-            "complex_tasks"
-        } else {
-            ""
-        };
+            || guard_counts.nudge_count > 0;
+
+        // Routing pool: general pool (role "") unless a node forced a
+        // specific role for this whole run (e.g. Cortex node Image mode
+        // forcing role = "image_model").
+        let preferred_role = ctx.preferred_role.as_deref().unwrap_or("");
 
         let model_phase = if !filtered.is_empty() && tools_used.is_empty() {
             "Planning next step..."
@@ -1099,9 +1089,7 @@ pub(crate) async fn run_inner(
         // model's thinking_mode opts in. Applied only on the capable/correction
         // phase where deeper planning pays off. Set "off" to disable.
         let reasoning_cfg = state.settings.get_str("agent.reasoning_effort", "medium");
-        let reasoning_effort = if !reasoning_cfg.is_empty()
-            && reasoning_cfg != "off"
-            && preferred_role == "complex_tasks"
+        let reasoning_effort = if !reasoning_cfg.is_empty() && reasoning_cfg != "off" && is_complex_turn
         {
             Some(reasoning_cfg)
         } else {

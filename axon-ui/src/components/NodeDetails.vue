@@ -83,8 +83,8 @@ onMounted(async () => {
   // Fetch available models for Axon node dropdown
   try {
     const mData = await get('/models')
-    availableModels.value = (mData.models || []).filter(m => m.enabled).map(m => ({ name: m.name, value: m.name }))
-    availableModels.value.unshift({ name: '(Auto-select)', value: '' })
+    availableModels.value = (mData.models || []).filter(m => m.enabled).map(m => ({ name: m.name, value: m.name, role: m.role || '' }))
+    availableModels.value.unshift({ name: '(Auto-select)', value: '', role: '' })
     availableModelNames.value = (mData.models || []).map(m => ({
       name: m.enabled === false ? `${m.name} (disabled)` : m.name,
       value: m.name,
@@ -1011,7 +1011,11 @@ const nodeDefinition = computed(() => {
   if ((type === 'cortex' || type === 'textAnalysis') && base.properties) {
     const enriched = { ...base, properties: base.properties.map(p => {
       if (p.name === 'model' && p.type === 'options') {
-        return { ...p, options: availableModels.value, searchable: true }
+        const isImageMode = type === 'cortex' && props.node.data.config?.mode === 'image'
+        const opts = isImageMode
+          ? availableModels.value.filter(m => m.role === 'image_model')
+          : availableModels.value
+        return { ...p, options: opts, searchable: true }
       }
       if (p.name === 'tools' && p.type === 'multiOptions') {
         return { ...p, options: availableTools.value }
