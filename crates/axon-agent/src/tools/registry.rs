@@ -115,7 +115,7 @@ const CRM_WRITE_TOOLS: &[&str] = &[
 ];
 
 fn internal_tools() -> Vec<ToolDefinition> {
-    vec![
+    let mut tools = vec![
         {
             let mut d = ToolDefinition::internal(
                 "update_plan",
