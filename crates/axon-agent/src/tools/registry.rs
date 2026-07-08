@@ -298,7 +298,6 @@ fn internal_tools() -> Vec<ToolDefinition> {
             }),
             vec!["name_or_id".into()],
         ),
-        crate::tools::telegram::tool_definition(),
         crate::tools::telegram::trigger_tool_definition(),
         crate::tools::whatsapp::tool_definition(),
         crate::tools::whatsapp::trigger_tool_definition(),
