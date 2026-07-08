@@ -486,7 +486,7 @@ export const NODE_TYPES = {
         name: 'synapse',
         icon: '/icons/synapse.png',
 
-        description: 'Makes an HTTP request and returns the response data',
+        description: 'Makes an HTTP request and returns the response data. Optionally scrape the response with CSS selectors (see "Extract with CSS Selectors" below) instead of chaining a separate HTML Extract node.',
         properties: [
             {
                 displayName: '',
