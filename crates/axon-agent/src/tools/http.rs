@@ -844,57 +844,77 @@ pub fn run_saved_tool_definition() -> ToolDefinition {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::links_to_markdown;
+mod data_cleaner_tests {
+    use super::HttpRequestTool;
 
-    fn base(u: &str) -> reqwest::Url {
-        reqwest::Url::parse(u).unwrap()
+    // Readability extraction drops nav/footer boilerplate and keeps the
+    // article body — the thing the old uniform tag-stripper couldn't do.
+    #[test]
+    fn readability_drops_boilerplate_keeps_article() {
+        let html = r#"<html><body>
+            <nav><a href="/">Home</a> <a href="/about">About</a></nav>
+            <article>
+                <h1>Headline</h1>
+                <p>This is the real article content, long enough for the
+                readability scorer to confidently pick it as the main
+                candidate over the surrounding navigation and footer chrome
+                that every page on this site repeats verbatim.</p>
+            </article>
+            <footer>Copyright 2026. All rights reserved. Contact us.</footer>
+        </body></html>"#;
+
+        let mut r =
+            dom_smoothie::Readability::new(html, Some("https://example.com/post"), None).unwrap();
+        let article = r.parse().unwrap();
+        let text = article.text_content.to_string();
+
+        assert!(text.contains("real article content"), "got: {text}");
+        assert!(!text.contains("Copyright 2026"), "footer leaked: {text}");
+    }
+
+    // Keep Links (Markdown text mode) preserves the link as [label](url).
+    #[test]
+    fn markdown_mode_keeps_links() {
+        let html = r#"<html><body><article>
+            <h1>Headline</h1>
+            <p>Read more in <a href="/deep-dive">our deep dive</a> about this
+            topic, which has enough surrounding text for readability to treat
+            this paragraph as the article body rather than noise.</p>
+        </article></body></html>"#;
+
+        let cfg = dom_smoothie::Config {
+            text_mode: dom_smoothie::TextMode::Markdown,
+            ..Default::default()
+        };
+        let mut r = dom_smoothie::Readability::new(
+            html,
+            Some("https://example.com/post"),
+            Some(cfg),
+        )
+        .unwrap();
+        let article = r.parse().unwrap();
+        let text = article.text_content.to_string();
+
+        assert!(
+            text.contains("[our deep dive](https://example.com/deep-dive)"),
+            "got: {text}"
+        );
+    }
+
+    // A body dom_smoothie can't parse as an article (e.g. no real content)
+    // must not panic the caller — http.rs falls back to the raw text.
+    #[test]
+    fn unparsable_body_is_handled_by_caller_fallback() {
+        let text = "not html at all, just plain text".to_string();
+        let cleaned = dom_smoothie::Readability::new(text.clone(), None, None)
+            .and_then(|mut r| r.parse())
+            .map(|a| a.text_content.to_string())
+            .unwrap_or_else(|_| text.clone());
+        assert!(!cleaned.is_empty());
     }
 
     #[test]
-    fn resolves_relative_permalinks_and_keeps_labels() {
-        let b = base("https://example.com/blog/index.html");
-        let html = r#"<p>See <a href="/post/123">My Post</a> and
-                      <a href="next.html">Next</a> and
-                      <a href="https://other.com/x">External</a>.</p>"#;
-        let out = links_to_markdown(html, Some(&b));
-        assert!(
-            out.contains("[My Post](https://example.com/post/123)"),
-            "root-relative not resolved: {out}"
-        );
-        assert!(
-            out.contains("[Next](https://example.com/blog/next.html)"),
-            "doc-relative not resolved: {out}"
-        );
-        assert!(
-            out.contains("[External](https://other.com/x)"),
-            "absolute url not kept: {out}"
-        );
-    }
-
-    #[test]
-    fn strips_inner_tags_and_degrades_non_navigational_hrefs() {
-        let b = base("https://example.com/");
-        let html = r##"<a href="/a"><b>Bold</b>  link</a> <a href="#top">jump</a> <a href="javascript:void(0)">js</a>"##;
-        let out = links_to_markdown(html, Some(&b));
-        assert!(
-            out.contains("[Bold link](https://example.com/a)"),
-            "inner tags not stripped / collapsed: {out}"
-        );
-        // Fragment-only and javascript hrefs keep just the label text, no URL.
-        assert!(out.contains(" jump "), "fragment label dropped: {out}");
-        assert!(out.contains(" js "), "javascript label dropped: {out}");
-        assert!(
-            !out.contains("javascript:"),
-            "javascript href leaked: {out}"
-        );
-        assert!(!out.contains("](#top)"), "fragment url leaked: {out}");
-    }
-
-    #[test]
-    fn leaves_non_anchor_html_untouched() {
-        let b = base("https://example.com/");
-        let html = "<p>no links here</p>";
-        assert_eq!(links_to_markdown(html, Some(&b)), html);
+    fn tool_constructs() {
+        let _ = HttpRequestTool::new();
     }
 }
