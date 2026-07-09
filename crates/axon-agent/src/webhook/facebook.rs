@@ -444,7 +444,7 @@ async fn dispatch_facebook_workflows(
             }
         };
         let mut stmt = match conn.prepare(
-            "SELECT wn.workflow_id, wn.config
+            "SELECT wn.workflow_id, wn.config, w.name, wn.name
              FROM workflow_nodes wn
              JOIN workflows w ON w.id = wn.workflow_id
              WHERE w.enabled = 1
@@ -458,7 +458,14 @@ async fn dispatch_facebook_workflows(
             }
         };
 
-        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)));
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+            ))
+        });
         let rows = match rows {
             Ok(r) => r,
             Err(e) => {
@@ -467,8 +474,14 @@ async fn dispatch_facebook_workflows(
             }
         };
 
+        // Every Facebook-bound trigger node found this pass is logged with its
+        // credential/page binding and whether it matched, regardless of outcome.
+        // Multiple enabled workflows (or duplicate trigger nodes left on "--
+        // None --") are the most common cause of a Page's events firing a
+        // workflow the user didn't expect — this makes that visible instead of
+        // only showing the workflows that actually fired.
         for row in rows.flatten() {
-            let (workflow_id, cfg_str) = row;
+            let (workflow_id, cfg_str, workflow_name, node_name) = row;
             let cfg: Value = serde_json::from_str(&cfg_str).unwrap_or(Value::Null);
 
             // event_type filter. An explicit list fires only on the named types.
