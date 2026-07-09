@@ -507,6 +507,10 @@ async fn dispatch_facebook_workflows(
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             if cred_id.is_empty() {
+                dbg_log(&format!(
+                    "FB dispatch candidate: workflow '{workflow_name}' ({workflow_id}) node '{node_name}' \
+                     has no credential selected (catch-all) — will fire for page {page_id}"
+                ));
                 targets.push(workflow_id); // catch-all
                 continue;
             }
@@ -526,7 +530,12 @@ async fn dispatch_facebook_workflows(
                         .map(|s| s.to_string())
                 })
                 .unwrap_or_default();
-            if cred_page == page_id {
+            let matched = cred_page == page_id;
+            dbg_log(&format!(
+                "FB dispatch candidate: workflow '{workflow_name}' ({workflow_id}) node '{node_name}' \
+                 cred_id={cred_id} bound_page={cred_page:?} incoming_page={page_id} match={matched}"
+            ));
+            if matched {
                 targets.push(workflow_id);
             }
         }
