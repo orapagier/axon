@@ -84,6 +84,10 @@ sqlx = { version = "0.8", default-features = false, features = [
 # Node 2.3 HTML Extract: CSS-selector extraction. No default features (drops the
 # CLI-example deps); compile-heavy but runtime-light, no TLS/HTTP of its own.
 scraper  = { version = "0.27", default-features = false, features = ["errors"] }
+# Synapse Data Cleaner: readability-style main-content extraction (Mozilla
+# readability.js port) — replaces uniform tag-stripping with boilerplate
+# (nav/footer/ads) removal. Pure Rust, no browser, no TLS/HTTP of its own.
+dom_smoothie = "0.18"
 # Node 2.4 Extract from File: CSV / XLSX → JSON. Both pure Rust, no TLS.
 # calamine's `dates` feature reuses the in-tree chrono for Excel date cells.
 csv      = "1.4"
