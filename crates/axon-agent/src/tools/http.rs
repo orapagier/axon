@@ -687,40 +687,31 @@ impl HttpRequestTool {
                 let text = String::from_utf8_lossy(&bytes).into_owned();
 
                 if params.data_cleaner.unwrap_or(false) {
-                    // Optionally preserve hyperlinks as Markdown — [label](absolute-url) —
-                    // BEFORE any tags are stripped, resolving relative permalinks against
-                    // the page's own URL.
-                    let working: String = if params.keep_links.unwrap_or(false) {
-                        let base = reqwest::Url::parse(&final_url).ok();
-                        links_to_markdown(&text, base.as_ref())
+                    // Readability-style main-content extraction (Mozilla
+                    // readability.js port): scores the DOM to find the actual
+                    // article container and drops nav/footer/ads, instead of
+                    // uniformly stripping every tag. Markdown text mode keeps
+                    // links as [label](url) when Keep Links is on; Formatted
+                    // mode yields plain paragraphs otherwise. A page dom_smoothie
+                    // can't parse (e.g. a non-HTML body) falls back to the raw
+                    // text rather than failing the node.
+                    let text_mode = if params.keep_links.unwrap_or(false) {
+                        dom_smoothie::TextMode::Markdown
                     } else {
-                        text.clone()
+                        dom_smoothie::TextMode::Formatted
                     };
-
-                    // Improved HTML stripping (preserve some structure)
-                    let re_script =
-                        regex::Regex::new(r"(?s)<script.*?>.*?</script>|<style.*?>.*?</style>")
-                            .unwrap();
-                    let stripped_scripts = re_script.replace_all(&working, " ");
-
-                    // Convert common block elements to newlines
-                    let re_blocks = regex::Regex::new(
-                        r"(?i)</?(div|p|br|li|h\d|tr|section|article|header|footer).*?>",
+                    let cfg = dom_smoothie::Config {
+                        text_mode,
+                        ..Default::default()
+                    };
+                    let cleaned = dom_smoothie::Readability::new(
+                        text.clone(),
+                        Some(&final_url),
+                        Some(cfg),
                     )
-                    .unwrap();
-                    let with_newlines = re_blocks.replace_all(&stripped_scripts, "\n");
-
-                    // Strip remaining tags
-                    let re_tags = regex::Regex::new(r"<[^>]*>").unwrap();
-                    let stripped_tags = re_tags.replace_all(&with_newlines, " ");
-
-                    // Clean up whitespace per line
-                    let cleaned = stripped_tags
-                        .lines()
-                        .map(|l| l.trim())
-                        .filter(|l| !l.is_empty())
-                        .collect::<Vec<_>>()
-                        .join("\n");
+                    .and_then(|mut r| r.parse())
+                    .map(|article| article.text_content.to_string())
+                    .unwrap_or_else(|_| text.clone());
 
                     (serde_json::json!(cleaned.clone()), Some(cleaned), None)
                 } else {
