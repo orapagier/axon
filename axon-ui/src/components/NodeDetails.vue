@@ -3384,6 +3384,58 @@ onUnmounted(() => {
                       <span class="toggle-label">{{ node.data.config.execute_once ? 'Run Once (aggregate all items)' : 'Run Per Item' }}</span>
                     </div>
                   </div>
+                  <!-- Per-item execution (n8n "Run Once For Each Item"): maps this
+                   node over its input array with $item/$json bound per item, no
+                   explicit Loop node. $ancestor('Node') then joins back to the
+                   matching upstream item by lineage. -->
+                  <div
+                    v-if="node.data && node.data.config"
+                    class="form-row row-boolean-field"
+                  >
+                    <label class="field-label">For Each Item</label>
+                    <div class="toggle-field">
+                      <label class="toggle-switch">
+                        <input
+                          v-model="node.data.config.for_each"
+                          type="checkbox"
+                          @change="onSettingsChange"
+                        >
+                        <span class="toggle-track"><span class="toggle-thumb" /></span>
+                      </label>
+                      <span class="toggle-label">{{ node.data.config.for_each ? 'Runs per input item ($item / $json)' : 'Runs once over all input' }}</span>
+                    </div>
+                  </div>
+                  <div
+                    v-if="node.data && node.data.config && node.data.config.for_each"
+                    class="form-row"
+                  >
+                    <label class="field-label">Parallelism</label>
+                    <input
+                      v-model.number="node.data.config.for_each_parallelism"
+                      type="number"
+                      min="1"
+                      placeholder="1 (sequential)"
+                      @change="onSettingsChange"
+                    >
+                    <span class="field-hint">Run this many items concurrently — a real edge over n8n's single-threaded per-item loop. Leave 1 for sequential.</span>
+                  </div>
+                  <div
+                    v-if="node.data && node.data.config && node.data.config.for_each"
+                    class="form-row row-boolean-field"
+                  >
+                    <label class="field-label">Stamp Lineage Index</label>
+                    <div class="toggle-field">
+                      <label class="toggle-switch">
+                        <input
+                          v-model="node.data.config.for_each_stamp_index"
+                          type="checkbox"
+                          @change="onSettingsChange"
+                        >
+                        <span class="toggle-track"><span class="toggle-thumb" /></span>
+                      </label>
+                      <span class="toggle-label">Add __idx to each output so $ancestor() joins back after Filter/Sort</span>
+                    </div>
+                  </div>
                   <!-- Pinned data (A4): manual runs use the saved output instead of
                    executing the node. Production/trigger runs always execute. -->
                   <div class="form-row row-boolean-field">

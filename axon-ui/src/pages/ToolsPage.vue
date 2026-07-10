@@ -50,8 +50,17 @@ async function reload() {
 }
 
 async function toggleTool(t) {
-  await put(`/tools/${encodeURIComponent(t.name)}`, { enabled: !t.enabled })
-  load()
+  // Optimistic: flip immediately, revert if the server rejects it. Waiting on
+  // the PUT + a full /tools refetch made the button feel 1-2s slow.
+  const next = !t.enabled
+  t.enabled = next
+  try {
+    const r = await put(`/tools/${encodeURIComponent(t.name)}`, { enabled: next })
+    if (r?.ok === false) throw new Error(r.error || 'update rejected')
+  } catch (e) {
+    t.enabled = !next
+    toast(`Failed to ${next ? 'enable' : 'disable'} ${t.name}: ${e.message}`, false)
+  }
 }
 
 onMounted(load)
@@ -67,6 +76,10 @@ onMounted(load)
         </p>
       </div>
       <div class="header-actions">
+        <SearchInput
+          v-model="searchQuery"
+          placeholder="Search tools by name or description…"
+        />
         <button
           class="btn btn-save"
           @click="reload"
@@ -75,11 +88,6 @@ onMounted(load)
         </button>
       </div>
     </div>
-
-    <SearchInput
-      v-model="searchQuery"
-      placeholder="Search tools by name or description…"
-    />
 
     <div
       v-if="sections.length"

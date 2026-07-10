@@ -1,11 +1,10 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { get, post, del, put } from '../lib/api.js'
 import { toast } from '../lib/toast.js'
 import { confirmDialog } from '../lib/confirm.js'
 import Modal from '../components/Modal.vue'
 import Pill from '../components/Pill.vue'
-import SearchInput from '../components/SearchInput.vue'
 
 const PLATFORMS = [
   { 
@@ -97,16 +96,6 @@ let messagingPollInterval
 
 const credentials = ref([])
 const credModal = ref(false)
-const servicesSearch = ref('')
-function byName(list, nameOf) {
-  const q = servicesSearch.value.trim().toLowerCase()
-  if (!q) return list
-  return list.filter((item) => nameOf(item).toLowerCase().includes(q))
-}
-const filteredCredentials = computed(() => byName(credentials.value, (c) => c.name))
-const filteredMcpServers = computed(() => byName(mcpServers.value, (n) => n))
-const filteredSshServers = computed(() => byName(sshServers.value, (s) => s.name))
-const filteredWsAccounts = computed(() => byName(wsAccounts.value, (a) => a.name))
 const credForm = ref({ name: '', service: 'telegram', fields: [{ key: 'access_token', value: '' }] })
 const testingCred = ref(null)
 
@@ -409,11 +398,6 @@ onUnmounted(() => {
       </button>
     </div>
 
-    <SearchInput
-      v-model="servicesSearch"
-      placeholder="Search credentials, MCP servers, SSH servers, web search accounts…"
-    />
-
     <!-- Credentials -->
     <div
       class="premium-card collapsible"
@@ -442,7 +426,7 @@ onUnmounted(() => {
         
         <div class="service-list">
           <div
-            v-for="c in filteredCredentials"
+            v-for="c in credentials"
             :key="c.id"
             class="service-item"
           >
@@ -473,10 +457,10 @@ onUnmounted(() => {
             </div>
           </div>
           <div
-            v-if="filteredCredentials.length === 0"
+            v-if="credentials.length === 0"
             class="empty-state"
           >
-            {{ servicesSearch.trim() ? 'No credentials match your search.' : 'No credentials configured.' }}
+            No credentials configured.
           </div>
         </div>
       </div>
@@ -510,7 +494,7 @@ onUnmounted(() => {
         
         <div class="service-list">
           <div
-            v-for="name in filteredMcpServers"
+            v-for="name in mcpServers"
             :key="name"
             class="service-item"
           >
@@ -540,10 +524,10 @@ onUnmounted(() => {
             </div>
           </div>
           <div
-            v-if="filteredMcpServers.length === 0"
+            v-if="mcpServers.length === 0"
             class="empty-state"
           >
-            {{ servicesSearch.trim() ? 'No MCP servers match your search.' : 'No MCP servers connected.' }}
+            No MCP servers connected.
           </div>
         </div>
       </div>
@@ -577,7 +561,7 @@ onUnmounted(() => {
         
         <div class="service-list">
           <div
-            v-for="s in filteredSshServers"
+            v-for="s in sshServers"
             :key="s.name"
             class="service-item"
           >
@@ -607,10 +591,10 @@ onUnmounted(() => {
             </div>
           </div>
           <div
-            v-if="filteredSshServers.length === 0"
+            v-if="sshServers.length === 0"
             class="empty-state"
           >
-            {{ servicesSearch.trim() ? 'No SSH servers match your search.' : 'No SSH servers configured.' }}
+            No SSH servers configured.
           </div>
         </div>
       </div>
@@ -651,7 +635,7 @@ onUnmounted(() => {
         
         <div class="service-list">
           <div
-            v-for="a in filteredWsAccounts"
+            v-for="a in wsAccounts"
             :key="a.id"
             class="service-item"
           >
@@ -687,10 +671,10 @@ onUnmounted(() => {
             </div>
           </div>
           <div
-            v-if="filteredWsAccounts.length === 0"
+            v-if="wsAccounts.length === 0"
             class="empty-state"
           >
-            {{ servicesSearch.trim() ? 'No web search accounts match your search.' : 'No Tavily accounts configured.' }}
+            No Tavily accounts configured.
           </div>
         </div>
       </div>

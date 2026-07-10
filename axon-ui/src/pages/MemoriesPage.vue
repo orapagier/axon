@@ -95,6 +95,10 @@ onMounted(() => {
         </div>
 
         <div class="action-bar gap-12">
+          <SearchInput
+            v-model="stmSearch"
+            placeholder="Search runs by task…"
+          />
           <button
             class="btn btn-ghost"
             @click="loadSTM"
@@ -102,11 +106,6 @@ onMounted(() => {
             Refresh
           </button>
         </div>
-
-        <SearchInput
-          v-model="stmSearch"
-          placeholder="Search runs by task…"
-        />
 
         <div class="service-list">
           <div
@@ -295,44 +294,18 @@ onMounted(() => {
         </div>
 
         <div class="action-bar search-bar-row">
-          <div class="search-input-group">
-            <svg
-              class="search-icon-inside"
-              viewBox="0 0 24 24"
-              width="14"
-              height="14"
-              aria-hidden="true"
-            >
-              <circle
-                cx="11"
-                cy="11"
-                r="7"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              />
-              <path
-                d="m16.5 16.5 4.5 4.5"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-              />
-            </svg>
-            <input
-              v-model="ltmSearch"
-              type="text"
-              class="premium-input search-input-styled"
-              placeholder="Search persistent knowledge..."
-              @keydown.enter="searchLTM"
-            >
-            <button
-              class="search-btn-styled"
-              @click="searchLTM"
-            >
-              Search
-            </button>
-          </div>
+          <SearchInput
+            v-model="ltmSearch"
+            :autofocus="false"
+            placeholder="Search persistent knowledge…"
+            @keydown.enter="searchLTM"
+          />
+          <button
+            class="btn btn-save"
+            @click="searchLTM"
+          >
+            Search
+          </button>
           <button
             class="btn btn-ghost"
             @click="loadLTM"

@@ -6,6 +6,7 @@ import { confirmDialog } from '../lib/confirm.js'
 import { timeAgo } from '../lib/utils.js'
 import Modal from '../components/Modal.vue'
 import Pill from '../components/Pill.vue'
+import SearchInput from '../components/SearchInput.vue'
 
 const LEAD_STATUSES = ['Open', 'Contacted', 'Qualified', 'Lost']
 const DEAL_STAGES = ['Prospecting', 'Qualified', 'Proposal', 'Negotiation', 'Won', 'Lost']
@@ -632,12 +633,11 @@ onMounted(loadDashboard)
     <!-- ── Leads ─────────────────────────────────────────────────────────── -->
     <template v-else-if="tab === 'leads'">
       <div class="filter-bar">
-        <input
+        <SearchInput
           v-model="leadQ"
-          class="premium-input search-input"
           placeholder="Search name, email, company, notes, tags…"
           @keyup.enter="loadLeads"
-        >
+        />
         <select
           v-model="leadStatus"
           class="premium-input slim-select"
@@ -730,12 +730,11 @@ onMounted(loadDashboard)
     <!-- ── Deals kanban ──────────────────────────────────────────────────── -->
     <template v-else-if="tab === 'deals'">
       <div class="filter-bar">
-        <input
+        <SearchInput
           v-model="dealQ"
-          class="premium-input search-input"
           placeholder="Search deal titles, notes, tags…"
           @keyup.enter="loadDeals"
-        >
+        />
         <span class="filter-count">{{ dealTotal }} deal(s)</span>
       </div>
 
@@ -797,12 +796,11 @@ onMounted(loadDashboard)
     <!-- ── Organizations ─────────────────────────────────────────────────── -->
     <template v-else-if="tab === 'orgs'">
       <div class="filter-bar">
-        <input
+        <SearchInput
           v-model="orgQ"
-          class="premium-input search-input"
           placeholder="Search name, industry, country, website…"
           @keyup.enter="loadOrgs"
-        >
+        />
         <span class="filter-count">{{ orgTotal }} organization(s)</span>
       </div>
 
@@ -1581,20 +1579,7 @@ onMounted(loadDashboard)
   white-space: nowrap;
 }
 
-/* Filter bar */
-.filter-bar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 14px;
-  flex-wrap: wrap;
-}
-
-.search-input {
-  flex: 1;
-  min-width: 220px;
-  max-width: 420px;
-}
+/* Filter bar layout comes from the global .filter-bar / .search-field rules. */
 
 .slim-select {
   width: auto;
