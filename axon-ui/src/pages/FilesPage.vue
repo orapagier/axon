@@ -4,6 +4,7 @@ import { get, del } from '../lib/api.js'
 import { toast } from '../lib/toast.js'
 import { confirmDialog } from '../lib/confirm.js'
 import { timeAgo, fmtBytes } from '../lib/utils.js'
+import SearchInput from '../components/SearchInput.vue'
 
 function getFileExt(name) {
   if (!name) return '?'
@@ -15,6 +16,15 @@ const incoming = ref([])
 const outgoing = ref([])
 const masterKey = localStorage.getItem('AXON_MASTER_KEY') || ''
 const hasFiles = computed(() => incoming.value.length > 0 || outgoing.value.length > 0)
+
+const searchQuery = ref('')
+function byFilename(list) {
+  const q = searchQuery.value.trim().toLowerCase()
+  if (!q) return list
+  return list.filter((f) => (f.filename || '').toLowerCase().includes(q))
+}
+const filteredIncoming = computed(() => byFilename(incoming.value))
+const filteredOutgoing = computed(() => byFilename(outgoing.value))
 
 async function load() {
   try {
