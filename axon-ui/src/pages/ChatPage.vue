@@ -910,13 +910,34 @@ watch(disabled, (newVal) => {
   background: rgba(94, 234, 212, 0.14);
 }
 
-.conv-title {
+.conv-item-text {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.conv-title {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   font-size: 0.88rem;
+}
+
+.conv-snippet {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.76rem;
+  opacity: 0.65;
+}
+
+.conv-snippet mark {
+  background: rgba(94, 234, 212, 0.35);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
 }
 
 .conv-rename {
