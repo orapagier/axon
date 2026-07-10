@@ -103,9 +103,14 @@ onMounted(() => {
           </button>
         </div>
 
+        <SearchInput
+          v-model="stmSearch"
+          placeholder="Search runs by task…"
+        />
+
         <div class="service-list">
           <div
-            v-for="r in stmRuns"
+            v-for="r in filteredStmRuns"
             :key="r.id"
             class="service-item run-item-row"
             :class="{ expanded: expandedRuns.has(r.id) }"
