@@ -76,6 +76,11 @@ onMounted(load)
       </div>
     </div>
 
+    <SearchInput
+      v-model="searchQuery"
+      placeholder="Search tools by name or description…"
+    />
+
     <div
       v-if="sections.length"
       class="tools-grid"
