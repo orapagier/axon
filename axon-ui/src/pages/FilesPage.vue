@@ -245,22 +245,22 @@ onMounted(load)
             </div>
             <h2>Outgoing Files</h2>
           </div>
-          <span class="card-summary">{{ outgoing.length }} files</span>
+          <span class="card-summary">{{ filteredOutgoing.length }} files</span>
         </div>
 
         <div class="card-content">
           <div
-            v-if="outgoing.length === 0"
+            v-if="filteredOutgoing.length === 0"
             class="empty-state"
           >
-            No outgoing files found.
+            {{ searchQuery.trim() ? 'No outgoing files match your search.' : 'No outgoing files found.' }}
           </div>
           <div
             v-else
             class="service-list"
           >
             <div
-              v-for="f in outgoing"
+              v-for="f in filteredOutgoing"
               :key="f.id"
               class="service-item file-row"
             >
