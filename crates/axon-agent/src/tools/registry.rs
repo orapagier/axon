@@ -825,17 +825,21 @@ impl ToolRegistry {
             .collect()
     }
     /// Enabled tools the agent is allowed to *call*. This is a subset of
-    /// [`all_enabled`] that drops three groups:
-    ///   • internal tools that exist only as workflow-builder nodes (e.g. webhook
-    ///     triggers) and have no `handle_internal` dispatch arm — offering them
-    ///     would let the agent pick a tool that fails with "Unknown internal tool";
-    ///   • social-platform outward-facing write actions (Facebook/Instagram —
-    ///     [`WORKFLOW_ONLY_WRITE_TOOLS`]), restricted to the deliberate workflow path;
-    ///   • CRM write tools ([`CRM_WRITE_TOOLS`]) unless the operator granted the
-    ///     agent CRM writes (`crm.agent_write_tools` setting → `allow_crm_writes`).
-    /// The full set is still served to the UI via [`all`] and dispatched by name
-    /// via [`run`], so the workflow node palette and execution are unaffected.
-    pub async fn all_enabled_for_agent(&self, allow_crm_writes: bool) -> Vec<ToolDefinition> {
+    /// [`all_enabled`] that drops internal tools which exist only as
+    /// workflow-builder nodes (e.g. webhook triggers, [`NON_DISPATCHABLE_TOOLS`])
+    /// and have no `handle_internal` dispatch arm — offering them would let
+    /// the agent pick a tool that fails with "Unknown internal tool".
+    ///
+    /// That's the only hardcoded exclusion left. The sensitive "write tool"
+    /// groups ([`SOCIAL_WRITE_TOOLS`], [`CRM_WRITE_TOOLS`],
+    /// [`MESSAGING_WRITE_TOOLS`]) are no longer name-filtered here — the
+    /// ToolsPage Enable/Disable toggle (`t.enabled`) is the single gate for
+    /// them, same as any other tool. They default to `enabled: false` at
+    /// boot via `apply_agent_gate_defaults`, so an operator has to
+    /// deliberately opt each one in. The full set is still served to the UI
+    /// via [`all`] and dispatched by name via [`run`], so the workflow node
+    /// palette and execution are unaffected by the toggle either way.
+    pub async fn all_enabled_for_agent(&self) -> Vec<ToolDefinition> {
         self.tools
             .read()
             .await
@@ -843,24 +847,34 @@ impl ToolRegistry {
             .filter(|t| t.enabled)
             .filter(|t| {
                 !(t.source == ToolSource::Internal
-                    && NON_AGENT_INTERNAL_TOOLS.contains(&t.name.as_str()))
+                    && NON_DISPATCHABLE_TOOLS.contains(&t.name.as_str()))
             })
-            // Outward-facing Facebook write actions are workflow-only — never
-            // exposed to the agent (workflow nodes still reach them via `all`/`run`).
-            .filter(|t| !WORKFLOW_ONLY_WRITE_TOOLS.contains(&t.name.as_str()))
-            .filter(|t| allow_crm_writes || !CRM_WRITE_TOOLS.contains(&t.name.as_str()))
             .cloned()
             .collect()
     }
+    /// Flip the sensitive write-tool groups ([`is_gated_write_tool`]) to
+    /// `enabled: false`, overriding whatever their source (MCP/internal
+    /// registration) set. Call once at boot, after all tools are registered
+    /// and *before* persisted [`crate::tools::overrides`] are applied on top
+    /// — persisted overrides must win so an operator's earlier opt-in
+    /// survives a restart instead of being reset back off every time.
+    pub async fn apply_agent_gate_defaults(&self) {
+        let names: Vec<String> = {
+            let m = self.tools.read().await;
+            m.keys().filter(|n| is_gated_write_tool(n)).cloned().collect()
+        };
+        for name in names {
+            self.set_enabled(&name, false).await;
+        }
+    }
     /// Enabled tools for a caller that supplies its own explicit allow-list
-    /// (currently: a Cortex node's `tools` picklist). An individually-named
-    /// pick overrides the [`NON_AGENT_INTERNAL_TOOLS`], [`WORKFLOW_ONLY_WRITE_TOOLS`],
-    /// and [`CRM_WRITE_TOOLS`] policy gates for that name only — naming a
-    /// specific write tool on a specific node *is* the deliberate, reviewable
-    /// decision those gates exist to require, unlike the open-ended chat agent
-    /// picking from the whole registry at its own discretion. Tools with no
-    /// dispatch arm ([`NON_DISPATCHABLE_TOOLS`]) stay excluded regardless,
-    /// since calling them always fails.
+    /// (currently: a Cortex node's `tools` picklist). Tools with no dispatch
+    /// arm ([`NON_DISPATCHABLE_TOOLS`]) stay excluded regardless, since
+    /// calling them always fails. Sensitive write tools are otherwise gated
+    /// the same way as everywhere else — via `t.enabled` — so a Cortex node
+    /// naming e.g. `fb_create_post` in its picklist only works once the
+    /// operator has also enabled that tool on the ToolsPage; naming it here
+    /// does not itself bypass the gate.
     pub async fn all_enabled_for_allowed(&self, allowed: &[String]) -> Vec<ToolDefinition> {
         self.tools
             .read()
