@@ -2,12 +2,12 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { get, post, put } from '../lib/api.js'
 import { toast } from '../lib/toast.js'
-import Pill from '../components/Pill.vue'
 import { useHeaderSearch } from '../lib/headerSearch.js'
 
 const byCategory = ref({})
 const settingsSearch = ref('')
 const patternsText = ref('[\n]')
+const patternsOriginal = ref('[\n]')
 const testMsg = ref('')
 const testResult = ref(null)
 const activeSection = ref('')
@@ -54,10 +54,10 @@ const sections = computed(() => [
   ...categoryEntries.value.map((category) => ({
     id: `category:${category.key}`,
     title: category.meta.title,
-    meta: `${category.rows.length} settings`,
+    meta: String(category.rows.length),
   })),
-  { id: 'router:patterns', title: 'Router Patterns', meta: 'JSON rules' },
-  { id: 'router:test', title: 'Router Test', meta: `${routerMatchCount.value} matches` },
+  { id: 'router:patterns', title: 'Router Patterns', meta: 'json', divider: true },
+  { id: 'router:test', title: 'Router Test', meta: String(routerMatchCount.value) },
 ])
 
 const activeCategory = computed(() => {
@@ -100,6 +100,13 @@ const showingPatterns = computed(() => activeSection.value === 'router:patterns'
 const showingRouterTest = computed(() => activeSection.value === 'router:test')
 
 const routerMatchCount = computed(() => testResult.value?.matched_tools?.length || 0)
+const patternsDirty = computed(() => patternsText.value !== patternsOriginal.value)
+
+// Dirty rows are counted against the FULL category (not just the rows visible
+// under a search filter) because Save writes the whole category.
+function dirtyCount(catKey) {
+  return (byCategory.value[catKey] || []).filter((s) => s.draft !== s.value).length
+}
 
 watch(
   sections,
@@ -142,6 +149,7 @@ async function load() {
     null,
     2
   )
+  patternsOriginal.value = patternsText.value
 
   loaded.value = true
 }
@@ -221,206 +229,205 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="settings-page services-page">
-    <div class="page-section-layout">
-      <aside class="page-section-sidebar">
-        <nav class="page-section-nav">
+  <div class="page-wrap settings-page">
+    <div class="set-layout">
+      <nav class="set-rail">
+        <template
+          v-for="section in sections"
+          :key="section.id"
+        >
+          <div
+            v-if="section.divider"
+            class="set-rail-rule"
+          />
           <button
-            v-for="section in sections"
-            :key="section.id"
             type="button"
-            class="page-section-nav-btn"
+            class="set-rail-btn"
             :class="{ active: section.id === activeSection }"
             @click="selectSection(section.id)"
           >
-            <span class="page-section-nav-title">{{ section.title }}</span>
-            <span class="page-section-nav-meta">{{ section.meta }}</span>
+            <span class="set-rail-title">{{ section.title }}</span>
+            <span class="set-rail-count">{{ section.meta }}</span>
           </button>
-        </nav>
-      </aside>
+        </template>
+      </nav>
 
-      <div class="page-section-content">
-        <section
+      <div class="set-content">
+        <div
           v-if="searchActive && displayedCategories.length === 0"
-          class="settings-card premium-card"
+          class="empty-state"
         >
-          <div class="empty-state">
-            No settings match your search.
-          </div>
-        </section>
+          <p class="empty-title">
+            No matching settings
+          </p>
+          <p class="empty-hint">
+            Nothing matches "{{ settingsSearch.trim() }}". Try a different term.
+          </p>
+        </div>
 
         <section
           v-for="cat in displayedCategories"
           :key="cat.key"
-          class="settings-card premium-card"
+          class="panel set-panel"
         >
-          <div class="settings-card-header">
-            <div>
-              <span class="settings-section-kicker">{{ cat.key }}</span>
-              <h2>{{ cat.meta.title }}</h2>
-              <p class="section-desc">
-                {{ cat.meta.description }}
-              </p>
+          <div class="panel-head">
+            <h2 class="panel-title">
+              {{ cat.meta.title }}
+            </h2>
+            <div class="set-head-actions">
+              <template v-if="cat.key === 'retention'">
+                <span
+                  v-if="retentionResult"
+                  class="set-note"
+                  :title="retentionResult"
+                >{{ retentionResult }}</span>
+                <button
+                  class="btn btn-ghost"
+                  :disabled="retentionRunning"
+                  @click="runRetentionNow"
+                >
+                  {{ retentionRunning ? 'Running…' : 'Run cleanup' }}
+                </button>
+              </template>
+              <button
+                class="btn"
+                :class="dirtyCount(cat.key) ? 'btn-save' : 'btn-ghost'"
+                :disabled="!dirtyCount(cat.key)"
+                @click="saveCategory(cat.key)"
+              >
+                {{ dirtyCount(cat.key) ? `Save ${dirtyCount(cat.key)}` : 'Saved' }}
+              </button>
             </div>
-            <span class="card-summary">{{ cat.rows.length }} {{ searchActive ? (cat.rows.length === 1 ? 'match' : 'matches') : 'settings' }}</span>
           </div>
 
-          <div class="settings-list">
+          <p class="set-cat-desc">
+            {{ cat.meta.description }}
+          </p>
+
+          <div class="row-list">
             <div
               v-for="s in cat.rows"
               :key="s.key"
-              class="setting-item"
+              class="list-row set-row"
             >
-              <div class="setting-copy">
-                <div class="setting-title-row">
-                  <span class="setting-key">{{ s.key }}</span>
-                  <Pill
-                    type="muted"
-                    :text="s.value_type"
-                  />
-                </div>
-                <p
-                  v-if="s.description"
-                  class="setting-desc"
-                >
-                  {{ s.description }}
-                </p>
-              </div>
-
-              <div class="setting-control">
-                <textarea
-                  v-if="isPrompt(s.key)"
-                  v-model="s.draft"
-                  class="premium-input setting-input setting-input-lg"
-                  spellcheck="false"
-                  placeholder="Enter prompt instructions"
-                />
-
-                <input
-                  v-else-if="isSecret(s)"
-                  v-model="s.draft"
-                  type="password"
-                  class="premium-input setting-input"
-                  placeholder="Hidden value"
-                >
-
-                <label
-                  v-else-if="s.value_type === 'bool'"
-                  class="setting-toggle"
-                >
-                  <input
-                    type="checkbox"
-                    class="setting-toggle-input"
-                    :checked="s.draft === 'true'"
-                    @change="s.draft = $event.target.checked ? 'true' : 'false'"
-                  >
-                  <span class="setting-toggle-track"><span class="setting-toggle-thumb" /></span>
-                  <span class="setting-toggle-text">{{ s.draft === 'true' ? 'On' : 'Off' }}</span>
-                </label>
-
-                <input
-                  v-else-if="s.value_type === 'int'"
-                  v-model="s.draft"
-                  type="number"
-                  step="1"
-                  class="premium-input setting-input"
-                  placeholder="0"
-                >
-
-                <input
-                  v-else
-                  v-model="s.draft"
-                  type="text"
-                  class="premium-input setting-input"
-                  placeholder="Value"
-                >
-              </div>
-            </div>
-          </div>
-
-          <div class="settings-card-footer">
-            <button
-              class="btn btn-save"
-              @click="saveCategory(cat.key)"
-            >
-              Save {{ cat.meta.title }}
-            </button>
-            <div
-              v-if="cat.key === 'retention'"
-              class="retention-actions"
-            >
-              <span
-                v-if="retentionResult"
-                class="retention-result"
-              >{{ retentionResult }}</span>
-              <button
-                class="btn"
-                :disabled="retentionRunning"
-                @click="runRetentionNow"
+              <div
+                class="set-row-grid"
+                :class="{ stacked: isPrompt(s.key) }"
               >
-                {{ retentionRunning ? 'Running…' : 'Run cleanup now' }}
-              </button>
+                <div class="set-copy">
+                  <span class="set-key">
+                    <span
+                      v-if="s.draft !== s.value"
+                      class="set-dirty-dot"
+                    />{{ s.key }}
+                  </span>
+                  <p
+                    v-if="s.description"
+                    class="row-desc"
+                  >
+                    {{ s.description }}
+                  </p>
+                </div>
+
+                <div class="set-control">
+                  <textarea
+                    v-if="isPrompt(s.key)"
+                    v-model="s.draft"
+                    class="set-input set-input-lg"
+                    spellcheck="false"
+                    placeholder="Enter prompt instructions"
+                  />
+
+                  <input
+                    v-else-if="isSecret(s)"
+                    v-model="s.draft"
+                    type="password"
+                    class="set-input"
+                    placeholder="Hidden value"
+                  >
+
+                  <button
+                    v-else-if="s.value_type === 'bool'"
+                    class="switch"
+                    type="button"
+                    role="switch"
+                    :aria-checked="s.draft === 'true' ? 'true' : 'false'"
+                    :aria-label="`Toggle ${s.key}`"
+                    @click="s.draft = s.draft === 'true' ? 'false' : 'true'"
+                  />
+
+                  <input
+                    v-else-if="s.value_type === 'int'"
+                    v-model="s.draft"
+                    type="number"
+                    step="1"
+                    class="set-input"
+                    placeholder="0"
+                  >
+
+                  <input
+                    v-else
+                    v-model="s.draft"
+                    type="text"
+                    class="set-input"
+                    placeholder="Value"
+                  >
+                </div>
+              </div>
             </div>
           </div>
         </section>
 
         <section
           v-if="!searchActive && showingPatterns"
-          class="settings-card premium-card"
+          class="panel set-panel"
         >
-          <div class="settings-card-header">
-            <div>
-              <span class="settings-section-kicker">router</span>
-              <h2>Tool Router Patterns</h2>
-              <p class="section-desc">
-                Maintain pattern rules as JSON. Each rule should include `tool_name`, `pattern`, and optional metadata.
-              </p>
-            </div>
-            <span class="card-summary">JSON</span>
-          </div>
-
-          <div class="editor-shell">
-            <div class="editor-shell-header">
-              Pattern Rules
-            </div>
-            <textarea
-              v-model="patternsText"
-              class="premium-input code-editor"
-              spellcheck="false"
-            />
-          </div>
-
-          <div class="settings-card-footer">
+          <div class="panel-head">
+            <h2 class="panel-title">
+              Router Patterns
+            </h2>
             <button
-              class="btn btn-save"
+              class="btn"
+              :class="patternsDirty ? 'btn-save' : 'btn-ghost'"
+              :disabled="!patternsDirty"
               @click="savePatterns"
             >
-              Save Patterns
+              {{ patternsDirty ? 'Save' : 'Saved' }}
             </button>
           </div>
+
+          <p class="set-cat-desc">
+            Pattern rules as JSON — each rule takes `tool_name`, `pattern`, and optional metadata.
+          </p>
+
+          <textarea
+            v-model="patternsText"
+            class="set-code-editor"
+            spellcheck="false"
+          />
         </section>
 
         <section
           v-if="!searchActive && showingRouterTest"
-          class="settings-card premium-card"
+          class="panel set-panel"
         >
-          <div class="settings-card-header">
-            <div>
-              <span class="settings-section-kicker">router</span>
-              <h2>Live Router Test</h2>
-              <p class="section-desc">
-                Validate how a message is categorized before it reaches the agent runtime.
-              </p>
-            </div>
-            <span class="card-summary">{{ routerMatchCount }} matches</span>
+          <div class="panel-head">
+            <h2 class="panel-title">
+              Router Test
+            </h2>
+            <span class="panel-count">{{ routerMatchCount }} matches</span>
           </div>
 
-          <div class="router-test-shell">
-            <div class="router-test-input">
+          <p class="set-cat-desc">
+            Check how a message is routed before it reaches the agent runtime.
+          </p>
+
+          <div class="set-test-body">
+            <div class="set-test-input">
               <input
                 v-model="testMsg"
                 type="text"
-                class="premium-input setting-input"
+                class="set-input"
                 placeholder="Type a message to test routing"
                 @keydown.enter="testRouter"
               >
@@ -428,50 +435,38 @@ onMounted(load)
                 class="btn btn-primary"
                 @click="testRouter"
               >
-                Run Test
+                Run
               </button>
             </div>
 
-            <div
-              class="router-test-result"
-              :class="{ populated: testResult }"
-            >
-              <template v-if="testResult">
-                <div class="router-result-row">
-                  <span class="router-result-label">Tier</span>
-                  <Pill
-                    type="info"
-                    :text="testResult.routing_info?.tier || '?'"
-                  />
-                </div>
-
-                <div class="router-result-row router-result-tools">
-                  <span class="router-result-label">Matched Tools</span>
-                  <div class="matched-tools-list">
-                    <template v-if="testResult.matched_tools?.length">
-                      <Pill
-                        v-for="t in testResult.matched_tools"
-                        :key="t"
-                        type="ok"
-                        :text="t"
-                      />
-                    </template>
-                    <Pill
-                      v-else
-                      type="muted"
-                      text="None"
-                    />
-                  </div>
-                </div>
-              </template>
-
-              <div
-                v-else
-                class="router-placeholder"
-              >
-                Run a message through the router to inspect its tier and matching tools.
+            <template v-if="testResult">
+              <div class="set-test-row">
+                <span class="set-test-label">tier</span>
+                <span class="mono-chip">{{ testResult.routing_info?.tier || '?' }}</span>
               </div>
-            </div>
+              <div class="set-test-row">
+                <span class="set-test-label">tools</span>
+                <div class="chip-row set-test-chips">
+                  <template v-if="testResult.matched_tools?.length">
+                    <span
+                      v-for="t in testResult.matched_tools"
+                      :key="t"
+                      class="mono-chip"
+                    >{{ t }}</span>
+                  </template>
+                  <span
+                    v-else
+                    class="set-test-none"
+                  >none</span>
+                </div>
+              </div>
+            </template>
+            <p
+              v-else
+              class="set-test-hint"
+            >
+              Run a message through the router to inspect its tier and matching tools.
+            </p>
           </div>
         </section>
       </div>
@@ -481,277 +476,273 @@ onMounted(load)
 
 <style scoped>
 .settings-page {
+  padding-bottom: 60px;
+}
+
+.set-layout {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 26px;
+  align-items: start;
+}
+
+/* ── Rail: bare text, hairline on the right, inset accent when active ─────── */
+.set-rail {
+  position: sticky;
+  top: 8px;
+  max-height: calc(100vh - 90px);
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 1px;
+  padding-right: 12px;
+  border-right: 1px solid var(--border);
 }
 
-/* Search mode stacks one card per matching category. */
-.settings-card + .settings-card {
-  margin-top: 16px;
+.set-rail-rule {
+  height: 1px;
+  margin: 8px 2px;
+  background: var(--border);
 }
 
-.empty-state {
-  padding: 40px;
-  text-align: center;
-  color: var(--muted);
-  font-size: 14px;
-}
-
-.settings-section-kicker {
-  display: inline-block;
-  margin-bottom: 10px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-
-.settings-card-header,
-.settings-card-footer {
+.set-rail-btn {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 20px 22px;
-}
-
-.settings-card-header {
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
-}
-
-.settings-card-header h2 {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 700;
-}
-
-.section-desc {
-  margin: 8px 0 0;
-  max-width: 720px;
-  color: var(--muted);
-  line-height: 1.6;
-}
-
-.settings-card-footer {
-  border-top: 1px solid rgba(0, 0, 0, 0.05);
-  justify-content: flex-end;
-}
-
-.settings-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  padding: 10px;
-}
-
-.setting-item {
-  display: grid;
-  grid-template-columns: minmax(260px, 0.95fr) minmax(0, 1.3fr);
-  gap: 18px;
-  align-items: start;
-  padding: 16px;
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.02);
-}
-
-.setting-item + .setting-item {
-  margin-top: 10px;
-}
-
-.setting-title-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 8px;
-}
-
-.setting-key {
-  font-size: 15px;
-  font-weight: 700;
-}
-
-.setting-desc {
-  margin: 0;
-  color: var(--muted);
-  line-height: 1.55;
-}
-
-.setting-input {
+  gap: 8px;
   width: 100%;
-}
-
-.setting-input-lg {
-  min-height: 150px;
-  resize: vertical;
-  font-family: 'Consolas', 'SFMono-Regular', monospace;
-}
-
-.setting-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
+  padding: 6px 9px;
+  border: 0;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.8rem;
+  text-align: left;
   cursor: pointer;
-  user-select: none;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
-.setting-toggle-input {
-  position: absolute;
-  opacity: 0;
-  width: 0;
-  height: 0;
+.set-rail-btn:hover {
+  background: var(--surface2);
+  color: var(--text);
 }
 
-.setting-toggle-track {
-  position: relative;
-  width: 42px;
-  height: 24px;
-  border-radius: 999px;
-  background: var(--muted);
-  transition: background 0.15s ease;
-  flex-shrink: 0;
+.set-rail-btn.active {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--text);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
-.setting-toggle-thumb {
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: #fff;
-  transition: transform 0.15s ease;
+.set-rail-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
 }
 
-.setting-toggle-input:checked + .setting-toggle-track {
-  background: var(--accent);
-}
-
-.setting-toggle-input:checked + .setting-toggle-track .setting-toggle-thumb {
-  transform: translateX(18px);
-}
-
-.setting-toggle-input:focus-visible + .setting-toggle-track {
-  box-shadow: 0 0 0 3px var(--accentDim);
-}
-
-.setting-toggle-text {
-  font-size: 14px;
+.set-rail-btn.active .set-rail-title {
   font-weight: 600;
+}
+
+.set-rail-count {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
   color: var(--muted);
+  opacity: 0.7;
 }
 
-.retention-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-left: auto;
-}
-
-.retention-result {
-  font-size: 12.5px;
-  color: var(--muted);
-  text-align: right;
-  max-width: 380px;
-  line-height: 1.4;
-}
-
-.editor-shell,
-.router-test-shell {
-  padding: 20px 22px 22px;
-}
-
-.editor-shell-header {
-  padding: 12px 14px;
-  border: 1px solid rgba(0, 0, 0, 0.06);
-  border-bottom: 0;
-  border-radius: 8px 8px 0 0;
-  background: rgba(0, 0, 0, 0.02);
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--muted);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.code-editor {
-  min-height: 340px;
-  border-radius: 0 0 8px 8px !important;
-  font-family: 'Consolas', 'SFMono-Regular', monospace;
-  line-height: 1.65;
-  resize: vertical;
-}
-
-.router-test-shell {
+/* ── Content panels ───────────────────────────────────────────────────────── */
+.set-content {
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 16px;
-}
-
-.router-test-input {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
-}
-
-.router-test-result {
-  min-height: 180px;
-  padding: 18px;
-  border: 1px solid rgba(0, 0, 0, 0.06);
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.02);
-}
-
-.router-test-result.populated {
-  background: rgba(37, 194, 209, 0.04);
-  border-color: rgba(37, 194, 209, 0.14);
-}
-
-.router-result-row {
-  display: flex;
-  align-items: flex-start;
   gap: 14px;
 }
 
-.router-result-row + .router-result-row {
-  margin-top: 16px;
+.set-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
 }
 
-.router-result-label {
-  min-width: 96px;
-  padding-top: 2px;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
+.set-note {
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  color: var(--muted);
+}
+
+.set-cat-desc {
+  margin: 0;
+  padding: 10px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  font-size: 0.76rem;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+/* ── Setting rows ─────────────────────────────────────────────────────────── */
+.set-row-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(200px, 0.9fr);
+  gap: 8px 24px;
+  align-items: center;
+}
+
+.set-row-grid.stacked {
+  grid-template-columns: 1fr;
+}
+
+.set-copy {
+  min-width: 0;
+}
+
+.set-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.set-dirty-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+
+.set-control {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.set-row-grid.stacked .set-control {
+  justify-content: stretch;
+}
+
+.set-input {
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 0.78rem;
+  font-family: var(--font-mono);
+}
+
+.set-input-lg {
+  min-height: 150px;
+  resize: vertical;
+  line-height: 1.6;
+}
+
+/* ── Patterns editor: the panel IS the editor, no inner frame ─────────────── */
+.set-code-editor {
+  display: block;
+  width: 100%;
+  min-height: 380px;
+  padding: 14px 16px;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  line-height: 1.7;
+  resize: vertical;
+}
+
+.set-code-editor:focus {
+  box-shadow: none !important;
+}
+
+/* ── Router test ──────────────────────────────────────────────────────────── */
+.set-test-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px 16px 16px;
+}
+
+.set-test-input {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.set-test-row {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+}
+
+.set-test-label {
+  min-width: 44px;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--muted);
 }
 
-.matched-tools-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+.set-test-chips {
+  margin-top: 0;
 }
 
-.router-placeholder {
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
+.set-test-none,
+.set-test-hint {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
   color: var(--muted);
-  line-height: 1.6;
+}
+
+.set-test-hint {
+  margin: 0;
 }
 
 @media (max-width: 960px) {
-  .setting-item {
+  .set-layout {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
+  .set-rail {
+    position: static;
+    max-height: none;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding-right: 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 10px;
+  }
+
+  .set-rail-rule {
+    display: none;
+  }
+
+  .set-rail-btn {
+    width: auto;
+  }
+
+  .set-rail-btn.active {
+    box-shadow: inset 0 -2px 0 var(--accent);
+  }
+
+  .set-row-grid {
     grid-template-columns: 1fr;
   }
 
-  .router-test-input {
-    grid-template-columns: 1fr;
+  .set-control {
+    justify-content: flex-start;
   }
 }
 </style>

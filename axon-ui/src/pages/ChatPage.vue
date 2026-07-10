@@ -723,7 +723,7 @@ watch(disabled, (newVal) => {
           <textarea
             ref="inputEl"
             v-model="input"
-            class="chat-textarea premium-input"
+            class="chat-textarea"
             :disabled="disabled"
             placeholder="Message Axon..."
             rows="1"

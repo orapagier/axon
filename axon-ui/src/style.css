@@ -4873,9 +4873,51 @@ select:focus,
     border: 1px solid var(--border) !important;
 }
 
+/* Chat composer — ONE box. Earlier layers boxed both the floating container
+   and the textarea inside it (the textarea inherits the global input skin),
+   which read as a box-in-a-box. The container is the only visible surface;
+   the textarea is a bare, transparent text region. All !important because the
+   legacy layers above use it on the same properties. */
 .chat-input-floating {
     background: var(--bg-card) !important;
     border: 1px solid var(--border) !important;
+    border-radius: 10px !important;
+    padding: 6px 6px 6px 8px !important;
+    box-shadow: none !important;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+}
+
+.chat-input-floating:focus-within {
+    border-color: color-mix(in srgb, var(--accent) 45%, transparent) !important;
+    box-shadow: none !important;
+}
+
+.chat-input-floating .chat-textarea,
+.chat-input-floating .chat-textarea:focus {
+    background: transparent !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    outline: none !important;
+}
+
+.btn-chat-send {
+    width: 32px;
+    height: 32px;
+    border-radius: 7px;
+    align-self: flex-end;
+}
+
+.btn-chat-send svg {
+    width: 15px;
+    height: 15px;
+}
+
+.btn-chat-send:not(:disabled):hover {
+    transform: none;
+    box-shadow: none;
+    filter: brightness(1.1);
 }
 
 .custom-node {
