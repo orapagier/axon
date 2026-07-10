@@ -7,27 +7,29 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-/// Internal tools registered for the workflow builder (they appear as nodes in
-/// the UI) but kept out of the agent's callable set by
-/// [`ToolRegistry::all_enabled_for_agent`]. Two reasons land a tool here:
-///
-///   • Trigger tools (`*_trigger`) register webhooks rather than perform a
-///     one-shot action, so they have no `handle_internal` arm — offering them
-///     would let the agent pick a tool that fails with "Unknown internal tool".
-///
-///   • Messaging tools (`telegram_*`/`whatsapp`) DO have `handle_internal`
-///     arms, but by design messaging platforms are user↔agent chat gateways
-///     (the `messaging/` module) and any agent-initiated sending is expressed
-///     as a workflow node — never an agent send-tool by default. The arms
-///     stay for the workflow generic-tool-node path; only the agent is denied
-///     them here. A Cortex node can still be granted one individually via its
-///     `tools` picklist — see [`ToolRegistry::all_enabled_for_allowed`].
-///
-/// Either way the full set is still served to the UI via [`all`], so their
-/// workflow-node counterparts (dispatched in `workflow.rs`) are unaffected.
-const NON_AGENT_INTERNAL_TOOLS: &[&str] = &[
-    "telegram_trigger",
-    "whatsapp_trigger",
+/// Trigger tools (`*_trigger`) register webhooks rather than perform a
+/// one-shot action, so they have no `handle_internal` arm — offering them to
+/// the agent would let it pick a tool that always fails with "Unknown
+/// internal tool". This is a hard technical limitation, not a policy choice,
+/// so unlike [`SOCIAL_WRITE_TOOLS`]/[`CRM_WRITE_TOOLS`]/[`MESSAGING_WRITE_TOOLS`]
+/// there is no toggle that can turn these on: they stay excluded even from an
+/// explicit per-node allow-list — see [`ToolRegistry::all_enabled_for_allowed`].
+/// The full set is still served to the UI via [`all`] since they exist as
+/// workflow-builder nodes.
+const NON_DISPATCHABLE_TOOLS: &[&str] = &["telegram_trigger", "whatsapp_trigger"];
+
+/// Messaging-platform send/manage tools (`telegram_*`/`whatsapp`). By default
+/// messaging platforms are user↔agent chat gateways (the `messaging/` module)
+/// and any agent-initiated sending is expressed as a workflow node rather
+/// than ad-hoc chat-agent discretion — so these are off by default. Unlike
+/// the old hard block, the operator can grant the agent any of these
+/// individually via the ToolsPage Enable toggle (see
+/// [`ToolRegistry::all_enabled_for_agent`] and [`is_gated_write_tool`]).
+/// These names are still served to the UI via [`all`] and dispatched by name
+/// via [`run`], so the workflow-node counterparts are unaffected regardless
+/// of the toggle. A Cortex node can also be granted one individually via its
+/// `tools` picklist — see [`ToolRegistry::all_enabled_for_allowed`].
+const MESSAGING_WRITE_TOOLS: &[&str] = &[
     "whatsapp",
     // Split per-operation Telegram tools (see `telegram::split_tool_definitions`)
     // — one name per Bot API action, so a Cortex node can grant exactly one.
@@ -54,27 +56,19 @@ const NON_AGENT_INTERNAL_TOOLS: &[&str] = &[
     "telegram_answer_callback_query",
 ];
 
-/// The trigger-only subset of [`NON_AGENT_INTERNAL_TOOLS`]: these have no
-/// `handle_internal` dispatch arm at all, so calling them always fails with
-/// "Unknown internal tool". Unlike `telegram`/`whatsapp` alongside them (which
-/// dispatch fine and are excluded purely for policy reasons), these stay
-/// excluded even from an explicit per-node allow-list — see
-/// [`ToolRegistry::all_enabled_for_allowed`].
-const NON_DISPATCHABLE_TOOLS: &[&str] = &["telegram_trigger", "whatsapp_trigger"];
-
 /// Social-platform *write* tools that perform outward-facing, public,
 /// hard-to-reverse actions (publish/edit/delete posts, reply/moderate comments,
-/// react, send DMs, edit Page settings). This is the standing pattern for social
-/// integrations: writes are workflow-only, reads stay on the agent. They are
-/// deliberately kept out of the agent's callable set so every public action flows
-/// through a defined, reviewable **workflow** path instead of the agent's ad-hoc
-/// discretion. The agent keeps the read tools (`*_get_*`, `*_list_*`,
-/// `fb_recent_comments`, `*_insights`) for answering questions conversationally.
-/// These names are still served to the UI via [`all`] and dispatched by name via
-/// [`run`], so the Facebook/Instagram workflow nodes are unaffected — only the
-/// agent is denied them here. Matched by name regardless of `ToolSource` (these are
-/// in-process MCP tools, not `Internal`). New social platforms follow suit.
-const WORKFLOW_ONLY_WRITE_TOOLS: &[&str] = &[
+/// react, send DMs, edit Page settings). Off by default — the operator opts
+/// the agent into any of these individually via the ToolsPage Enable toggle
+/// (see [`ToolRegistry::all_enabled_for_agent`] and [`is_gated_write_tool`]).
+/// The agent otherwise keeps the read tools (`*_get_*`, `*_list_*`,
+/// `fb_recent_comments`, `*_insights`) for answering questions
+/// conversationally. These names are still served to the UI via [`all`] and
+/// dispatched by name via [`run`], so the Facebook/Instagram workflow nodes
+/// are unaffected regardless of the toggle. Matched by name regardless of
+/// `ToolSource` (these are in-process MCP tools, not `Internal`). New social
+/// platforms follow suit.
+const SOCIAL_WRITE_TOOLS: &[&str] = &[
     // ── Facebook ──
     // Page
     "fb_update_page",
