@@ -341,6 +341,7 @@ onMounted(load)
         </div>
       </div>
     </div>
+    </template>
   </div>
 
   <Modal
