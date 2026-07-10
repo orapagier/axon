@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { get, post, put } from '../lib/api.js'
 import { toast } from '../lib/toast.js'
 import Pill from '../components/Pill.vue'
-import SearchInput from '../components/SearchInput.vue'
+import { useHeaderSearch } from '../lib/headerSearch.js'
 
 const byCategory = ref({})
 const settingsSearch = ref('')
@@ -73,6 +73,13 @@ const filteredCategoryRows = computed(() => {
   return rows.filter(
     (s) => s.key.toLowerCase().includes(q) || (s.description || '').toLowerCase().includes(q)
   )
+})
+
+useHeaderSearch('settings', {
+  query: settingsSearch,
+  placeholder: 'Search settings in this category…',
+  // Only category sections are searchable, and short lists don't need it.
+  visible: computed(() => (activeCategory.value?.rows.length || 0) > 5),
 })
 
 const showingPatterns = computed(() => activeSection.value === 'router:patterns')
@@ -233,12 +240,6 @@ onMounted(load)
             </div>
             <span class="card-summary">{{ activeCategory.rows.length }} settings</span>
           </div>
-
-          <SearchInput
-            v-if="activeCategory.rows.length > 5"
-            v-model="settingsSearch"
-            placeholder="Search settings in this category…"
-          />
 
           <div
             v-if="filteredCategoryRows.length === 0"

@@ -6,7 +6,7 @@ import { confirmDialog } from '../lib/confirm.js'
 import { timeAgo } from '../lib/utils.js'
 import Modal from '../components/Modal.vue'
 import Pill from '../components/Pill.vue'
-import SearchInput from '../components/SearchInput.vue'
+import { useHeaderSearch } from '../lib/headerSearch.js'
 
 const LEAD_STATUSES = ['Open', 'Contacted', 'Qualified', 'Lost']
 const DEAL_STAGES = ['Prospecting', 'Qualified', 'Proposal', 'Negotiation', 'Won', 'Lost']
@@ -143,6 +143,28 @@ async function loadOrgs() {
   orgs.value = r.organizations || r.results || []
   orgTotal.value = r.total ?? orgs.value.length
 }
+
+// ── Topbar search ─────────────────────────────────────────────────────────────
+// One header field serves all three record tabs: query, placeholder, and the
+// Enter-to-search target follow the active tab. Hidden on dashboard/archived.
+const TAB_SEARCH = {
+  leads: { q: leadQ, load: loadLeads, hint: 'Search name, email, company, notes, tags…' },
+  deals: { q: dealQ, load: loadDeals, hint: 'Search deal titles, notes, tags…' },
+  orgs: { q: orgQ, load: loadOrgs, hint: 'Search name, industry, country, website…' },
+}
+
+useHeaderSearch('crm', {
+  query: computed({
+    get: () => TAB_SEARCH[tab.value]?.q.value ?? '',
+    set: (v) => {
+      const t = TAB_SEARCH[tab.value]
+      if (t) t.q.value = v
+    },
+  }),
+  placeholder: computed(() => TAB_SEARCH[tab.value]?.hint ?? ''),
+  visible: computed(() => tab.value in TAB_SEARCH),
+  onSubmit: () => TAB_SEARCH[tab.value]?.load(),
+})
 
 // ── Archived ─────────────────────────────────────────────────────────────────
 const archived = ref([])
@@ -633,11 +655,6 @@ onMounted(loadDashboard)
     <!-- ── Leads ─────────────────────────────────────────────────────────── -->
     <template v-else-if="tab === 'leads'">
       <div class="filter-bar">
-        <SearchInput
-          v-model="leadQ"
-          placeholder="Search name, email, company, notes, tags…"
-          @keyup.enter="loadLeads"
-        />
         <select
           v-model="leadStatus"
           class="premium-input slim-select"
@@ -730,11 +747,6 @@ onMounted(loadDashboard)
     <!-- ── Deals kanban ──────────────────────────────────────────────────── -->
     <template v-else-if="tab === 'deals'">
       <div class="filter-bar">
-        <SearchInput
-          v-model="dealQ"
-          placeholder="Search deal titles, notes, tags…"
-          @keyup.enter="loadDeals"
-        />
         <span class="filter-count">{{ dealTotal }} deal(s)</span>
       </div>
 
@@ -796,11 +808,6 @@ onMounted(loadDashboard)
     <!-- ── Organizations ─────────────────────────────────────────────────── -->
     <template v-else-if="tab === 'orgs'">
       <div class="filter-bar">
-        <SearchInput
-          v-model="orgQ"
-          placeholder="Search name, industry, country, website…"
-          @keyup.enter="loadOrgs"
-        />
         <span class="filter-count">{{ orgTotal }} organization(s)</span>
       </div>
 

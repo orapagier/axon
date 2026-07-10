@@ -3,10 +3,15 @@ import { computed, onMounted, ref } from 'vue'
 import { get, post, put } from '../lib/api.js'
 import { toast } from '../lib/toast.js'
 import Pill from '../components/Pill.vue'
-import SearchInput from '../components/SearchInput.vue'
+import { useHeaderSearch } from '../lib/headerSearch.js'
 
 const bySource = ref({})
 const searchQuery = ref('')
+
+useHeaderSearch('tools', {
+  query: searchQuery,
+  placeholder: 'Search tools by name or description…',
+})
 
 const filteredBySource = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
@@ -76,10 +81,6 @@ onMounted(load)
         </p>
       </div>
       <div class="header-actions">
-        <SearchInput
-          v-model="searchQuery"
-          placeholder="Search tools by name or description…"
-        />
         <button
           class="btn btn-save"
           @click="reload"

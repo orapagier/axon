@@ -6,10 +6,16 @@ import { confirmDialog } from '../lib/confirm.js'
 import { timeAgo } from '../lib/utils.js'
 import Modal from '../components/Modal.vue'
 import Pill from '../components/Pill.vue'
-import SearchInput from '../components/SearchInput.vue'
+import { useHeaderSearch } from '../lib/headerSearch.js'
 
 const jobs = ref([])
 const jobSearch = ref('')
+
+useHeaderSearch('tasks', {
+  query: jobSearch,
+  placeholder: 'Search jobs by name, status, or platform…',
+  visible: computed(() => jobs.value.length > 0),
+})
 const filteredJobs = computed(() => {
   const q = jobSearch.value.trim().toLowerCase()
   if (!q) return jobs.value
@@ -216,12 +222,6 @@ onMounted(load)
           </div>
           <span class="card-summary">{{ jobs.length }} active</span>
         </div>
-
-        <SearchInput
-          v-if="jobs.length"
-          v-model="jobSearch"
-          placeholder="Search jobs by name, status, or platform…"
-        />
 
         <div
           v-if="filteredJobs.length === 0"

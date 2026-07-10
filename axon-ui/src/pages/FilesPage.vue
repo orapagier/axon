@@ -4,7 +4,7 @@ import { get, del } from '../lib/api.js'
 import { toast } from '../lib/toast.js'
 import { confirmDialog } from '../lib/confirm.js'
 import { timeAgo, fmtBytes } from '../lib/utils.js'
-import SearchInput from '../components/SearchInput.vue'
+import { useHeaderSearch } from '../lib/headerSearch.js'
 
 function getFileExt(name) {
   if (!name) return '?'
@@ -18,6 +18,11 @@ const masterKey = localStorage.getItem('AXON_MASTER_KEY') || ''
 const hasFiles = computed(() => incoming.value.length > 0 || outgoing.value.length > 0)
 
 const searchQuery = ref('')
+
+useHeaderSearch('files', {
+  query: searchQuery,
+  placeholder: 'Search files by name…',
+})
 function byFilename(list) {
   const q = searchQuery.value.trim().toLowerCase()
   if (!q) return list
@@ -138,11 +143,6 @@ onMounted(load)
         </button>
       </div>
     </div>
-
-    <SearchInput
-      v-model="searchQuery"
-      placeholder="Search files by name…"
-    />
 
     <div class="files-grid">
       <section class="premium-card">

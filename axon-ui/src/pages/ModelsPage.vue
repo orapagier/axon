@@ -6,10 +6,16 @@ import { confirmDialog } from '../lib/confirm.js'
 import { fmtTokens, timeAgo } from '../lib/utils.js'
 import Modal from '../components/Modal.vue'
 import Pill from '../components/Pill.vue'
-import SearchInput from '../components/SearchInput.vue'
+import { useHeaderSearch } from '../lib/headerSearch.js'
 
 const models = ref([])
 const modelSearch = ref('')
+
+useHeaderSearch('models', {
+  query: modelSearch,
+  placeholder: 'Search models by name or role…',
+  visible: computed(() => models.value.length > 0),
+})
 const filteredModels = computed(() => {
   const q = modelSearch.value.trim().toLowerCase()
   if (!q) return models.value
@@ -209,147 +215,142 @@ onMounted(load)
     </div>
 
     <template v-else>
-      <SearchInput
-        v-model="modelSearch"
-        placeholder="Search models by name or role…"
-      />
-
       <div class="models-list">
         <div class="premium-card">
-        <div class="card-header-row no-collapse">
-          <div class="card-title-group">
-            <h2>Active Models</h2>
+          <div class="card-header-row no-collapse">
+            <div class="card-title-group">
+              <h2>Active Models</h2>
+            </div>
+            <div class="fleet-summary">
+              <span class="fleet-total">{{ summary.total }} configured</span>
+              <span
+                class="fleet-stat"
+                :class="{ dim: summary.healthy === 0 }"
+              >
+                <i class="dot ok" />{{ summary.healthy }} healthy
+              </span>
+              <span
+                class="fleet-stat"
+                :class="{ dim: summary.rateLimited === 0 }"
+              >
+                <i class="dot warn" />{{ summary.rateLimited }} rate limited
+              </span>
+              <span
+                class="fleet-stat"
+                :class="{ dim: summary.unavailable === 0 }"
+              >
+                <i class="dot err" />{{ summary.unavailable }} unavailable
+              </span>
+              <span
+                class="fleet-stat"
+                :class="{ dim: summary.disabled === 0 }"
+              >
+                <i class="dot muted" />{{ summary.disabled }} disabled
+              </span>
+            </div>
           </div>
-          <div class="fleet-summary">
-            <span class="fleet-total">{{ summary.total }} configured</span>
-            <span
-              class="fleet-stat"
-              :class="{ dim: summary.healthy === 0 }"
-            >
-              <i class="dot ok" />{{ summary.healthy }} healthy
-            </span>
-            <span
-              class="fleet-stat"
-              :class="{ dim: summary.rateLimited === 0 }"
-            >
-              <i class="dot warn" />{{ summary.rateLimited }} rate limited
-            </span>
-            <span
-              class="fleet-stat"
-              :class="{ dim: summary.unavailable === 0 }"
-            >
-              <i class="dot err" />{{ summary.unavailable }} unavailable
-            </span>
-            <span
-              class="fleet-stat"
-              :class="{ dim: summary.disabled === 0 }"
-            >
-              <i class="dot muted" />{{ summary.disabled }} disabled
-            </span>
-          </div>
-        </div>
 
-        <div
-          v-if="filteredModels.length === 0"
-          class="empty-state"
-        >
-          No models match your search.
-        </div>
-        <div
-          v-else
-          class="service-list"
-        >
           <div
-            v-for="m in filteredModels"
-            :key="m.name"
-            class="service-item model-row"
-            :class="{ disabled: m.enabled === false }"
+            v-if="filteredModels.length === 0"
+            class="empty-state"
           >
-            <div class="service-info">
-              <div class="service-name-row">
-                <div class="service-name-group">
-                  <span class="service-name">{{ m.name }}</span>
-                  <Pill
-                    v-if="m.enabled === false"
-                    type="muted"
-                    text="Disabled"
-                  />
-                  <Pill
-                    :type="statusType(m.status)"
-                    :text="m.status"
-                  />
-                  <template v-if="m.role">
+            No models match your search.
+          </div>
+          <div
+            v-else
+            class="service-list"
+          >
+            <div
+              v-for="m in filteredModels"
+              :key="m.name"
+              class="service-item model-row"
+              :class="{ disabled: m.enabled === false }"
+            >
+              <div class="service-info">
+                <div class="service-name-row">
+                  <div class="service-name-group">
+                    <span class="service-name">{{ m.name }}</span>
                     <Pill
-                      type="info"
-                      :text="m.role.toUpperCase()"
+                      v-if="m.enabled === false"
+                      type="muted"
+                      text="Disabled"
                     />
+                    <Pill
+                      :type="statusType(m.status)"
+                      :text="m.status"
+                    />
+                    <template v-if="m.role">
+                      <Pill
+                        type="info"
+                        :text="m.role.toUpperCase()"
+                      />
+                    </template>
+                  </div>
+                  <div class="service-actions">
+                    <button
+                      class="btn btn-sm btn-ghost"
+                      @click="showEdit(m)"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      v-if="m.consecutive_errors > 0 || (m.status && m.status !== 'available')"
+                      class="btn btn-sm btn-ghost"
+                      @click="reset(m)"
+                    >
+                      Reset
+                    </button>
+                    <button
+                      class="btn btn-sm btn-ghost"
+                      @click="toggle(m)"
+                    >
+                      {{ m.enabled === false ? 'Enable' : 'Disable' }}
+                    </button>
+                    <button
+                      class="btn btn-sm btn-danger"
+                      @click="remove(m)"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+
+                <div class="model-meta-line">
+                  <span class="provider-pill">{{ m.provider }}</span>
+                  <span class="model-id-text">{{ m.model_id }}</span>
+                  <span class="priority-pill">P{{ m.priority }}</span>
+                  <span class="meta-sep">·</span>
+                  <span>{{ m.total_calls }} calls</span>
+                  <span class="meta-sep">·</span>
+                  <span>{{ fmtTokens(m.total_input_tokens) }} in / {{ fmtTokens(m.total_output_tokens) }} out</span>
+                  <span class="meta-sep">·</span>
+                  <span :class="{ 'text-danger': m.consecutive_errors > 0 }">{{ m.consecutive_errors }} errors</span>
+                  <template v-if="m.rate_limit_reset_at">
+                    <span class="meta-sep">·</span>
+                    <span>resets {{ timeAgo(m.rate_limit_reset_at) }}</span>
                   </template>
                 </div>
-                <div class="service-actions">
-                  <button
-                    class="btn btn-sm btn-ghost"
-                    @click="showEdit(m)"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    v-if="m.consecutive_errors > 0 || (m.status && m.status !== 'available')"
-                    class="btn btn-sm btn-ghost"
-                    @click="reset(m)"
-                  >
-                    Reset
-                  </button>
-                  <button
-                    class="btn btn-sm btn-ghost"
-                    @click="toggle(m)"
-                  >
-                    {{ m.enabled === false ? 'Enable' : 'Disable' }}
-                  </button>
-                  <button
-                    class="btn btn-sm btn-danger"
-                    @click="remove(m)"
-                  >
-                    ✕
-                  </button>
-                </div>
-              </div>
 
-              <div class="model-meta-line">
-                <span class="provider-pill">{{ m.provider }}</span>
-                <span class="model-id-text">{{ m.model_id }}</span>
-                <span class="priority-pill">P{{ m.priority }}</span>
-                <span class="meta-sep">·</span>
-                <span>{{ m.total_calls }} calls</span>
-                <span class="meta-sep">·</span>
-                <span>{{ fmtTokens(m.total_input_tokens) }} in / {{ fmtTokens(m.total_output_tokens) }} out</span>
-                <span class="meta-sep">·</span>
-                <span :class="{ 'text-danger': m.consecutive_errors > 0 }">{{ m.consecutive_errors }} errors</span>
-                <template v-if="m.rate_limit_reset_at">
-                  <span class="meta-sep">·</span>
-                  <span>resets {{ timeAgo(m.rate_limit_reset_at) }}</span>
-                </template>
-              </div>
-
-              <div
-                v-if="getPct(m) !== null"
-                class="rate-limit-row"
-              >
                 <div
-                  class="premium-progress"
-                  :title="`${m.rl_snapshot.tokens_remaining_per_min} / ${m.rl_snapshot.tokens_limit_per_min} tokens remaining`"
+                  v-if="getPct(m) !== null"
+                  class="rate-limit-row"
                 >
                   <div
-                    class="progress-fill"
-                    :style="{ width: getPct(m) + '%' }"
-                  />
+                    class="premium-progress"
+                    :title="`${m.rl_snapshot.tokens_remaining_per_min} / ${m.rl_snapshot.tokens_limit_per_min} tokens remaining`"
+                  >
+                    <div
+                      class="progress-fill"
+                      :style="{ width: getPct(m) + '%' }"
+                    />
+                  </div>
+                  <span class="rate-limit-pct">{{ getPct(m) }}% left</span>
                 </div>
-                <span class="rate-limit-pct">{{ getPct(m) }}% left</span>
               </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
     </template>
   </div>
 

@@ -1,10 +1,12 @@
 <script setup>
-import { ref, computed, defineAsyncComponent, markRaw } from 'vue'
+import { ref, computed, defineAsyncComponent, markRaw, onMounted, onUnmounted } from 'vue'
 import { wsStatus } from './lib/ws.js'
 import { confirmDialog } from './lib/confirm.js'
+import { headerSearchFor } from './lib/headerSearch.js'
 import ConfirmDialog from './components/ConfirmDialog.vue'
 import PromptDialog from './components/PromptDialog.vue'
 import NotificationBell from './components/NotificationBell.vue'
+import SearchInput from './components/SearchInput.vue'
 import LoginPage from './pages/LoginPage.vue'
 
 const PAGES = {
@@ -145,6 +147,24 @@ const wsLabel = computed(() => {
   if (wsStatus.value === 'connecting') return 'Connecting'
   return 'Reconnecting'
 })
+
+// The topbar search field: bound to whatever scope the active page registered
+// via useHeaderSearch(); hidden on pages with nothing to search.
+const topbarSearch = headerSearchFor(activePage)
+const topbarSearchRef = ref(null)
+
+// Pages no longer autofocus a local search on mount, so "/" focuses the
+// topbar field from anywhere (unless the user is already typing somewhere).
+function onGlobalKeydown(e) {
+  if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return
+  const t = e.target
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+  if (!topbarSearch.value) return
+  e.preventDefault()
+  topbarSearchRef.value?.focus()
+}
+onMounted(() => window.addEventListener('keydown', onGlobalKeydown))
+onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown))
 
 function reload() {
   window.location.reload()
@@ -332,6 +352,15 @@ async function logout() {
         </div>
 
         <div class="shell-topbar-right">
+          <SearchInput
+            v-if="topbarSearch"
+            ref="topbarSearchRef"
+            v-model="topbarSearch.query"
+            class="shell-topbar-search"
+            :autofocus="false"
+            :placeholder="topbarSearch.placeholder"
+            @keyup.enter="topbarSearch.onSubmit?.()"
+          />
           <NotificationBell />
           <div class="shell-status-chip">
             <span

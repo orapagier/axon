@@ -4478,3 +4478,32 @@ select {
     width: min(340px, 100%);
     flex: 0 1 340px;
 }
+
+/* Shell topbar: the global page-scoped search beside the notification bell.
+   Scope and placeholder follow the active page (lib/headerSearch.js); pages
+   with nothing to search hide it entirely. */
+.shell-topbar .search-field {
+    margin-bottom: 0;
+    flex: 0 1 300px;
+    width: clamp(150px, 26vw, 300px);
+}
+
+@media (max-width: 960px) {
+
+    /* Let the right cluster (search · bell · logout) wrap under the page
+       heading instead of crushing it; the field flexes into the leftover
+       row width (the generic mobile rule above lifts its max-width). */
+    .shell-topbar {
+        flex-wrap: wrap;
+    }
+
+    .shell-topbar-right {
+        flex: 1 1 auto;
+        justify-content: flex-end;
+    }
+
+    .shell-topbar .search-field {
+        flex: 1 1 140px;
+        width: auto;
+    }
+}

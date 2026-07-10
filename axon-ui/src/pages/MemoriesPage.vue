@@ -6,11 +6,19 @@ import { confirmDialog } from '../lib/confirm.js'
 import { fmtTokens, safeJsonParse, timeAgo } from '../lib/utils.js'
 import Pill from '../components/Pill.vue'
 import SearchInput from '../components/SearchInput.vue'
+import { useHeaderSearch } from '../lib/headerSearch.js'
 
 const stmRuns = ref([])
 const ltmEntries = ref([])
 const ltmSearch = ref('')
 const stmSearch = ref('')
+
+// The topbar field filters the run list live; long-term memory keeps its own
+// bar below because it's a server-side semantic search with explicit buttons.
+useHeaderSearch('memories', {
+  query: stmSearch,
+  placeholder: 'Search runs by task…',
+})
 const expandedRuns = ref(new Set())
 const loadedTraces = ref({})
 
@@ -95,10 +103,6 @@ onMounted(() => {
         </div>
 
         <div class="action-bar gap-12">
-          <SearchInput
-            v-model="stmSearch"
-            placeholder="Search runs by task…"
-          />
           <button
             class="btn btn-ghost"
             @click="loadSTM"
