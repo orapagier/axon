@@ -101,12 +101,6 @@ impl RuntimeSettings {
     pub fn allow_tool_writing(&self) -> bool {
         self.get_bool("agent.allow_tool_writing", true)
     }
-    /// CRM access for the chat agent: reads are always available; the write
-    /// tools (create/update/delete/convert/archive) are workflow-only unless
-    /// this is on. Read per call so the toggle applies without a restart.
-    pub fn crm_agent_write_tools(&self) -> bool {
-        self.get_bool("crm.agent_write_tools", false)
-    }
     /// Currency assigned to deals created without an explicit one. Read per
     /// call (via the provider registered in main.rs) so changing the setting
     /// applies without a restart; axon-crm validates and falls back to USD.
