@@ -950,17 +950,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn crm_writes_are_agent_gated_by_flag_and_workflows_unaffected() {
+    async fn gated_write_tools_default_off_and_toggle_on_via_enable() {
         let r = ToolRegistry {
             tools: Arc::new(RwLock::new(HashMap::new())),
             timeout_sec: 5,
             mcp_manager: None,
         };
         for name in [
-            "crm_lead_create", // CRM write — gated
-            "crm_lead_list",   // CRM read — always agent-callable
-            "fb_create_post",  // social write — always workflow-only
-            "gmail_list",      // unrelated — always agent-callable
+            "crm_lead_create",       // CRM write — gated
+            "crm_lead_list",         // CRM read — always agent-callable
+            "fb_create_post",        // social write — gated
+            "telegram_send_message", // messaging write — gated
+            "gmail_list",            // unrelated — always agent-callable
         ] {
             r.register(def(name)).await;
         }
@@ -968,16 +969,28 @@ mod tests {
         let names =
             |tools: Vec<ToolDefinition>| tools.into_iter().map(|t| t.name).collect::<Vec<_>>();
 
-        let agent_default = names(r.all_enabled_for_agent(false).await);
+        // Before the boot-time defaulting pass, every tool's source set
+        // `enabled: true` — this is the exact bug the toggle is meant to fix.
+        let before_defaults = names(r.all_enabled_for_agent().await);
+        assert!(before_defaults.contains(&"fb_create_post".to_string()));
+
+        r.apply_agent_gate_defaults().await;
+
+        let agent_default = names(r.all_enabled_for_agent().await);
         assert!(agent_default.contains(&"crm_lead_list".to_string()));
         assert!(agent_default.contains(&"gmail_list".to_string()));
         assert!(!agent_default.contains(&"crm_lead_create".to_string()));
         assert!(!agent_default.contains(&"fb_create_post".to_string()));
+        assert!(!agent_default.contains(&"telegram_send_message".to_string()));
 
-        let agent_with_writes = names(r.all_enabled_for_agent(true).await);
-        assert!(agent_with_writes.contains(&"crm_lead_create".to_string()));
-        // The toggle grants CRM writes only — social stays workflow-only.
-        assert!(!agent_with_writes.contains(&"fb_create_post".to_string()));
+        // The ToolsPage Enable toggle (set_enabled) is the only thing that
+        // grants agent access to a gated tool, and it grants exactly that
+        // tool — no bulk flag.
+        r.set_enabled("fb_create_post", true).await;
+        let agent_after_toggle = names(r.all_enabled_for_agent().await);
+        assert!(agent_after_toggle.contains(&"fb_create_post".to_string()));
+        assert!(!agent_after_toggle.contains(&"crm_lead_create".to_string()));
+        assert!(!agent_after_toggle.contains(&"telegram_send_message".to_string()));
 
         // The workflow path sees everything regardless of the toggle.
         let workflow = names(r.all_enabled().await);
@@ -985,6 +998,7 @@ mod tests {
             "crm_lead_create",
             "crm_lead_list",
             "fb_create_post",
+            "telegram_send_message",
             "gmail_list",
         ] {
             assert!(workflow.contains(&name.to_string()), "missing {name}");
