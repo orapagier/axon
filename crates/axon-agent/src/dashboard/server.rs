@@ -99,6 +99,7 @@ pub fn build_router(state: AppState) -> Router {
             "/api/conversations",
             get(api::list_conversations).post(api::create_conversation),
         )
+        .route("/api/conversations/search", get(api::search_conversations))
         .route(
             "/api/conversations/:id",
             axum::routing::put(api::rename_conversation).delete(api::delete_conversation),
