@@ -7,6 +7,55 @@
     padding: 0;
 }
 
+/* ── SYNAPSE type · locally bundled latin subsets (public/fonts/) ─────────── */
+@font-face {
+    font-family: 'Space Grotesk';
+    font-style: normal;
+    font-weight: 300 700;
+    font-display: swap;
+    src: url('/fonts/space-grotesk-normal-300-700.woff2') format('woff2');
+}
+
+@font-face {
+    font-family: 'Instrument Sans';
+    font-style: normal;
+    font-weight: 400 700;
+    font-display: swap;
+    src: url('/fonts/instrument-sans-normal-400-700.woff2') format('woff2');
+}
+
+@font-face {
+    font-family: 'Instrument Sans';
+    font-style: italic;
+    font-weight: 400 700;
+    font-display: swap;
+    src: url('/fonts/instrument-sans-italic-400-700.woff2') format('woff2');
+}
+
+@font-face {
+    font-family: 'IBM Plex Mono';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url('/fonts/ibm-plex-mono-normal-400.woff2') format('woff2');
+}
+
+@font-face {
+    font-family: 'IBM Plex Mono';
+    font-style: normal;
+    font-weight: 500;
+    font-display: swap;
+    src: url('/fonts/ibm-plex-mono-normal-500.woff2') format('woff2');
+}
+
+@font-face {
+    font-family: 'IBM Plex Mono';
+    font-style: normal;
+    font-weight: 600;
+    font-display: swap;
+    src: url('/fonts/ibm-plex-mono-normal-600.woff2') format('woff2');
+}
+
 /* ════════════════════════════════════════════════════════════════════════════
    THEME · single source of truth
    ----------------------------------------------------------------------------
@@ -17,27 +66,37 @@
 :root {
     color-scheme: dark;
 
-    /* Core surfaces & text */
-    --bg: #0a0a0c;
-    --bg-card: #1b1b20;
-    --surface: #16161a;
-    --surface2: #1f1f25;
-    --border: rgba(255, 255, 255, 0.09);
-    --text: #f2f7ff;
-    --muted: #a6a6b2;
+    /* Core surfaces & text — SYNAPSE palette: void / membrane / myelin */
+    --bg: #07080c;
+    --bg-card: #13161f;
+    --surface: #0f1118;
+    --surface2: #1a1e29;
+    --border: rgba(148, 170, 215, 0.11);
+    --text: #e9eef7;
+    --muted: #8d95a8;
 
-    /* Accent & semantic palette */
-    --accent: #56e6c8;
-    --accentDim: rgba(86, 230, 200, 0.2);
-    --green: #73ebb5;
-    --greenDim: #10372b;
-    --red: #f6a2ad;
-    --redDim: #41191d;
-    --yellow: #f7d17c;
-    --yellowDim: #463015;
-    --teal: #8ec5ff;
-    --blue: #56a6ff;
-    --purple: #8f8cff;
+    /* Accent & semantic palette — Signal + bioluminescent semantics */
+    --accent: #45f1c6;
+    --accentDim: rgba(69, 241, 198, 0.16);
+    --green: #5ef2a9;
+    --greenDim: #0e3628;
+    --red: #ff92a4;
+    --redDim: #411a23;
+    --yellow: #ffd47e;
+    --yellowDim: #443113;
+    --teal: #7cc8ff;
+    --blue: #5fb0ff;
+    --purple: #918eff;
+
+    /* Type roles: display (Space Grotesk) · body (Instrument Sans) · data (Plex Mono) */
+    --font-display: 'Space Grotesk', 'Segoe UI', sans-serif;
+    --font-body: 'Instrument Sans', -apple-system, 'Segoe UI', sans-serif;
+    --font-mono: 'IBM Plex Mono', Consolas, 'SFMono-Regular', monospace;
+
+    /* Radius scale */
+    --r-sm: 8px;
+    --r-md: 12px;
+    --r-lg: 16px;
 
     /* Button sizing — SINGLE SOURCE OF TRUTH.
        Every standard button derives its size from these tokens via the global
@@ -101,13 +160,21 @@
 }
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-family: var(--font-body);
     background: var(--bg);
     color: var(--text);
     font-size: 14px;
     line-height: 1.5;
     height: 100vh;
     overflow: hidden;
+}
+
+/* Form controls and buttons default to the UA font — pull them onto the body face. */
+button,
+input,
+select,
+textarea {
+    font-family: inherit;
 }
 
 /* ── Layout ───────────────────────────────────────────────────────────────── */
@@ -1845,11 +1912,8 @@ body,
 
 body {
     min-height: 100vh;
-    font-family: Inter, "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-    color: var(--text);
-    background:
-        linear-gradient(180deg, rgba(37, 194, 209, 0.06), transparent 22%),
-        linear-gradient(135deg, #0b1216 0%, #0f171d 42%, #11191f 100%);
+    /* (Legacy font/background removed — the base body rule and the SYNAPSE
+       layer own typography and backdrop now.) */
 }
 
 body::before {
@@ -2843,16 +2907,8 @@ body,
     height: 100%;
 }
 
-body {
-    font-family: "Aptos", "Segoe UI Variable Display", "Segoe UI", sans-serif;
-    background:
-        radial-gradient(circle at 14% 8%, rgba(86, 230, 200, 0.2), transparent 28%),
-        radial-gradient(circle at 86% 8%, rgba(142, 197, 255, 0.18), transparent 26%),
-        radial-gradient(circle at 52% 100%, rgba(90, 168, 255, 0.1), transparent 36%),
-        linear-gradient(165deg, #050910 0%, #0f1926 50%, #09111b 100%);
-    color: var(--text);
-    letter-spacing: -0.01em;
-}
+/* (Legacy body font/background removed — the SYNAPSE layer at the end of this
+   file owns the backdrop, and the base body rule at the top owns typography.) */
 
 body::before {
     content: "";
@@ -3025,8 +3081,8 @@ body::before {
 
 .nav-item.active {
     color: var(--text);
-    background: linear-gradient(180deg, rgba(0, 0, 0, 0.07), rgba(0, 0, 0, 0.03)) !important;
-    border-color: rgba(0, 0, 0, 0.1) !important;
+    background: linear-gradient(180deg, rgba(0, 0, 0, 0.07), rgba(0, 0, 0, 0.03));
+    border-color: rgba(0, 0, 0, 0.1);
     box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.04);
 }
 
@@ -3844,159 +3900,6 @@ textarea::placeholder {
     font-size: 1.02em;
 }
 
-/* ── Aurora accent layer ──────────────────────────────────────────────────
-   Soft pastel tints over the dark shell: each nav page carries its own
-   --nav-tint (set inline from App.vue), echoed in the topbar as --page-tint. */
-
-body {
-    background:
-        radial-gradient(circle at 14% 8%, rgba(94, 234, 212, 0.16), transparent 30%),
-        radial-gradient(circle at 86% 6%, rgba(142, 197, 255, 0.15), transparent 28%),
-        radial-gradient(circle at 72% 82%, rgba(196, 181, 253, 0.1), transparent 34%),
-        radial-gradient(circle at 28% 96%, rgba(240, 171, 252, 0.07), transparent 30%),
-        linear-gradient(165deg, #050910 0%, #0d1622 55%, #0a101d 100%);
-}
-
-.shell-ambient-three {
-    top: 34%;
-    left: 32%;
-    width: 26rem;
-    height: 26rem;
-    background: rgba(196, 181, 253, 0.16);
-}
-
-/* Sidebar nav: tinted icon chips */
-.nav-item {
-    --nav-tint: var(--accent);
-}
-
-.nav-icon {
-    width: 26px;
-    min-width: 26px;
-    height: 26px;
-    border-radius: 9px;
-    background: color-mix(in srgb, var(--nav-tint) 9%, transparent);
-    border: 1px solid color-mix(in srgb, var(--nav-tint) 15%, transparent);
-    color: color-mix(in srgb, var(--nav-tint) 82%, #ffffff);
-    transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
-}
-
-.nav-icon svg {
-    width: 16px;
-    height: 16px;
-}
-
-.nav-item:hover .nav-icon {
-    background: color-mix(in srgb, var(--nav-tint) 16%, transparent);
-    border-color: color-mix(in srgb, var(--nav-tint) 32%, transparent);
-}
-
-.nav-item.active {
-    background: linear-gradient(135deg, color-mix(in srgb, var(--nav-tint) 13%, transparent), rgba(0, 0, 0, 0.02)) !important;
-    border-color: color-mix(in srgb, var(--nav-tint) 28%, transparent) !important;
-}
-
-.nav-item.active .nav-icon {
-    background: color-mix(in srgb, var(--nav-tint) 22%, transparent);
-    border-color: color-mix(in srgb, var(--nav-tint) 48%, transparent);
-    box-shadow: 0 0 16px color-mix(in srgb, var(--nav-tint) 26%, transparent);
-}
-
-.nav-item.active::before {
-    background: var(--nav-tint);
-    box-shadow: 0 0 8px color-mix(in srgb, var(--nav-tint) 70%, transparent);
-}
-
-.nav-item.active .nav-description {
-    color: color-mix(in srgb, var(--nav-tint) 42%, var(--muted));
-}
-
-/* Brand lockup: soft gradient wordmark */
-.logo-text {
-    background: linear-gradient(90deg, #5eead4, #8ec5ff);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-}
-
-.logo-img {
-    border-color: rgba(94, 234, 212, 0.22);
-}
-
-/* Topbar: page tint echoes the active nav item */
-.shell-page-meta {
-    --page-tint: var(--accent);
-}
-
-.shell-eyebrow {
-    background: linear-gradient(90deg, #5eead4, #8ec5ff 55%, #c4b5fd);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-}
-
-.shell-page-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 999px;
-    background: var(--page-tint);
-    box-shadow: 0 0 10px color-mix(in srgb, var(--page-tint) 75%, transparent);
-    transition: background 0.25s ease, box-shadow 0.25s ease;
-}
-
-.shell-page-pill {
-    border-color: color-mix(in srgb, var(--page-tint) 24%, transparent);
-    background: color-mix(in srgb, var(--page-tint) 8%, transparent);
-    color: color-mix(in srgb, var(--page-tint) 52%, #f2f7ff);
-}
-
-/* Connection chip glows green when live */
-.shell-status-chip:has(.ws-dot.connected) {
-    border-color: rgba(115, 235, 181, 0.28);
-    background: rgba(115, 235, 181, 0.07);
-    color: #b9f2d6;
-}
-
-.shell-status-chip:has(.ws-dot.disconnected) {
-    border-color: rgba(246, 162, 173, 0.28);
-    background: rgba(246, 162, 173, 0.07);
-    color: #b04a5a;
-}
-
-/* Focus rings: mint instead of leftover sage */
-.premium-input:focus,
-input:focus,
-textarea:focus,
-select:focus {
-    border-color: rgba(94, 234, 212, 0.38) !important;
-    box-shadow: 0 0 0 4px rgba(94, 234, 212, 0.09) !important;
-}
-
-.chat-input-floating:focus-within {
-    border-color: rgba(94, 234, 212, 0.34) !important;
-    box-shadow: 0 0 0 4px rgba(94, 234, 212, 0.08), var(--shadow-sm) !important;
-}
-
-/* Chat send button — consolidated into the "POLISHED BUTTON SYSTEM" at end of file. */
-
-/* Chat welcome title: light gradient sheen */
-.welcome-title {
-    background: linear-gradient(95deg, #f2f7ff 20%, #8ec5ff 65%, #5eead4);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-    -webkit-text-fill-color: transparent;
-}
-
-/* Scrollbars pick up a faint sky tint */
-::-webkit-scrollbar-thumb {
-    background: rgba(142, 197, 255, 0.18);
-}
-
-::-webkit-scrollbar-thumb:hover {
-    background: rgba(142, 197, 255, 0.3);
-}
-
 /* ── Dark surface correction (readability fix) ──────────────────────────────
    Earlier "refresh" layers set the panel surfaces to white while keeping the
    near-white text, so the sidebar, cards and main body were unreadable. This
@@ -4004,29 +3907,6 @@ select:focus {
    so the existing light text reads correctly. Appended last + !important so it
    wins over the hardcoded white rules above. */
 /* Theme variables consolidated into the single :root at the top of this file. */
-
-/* Neutral charcoal page backdrop with faint accent glows */
-body {
-    background:
-        radial-gradient(circle at 14% 8%, rgba(94, 234, 212, 0.08), transparent 26%),
-        radial-gradient(circle at 86% 6%, rgba(142, 197, 255, 0.07), transparent 24%),
-        linear-gradient(165deg, #08080a 0%, #0c0c0f 55%, #090909 100%) !important;
-}
-
-/* Sidebar + main shell panels */
-.sidebar-panel {
-    background:
-        linear-gradient(180deg, rgba(255, 255, 255, 0.045), transparent 30%),
-        rgba(22, 22, 26, 0.97) !important;
-    border: 1px solid rgba(255, 255, 255, 0.09) !important;
-}
-
-.main {
-    background:
-        linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 22%),
-        rgba(18, 18, 22, 0.88) !important;
-    border: 1px solid rgba(255, 255, 255, 0.07) !important;
-}
 
 /* Cards, modals, login card, chat composer, toast (all forced white above) */
 .premium-card,
@@ -4061,24 +3941,10 @@ select {
 
 /* Inner "elevated" chips/buttons used black tints meant for a white panel —
    flip them to light tints so they're visible on the dark surface. */
-.shell-icon-btn,
-.shell-page-pill,
-.shell-status-chip,
 .sidebar-status-card,
 .page-section-sidebar {
     background: rgba(255, 255, 255, 0.05) !important;
     border-color: rgba(255, 255, 255, 0.1) !important;
-}
-
-.shell-icon-btn:hover,
-.nav-item:hover {
-    background: rgba(255, 255, 255, 0.08) !important;
-    border-color: rgba(255, 255, 255, 0.14) !important;
-}
-
-.nav-item.active {
-    background: linear-gradient(180deg, rgba(86, 230, 200, 0.18), rgba(86, 230, 200, 0.06)) !important;
-    border-color: rgba(86, 230, 200, 0.3) !important;
 }
 
 /* Mobile nav overlay should dim, not whiten, the screen */
@@ -4211,7 +4077,7 @@ select {
 
 .btn:focus-visible {
     outline: none !important;
-    box-shadow: 0 0 0 3px rgba(86, 230, 200, 0.3) !important;
+    box-shadow: 0 0 0 3px rgba(69, 241, 198, 0.32) !important;
 }
 
 /* ── Sizing variants ──────────────────────────────────────────────────────── */
@@ -4236,11 +4102,11 @@ select {
 .btn-success,
 .btn-execute,
 .btn-fc-add {
-    background: linear-gradient(135deg, #5eeacf 0%, #38c4d8 100%) !important;
+    background: linear-gradient(135deg, #45f1c6 0%, #2bd4de 100%) !important;
     border-color: transparent !important;
-    color: #04181b !important;
+    color: #03211a !important;
     font-weight: 700 !important;
-    box-shadow: 0 6px 18px rgba(56, 196, 216, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.28) !important;
+    box-shadow: 0 6px 18px rgba(43, 212, 222, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.28) !important;
 }
 
 .btn-save:hover,
@@ -4251,29 +4117,29 @@ select {
     /* Re-declare the gradient: the generic `.btn:hover` above swaps the
        background for a translucent dark tint, which would leave this button's
        near-black text unreadable on hover. */
-    background: linear-gradient(135deg, #5eeacf 0%, #38c4d8 100%) !important;
+    background: linear-gradient(135deg, #45f1c6 0%, #2bd4de 100%) !important;
     filter: brightness(1.06) !important;
     border-color: transparent !important;
-    box-shadow: 0 10px 26px rgba(56, 196, 216, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.34) !important;
+    box-shadow: 0 10px 26px rgba(43, 212, 222, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.34) !important;
 }
 
 /* ── Primary · blue gradient ──────────────────────────────────────────────── */
 .btn-primary {
-    background: linear-gradient(135deg, #8ec5ff 0%, #67d7ef 100%) !important;
+    background: linear-gradient(135deg, #6cb5ff 0%, #45c8f0 100%) !important;
     border-color: transparent !important;
-    color: #06121d !important;
+    color: #041322 !important;
     font-weight: 700 !important;
-    box-shadow: 0 6px 18px rgba(103, 215, 239, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.28) !important;
+    box-shadow: 0 6px 18px rgba(69, 200, 240, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.28) !important;
 }
 
 .btn-primary:hover {
     transform: translateY(-1px) !important;
     /* Same as .btn-save:hover — keep the gradient so the dark label stays
        readable (generic .btn:hover would darken the background). */
-    background: linear-gradient(135deg, #8ec5ff 0%, #67d7ef 100%) !important;
+    background: linear-gradient(135deg, #6cb5ff 0%, #45c8f0 100%) !important;
     filter: brightness(1.06) !important;
     border-color: transparent !important;
-    box-shadow: 0 10px 26px rgba(103, 215, 239, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.34) !important;
+    box-shadow: 0 10px 26px rgba(69, 200, 240, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.34) !important;
 }
 
 /* ── Destructive · soft red ───────────────────────────────────────────────── */
@@ -4347,8 +4213,8 @@ select {
 .btn-tab-action:hover,
 .btn-reconnect-inline:hover {
     transform: translateY(-1px) !important;
-    background: linear-gradient(180deg, rgba(86, 230, 200, 0.18), rgba(86, 230, 200, 0.06)) !important;
-    border-color: rgba(86, 230, 200, 0.42) !important;
+    background: linear-gradient(180deg, rgba(69, 241, 198, 0.16), rgba(69, 241, 198, 0.05)) !important;
+    border-color: rgba(69, 241, 198, 0.4) !important;
     color: #eafff9 !important;
     box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
 }
@@ -4362,7 +4228,7 @@ select {
 }
 
 .icon-action-btn:hover {
-    border-color: rgba(86, 230, 200, 0.4) !important;
+    border-color: rgba(69, 241, 198, 0.4) !important;
     color: var(--accent) !important;
 }
 
@@ -4385,7 +4251,7 @@ select {
     flex-shrink: 0;
     border: none;
     border-radius: 12px;
-    background: linear-gradient(135deg, #5eead4, #8ec5ff);
+    background: linear-gradient(135deg, #45f1c6, #59b8ff);
     color: #06131a;
     font-size: 18px;
     cursor: pointer;
@@ -4512,5 +4378,546 @@ select {
     .shell-topbar .search-field {
         flex: 1 1 140px;
         width: auto;
+    }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   SYNAPSE · design system v3 — the authoritative visual layer
+   ----------------------------------------------------------------------------
+   The page-by-page redesign (2026-07): neural identity. Void backdrop,
+   membrane surfaces, one electric Signal accent, per-page neurotransmitter
+   tints, Space Grotesk display / Instrument Sans body / IBM Plex Mono data.
+   This layer deliberately wins the cascade over the legacy layers above;
+   those shrink as pages migrate and are deleted in the final cleanup.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* ── Base typography ──────────────────────────────────────────────────────── */
+h1,
+h2,
+h3 {
+    font-family: var(--font-display);
+    letter-spacing: 0.01em;
+}
+
+code,
+kbd,
+.tag,
+.item-meta,
+.summary-names {
+    font-family: var(--font-mono);
+}
+
+::selection {
+    background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+/* ── Backdrop: the void ───────────────────────────────────────────────────── */
+body {
+    background:
+        radial-gradient(1100px 700px at 12% -8%, rgba(69, 241, 198, 0.055), transparent 60%),
+        radial-gradient(950px 700px at 96% 108%, rgba(143, 140, 255, 0.06), transparent 62%),
+        linear-gradient(168deg, #0a0c13 0%, var(--bg) 48%, #05060a 100%);
+}
+
+/* ── Shell panels: membranes floating on the void ─────────────────────────── */
+.sidebar-panel {
+    background:
+        linear-gradient(180deg, rgba(148, 170, 215, 0.05), rgba(148, 170, 215, 0.012) 34%, transparent 72%),
+        var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    box-shadow: 0 24px 60px rgba(2, 4, 9, 0.55);
+}
+
+.main {
+    background:
+        linear-gradient(180deg, rgba(148, 170, 215, 0.035), transparent 16%),
+        var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    box-shadow: 0 24px 60px rgba(2, 4, 9, 0.4);
+}
+
+/* ── Brand ────────────────────────────────────────────────────────────────── */
+.brand-lockup:hover {
+    background: rgba(148, 170, 215, 0.06);
+    border-color: transparent;
+}
+
+.logo-img {
+    width: 40px;
+    height: 40px;
+    border-radius: 13px;
+    border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+    box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.logo-text {
+    font-family: var(--font-display);
+    font-size: 0.98rem;
+    font-weight: 700;
+    letter-spacing: 0.24em;
+    color: var(--text);
+}
+
+.logo-subtitle {
+    margin-top: 3px;
+    font-family: var(--font-mono);
+    font-size: 0.58rem;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: color-mix(in srgb, var(--accent) 45%, var(--muted));
+}
+
+/* ── Sidebar nav: the axon chain (the signature) ──────────────────────────── */
+.sidebar-nav {
+    position: relative;
+    padding: 4px 0;
+    gap: 2px;
+}
+
+/* the axon: one continuous fiber threading every node */
+.sidebar-nav::before {
+    content: "";
+    position: absolute;
+    left: 24px;
+    top: 16px;
+    bottom: 16px;
+    width: 1px;
+    background: linear-gradient(180deg,
+            transparent,
+            rgba(148, 170, 215, 0.22) 10%,
+            rgba(148, 170, 215, 0.22) 90%,
+            transparent);
+    pointer-events: none;
+}
+
+.nav-item {
+    position: relative;
+    gap: 11px;
+    padding: 7px 10px;
+    border: 1px solid transparent;
+    border-radius: 12px;
+    background: transparent;
+    color: var(--muted);
+}
+
+.nav-item:hover {
+    background: rgba(148, 170, 215, 0.055);
+    border-color: transparent;
+    color: var(--text);
+}
+
+.nav-item.active {
+    background: color-mix(in srgb, var(--nav-tint) 6%, transparent);
+    border-color: color-mix(in srgb, var(--nav-tint) 14%, transparent);
+    color: var(--text);
+    box-shadow: none;
+}
+
+/* the legacy active-indicator bar/dot is replaced by the firing node */
+.nav-item::before,
+.nav-item.active::before {
+    content: none;
+}
+
+/* nodes on the fiber: opaque chips mask the line where they sit */
+.nav-icon {
+    width: 28px;
+    min-width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--nav-tint, var(--muted)) 7%, var(--surface));
+    border: 1px solid color-mix(in srgb, var(--nav-tint, var(--muted)) 20%, transparent);
+    color: color-mix(in srgb, var(--nav-tint, var(--muted)) 80%, #ffffff);
+    transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.nav-icon svg {
+    width: 16px;
+    height: 16px;
+}
+
+.nav-item:hover .nav-icon {
+    background: color-mix(in srgb, var(--nav-tint) 13%, var(--surface));
+    border-color: color-mix(in srgb, var(--nav-tint) 38%, transparent);
+}
+
+/* the firing node */
+.nav-item.active .nav-icon {
+    background: color-mix(in srgb, var(--nav-tint) 20%, var(--surface));
+    border-color: color-mix(in srgb, var(--nav-tint) 60%, transparent);
+    color: color-mix(in srgb, var(--nav-tint) 90%, #ffffff);
+    animation: synapse-fire 3s ease-in-out infinite;
+}
+
+@keyframes synapse-fire {
+
+    0%,
+    100% {
+        box-shadow: 0 0 8px color-mix(in srgb, var(--nav-tint) 22%, transparent);
+    }
+
+    50% {
+        box-shadow: 0 0 18px color-mix(in srgb, var(--nav-tint) 48%, transparent);
+    }
+}
+
+.nav-label {
+    font-size: 0.83rem;
+    font-weight: 600;
+    letter-spacing: 0.005em;
+}
+
+.nav-description {
+    font-size: 0.66rem;
+    color: var(--muted);
+}
+
+.nav-item.active .nav-description {
+    color: color-mix(in srgb, var(--nav-tint) 40%, var(--muted));
+}
+
+/* ── Topbar ───────────────────────────────────────────────────────────────── */
+.shell-topbar {
+    padding: 12px 18px 8px;
+}
+
+.shell-page-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: var(--page-tint, var(--accent));
+    box-shadow: 0 0 10px color-mix(in srgb, var(--page-tint, var(--accent)) 70%, transparent);
+    transition: background 0.25s ease, box-shadow 0.25s ease;
+}
+
+.shell-page-heading {
+    font-family: var(--font-display);
+    font-size: 1.04rem;
+    font-weight: 600;
+    letter-spacing: 0.015em;
+}
+
+.shell-page-pill {
+    min-height: 0;
+    padding: 2px 0 0;
+    border: 0;
+    background: none;
+    font-family: var(--font-mono);
+    font-size: 0.64rem;
+    font-weight: 500;
+    letter-spacing: 0.03em;
+    text-transform: lowercase;
+    color: var(--muted);
+}
+
+.shell-icon-btn {
+    border-radius: 11px;
+    border: 1px solid var(--border);
+    background: rgba(148, 170, 215, 0.05);
+    box-shadow: none;
+}
+
+.shell-icon-btn:hover {
+    background: rgba(148, 170, 215, 0.1);
+    border-color: rgba(148, 170, 215, 0.2);
+}
+
+.shell-status-chip {
+    min-height: 30px;
+    padding: 0 11px;
+    border: 1px solid var(--border);
+    background: transparent;
+    font-family: var(--font-mono);
+    font-size: 0.64rem;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: lowercase;
+    color: var(--muted);
+}
+
+.shell-status-chip:has(.ws-dot.connected) {
+    border-color: color-mix(in srgb, var(--green) 26%, transparent);
+    color: color-mix(in srgb, var(--green) 70%, var(--muted));
+}
+
+.shell-status-chip:has(.ws-dot.disconnected) {
+    border-color: color-mix(in srgb, var(--red) 30%, transparent);
+    color: color-mix(in srgb, var(--red) 75%, var(--muted));
+}
+
+.ws-dot {
+    width: 7px;
+    height: 7px;
+}
+
+.ws-dot.connected {
+    background: var(--green);
+    box-shadow: 0 0 8px color-mix(in srgb, var(--green) 60%, transparent);
+}
+
+/* ── Focus: the signal ring ───────────────────────────────────────────────── */
+input:focus,
+textarea:focus,
+select:focus,
+.premium-input:focus {
+    outline: none;
+    border-color: color-mix(in srgb, var(--accent) 45%, transparent) !important;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 13%, transparent) !important;
+}
+
+.chat-input-floating:focus-within {
+    border-color: color-mix(in srgb, var(--accent) 40%, transparent) !important;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 11%, transparent), var(--shadow-sm) !important;
+}
+
+/* ── Scrollbars ───────────────────────────────────────────────────────────── */
+::-webkit-scrollbar-thumb {
+    background: rgba(148, 170, 215, 0.16);
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(148, 170, 215, 0.28);
+}
+
+/* ── SYNAPSE kit · shared components for redesigned pages ─────────────────────
+   Pages migrate onto these; the premium-card / form-group-modern era classes
+   above are legacy and disappear once no page references them. */
+
+.page-wrap {
+    width: 100%;
+    max-width: 1320px;
+    margin: 0 auto;
+}
+
+.page-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 14px;
+    min-height: var(--search-h);
+}
+
+.page-readout {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.02em;
+    color: var(--muted);
+}
+
+.page-readout .readout-em {
+    color: var(--text);
+    font-weight: 500;
+}
+
+.panel {
+    background:
+        linear-gradient(180deg, rgba(148, 170, 215, 0.04), transparent 30%),
+        var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    overflow: hidden;
+}
+
+.panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 11px 16px;
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+    background: rgba(148, 170, 215, 0.025);
+}
+
+.panel-title {
+    margin: 0;
+    font-family: var(--font-display);
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: color-mix(in srgb, var(--text) 80%, var(--muted));
+}
+
+.panel-count {
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    color: var(--muted);
+}
+
+.row-list {
+    display: flex;
+    flex-direction: column;
+}
+
+.list-row {
+    padding: 11px 16px 12px;
+    border-top: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
+    transition: background 0.15s ease;
+}
+
+.list-row:first-child {
+    border-top: 0;
+}
+
+.list-row:hover {
+    background: rgba(148, 170, 215, 0.035);
+}
+
+.row-line {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.row-title {
+    font-size: 0.84rem;
+    font-weight: 600;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.row-desc {
+    margin-top: 3px;
+    font-size: 0.76rem;
+    line-height: 1.5;
+    color: var(--muted);
+}
+
+.chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.mono-chip {
+    font-family: var(--font-mono);
+    font-size: 0.63rem;
+    letter-spacing: 0.01em;
+    padding: 2px 7px;
+    border-radius: 6px;
+    border: 1px solid color-mix(in srgb, var(--teal) 24%, transparent);
+    background: color-mix(in srgb, var(--teal) 7%, transparent);
+    color: color-mix(in srgb, var(--teal) 78%, var(--text));
+}
+
+/* Boolean state: a synapse either fires or it doesn't */
+.switch {
+    position: relative;
+    width: 34px;
+    height: 19px;
+    flex-shrink: 0;
+    padding: 0;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.switch::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 13px;
+    height: 13px;
+    border-radius: 999px;
+    background: var(--muted);
+    transition: transform 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.switch[aria-checked="true"] {
+    background: color-mix(in srgb, var(--accent) 22%, var(--surface2));
+    border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
+.switch[aria-checked="true"]::after {
+    transform: translateX(15px);
+    background: var(--accent);
+    box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.switch:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 44px 20px;
+    border: 1px dashed rgba(148, 170, 215, 0.2);
+    border-radius: var(--r-lg);
+    text-align: center;
+}
+
+.empty-title {
+    font-family: var(--font-display);
+    font-size: 0.86rem;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.empty-hint {
+    font-family: var(--font-mono);
+    font-style: normal;
+    /* a legacy .empty-hint (Memories era) sets italic — data readouts don't slant */
+    font-size: 0.68rem;
+    color: var(--muted);
+}
+
+/* ── Responsive (re-asserts breakpoint behavior my base rules override) ───── */
+@media (min-width: 768px) {
+    .sidebar.collapsed .sidebar-nav::before {
+        left: 50%;
+        transform: translateX(-50%);
+    }
+}
+
+@media (max-width: 960px) {
+    .shell-page-heading {
+        font-size: 0.94rem;
+    }
+}
+
+@media (max-width: 640px) {
+    .shell-topbar {
+        padding: 10px 12px 6px;
+    }
+
+    .sidebar-panel,
+    .main {
+        border-radius: 16px;
+    }
+}
+
+/* ── Motion discipline ────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+    .nav-item.active .nav-icon {
+        animation: none;
+        box-shadow: 0 0 12px color-mix(in srgb, var(--nav-tint) 30%, transparent);
+    }
+
+    .page.active {
+        animation: none;
+    }
+
+    .btn,
+    .switch,
+    .switch::after,
+    .list-row {
+        transition: none !important;
     }
 }

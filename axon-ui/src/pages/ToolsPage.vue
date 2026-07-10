@@ -2,7 +2,6 @@
 import { computed, onMounted, ref } from 'vue'
 import { get, post, put } from '../lib/api.js'
 import { toast } from '../lib/toast.js'
-import Pill from '../components/Pill.vue'
 import { useHeaderSearch } from '../lib/headerSearch.js'
 
 const bySource = ref({})
@@ -28,14 +27,14 @@ const filteredBySource = computed(() => {
 
 const sections = computed(() =>
   Object.entries(filteredBySource.value)
-    .map(([key, tools]) => ({
-      key,
-      title: `${String(key).toUpperCase()} TOOLS`,
-      count: tools.length,
-      tools,
-    }))
-    .sort((a, b) => a.title.localeCompare(b.title))
+    .map(([key, tools]) => ({ key, count: tools.length, tools }))
+    .sort((a, b) => a.key.localeCompare(b.key))
 )
+
+const allTools = computed(() => Object.values(bySource.value).flat())
+const shownCount = computed(() => sections.value.reduce((n, s) => n + s.count, 0))
+const enabledCount = computed(() => allTools.value.filter((t) => t.enabled).length)
+const isSearching = computed(() => !!searchQuery.value.trim())
 
 async function load() {
   const d = await get('/tools')
@@ -72,22 +71,22 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="services-page tools-page">
-    <div class="page-header-container">
-      <div class="page-header">
-        <h1>Tools</h1>
-        <p class="page-desc">
-          Explore and manage available tools from internal and external sources.
-        </p>
-      </div>
-      <div class="header-actions">
-        <button
-          class="btn btn-save"
-          @click="reload"
-        >
-          Reload Tools
-        </button>
-      </div>
+  <div class="page-wrap tools-page">
+    <div class="page-toolbar">
+      <p class="page-readout">
+        <span class="readout-em">{{ shownCount }}</span><template v-if="isSearching">
+          / {{ allTools.length }}
+        </template> tools
+        <template v-if="allTools.length">
+          · <span class="readout-em">{{ enabledCount }}</span> enabled
+        </template>
+      </p>
+      <button
+        class="btn btn-ghost"
+        @click="reload"
+      >
+        Reload tools
+      </button>
     </div>
 
     <div
@@ -97,54 +96,47 @@ onMounted(load)
       <section
         v-for="section in sections"
         :key="section.key"
-        class="premium-card"
+        class="panel"
       >
-        <div class="card-header-row no-collapse">
-          <div class="card-title-group">
-            <h2>{{ section.title }}</h2>
-          </div>
-          <span class="card-summary">{{ section.count }} available</span>
+        <div class="panel-head">
+          <h2 class="panel-title">
+            {{ section.key }}
+          </h2>
+          <span class="panel-count">{{ section.count }}</span>
         </div>
 
-        <div class="service-list">
+        <div class="row-list">
           <div
             v-for="t in section.tools"
             :key="t.name"
-            class="service-item tool-row"
-            :class="{ disabled: !t.enabled }"
+            class="list-row tool-row"
+            :class="{ off: !t.enabled }"
           >
-            <div class="service-info">
-              <div class="service-name-row">
-                <div class="service-name-group">
-                  <span class="service-name">{{ t.name }}</span>
-                  <Pill
-                    :type="t.enabled ? 'ok' : 'muted'"
-                    :text="t.enabled ? 'Enabled' : 'Disabled'"
-                  />
-                </div>
-                <div class="service-actions">
-                  <button
-                    class="btn btn-sm btn-ghost"
-                    @click="toggleTool(t)"
-                  >
-                    {{ t.enabled ? 'Disable' : 'Enable' }}
-                  </button>
-                </div>
-              </div>
-              <p class="service-meta description">
-                {{ t.description }}
-              </p>
+            <div class="row-line">
+              <span class="row-title">{{ t.name }}</span>
+              <button
+                class="switch"
+                type="button"
+                role="switch"
+                :aria-checked="t.enabled ? 'true' : 'false'"
+                :aria-label="`${t.enabled ? 'Disable' : 'Enable'} ${t.name}`"
+                :title="t.enabled ? 'Disable' : 'Enable'"
+                @click="toggleTool(t)"
+              />
+            </div>
+            <p class="row-desc">
+              {{ t.description }}
+            </p>
 
-              <div
-                v-if="t.required?.length"
-                class="tool-tags-row"
-              >
-                <span
-                  v-for="r in t.required"
-                  :key="r"
-                  class="tool-tag"
-                >{{ r }}</span>
-              </div>
+            <div
+              v-if="t.required?.length"
+              class="chip-row"
+            >
+              <span
+                v-for="r in t.required"
+                :key="r"
+                class="mono-chip"
+              >{{ r }}</span>
             </div>
           </div>
         </div>
@@ -153,11 +145,14 @@ onMounted(load)
 
     <div
       v-else
-      class="empty-state-container"
+      class="empty-state"
     >
-      <div class="empty-state">
-        {{ searchQuery.trim() ? `No tools match "${searchQuery.trim()}".` : 'No tools loaded. Try reloading your tool directories.' }}
-      </div>
+      <p class="empty-title">
+        {{ isSearching ? 'No matching tools' : 'No tools loaded' }}
+      </p>
+      <p class="empty-hint">
+        {{ isSearching ? `Nothing matches "${searchQuery.trim()}". Try a different term.` : 'Reload tools to scan the tool directories.' }}
+      </p>
     </div>
   </div>
 </template>
@@ -170,53 +165,18 @@ onMounted(load)
 .tools-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  gap: 14px;
   align-items: start;
 }
 
-.tool-row.disabled {
-  opacity: 0.6;
-}
-
-.service-name-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-}
-
-.service-name-group {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.service-name {
-  font-size: 15px;
-  font-weight: 700;
-}
-
-.service-meta.description {
-  margin-top: 8px;
-  line-height: 1.55;
-}
-
-.tool-tags-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.empty-state-container {
-  padding: 60px 0;
-  text-align: center;
-}
-
-.empty-state {
+/* A tool that isn't firing fades back into the membrane. */
+.tool-row.off .row-title {
   color: var(--muted);
-  font-size: 14px;
+}
+
+.tool-row.off .row-desc,
+.tool-row.off .chip-row {
+  opacity: 0.55;
 }
 
 @media (max-width: 960px) {

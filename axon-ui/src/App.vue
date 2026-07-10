@@ -193,15 +193,6 @@ async function logout() {
     class="layout app-shell"
     :class="{ 'sidebar-collapsed': isSidebarCollapsed, 'sidebar-open': sidebarOpen }"
   >
-    <div
-      class="app-shell-backdrop"
-      aria-hidden="true"
-    >
-      <span class="shell-ambient shell-ambient-one" />
-      <span class="shell-ambient shell-ambient-two" />
-      <span class="shell-ambient shell-ambient-three" />
-    </div>
-
     <aside
       class="sidebar"
       :class="{ open: sidebarOpen, collapsed: isSidebarCollapsed }"
