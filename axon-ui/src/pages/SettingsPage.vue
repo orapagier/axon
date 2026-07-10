@@ -233,9 +233,24 @@ onMounted(load)
             <span class="card-summary">{{ activeCategory.rows.length }} settings</span>
           </div>
 
-          <div class="settings-list">
+          <SearchInput
+            v-if="activeCategory.rows.length > 5"
+            v-model="settingsSearch"
+            placeholder="Search settings in this category…"
+          />
+
+          <div
+            v-if="filteredCategoryRows.length === 0"
+            class="empty-state"
+          >
+            No settings match your search.
+          </div>
+          <div
+            v-else
+            class="settings-list"
+          >
             <div
-              v-for="s in activeCategory.rows"
+              v-for="s in filteredCategoryRows"
               :key="s.key"
               class="setting-item"
             >
