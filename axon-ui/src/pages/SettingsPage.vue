@@ -16,7 +16,7 @@ const retentionResult = ref('')
 const CATEGORY_META = {
   agent: { title: 'Agent', description: 'Core agent-loop behavior: iteration and correction budgets, run/tool timeouts, tool scope, reasoning effort, temperature, token caps, and the system prompt.' },
   backup: { title: 'Backups', description: 'Daily local snapshots of axon.db and crm.db (VACUUM INTO), written to the Files page directory and pruned after the configured retention. These are on-instance only — copying them off the server is the operator’s responsibility.' },
-  crm: { title: 'CRM', description: 'Chat-agent access to the built-in CRM. Reads (list/get/search/reports) are always available to the agent; writes are workflow-only unless enabled here.' },
+  crm: { title: 'CRM', description: 'CRM behavior. Chat-agent write access (create/update/delete/convert/archive) is gated per-tool on the Tools page, not here — reads are always available to the agent.' },
   embedder: { title: 'Embeddings', description: 'OpenAI-compatible embeddings provider powering the semantic tool-routing tier and long-term memory recall.' },
   instagram: { title: 'Instagram Publishing', description: 'Media hosting URLs, bind address, TTL, and image/video processing waits.' },
   memory: { title: 'Memory', description: 'Retention, recall, and knowledge persistence behavior.' },
