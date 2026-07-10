@@ -29,8 +29,9 @@ use crate::tools::telegram::binary_descriptor;
 use serde_json::{json, Value};
 
 /// Resolve a source path for upload: explicit `localPath`, else the input's
-/// binary descriptor (any of the accepted key spellings).
-fn resolve_local_path(config: &Value, input: &Value) -> Option<String> {
+/// binary descriptor (any of the accepted key spellings). Shared with the FTP
+/// node, which uploads from the same descriptor convention.
+pub(crate) fn resolve_local_path(config: &Value, input: &Value) -> Option<String> {
     let direct = config
         .get("localPath")
         .or_else(|| config.get("local_path"))

@@ -886,6 +886,12 @@ async fn execute_node_dispatch(
             let input = primary_input(direct_inputs);
             nodes::ssh::execute(config, state, &input).await
         }
+        // Classic FTP/FTPS file operations with inline or saved-credential
+        // connection details. Input feeds upload's binary-descriptor fallback.
+        "ftp" => {
+            let input = primary_input(direct_inputs);
+            nodes::ftp::execute(config, &input).await
+        }
         "javascript" => {
             // Sort by position for deterministic $results[N] ordering.
             // HashMap iteration order is random, which caused the JS node

@@ -293,8 +293,8 @@ const DOC_SECTIONS = [
     id: 'workflow-lineage-and-new-nodes',
     category: 'Automation',
     title: 'Per-Item Lineage and n8n Parity Nodes',
-    summary: 'For-each execution with $ancestor lineage, plus GraphQL, Compare Datasets, Python, SSH, JWT/TOTP/encrypt crypto, and cross-run dedupe.',
-    tags: ['workflows', 'for_each', 'lineage', 'ancestor', 'graphql', 'python', 'ssh', 'jwt', 'totp', 'dedupe', 'compare', 'n8n'],
+    summary: 'For-each execution with $ancestor lineage, plus GraphQL, Compare Datasets, Python, SSH, FTP/FTPS, JWT/TOTP/signature/encrypt crypto, and cross-run dedupe.',
+    tags: ['workflows', 'for_each', 'lineage', 'ancestor', 'graphql', 'python', 'ssh', 'ftp', 'ftps', 'jwt', 'totp', 'sign', 'signature', 'dedupe', 'compare', 'n8n'],
     blocks: [
       {
         type: 'paragraph',
@@ -319,6 +319,7 @@ const DOC_SECTIONS = [
           ['Compare Datasets', 'Diff two lists by key into same / different / a_only / b_only + counts.', 'One composable output object instead of four forced branches.'],
           ['Python', 'Runs real CPython on the host with _json / _item / _node / _results globals.', 'Full native packages (pandas, requests) — n8n\'s Python is a WASM sandbox.'],
           ['SSH', 'Remote command + SFTP upload/download against a saved server.', 'Reuses the agent\'s host-key-pinned SSH stack and destructive-command guards.'],
+          ['FTP', 'List / download / upload / delete / rename / mkdir over FTP or explicit FTPS, inline or saved credentials.', 'Self-signed-cert tolerance is a per-node toggle; List emits one item per file, Loop-ready.'],
         ],
       },
       {
@@ -327,6 +328,7 @@ const DOC_SECTIONS = [
         columns: ['Node', 'New operations / options', 'Use'],
         rows: [
           ['Crypto', 'JWT sign & verify (HS/RS/ES/PS/EdDSA), TOTP generate & verify, AES-256-GCM encrypt/decrypt.', 'Mint/check API tokens, 2FA codes, encrypt a field at rest — was hash/HMAC/UUID only.'],
+          ['Crypto — Signatures', 'Raw Sign / Verify over any value with RSA (RS/PS), ECDSA (ES256/384), Ed25519, or HMAC — hex/base64/base64url output, auto-detected on verify.', 'Sign API payloads or verify provider signatures without a JWT wrapper (n8n signs but cannot verify).'],
           ['Sort / Limit / Dedupe', 'Dedupe Scope "Across all runs" (persistent), with a per-node key cap and reset.', 'Pair with a polling trigger for "only new items"; test runs check but never record.'],
         ],
       },

@@ -27,6 +27,7 @@ pub(crate) mod extract_from_file;
 pub(crate) mod facebook;
 pub(crate) mod filter;
 pub(crate) mod fovea;
+pub(crate) mod ftp;
 pub(crate) mod github;
 pub(crate) mod graphql;
 pub(crate) mod homeostasis;

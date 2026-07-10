@@ -15,6 +15,15 @@
 //!   - `totp`         — RFC 6238 code from a base32/plain/hex secret
 //!                      (SHA1 default, SHA256/512 supported, 6–8 digits).
 //!   - `totpVerify`   — constant-time code check across a ±window of periods.
+//!   - `sign`         — asymmetric signature over an arbitrary value (n8n's
+//!                      Crypto "Sign" action): RS/PS (RSA), ES256/ES384
+//!                      (ECDSA), EdDSA — the same PEM `privateKey` handling as
+//!                      `jwtSign`, and HS* as a keyed-HMAC convenience. ECDSA
+//!                      signatures use the raw JOSE `r‖s` layout (not ASN.1
+//!                      DER), matching what JWS libraries expect.
+//!   - `verifySignature` — soft-fail check of a signature against `publicKey`
+//!                      (or `secret` for HS*); accepts hex, base64, or
+//!                      base64url signatures by trying each decoding.
 //!   - `encrypt` / `decrypt` — AES-256-GCM with an SHA-256-derived key from a
 //!                      passphrase; blob format matches the master-key store:
 //!                      base64(nonce(12) ‖ ciphertext+tag).
@@ -159,6 +168,33 @@ fn jwt_decoding_key(
             DecodingKey::from_ed_pem(pem()?.as_bytes()).map_err(|e| format!("Bad Ed25519 key: {e}"))
         }
     }
+}
+
+// ── Raw signatures (sign / verifySignature) ──────────────────────────────────
+
+/// Every plausible byte decoding of a signature string. Hex, base64, and
+/// base64url are each tried (an input can legitimately decode under more than
+/// one, so verification checks all candidates — accepting any decoding that
+/// verifies is sound: it is still a valid signature by the key over the value).
+fn signature_candidates(s: &str) -> Vec<Vec<u8>> {
+    let s = s.trim();
+    let mut out: Vec<Vec<u8>> = Vec::new();
+    if s.len() % 2 == 0 && s.bytes().all(|b| b.is_ascii_hexdigit()) {
+        if let Ok(b) = hex::decode(s) {
+            out.push(b);
+        }
+    }
+    if let Ok(b) = STANDARD.decode(s) {
+        if !out.contains(&b) {
+            out.push(b);
+        }
+    }
+    if let Ok(b) = URL_SAFE_NO_PAD.decode(s.trim_end_matches('=')) {
+        if !out.contains(&b) {
+            out.push(b);
+        }
+    }
+    out
 }
 
 // ── TOTP (RFC 6238) ───────────────────────────────────────────────────────────
@@ -425,6 +461,52 @@ pub(crate) fn execute(config: &Value, input: &Value) -> Result<Value, String> {
                 Err(e) => json!({ "valid": false, "error": e.to_string() }),
             };
             Ok(wrap(config, input, "jwt", result))
+        }
+
+        "sign" => {
+            let alg = jwt_algorithm(
+                cfg_str(config, "algorithm").as_deref().unwrap_or("RS256"),
+            )?;
+            let value = val_to_string(&config.get("value").cloned().unwrap_or(Value::Null));
+            let key = jwt_encoding_key(alg, config)?;
+            // jsonwebtoken signs raw bytes and returns base64url; decode so the
+            // `encoding` knob applies uniformly. Signatures default to base64
+            // (the usual wire format outside JOSE) rather than hash's hex.
+            let sig_b64url = jsonwebtoken::crypto::sign(value.as_bytes(), &key, alg)
+                .map_err(|e| format!("Signing failed: {e}"))?;
+            let raw = URL_SAFE_NO_PAD
+                .decode(sig_b64url.trim_end_matches('='))
+                .map_err(|e| format!("Signing produced undecodable output: {e}"))?;
+            let encoding = config
+                .get("encoding")
+                .and_then(|v| v.as_str())
+                .unwrap_or("base64");
+            Ok(wrap(
+                config,
+                input,
+                "signature",
+                Value::String(encode(&raw, encoding)),
+            ))
+        }
+
+        "verifySignature" => {
+            let alg = jwt_algorithm(
+                cfg_str(config, "algorithm").as_deref().unwrap_or("RS256"),
+            )?;
+            let value = val_to_string(&config.get("value").cloned().unwrap_or(Value::Null));
+            let key = jwt_decoding_key(alg, config)?;
+            // A malformed or forged signature is data, not a config error —
+            // soft-fail to {valid:false} so an IF node can route it (same
+            // contract as jwtVerify/totpVerify).
+            let valid = match cfg_str(config, "signature") {
+                Some(sig) => signature_candidates(&sig).into_iter().any(|bytes| {
+                    let b64url = URL_SAFE_NO_PAD.encode(&bytes);
+                    jsonwebtoken::crypto::verify(&b64url, value.as_bytes(), &key, alg)
+                        .unwrap_or(false)
+                }),
+                None => false,
+            };
+            Ok(wrap(config, input, "valid", Value::Bool(valid)))
         }
 
         "totp" => {
@@ -860,5 +942,167 @@ mod tests {
         let a = execute(&cfg, &Value::Null).unwrap();
         let b = execute(&cfg, &Value::Null).unwrap();
         assert_ne!(a["encrypted"], b["encrypted"]);
+    }
+
+    // ── sign / verifySignature ────────────────────────────────────────────
+
+    // Fixed test-only keypairs (PKCS#8 PEM), generated with openssl. Never
+    // reuse outside tests.
+    const RSA_PRIV: &str = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC95Z/Czh23cwNY\nY55S+1Kk2Wuhv05HYrsgu1yHxcSx/mQku3PPKDRIQP4FH6ohZGUkNi980XChzVlP\no0ASf5z3xadTnWrdYoX5emI6zdGZOYEUqq3vLV+PsAVXAGXYle4RvX3ZNn6BjAvS\ngd8qNV6wUUSRf6LLWzBdD62o7EHWjEFH15PZdwKDbx/D4Lb27gZxfeFZKD1O1l+2\nHanLokw2XV4cX3M/mbwoKvnUX2z2npiX5nfSDwyMwLXCqhKkpKxkAXG1ljf8KiX7\nhznAa0cGEphUFnn0vQecfDKsgKrc2t4WLj3sYWAuTP3Iuvm0u19HZZ7Jmwg7/VcO\nzcLA4wODAgMBAAECggEAXlOzmiacaEW/QaaqPHoOwUgmyL+oeJk4brfi7KZ2YBwH\nTp+2lQ5ZehKem5jw/4lJHEW2LQA0PIsuc/qZlxbAt+r8hPJK5RFNj3EVXjRiiwQf\ndE6b+5TERTGgVWkjLgS7ryA7ZSxGhr80GCre2a6NDHQx5TxLd0wip/djwecphRJm\nXnVqE2U0J+hYNGRiSxQPiiKvPPh9zyupq5aMgbyJCzxwGezRhT6RIkKIqGLUKslo\nmv4RMuUFzAYNvYvG2gX0k9zApPBVb6d0O9mw/zAdB+XdIiF6V7Dn2ProhaP9VHdT\nZXb1PXrrL2puTsnQtVlMNYpGjqqmfWbR05hlNnInwQKBgQDxhQms6TFg258QGouc\nn00cfBHqMYzxc1ESfMHswyB6I/JjWC0mK/JFAceng7cWIG+LgCucMvfPXhoqGC9e\npu6v9ZsrPLrZuOKVaaAVVj957A9cnP8iYd5ceTfokrLQv9PInc3mW/smk7UsgAR1\nZWrgg5S+nGLAEBKk4v4PWhancwKBgQDJSEFzDObwPPhu7ySj8sOSqxc+xAVXl9Eq\nYJjnGkVvjiro+bn0/EAprzjBUGTtBgvrkuNrDPZ9C1PJxx+Oz/PesQsI6o+CsDPj\n5pzqn8s7NhReTOyfNEoLlLx8DDYad7VhJVDEHQD7AUQ+HDfhmPOYVOJxWgzRMORl\nLkNbJZCPsQKBgQCjORjf3b08S1DFbls6H0La5FKrJo+tQhThXKUmoHybbx3J2/av\nXHXgAyLuaArdDlC0Q4u1hZCKeXtPRYcF/eVDz8XtQ563s8aV2YuRv/coK8v5+DRJ\nBUFk15tcN4BXqby0UUmszC8A1ERV7bKVsFO5pdNpuoDWckZXXvz6XRUAVwKBgDl0\nUZJYpXb/wF5SDuBphF/STIFTDL9TC5aQGjUlb5qHN0JnPihq9JmxdX7gxt5Ncouc\n0yOUgKty10jqeNyYCWGQobi605oXV8h+5F2onSdaqXe9d3F+SICDxUWXar4lW3XO\nY/6G1OfRFbyw61aPBUF/QV/ft3bjAN7M1NcootoRAoGAPJ++2WGpwbhkAxptruz9\nXCB1XQ3Ad8F0UBi34Uj1EeCyOwGNSZ2vrgFpcg3L6gUFhNZt9IG1AQCBLUikrKDL\nl/lL2VzYg3H3OFwRVyYymRJrOWvmHsOscmFT6mSioQDYhX1CXpU4b2p/O8AqjEX1\npNIrKnYXihUytk3KEy8buC0=\n-----END PRIVATE KEY-----\n";
+    const RSA_PUB: &str = "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAveWfws4dt3MDWGOeUvtS\npNlrob9OR2K7ILtch8XEsf5kJLtzzyg0SED+BR+qIWRlJDYvfNFwoc1ZT6NAEn+c\n98WnU51q3WKF+XpiOs3RmTmBFKqt7y1fj7AFVwBl2JXuEb192TZ+gYwL0oHfKjVe\nsFFEkX+iy1swXQ+tqOxB1oxBR9eT2XcCg28fw+C29u4GcX3hWSg9TtZfth2py6JM\nNl1eHF9zP5m8KCr51F9s9p6Yl+Z30g8MjMC1wqoSpKSsZAFxtZY3/Col+4c5wGtH\nBhKYVBZ59L0HnHwyrICq3NreFi497GFgLkz9yLr5tLtfR2WeyZsIO/1XDs3CwOMD\ngwIDAQAB\n-----END PUBLIC KEY-----\n";
+    const EC_PRIV: &str = "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgJEaWBE1RsqjEFcFK\nqmqRRgLuL/91FWwpAmRCsP2nkWWhRANCAATOcHiO3vxUF3DXl6T4JWaUy29bGFBR\neII0j5CeZj4wmh3o4e1dbqphieWWKi5GSjwVHu0JXz5xhAuG3tZv7816\n-----END PRIVATE KEY-----\n";
+    const EC_PUB: &str = "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEznB4jt78VBdw15ek+CVmlMtvWxhQ\nUXiCNI+QnmY+MJod6OHtXW6qYYnlliouRko8FR7tCV8+cYQLht7Wb+/Neg==\n-----END PUBLIC KEY-----\n";
+    const ED_PRIV: &str = "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIONuXA53B7z+GlwYa4kAZfWK7LH8Sb43f5VT8zaa7MFZ\n-----END PRIVATE KEY-----\n";
+    const ED_PUB: &str = "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAGUuSw+1JjWEeu6oWhyxGkWFJIN2WeOxQ9bkS09vusqc=\n-----END PUBLIC KEY-----\n";
+
+    fn sign_with(alg: &str, priv_key: &str, extra: Value) -> Value {
+        let mut cfg = json!({
+            "operation": "sign", "value": "payload-to-sign",
+            "algorithm": alg, "privateKey": priv_key,
+        });
+        if let (Value::Object(m), Value::Object(e)) = (&mut cfg, extra) {
+            m.extend(e);
+        }
+        execute(&cfg, &Value::Null).unwrap()
+    }
+
+    fn verify_with(alg: &str, pub_key: &str, value: &str, signature: &Value) -> bool {
+        let out = execute(
+            &json!({
+                "operation": "verifySignature", "value": value,
+                "algorithm": alg, "publicKey": pub_key, "signature": signature,
+            }),
+            &Value::Null,
+        )
+        .unwrap();
+        out["valid"] == json!(true)
+    }
+
+    // RSA PKCS#1 v1.5 (RS256) sign → verify roundtrip; tampering fails.
+    #[test]
+    fn sign_verify_rs256_roundtrip() {
+        let signed = sign_with("RS256", RSA_PRIV, json!({}));
+        let sig = &signed["signature"];
+        // Default output is base64 of a 2048-bit (256-byte) signature.
+        assert_eq!(STANDARD.decode(sig.as_str().unwrap()).unwrap().len(), 256);
+        assert!(verify_with("RS256", RSA_PUB, "payload-to-sign", sig));
+        assert!(!verify_with("RS256", RSA_PUB, "tampered-payload", sig));
+    }
+
+    // RSA-PSS (PS256) — the randomized-padding family also roundtrips.
+    #[test]
+    fn sign_verify_ps256_roundtrip() {
+        let signed = sign_with("PS256", RSA_PRIV, json!({}));
+        assert!(verify_with("PS256", RSA_PUB, "payload-to-sign", &signed["signature"]));
+    }
+
+    // ECDSA P-256 (ES256): JOSE r‖s signatures, 64 raw bytes.
+    #[test]
+    fn sign_verify_es256_roundtrip() {
+        let signed = sign_with("ES256", EC_PRIV, json!({}));
+        let sig = &signed["signature"];
+        assert_eq!(STANDARD.decode(sig.as_str().unwrap()).unwrap().len(), 64);
+        assert!(verify_with("ES256", EC_PUB, "payload-to-sign", sig));
+        assert!(!verify_with("ES256", EC_PUB, "tampered-payload", sig));
+    }
+
+    // Ed25519 (EdDSA) roundtrip.
+    #[test]
+    fn sign_verify_eddsa_roundtrip() {
+        let signed = sign_with("EdDSA", ED_PRIV, json!({}));
+        assert!(verify_with("EdDSA", ED_PUB, "payload-to-sign", &signed["signature"]));
+    }
+
+    // Every output encoding (hex / base64 / base64url) verifies — the checker
+    // auto-detects the decoding, so producer and consumer need no coordination.
+    #[test]
+    fn verify_accepts_all_signature_encodings() {
+        for enc in ["hex", "base64", "base64url"] {
+            let signed = sign_with("RS256", RSA_PRIV, json!({ "encoding": enc }));
+            assert!(
+                verify_with("RS256", RSA_PUB, "payload-to-sign", &signed["signature"]),
+                "encoding {enc} failed to verify"
+            );
+        }
+    }
+
+    // A signature by the wrong key soft-fails to valid:false (routable).
+    #[test]
+    fn verify_wrong_key_soft_fails() {
+        let signed = sign_with("ES256", EC_PRIV, json!({}));
+        let other_pub = RSA_PUB; // key type mismatch for ES256 → invalid, not a crash
+        let out = execute(
+            &json!({
+                "operation": "verifySignature", "value": "payload-to-sign",
+                "algorithm": "ES256", "publicKey": other_pub,
+                "signature": signed["signature"],
+            }),
+            &Value::Null,
+        );
+        // Either a clean {valid:false} or a key-parse config error is
+        // acceptable for a mismatched key type; garbage signatures must not
+        // hard-fail (covered below).
+        if let Ok(out) = out {
+            assert_eq!(out["valid"], json!(false));
+        }
+    }
+
+    // Garbage signature strings are data → {valid:false}, never an Err.
+    #[test]
+    fn verify_garbage_signature_soft_fails() {
+        let out = execute(
+            &json!({
+                "operation": "verifySignature", "value": "payload-to-sign",
+                "algorithm": "RS256", "publicKey": RSA_PUB,
+                "signature": "not!!a//signature==",
+            }),
+            &Value::Null,
+        )
+        .unwrap();
+        assert_eq!(out["valid"], json!(false));
+    }
+
+    // HS256 sign is the keyed-HMAC convenience: it must equal the hmac op's
+    // output for the same value+secret (base64url encoding).
+    #[test]
+    fn sign_hs256_matches_hmac_op() {
+        let signed = execute(
+            &json!({
+                "operation": "sign", "value": "payload-to-sign",
+                "algorithm": "HS256", "secret": "shared", "encoding": "base64url",
+            }),
+            &Value::Null,
+        )
+        .unwrap();
+        let hmac = execute(
+            &json!({
+                "operation": "hmac", "value": "payload-to-sign",
+                "secret": "shared", "algorithm": "sha256", "encoding": "base64url",
+            }),
+            &Value::Null,
+        )
+        .unwrap();
+        assert_eq!(signed["signature"], hmac["hmac"]);
+        // …and verifies through verifySignature with the shared secret.
+        let out = execute(
+            &json!({
+                "operation": "verifySignature", "value": "payload-to-sign",
+                "algorithm": "HS256", "secret": "shared",
+                "signature": signed["signature"],
+            }),
+            &Value::Null,
+        )
+        .unwrap();
+        assert_eq!(out["valid"], json!(true));
+    }
+
+    // Signing without a key is a config error (hard fail).
+    #[test]
+    fn sign_without_key_errors() {
+        let out = execute(
+            &json!({ "operation": "sign", "value": "x", "algorithm": "RS256" }),
+            &Value::Null,
+        );
+        assert!(out.is_err());
     }
 }
