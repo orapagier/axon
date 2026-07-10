@@ -142,6 +142,24 @@ const MIGRATIONS: &[Migration] = &[
         sql: include_str!("migrations/0019_ssh_host_key_fingerprint.sql"),
         tolerant_dup_column: true,
     },
+    Migration {
+        version: 20,
+        name: "tool_overrides",
+        sql: include_str!("migrations/0020_tool_overrides.sql"),
+        tolerant_dup_column: false,
+    },
+    Migration {
+        version: 21,
+        name: "remove_crm_agent_write_tools_setting",
+        sql: include_str!("migrations/0021_remove_crm_agent_write_tools_setting.sql"),
+        tolerant_dup_column: false,
+    },
+    Migration {
+        version: 22,
+        name: "short_term_fts",
+        sql: include_str!("migrations/0022_short_term_fts.sql"),
+        tolerant_dup_column: false,
+    },
 ];
 
 const SEED_SQL: &str = include_str!("seed.sql");
