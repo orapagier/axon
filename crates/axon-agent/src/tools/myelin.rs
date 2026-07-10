@@ -110,12 +110,13 @@ async fn save_file(state: &AppState, config: &Value) -> Result<Value, String> {
         chat_id: None,
     };
 
-    // store_incoming saves under the file's name, overwriting any existing copy
+    // store_file saves under the file's name, overwriting any existing copy
     // so only the newest is kept. The id is the SHA-256 of the bytes, so saving
-    // identical bytes returns the same id. Returns (id, path).
+    // identical bytes returns the same id. Returns (id, path). Saved files are
+    // produced artifacts, so they land in the Files page "Outgoing" bucket.
     let (id, stored_path) = state
         .files
-        .store_incoming(file)
+        .store_file(file, "outgoing")
         .await
         .map_err(|e| format!("Myelin save: failed to write to storage: {e}"))?;
 

@@ -351,7 +351,7 @@ pub async fn run_saved_synapse(
             let val = serde_json::to_value(&resp).unwrap_or(json!({}));
             state
                 .files
-                .register_from_json(&val, Some("synapse".to_string()))
+                .register_from_json(&val, Some("synapse".to_string()), "outgoing")
                 .await;
             Json(json!({"ok": true, "result": resp, "next_request_id": next_request_id}))
         }
@@ -430,7 +430,7 @@ pub async fn run_synapse_adhoc(
             let val = serde_json::to_value(&resp).unwrap_or(json!({}));
             state
                 .files
-                .register_from_json(&val, Some("synapse_adhoc".to_string()))
+                .register_from_json(&val, Some("synapse_adhoc".to_string()), "outgoing")
                 .await;
             Json(json!({"ok": true, "result": resp}))
         }

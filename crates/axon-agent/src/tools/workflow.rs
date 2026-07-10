@@ -2452,11 +2452,22 @@ impl WorkflowEngine {
                     break;
                 }
 
-                // Scan for files in the node result to auto-register in DB/UI
+                // Scan for files in the node result to auto-register in DB/UI.
+                // Trigger payloads carry files INTO the run (user attachments),
+                // every other node's files are artifacts the run produced — that
+                // split is what fills the Files page Incoming/Outgoing buckets.
+                let scan_direction = if matches!(
+                    node.node_type.as_str(),
+                    "trigger" | "circadian" | "stimulus"
+                ) {
+                    "incoming"
+                } else {
+                    "outgoing"
+                };
                 let reg_start = std::time::Instant::now();
                 state
                     .files
-                    .register_from_json(&nr.output, Some(node.name.clone()))
+                    .register_from_json(&nr.output, Some(node.name.clone()), scan_direction)
                     .await;
                 let reg_ms = reg_start.elapsed().as_millis();
                 if reg_ms > 100 {

@@ -1817,7 +1817,7 @@ pub(crate) async fn run_inner(
             if let Ok((id, name, val)) = res {
                 state
                     .files
-                    .register_from_json(&val, Some(name.clone()))
+                    .register_from_json(&val, Some(name.clone()), "outgoing")
                     .await;
                 if !tools_used.contains(&name) {
                     tools_used.push(name.clone());

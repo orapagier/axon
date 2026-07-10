@@ -300,6 +300,7 @@ async fn handle_http_request(
                             binary.mime_type.clone(),
                             bytes.len(),
                             Some("synapse".to_string()),
+                            "outgoing",
                         )
                         .await;
                 }
@@ -412,6 +413,7 @@ async fn handle_run_saved_http_request(
                             binary.mime_type.clone(),
                             bytes.len(),
                             Some("synapse".to_string()),
+                            "outgoing",
                         )
                         .await;
                 }

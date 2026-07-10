@@ -49,8 +49,18 @@ impl FileHandler {
             db,
         })
     }
-    /// Recursively scans JSON for paths in data/files and indexes them
-    pub async fn register_from_json(&self, val: &serde_json::Value, platform: Option<String>) {
+    /// Recursively scans JSON for paths in data/files and indexes them.
+    /// `direction` labels what the scan represents: "incoming" for payloads
+    /// that carry files INTO the system (trigger/user uploads), "outgoing"
+    /// for files produced by agent tools or workflow nodes. Re-registering
+    /// the same path is last-writer-wins, so a file the workflow re-emits
+    /// downstream ends up labeled outgoing.
+    pub async fn register_from_json(
+        &self,
+        val: &serde_json::Value,
+        platform: Option<String>,
+        direction: &str,
+    ) {
         match val {
             serde_json::Value::String(s) => {
                 let path = std::path::Path::new(s);
@@ -86,6 +96,7 @@ impl FileHandler {
                                 "application/octet-stream".to_string(), // Default
                                 bytes.len(),
                                 platform,
+                                direction,
                             )
                             .await;
                     }
@@ -93,12 +104,12 @@ impl FileHandler {
             }
             serde_json::Value::Object(map) => {
                 for v in map.values() {
-                    Box::pin(self.register_from_json(v, platform.clone())).await;
+                    Box::pin(self.register_from_json(v, platform.clone(), direction)).await;
                 }
             }
             serde_json::Value::Array(arr) => {
                 for v in arr {
-                    Box::pin(self.register_from_json(v, platform.clone())).await;
+                    Box::pin(self.register_from_json(v, platform.clone(), direction)).await;
                 }
             }
             _ => {}
@@ -106,6 +117,7 @@ impl FileHandler {
     }
 
     /// Register an existing file in the staging directory into the database
+    #[allow(clippy::too_many_arguments)]
     pub async fn store_path(
         &self,
         id: String,
@@ -114,6 +126,7 @@ impl FileHandler {
         mime_type: String,
         size: usize,
         platform: Option<String>,
+        direction: &str,
     ) -> anyhow::Result<()> {
         let conn = self.db.get().context("DB pool")?;
         // Keep only the newest record for a given on-disk path: drop any prior
@@ -123,13 +136,17 @@ impl FileHandler {
             rusqlite::params![path, id],
         )?;
         conn.execute(
-            "INSERT OR REPLACE INTO files (id,filename,mime_type,path,direction,size_bytes,platform,chat_id,created_at) VALUES (?1,?2,?3,?4,'incoming',?5,?6,?7,datetime('now'))",
-            rusqlite::params![id, filename, mime_type, path, size as i64, platform, None::<String>],
+            "INSERT OR REPLACE INTO files (id,filename,mime_type,path,direction,size_bytes,platform,chat_id,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,datetime('now'))",
+            rusqlite::params![id, filename, mime_type, path, direction, size as i64, platform, None::<String>],
         )?;
         Ok(())
     }
 
-    pub async fn store_incoming(&self, file: AgentFile) -> anyhow::Result<(String, String)> {
+    pub async fn store_file(
+        &self,
+        file: AgentFile,
+        direction: &str,
+    ) -> anyhow::Result<(String, String)> {
         let hash = format!("{:x}", Sha256::digest(&file.bytes));
         let safe = file
             .filename
@@ -154,7 +171,7 @@ impl FileHandler {
         // copy is kept on disk.
         tokio::fs::write(&dest, &file.bytes)
             .await
-            .context("write incoming file")?;
+            .context("write staged file")?;
 
         let path_str = dest.to_string_lossy().to_string();
         self.store_path(
@@ -164,6 +181,7 @@ impl FileHandler {
             file.mime_type,
             file.size_bytes,
             file.platform,
+            direction,
         )
         .await?;
 

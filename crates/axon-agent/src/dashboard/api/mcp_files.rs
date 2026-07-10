@@ -264,7 +264,7 @@ pub async fn upload_file(
                 chat_id: None,
             };
 
-            match state.files.store_incoming(agent_file).await {
+            match state.files.store_file(agent_file, "incoming").await {
                 Ok((id, _path)) => {
                     saved_files.push(json!({
                         "id": id,
