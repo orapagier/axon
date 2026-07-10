@@ -534,15 +534,24 @@ watch(disabled, (newVal) => {
         <span>New chat</span>
       </button>
 
+      <div class="conv-search">
+        <input
+          v-model="historySearch"
+          type="search"
+          class="premium-input conv-search-input"
+          placeholder="Search chat history…"
+        >
+      </div>
+
       <div class="conv-list">
         <p
-          v-if="conversations.length === 0"
+          v-if="sidebarConversations.length === 0"
           class="conv-empty"
         >
-          No conversations yet.
+          {{ historySearch.trim() ? 'No conversations match your search.' : 'No conversations yet.' }}
         </p>
         <div
-          v-for="c in conversations"
+          v-for="c in sidebarConversations"
           :key="c.id"
           class="conv-item"
           :class="{ active: c.id === currentSessionId }"
@@ -561,12 +570,22 @@ watch(disabled, (newVal) => {
             @keydown.esc.prevent="cancelRename"
             @blur="commitRename(c)"
           >
-          <span
-            v-else
-            class="conv-title"
-            title="Double-click to rename"
-            @dblclick.stop="startRename(c)"
-          >{{ c.title || 'New chat' }}</span>
+          <template v-else>
+            <span
+              class="conv-title"
+              title="Double-click to rename"
+              @dblclick.stop="startRename(c)"
+            >{{ c.title || 'New chat' }}</span>
+            <span
+              v-if="c.snippet"
+              class="conv-snippet"
+            >
+              <template
+                v-for="(seg, i) in highlightSegments(c.snippet)"
+                :key="i"
+              ><mark v-if="seg.mark">{{ seg.text }}</mark><template v-else>{{ seg.text }}</template></template>
+            </span>
+          </template>
           <button
             class="conv-del"
             type="button"
