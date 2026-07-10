@@ -147,10 +147,7 @@ pub(crate) async fn build_run_context(
                 );
                 (filtered, serde_json::Value::Object(info))
             } else {
-                let all_tools = state
-                    .tools
-                    .all_enabled_for_agent(state.settings.crm_agent_write_tools())
-                    .await;
+                let all_tools = state.tools.all_enabled_for_agent().await;
                 match state
                     .settings
                     .get_str("agent.tool_scope", "hybrid")
