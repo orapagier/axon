@@ -607,10 +607,10 @@ onUnmounted(() => {
             </div>
           </div>
           <div
-            v-if="sshServers.length === 0"
+            v-if="filteredSshServers.length === 0"
             class="empty-state"
           >
-            No SSH servers configured.
+            {{ servicesSearch.trim() ? 'No SSH servers match your search.' : 'No SSH servers configured.' }}
           </div>
         </div>
       </div>
