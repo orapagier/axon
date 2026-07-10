@@ -29,6 +29,50 @@ pub async fn list_conversations(State(state): State<AppState>) -> Json<Value> {
     Json(json!({ "conversations": items }))
 }
 
+/// Chat-history search: full-text search over message content (`short_term_fts`,
+/// see `db/migrations/0022_short_term_fts.sql`), returning the conversations
+/// that contain a match with a highlighted snippet — powers the Chat page
+/// sidebar search box. Distinct from `search_memory`, which searches
+/// long-term memory rather than conversation transcripts.
+pub async fn search_conversations(
+    State(state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Json<Value> {
+    let q = params.get("q").map(|s| s.trim()).unwrap_or("");
+    if q.is_empty() {
+        return Json(json!({ "conversations": [] }));
+    }
+    // Quote the term so FTS5 query-syntax characters in free-typed search
+    // text (-, *, :, etc.) are treated literally instead of as operators.
+    let fts_query = format!("\"{}\"", q.replace('"', "\"\""));
+    let mut items: Vec<Value> = Vec::new();
+    if let Ok(conn) = state.db.get() {
+        if let Ok(mut s) = conn.prepare(
+            "SELECT c.id, c.title, c.updated_at,
+                    snippet(short_term_fts, 0, '<mark>', '</mark>', '…', 8) AS snippet
+             FROM short_term_fts
+             JOIN short_term ON short_term.id = short_term_fts.rowid
+             JOIN conversations c ON c.id = short_term.session_id
+             WHERE short_term_fts MATCH ?1
+             GROUP BY c.id
+             ORDER BY c.updated_at DESC
+             LIMIT 50",
+        ) {
+            if let Ok(iter) = s.query_map(rusqlite::params![fts_query], |r| {
+                Ok(json!({
+                    "id": r.get::<_, String>(0)?,
+                    "title": r.get::<_, String>(1)?,
+                    "updated_at": r.get::<_, String>(2)?,
+                    "snippet": r.get::<_, String>(3)?,
+                }))
+            }) {
+                items = iter.filter_map(|r| r.ok()).collect();
+            }
+        }
+    }
+    Json(json!({ "conversations": items }))
+}
+
 /// Create an empty conversation and return its id. Clients can also just start
 /// sending with a fresh id — the row is created lazily on the first message
 /// (see `dashboard::ws`), so this is only for callers that want the id up front.
