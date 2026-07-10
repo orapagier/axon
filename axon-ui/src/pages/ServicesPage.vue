@@ -5,6 +5,7 @@ import { toast } from '../lib/toast.js'
 import { confirmDialog } from '../lib/confirm.js'
 import Modal from '../components/Modal.vue'
 import Pill from '../components/Pill.vue'
+import SearchInput from '../components/SearchInput.vue'
 
 const PLATFORMS = [
   { 
