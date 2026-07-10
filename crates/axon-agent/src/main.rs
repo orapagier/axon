@@ -463,6 +463,16 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    // Sensitive write tools (social/CRM/messaging) default to off for the
+    // agent regardless of what their source registered — the operator opts
+    // each one in via the ToolsPage Enable toggle. Persisted overrides are
+    // applied after, so an earlier opt-in survives this restart instead of
+    // being reset back off every time.
+    tools.apply_agent_gate_defaults().await;
+    for (name, enabled) in axon::tools::overrides::load_all(&db) {
+        tools.set_enabled(&name, enabled).await;
+    }
+
     let files = Arc::new(FileHandler::new(Arc::clone(&db)).context("create file handler")?);
     let job_store = Arc::new(JobStore::new(Arc::clone(&db)));
     let scheduler = Arc::new(
