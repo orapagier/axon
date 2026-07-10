@@ -510,7 +510,7 @@ onUnmounted(() => {
         
         <div class="service-list">
           <div
-            v-for="name in mcpServers"
+            v-for="name in filteredMcpServers"
             :key="name"
             class="service-item"
           >
