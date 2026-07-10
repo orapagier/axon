@@ -4190,9 +4190,9 @@ select {
 .btn-icon:hover,
 .btn-styled:hover {
     transform: translateY(-1px) !important;
-    background: rgba(255, 255, 255, 0.09) !important;
-    border-color: rgba(255, 255, 255, 0.2) !important;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 8px 20px rgba(0, 0, 0, 0.3) !important;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.08)) !important;
+    border-color: rgba(255, 255, 255, 0.24) !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 8px 20px rgba(0, 0, 0, 0.3) !important;
 }
 
 .btn:active {
@@ -4248,6 +4248,10 @@ select {
 .btn-execute:hover,
 .btn-fc-add:hover {
     transform: translateY(-1px) !important;
+    /* Re-declare the gradient: the generic `.btn:hover` above swaps the
+       background for a translucent dark tint, which would leave this button's
+       near-black text unreadable on hover. */
+    background: linear-gradient(135deg, #5eeacf 0%, #38c4d8 100%) !important;
     filter: brightness(1.06) !important;
     border-color: transparent !important;
     box-shadow: 0 10px 26px rgba(56, 196, 216, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.34) !important;
@@ -4264,6 +4268,9 @@ select {
 
 .btn-primary:hover {
     transform: translateY(-1px) !important;
+    /* Same as .btn-save:hover — keep the gradient so the dark label stays
+       readable (generic .btn:hover would darken the background). */
+    background: linear-gradient(135deg, #8ec5ff 0%, #67d7ef 100%) !important;
     filter: brightness(1.06) !important;
     border-color: transparent !important;
     box-shadow: 0 10px 26px rgba(103, 215, 239, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.34) !important;

@@ -1,23 +1,22 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { del, get, post } from '../lib/api.js'
 import { toast } from '../lib/toast.js'
 import { confirmDialog } from '../lib/confirm.js'
 import { fmtTokens, safeJsonParse, timeAgo } from '../lib/utils.js'
 import Pill from '../components/Pill.vue'
-import SearchInput from '../components/SearchInput.vue'
 import { useHeaderSearch } from '../lib/headerSearch.js'
 
 const stmRuns = ref([])
 const ltmEntries = ref([])
-const ltmSearch = ref('')
-const stmSearch = ref('')
+const memSearch = ref('')
 
-// The topbar field filters the run list live; long-term memory keeps its own
-// bar below because it's a server-side semantic search with explicit buttons.
+// One topbar field searches both columns: it filters the run list live, and
+// Enter runs the server-side semantic search over long-term memory.
 useHeaderSearch('memories', {
-  query: stmSearch,
-  placeholder: 'Search runs by task…',
+  query: memSearch,
+  placeholder: 'Search memories… (Enter searches long-term)',
+  onSubmit: searchLTM,
 })
 const expandedRuns = ref(new Set())
 const loadedTraces = ref({})
@@ -25,9 +24,14 @@ const loadedTraces = ref({})
 const stmBadge = computed(() => stmRuns.value.length)
 const ltmBadge = computed(() => ltmEntries.value.length)
 const filteredStmRuns = computed(() => {
-  const q = stmSearch.value.trim().toLowerCase()
+  const q = memSearch.value.trim().toLowerCase()
   if (!q) return stmRuns.value
   return stmRuns.value.filter((r) => String(r.task || '').toLowerCase().includes(q))
+})
+
+// Clearing the field resets long-term memory back to the recent feed.
+watch(memSearch, (q) => {
+  if (!q.trim()) loadLTM()
 })
 
 async function loadSTM() {
@@ -41,8 +45,8 @@ async function loadLTM() {
 }
 
 async function searchLTM() {
-  if (!ltmSearch.value.trim()) return loadLTM()
-  const d = await post('/memory/search', { query: ltmSearch.value, top_k: 20 })
+  if (!memSearch.value.trim()) return loadLTM()
+  const d = await post('/memory/search', { query: memSearch.value, top_k: 20 })
   ltmEntries.value = Array.isArray(d) ? d : (d.results ?? [])
 }
 
@@ -54,7 +58,7 @@ async function deleteMemory(id) {
   if (!ok) return
   const r = await del(`/memory/${id}`)
   toast(r.ok ? 'Deleted' : r.error, r.ok)
-  if (ltmSearch.value.trim()) searchLTM()
+  if (memSearch.value.trim()) searchLTM()
   else loadLTM()
 }
 
@@ -284,7 +288,7 @@ onMounted(() => {
             v-if="filteredStmRuns.length === 0"
             class="empty-state"
           >
-            {{ stmSearch.trim() ? 'No runs match your search.' : 'No short-term memories found.' }}
+            {{ memSearch.trim() ? 'No runs match your search.' : 'No short-term memories found.' }}
           </div>
         </div>
       </section>
@@ -297,19 +301,7 @@ onMounted(() => {
           <span class="card-summary">{{ ltmBadge }} entries</span>
         </div>
 
-        <div class="action-bar search-bar-row">
-          <SearchInput
-            v-model="ltmSearch"
-            :autofocus="false"
-            placeholder="Search persistent knowledge…"
-            @keydown.enter="searchLTM"
-          />
-          <button
-            class="btn btn-save"
-            @click="searchLTM"
-          >
-            Search
-          </button>
+        <div class="action-bar gap-12">
           <button
             class="btn btn-ghost"
             @click="loadLTM"
@@ -455,10 +447,6 @@ onMounted(() => {
   overflow-y: auto;
 }
 
-.search-bar-row {
-  padding: 16px;
-}
-
 .memory-entry {
   display: flex;
   flex-direction: column;
@@ -501,8 +489,7 @@ onMounted(() => {
     grid-template-columns: 1fr;
   }
 
-  .action-bar,
-  .search-bar-row {
+  .action-bar {
     flex-direction: column;
     gap: 12px;
   }

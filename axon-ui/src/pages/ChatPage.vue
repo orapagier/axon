@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { connectWs, wsSend, wsStatus } from '../lib/ws.js'
 import { get, put, del } from '../lib/api.js'
-import { toast } from '../lib/toast.js'
+import { toast, notifyBell } from '../lib/toast.js'
 import { confirmDialog } from '../lib/confirm.js'
 import { renderMarkdown } from '../lib/markdown.js'
 import SearchInput from '../components/SearchInput.vue'
@@ -298,7 +298,9 @@ function handleWsEvent(ev) {
       const message = (ev.message || '').trim()
       const body = title ? `${title}\n${message}` : (message || 'Notification')
       const ok = (ev.level || '').toLowerCase() !== 'error'
-      toast(body, ok)
+      // Backend-pushed notifications (watchers, background jobs) are
+      // review-worthy: record in the bell, not just a transient toast.
+      notifyBell(body, ok)
       break
     }
 
@@ -327,7 +329,9 @@ function handleWsEvent(ev) {
         messages.value[agentIdx].thinking = false
         messages.value[agentIdx].status = ''
       }
-      toast(ev.message || 'Agent error', false)
+      // Run failures (model router exhaustion, agent errors) need review —
+      // keep them in the bell as well as flashing a toast.
+      notifyBell(ev.message || 'Agent error', false)
       collapseTrace()
       resetRunTrackers()
       disabled.value = false

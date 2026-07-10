@@ -1,5 +1,6 @@
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { useHeaderSearch } from '../lib/headerSearch.js'
 
 const DOC_SECTIONS = [
   {
@@ -727,9 +728,14 @@ const DOC_SECTIONS = [
 ]
 
 const searchQuery = ref('')
-const searchInput = ref(null)
 const activeSectionId = ref(DOC_SECTIONS[0]?.id || '')
 let sectionObserver = null
+
+// The docs search lives in the shell topbar, like every other page.
+useHeaderSearch('docs', {
+  query: searchQuery,
+  placeholder: 'Search docs: pages, endpoints, workflows…',
+})
 
 function normalizeText(text) {
   return String(text || '')
@@ -788,11 +794,8 @@ const filteredSections = computed(() => {
 
 const visibleSectionsCount = computed(() => filteredSections.value.length)
 
-const quickJumpSections = computed(() => filteredSections.value.slice(0, 6))
-
 function clearSearch() {
   searchQuery.value = ''
-  nextTick(() => searchInput.value?.focus())
 }
 
 function jumpToSection(sectionId) {
@@ -834,27 +837,6 @@ function startObserver() {
   })
 }
 
-function isTypingTarget(target) {
-  if (!target) return false
-  const tag = target.tagName?.toLowerCase()
-  return (
-    tag === 'input' ||
-    tag === 'textarea' ||
-    target.isContentEditable ||
-    target.closest?.('[contenteditable="true"]')
-  )
-}
-
-function handleGlobalKeydown(event) {
-  if (event.key === '/' && !event.metaKey && !event.ctrlKey && !event.altKey && !isTypingTarget(event.target)) {
-    event.preventDefault()
-    searchInput.value?.focus()
-  }
-  if (event.key === 'Escape' && searchQuery.value) {
-    clearSearch()
-  }
-}
-
 watch(
   filteredSections,
   async (sections) => {
@@ -871,14 +853,8 @@ watch(
   { immediate: true }
 )
 
-onMounted(() => {
-  window.addEventListener('keydown', handleGlobalKeydown)
-  nextTick(() => searchInput.value?.focus())
-})
-
 onBeforeUnmount(() => {
   destroyObserver()
-  window.removeEventListener('keydown', handleGlobalKeydown)
 })
 </script>
 
@@ -887,48 +863,6 @@ onBeforeUnmount(() => {
     <section class="docs-layout">
       <aside class="docs-index-col">
         <div class="docs-index-card">
-          <div class="docs-search-panel docs-search-panel-compact">
-            <label for="docs-search-input">Search docs</label>
-            <div class="docs-search-row">
-              <input
-                id="docs-search-input"
-                ref="searchInput"
-                v-model="searchQuery"
-                type="text"
-                placeholder="Search pages, endpoints, workflows, tasks, settings..."
-              >
-              <button
-                type="button"
-                class="btn docs-clear-btn"
-                :disabled="!searchQuery"
-                @click="clearSearch"
-              >
-                Clear
-              </button>
-            </div>
-
-            <div class="docs-search-meta">
-              <span>Press / to focus search.</span>
-              <span v-if="searchTokens.length">{{ visibleSectionsCount }} match(es)</span>
-              <span v-else>{{ DOC_SECTIONS.length }} total sections</span>
-            </div>
-
-            <div
-              v-if="searchTokens.length && quickJumpSections.length"
-              class="docs-jump-chips"
-            >
-              <button
-                v-for="section in quickJumpSections"
-                :key="`jump-${section.id}`"
-                type="button"
-                class="docs-chip-btn"
-                @click="jumpToSection(section.id)"
-              >
-                {{ section.title }}
-              </button>
-            </div>
-          </div>
-
           <h2>Section Index</h2>
           <p>{{ visibleSectionsCount }} of {{ DOC_SECTIONS.length }} sections visible</p>
 
@@ -1098,58 +1032,6 @@ onBeforeUnmount(() => {
   font-family: 'Aptos Display', 'Segoe UI Variable Display', 'Segoe UI', sans-serif;
 }
 
-.docs-search-panel {
-  margin-top: 0;
-  border-radius: 16px;
-  border: 1px solid var(--docs-border);
-  background: rgba(8, 12, 11, 0.52);
-  padding: 14px;
-  backdrop-filter: blur(8px);
-}
-
-.docs-search-panel-compact {
-  margin-bottom: 12px;
-}
-
-.docs-search-panel label {
-  display: inline-flex;
-  margin-bottom: 10px;
-  font-size: 0.72rem;
-  letter-spacing: 0.08em;
-  font-weight: 700;
-  text-transform: uppercase;
-  color: var(--docs-muted);
-}
-
-.docs-search-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-}
-
-.docs-search-row input {
-  width: 100%;
-  height: var(--search-h);
-  min-height: var(--search-h);
-  border-radius: 8px;
-  border: 1px solid var(--docs-border);
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--docs-ink);
-  padding: 0 12px;
-  font-size: var(--search-fs);
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
-}
-
-.docs-search-row input:focus {
-  outline: none;
-  border-color: rgba(216, 230, 190, 0.42);
-  box-shadow: 0 0 0 4px rgba(216, 230, 190, 0.1);
-}
-
-.docs-search-row input::placeholder {
-  color: rgba(159, 176, 168, 0.86);
-}
-
 .docs-clear-btn {
   /* Uses the `.btn` class — size/colors come from the global --btn-* tokens. */
   cursor: pointer;
@@ -1163,39 +1045,6 @@ onBeforeUnmount(() => {
 .docs-clear-btn:disabled {
   cursor: not-allowed;
   opacity: 0.45;
-}
-
-.docs-search-meta {
-  margin-top: 10px;
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 0.74rem;
-  color: var(--docs-muted);
-}
-
-.docs-jump-chips {
-  margin-top: 10px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.docs-chip-btn {
-  border: 1px solid rgba(184, 214, 206, 0.25);
-  background: rgba(184, 214, 206, 0.12);
-  color: var(--docs-teal);
-  border-radius: 999px;
-  min-height: 28px;
-  padding: 0 10px;
-  font-size: 0.72rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.docs-chip-btn:hover {
-  background: rgba(184, 214, 206, 0.2);
 }
 
 .docs-layout {
@@ -1491,14 +1340,6 @@ onBeforeUnmount(() => {
   .docs-tag-row {
     justify-content: flex-start;
     max-width: 100%;
-  }
-
-  .docs-search-row {
-    grid-template-columns: 1fr;
-  }
-
-  .docs-clear-btn {
-    width: 100%;
   }
 }
 

@@ -66,20 +66,34 @@ const activeCategory = computed(() => {
   return categoryEntries.value.find((item) => item.key === key) || null
 })
 
-const filteredCategoryRows = computed(() => {
-  const rows = activeCategory.value?.rows || []
+const searchActive = computed(() => settingsSearch.value.trim().length > 0)
+
+// A query searches EVERY category, not just the selected one: matching rows
+// are grouped per category so each keeps its own Save button. Row objects are
+// the same references as byCategory, so drafts edited here persist.
+const searchResults = computed(() => {
   const q = settingsSearch.value.trim().toLowerCase()
-  if (!q) return rows
-  return rows.filter(
-    (s) => s.key.toLowerCase().includes(q) || (s.description || '').toLowerCase().includes(q)
-  )
+  if (!q) return []
+  return categoryEntries.value
+    .map((cat) => ({
+      ...cat,
+      rows: cat.rows.filter(
+        (s) => s.key.toLowerCase().includes(q) || (s.description || '').toLowerCase().includes(q)
+      ),
+    }))
+    .filter((cat) => cat.rows.length > 0)
+})
+
+// What the content column renders: all matching categories while searching,
+// otherwise just the category picked in the sidebar.
+const displayedCategories = computed(() => {
+  if (searchActive.value) return searchResults.value
+  return activeCategory.value ? [activeCategory.value] : []
 })
 
 useHeaderSearch('settings', {
   query: settingsSearch,
-  placeholder: 'Search settings in this category…',
-  // Only category sections are searchable, and short lists don't need it.
-  visible: computed(() => (activeCategory.value?.rows.length || 0) > 5),
+  placeholder: 'Search all settings…',
 })
 
 const showingPatterns = computed(() => activeSection.value === 'router:patterns')
@@ -227,32 +241,33 @@ onMounted(load)
 
       <div class="page-section-content">
         <section
-          v-if="activeCategory"
+          v-if="searchActive && displayedCategories.length === 0"
+          class="settings-card premium-card"
+        >
+          <div class="empty-state">
+            No settings match your search.
+          </div>
+        </section>
+
+        <section
+          v-for="cat in displayedCategories"
+          :key="cat.key"
           class="settings-card premium-card"
         >
           <div class="settings-card-header">
             <div>
-              <span class="settings-section-kicker">{{ activeCategory.key }}</span>
-              <h2>{{ activeCategory.meta.title }}</h2>
+              <span class="settings-section-kicker">{{ cat.key }}</span>
+              <h2>{{ cat.meta.title }}</h2>
               <p class="section-desc">
-                {{ activeCategory.meta.description }}
+                {{ cat.meta.description }}
               </p>
             </div>
-            <span class="card-summary">{{ activeCategory.rows.length }} settings</span>
+            <span class="card-summary">{{ cat.rows.length }} {{ searchActive ? (cat.rows.length === 1 ? 'match' : 'matches') : 'settings' }}</span>
           </div>
 
-          <div
-            v-if="filteredCategoryRows.length === 0"
-            class="empty-state"
-          >
-            No settings match your search.
-          </div>
-          <div
-            v-else
-            class="settings-list"
-          >
+          <div class="settings-list">
             <div
-              v-for="s in filteredCategoryRows"
+              v-for="s in cat.rows"
               :key="s.key"
               class="setting-item"
             >
@@ -326,12 +341,12 @@ onMounted(load)
           <div class="settings-card-footer">
             <button
               class="btn btn-save"
-              @click="saveCategory(activeCategory.key)"
+              @click="saveCategory(cat.key)"
             >
-              Save {{ activeCategory.meta.title }}
+              Save {{ cat.meta.title }}
             </button>
             <div
-              v-if="activeCategory.key === 'retention'"
+              v-if="cat.key === 'retention'"
               class="retention-actions"
             >
               <span
@@ -350,7 +365,7 @@ onMounted(load)
         </section>
 
         <section
-          v-else-if="showingPatterns"
+          v-if="!searchActive && showingPatterns"
           class="settings-card premium-card"
         >
           <div class="settings-card-header">
@@ -386,7 +401,7 @@ onMounted(load)
         </section>
 
         <section
-          v-else-if="showingRouterTest"
+          v-if="!searchActive && showingRouterTest"
           class="settings-card premium-card"
         >
           <div class="settings-card-header">
@@ -469,6 +484,18 @@ onMounted(load)
   display: flex;
   flex-direction: column;
   gap: 20px;
+}
+
+/* Search mode stacks one card per matching category. */
+.settings-card + .settings-card {
+  margin-top: 16px;
+}
+
+.empty-state {
+  padding: 40px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 14px;
 }
 
 .settings-section-kicker {

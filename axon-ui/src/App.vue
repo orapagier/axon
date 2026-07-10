@@ -6,6 +6,7 @@ import { headerSearchFor } from './lib/headerSearch.js'
 import ConfirmDialog from './components/ConfirmDialog.vue'
 import PromptDialog from './components/PromptDialog.vue'
 import NotificationBell from './components/NotificationBell.vue'
+import ToastHost from './components/ToastHost.vue'
 import SearchInput from './components/SearchInput.vue'
 import LoginPage from './pages/LoginPage.vue'
 
@@ -399,4 +400,5 @@ async function logout() {
 
   <ConfirmDialog />
   <PromptDialog />
+  <ToastHost />
 </template>
