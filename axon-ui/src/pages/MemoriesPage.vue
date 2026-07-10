@@ -5,15 +5,22 @@ import { toast } from '../lib/toast.js'
 import { confirmDialog } from '../lib/confirm.js'
 import { fmtTokens, safeJsonParse, timeAgo } from '../lib/utils.js'
 import Pill from '../components/Pill.vue'
+import SearchInput from '../components/SearchInput.vue'
 
 const stmRuns = ref([])
 const ltmEntries = ref([])
 const ltmSearch = ref('')
+const stmSearch = ref('')
 const expandedRuns = ref(new Set())
 const loadedTraces = ref({})
 
 const stmBadge = computed(() => stmRuns.value.length)
 const ltmBadge = computed(() => ltmEntries.value.length)
+const filteredStmRuns = computed(() => {
+  const q = stmSearch.value.trim().toLowerCase()
+  if (!q) return stmRuns.value
+  return stmRuns.value.filter((r) => String(r.task || '').toLowerCase().includes(q))
+})
 
 async function loadSTM() {
   const d = await get('/runs')
