@@ -207,18 +207,15 @@ onMounted(load)
         No models configured. Add one to get started.
       </div>
     </div>
-    
-    <SearchInput
-      v-if="models.length"
-      v-model="modelSearch"
-      placeholder="Search models by name or role…"
-    />
 
-    <div
-      v-else
-      class="models-list"
-    >
-      <div class="premium-card">
+    <template v-else>
+      <SearchInput
+        v-model="modelSearch"
+        placeholder="Search models by name or role…"
+      />
+
+      <div class="models-list">
+        <div class="premium-card">
         <div class="card-header-row no-collapse">
           <div class="card-title-group">
             <h2>Active Models</h2>
