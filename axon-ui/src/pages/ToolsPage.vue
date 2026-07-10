@@ -147,7 +147,7 @@ onMounted(load)
       class="empty-state-container"
     >
       <div class="empty-state">
-        No tools loaded. Try reloading your tool directories.
+        {{ searchQuery.trim() ? `No tools match "${searchQuery.trim()}".` : 'No tools loaded. Try reloading your tool directories.' }}
       </div>
     </div>
   </div>
