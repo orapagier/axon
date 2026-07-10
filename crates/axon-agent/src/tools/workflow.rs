@@ -602,6 +602,20 @@ pub(crate) fn direct_predecessor_outputs(
     grouped
 }
 
+/// Whether a node's "Error Output" toggle is on (Cortex). Read from the RAW
+/// stored config — it gates edge routing after execution, so the plain
+/// boolean (or its string form) is supported but not a dynamic expression.
+fn error_output_enabled(config: &Value) -> bool {
+    match config.get("error_output") {
+        Some(Value::Bool(b)) => *b,
+        Some(Value::String(s)) => {
+            let t = s.trim();
+            t.eq_ignore_ascii_case("true") || t == "1"
+        }
+        _ => false,
+    }
+}
+
 /// Flatten a node's `direct_inputs` down to one primary-input `Value`, for the
 /// single-input node types (everything except Merge). Every input handle is
 /// realistically just `input_main_0` for these (only Merge declares a second
@@ -2308,6 +2322,23 @@ impl WorkflowEngine {
                     attempts,
                 };
 
+                // Cortex Error Output: with the toggle on, a failed model call
+                // (after any retries) becomes a branch decision instead of a
+                // run-halting failure. The node result keeps status="error" (the
+                // editor paints it red) but its output carries outputIndex=1 so
+                // the edge gating below takes the error branch (`output_main_1`)
+                // and skips the main one.
+                let error_routed = status == "error"
+                    && node.node_type == "cortex"
+                    && error_output_enabled(&node.config);
+                if error_routed {
+                    nr.output = json!({
+                        "error": nr.error.clone().unwrap_or_else(|| "unknown error".to_string()),
+                        "node": node.name.clone(),
+                        "outputIndex": 1,
+                    });
+                }
+
                 // Durable Wait suspension: a long Wait returns a sentinel instead of
                 // blocking an in-process sleep. Persist the chain so far plus WHEN and
                 // WHERE to resume, mark the run 'waiting', and hand the task back. A
@@ -2441,8 +2472,9 @@ impl WorkflowEngine {
                     record_telegram_reply_route(state, workflow_id, &nr.output);
                 }
 
-                // Halting logic: if stop on error and node failed, break the whole workflow.
-                if status == "error" && !node.continue_on_fail {
+                // Halting logic: if stop on error and node failed, break the whole
+                // workflow — unless the failure was routed down an error output.
+                if status == "error" && !node.continue_on_fail && !error_routed {
                     tracing::warn!(
                         "Workflow execution halted due to error in node '{}' ({})",
                         node.name,
@@ -2485,10 +2517,14 @@ impl WorkflowEngine {
                 // Branch routing for IF/Switch nodes: only follow matching output
                 // handle(s). A Switch in "all" mode reports several active outputs
                 // (outputIndices); an edge is live if its handle matches ANY of them.
+                // A Cortex with Error Output on is gated the same way: success has
+                // no outputIndex (defaults to 0 → main), a routed failure carries
+                // outputIndex=1 → error branch.
                 let mut live = true;
                 if node.node_type == "ifCondition"
                     || node.node_type == "switch"
                     || node.node_type == "approval"
+                    || (node.node_type == "cortex" && error_output_enabled(&node.config))
                 {
                     if let Some(nr) = node_results.get(&current_id) {
                         // Prefer outputIndices (multi-match); fall back to the single
@@ -4848,5 +4884,32 @@ mod multi_input_plumbing_tests {
             vec![json!({ "a": 1 }), json!({ "b": 2 })]
         );
         assert_eq!(out.len(), 1, "both bare edges collapse onto input_main_0");
+    }
+}
+
+#[cfg(test)]
+mod error_output_tests {
+    use super::error_output_enabled;
+    use serde_json::json;
+
+    // The toggle gates edge routing from the RAW stored config, so both the
+    // native boolean and its string forms (an fx-mode literal) must count.
+    #[test]
+    fn recognizes_toggle_forms() {
+        assert!(error_output_enabled(&json!({ "error_output": true })));
+        assert!(error_output_enabled(&json!({ "error_output": "true" })));
+        assert!(error_output_enabled(&json!({ "error_output": "TRUE" })));
+        assert!(error_output_enabled(&json!({ "error_output": "1" })));
+    }
+
+    #[test]
+    fn off_absent_or_expression_stays_disabled() {
+        assert!(!error_output_enabled(&json!({ "error_output": false })));
+        assert!(!error_output_enabled(&json!({ "error_output": "false" })));
+        assert!(!error_output_enabled(&json!({})));
+        // A dynamic expression can't be evaluated at routing time — treated as off.
+        assert!(!error_output_enabled(
+            &json!({ "error_output": "{{ $json.flag }}" })
+        ));
     }
 }

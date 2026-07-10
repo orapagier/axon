@@ -3913,6 +3913,9 @@ export const NODE_TYPES = {
         displayName: 'Cortex',
         name: 'cortex',
         icon: '/icons/cortex.png',
+        // Output handles derive from the live config: the Error Output toggle
+        // below adds/removes the second (error) handle instantly.
+        dynamicOutputs: true,
         description: 'Runs an AI agent on the input and dispatches its response to the active messaging platform',
         properties: [
             {
@@ -3983,6 +3986,14 @@ export const NODE_TYPES = {
                 default: '',
                 placeholder: 'e.g. You are a helpful assistant. Be concise.',
                 hint: 'The underlying persona or strict rules the AI should follow',
+            },
+            {
+                displayName: 'Error Output',
+                name: 'error_output',
+                type: 'boolean',
+                default: false,
+                noExpr: true,
+                hint: 'Adds a second output that fires instead of failing the workflow when the model call errors (after any retries). The error branch receives { error, node }.',
             },
         ],
     },
@@ -6687,6 +6698,11 @@ export const NODE_TYPES = {
  * @returns {string[]|null} ordered labels, or null for ordinary single-output nodes.
  */
 export function getNodeOutputs(type, config = {}) {
+    if (type === 'cortex') {
+        // The error handle exists only while the Error Output toggle is on; the
+        // main output stays unlabeled so a plain Cortex node looks unchanged.
+        return config?.error_output ? ['', 'error'] : ['']
+    }
     if (type === 'switch') {
         const rules = config?.rules?.parameters
         const list = Array.isArray(rules) ? rules : []

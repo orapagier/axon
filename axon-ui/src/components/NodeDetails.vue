@@ -849,6 +849,18 @@ function isDynamicOutputCollection(propName) {
   return !!NODE_TYPES[props.node.data.node_type]?.dynamicOutputs && propName === 'rules'
 }
 
+// Cortex Error Output: turning the toggle off removes the error handle
+// (output_main_1), so any edge wired to it must be dropped — otherwise the
+// engine would see an ungated leftover edge and fire it on success.
+watch(
+  () => props.node?.data?.node_type === 'cortex' && !!props.node?.data?.config?.error_output,
+  (on, wasOn) => {
+    if (wasOn && !on && props.node?.data?.node_type === 'cortex') {
+      emit('output-removed', { nodeId: props.node.id, index: 1 })
+    }
+  },
+)
+
 function addCollectionItem(propName, options) {
   // A leftover legacy value (string/number) can't hold a parameters array;
   // strict mode would throw on the property assignment below. Reset it.

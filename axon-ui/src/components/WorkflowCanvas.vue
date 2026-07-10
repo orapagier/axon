@@ -472,14 +472,24 @@ async function processNodeResult(result) {
     updateNodeExecution(nodeId, { running: false, waiting: false, status: finalStatus })
   }
 
-  if (!hasError && !isSkipped) {
-    // For branching nodes (IF/Switch), only mark the selected branch as waiting.
-    // Otherwise non-selected branches can remain stuck in waiting:true forever.
-    const nodeType = node.data?.node_type || node.data?.type
+  const nodeType = node.data?.node_type || node.data?.type
+  // Cortex Error Output: a failed call with the toggle on is routed down the
+  // error branch by the backend (outputIndex=1) instead of halting the run, so
+  // playback keeps going and animates the error branch like any taken branch.
+  const errorRouted = hasError && nodeType === 'cortex' && !!node.data?.config?.error_output
+
+  if ((!hasError || errorRouted) && !isSkipped) {
+    // For branching nodes (IF/Switch/Cortex error-output), only mark the selected
+    // branch as waiting. Otherwise non-selected branches can remain stuck in
+    // waiting:true forever.
     const isBranchNode = nodeType === 'ifCondition' || nodeType === 'switch'
+      || (nodeType === 'cortex' && !!node.data?.config?.error_output)
     const takenBranch = result.output?.branch
     const rawOutputIndex = result.output?.outputIndex
-    const outputIndex = Number.isFinite(Number(rawOutputIndex)) ? Number(rawOutputIndex) : null
+    // A cortex success carries no outputIndex — that means the main output (0).
+    const outputIndex = Number.isFinite(Number(rawOutputIndex))
+      ? Number(rawOutputIndex)
+      : (nodeType === 'cortex' ? 0 : null)
 
     // Mark immediate successors as "waiting" so their incoming edges start animating
     // while the backend is already processing them — this is what makes the flow feel live.
@@ -520,9 +530,10 @@ async function processNodeResult(result) {
   }
 
   // Honour stop-on-fail: if this node errored and continueOnFail is not set,
-  // return false so runLivePlayback stops the visual sequence immediately.
+  // return false so runLivePlayback stops the visual sequence immediately —
+  // unless the failure was routed down the node's error output.
   const continueOnFail = node.data?.continueOnFail === true
-  if (hasError && !continueOnFail) {
+  if (hasError && !continueOnFail && !errorRouted) {
     return false
   }
 

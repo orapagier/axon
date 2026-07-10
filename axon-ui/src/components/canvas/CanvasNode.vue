@@ -311,7 +311,7 @@ function cancelRename() {
           <span
             v-if="source.label"
             class="handle-label"
-            :class="{ 'handle-label--true': source.label === 'true', 'handle-label--false': source.label === 'false' }"
+            :class="{ 'handle-label--true': source.label === 'true', 'handle-label--false': source.label === 'false', 'handle-label--error': source.label === 'error' }"
           >
             {{ source.label === 'true' ? '✓' : (source.label === 'false' ? '✗' : source.label) }}
           </span>
@@ -694,6 +694,11 @@ function cancelRename() {
   background: rgba(80, 250, 123, 0.15);
 }
 .handle-label--false {
+  color: #ff5555;
+  background: rgba(255, 85, 85, 0.15);
+}
+/* Cortex Error Output branch — same alarm red as the IF false branch. */
+.handle-label--error {
   color: #ff5555;
   background: rgba(255, 85, 85, 0.15);
 }
