@@ -29,6 +29,46 @@ const conversations = ref([])
 const currentSessionId = ref(null)
 const LS_KEY = 'axon.chat.session'
 
+// Chat-history search (over message content, not just titles). Debounced
+// against the /conversations/search endpoint; an empty query restores the
+// normal newest-first sidebar list.
+const historySearch = ref('')
+const historyResults = ref(null) // null = not searching; [] = searching, no matches
+let historySearchTimer = null
+
+const sidebarConversations = computed(() => (historyResults.value !== null ? historyResults.value : conversations.value))
+
+watch(historySearch, (q) => {
+  clearTimeout(historySearchTimer)
+  const trimmed = q.trim()
+  if (!trimmed) {
+    historyResults.value = null
+    return
+  }
+  historySearchTimer = setTimeout(async () => {
+    try {
+      const res = await get(`/conversations/search?q=${encodeURIComponent(trimmed)}`)
+      historyResults.value = res.conversations || []
+    } catch {
+      historyResults.value = []
+    }
+  }, 300)
+})
+
+// Splits a snippet like "…before <mark>match</mark> after…" into plain-text
+// and highlighted segments so it can be rendered without v-html (message
+// content is user-typed and must stay escaped even inside a highlight).
+function highlightSegments(snippet) {
+  if (!snippet) return []
+  return snippet
+    .split(/(<mark>.*?<\/mark>)/g)
+    .filter(Boolean)
+    .map((part) => {
+      const m = part.match(/^<mark>([\s\S]*)<\/mark>$/)
+      return m ? { text: m[1], mark: true } : { text: part, mark: false }
+    })
+}
+
 // Inline rename state: the conversation id currently being edited + its draft.
 const renamingId = ref(null)
 const renameText = ref('')
