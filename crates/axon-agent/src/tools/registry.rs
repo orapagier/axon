@@ -101,14 +101,13 @@ const SOCIAL_WRITE_TOOLS: &[&str] = &[
 ];
 
 /// CRM *write* tools (create/update/delete/convert/archive/restore). Follows
-/// the same standing pattern as [`WORKFLOW_ONLY_WRITE_TOOLS`]: mutations flow
-/// through the deliberate workflow path while the agent keeps the read tools
-/// (list/get/search/overview/pipeline/dashboard/export) for answering
-/// questions conversationally. Unlike the social list this gate is *soft* —
-/// the operator can grant the agent full CRM read/write by turning on the
-/// `crm.agent_write_tools` setting (Settings → CRM); callers of
-/// [`ToolRegistry::all_enabled_for_agent`] pass that setting in. Workflow
-/// nodes always reach every CRM tool via [`ToolRegistry::all`] / `run`.
+/// the same standing pattern as [`SOCIAL_WRITE_TOOLS`]: off by default while
+/// the agent keeps the read tools (list/get/search/overview/pipeline/
+/// dashboard/export) for answering questions conversationally. The operator
+/// opts the agent into any of these individually via the ToolsPage Enable
+/// toggle — see [`ToolRegistry::all_enabled_for_agent`] and
+/// [`is_gated_write_tool`]. Workflow nodes always reach every CRM tool via
+/// [`ToolRegistry::all`] / `run`, regardless of the toggle.
 const CRM_WRITE_TOOLS: &[&str] = &[
     // Leads
     "crm_lead_create",
@@ -131,6 +130,16 @@ const CRM_WRITE_TOOLS: &[&str] = &[
     "crm_record_archive",
     "crm_record_restore",
 ];
+
+/// True for any tool in [`SOCIAL_WRITE_TOOLS`], [`CRM_WRITE_TOOLS`], or
+/// [`MESSAGING_WRITE_TOOLS`] — the "sensitive write tool" set that the agent
+/// gate defaults to `enabled: false` for at boot (see
+/// `ToolRegistry::apply_agent_gate_defaults`), regardless of what the
+/// underlying source (MCP/internal registration) set. An operator opts a
+/// specific tool back in via the ToolsPage Enable toggle.
+pub fn is_gated_write_tool(name: &str) -> bool {
+    SOCIAL_WRITE_TOOLS.contains(&name) || CRM_WRITE_TOOLS.contains(&name) || MESSAGING_WRITE_TOOLS.contains(&name)
+}
 
 fn internal_tools() -> Vec<ToolDefinition> {
     let mut tools = vec![
