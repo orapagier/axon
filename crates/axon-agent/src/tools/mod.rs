@@ -2,6 +2,7 @@ pub mod file_handler;
 pub mod http;
 pub mod image_tool;
 pub mod myelin;
+pub mod overrides;
 pub mod registry;
 pub mod runner;
 pub mod schema;
