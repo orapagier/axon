@@ -66,37 +66,40 @@
 :root {
     color-scheme: dark;
 
-    /* Core surfaces & text — SYNAPSE palette: void / membrane / myelin */
-    --bg: #07080c;
-    --bg-card: #13161f;
-    --surface: #0f1118;
-    --surface2: #1a1e29;
-    --border: rgba(148, 170, 215, 0.11);
-    --text: #e9eef7;
-    --muted: #8d95a8;
+    /* Core surfaces & text — GRAPHITE LAB palette: dim graphite, soft ink,
+       hairlines. Deliberately mid-dark (not void black, not paper white) so
+       long sessions are easy on the eyes. */
+    --bg: #16181d;
+    --bg-card: #1e222a;
+    --surface: #1a1d23;
+    --surface2: #262b34;
+    --border: rgba(188, 204, 230, 0.13);
+    --text: #dce2eb;
+    --muted: #8f99a8;
 
-    /* Accent & semantic palette — Signal + bioluminescent semantics */
-    --accent: #45f1c6;
-    --accentDim: rgba(69, 241, 198, 0.16);
-    --green: #5ef2a9;
-    --greenDim: #0e3628;
-    --red: #ff92a4;
-    --redDim: #411a23;
-    --yellow: #ffd47e;
-    --yellowDim: #443113;
-    --teal: #7cc8ff;
-    --blue: #5fb0ff;
-    --purple: #918eff;
+    /* Accent & semantic palette — one signal teal + lab semantics, lifted
+       for legibility on graphite */
+    --accent: #3ecfae;
+    --accentDim: rgba(62, 207, 174, 0.14);
+    --green: #4cc98a;
+    --greenDim: #17352a;
+    --red: #e8808f;
+    --redDim: #3d2026;
+    --yellow: #d9ac55;
+    --yellowDim: #3a2f16;
+    --teal: #5fb3dd;
+    --blue: #6ea3ef;
+    --purple: #948ceb;
 
     /* Type roles: display (Space Grotesk) · body (Instrument Sans) · data (Plex Mono) */
     --font-display: 'Space Grotesk', 'Segoe UI', sans-serif;
     --font-body: 'Instrument Sans', -apple-system, 'Segoe UI', sans-serif;
     --font-mono: 'IBM Plex Mono', Consolas, 'SFMono-Regular', monospace;
 
-    /* Radius scale */
-    --r-sm: 8px;
-    --r-md: 12px;
-    --r-lg: 16px;
+    /* Radius scale — hard lab edges */
+    --r-sm: 3px;
+    --r-md: 4px;
+    --r-lg: 6px;
 
     /* Button sizing — SINGLE SOURCE OF TRUTH.
        Every standard button derives its size from these tokens via the global
@@ -108,7 +111,7 @@
        only in horizontal padding / font for denser or roomier rows. */
     --btn-h: 27px;
     --btn-px: 12px;
-    --btn-radius: 8px;
+    --btn-radius: 4px;
     --btn-fs: 0.72rem;
     --btn-gap: 6px;
     --btn-sm-h: var(--btn-h);
@@ -117,7 +120,7 @@
     --btn-sm-fs: 0.71rem;
     --btn-xs-h: var(--btn-h);
     --btn-xs-px: 9px;
-    --btn-xs-radius: 7px;
+    --btn-xs-radius: 4px;
     --btn-xs-fs: 0.7rem;
 
     /* Search field sizing — SINGLE SOURCE OF TRUTH (see the POLISHED SEARCH
@@ -128,9 +131,9 @@
     --search-max-w: 420px;
 
     /* Layout, shadows & surface tints */
-    --sidebar-w: 272px;
-    --shadow-sm: 0 16px 36px rgba(0, 0, 0, 0.22);
-    --shadow-lg: 0 28px 64px rgba(0, 0, 0, 0.28);
+    --sidebar-w: 252px;
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.28);
+    --shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.42);
     --surface-glow: linear-gradient(180deg, rgba(0, 0, 0, 0.05), rgba(0, 0, 0, 0.015));
     --surface-muted: rgba(0, 0, 0, 0.03);
     --surface-muted-strong: rgba(0, 0, 0, 0.05);
@@ -3900,91 +3903,6 @@ textarea::placeholder {
     font-size: 1.02em;
 }
 
-/* ── Dark surface correction (readability fix) ──────────────────────────────
-   Earlier "refresh" layers set the panel surfaces to white while keeping the
-   near-white text, so the sidebar, cards and main body were unreadable. This
-   block restores dark surfaces (the page gradient behind them is already dark)
-   so the existing light text reads correctly. Appended last + !important so it
-   wins over the hardcoded white rules above. */
-/* Theme variables consolidated into the single :root at the top of this file. */
-
-/* Cards, modals, login card, chat composer, toast (all forced white above) */
-.premium-card,
-.card,
-.mem-card,
-.modal,
-.login-card,
-.toast {
-    background: rgba(27, 27, 32, 0.96) !important;
-    border: 1px solid rgba(255, 255, 255, 0.09) !important;
-}
-
-.chat-input-floating {
-    background: rgba(27, 27, 32, 0.94) !important;
-    border: 1px solid rgba(255, 255, 255, 0.1) !important;
-}
-
-.custom-node {
-    background: rgba(27, 27, 32, 0.96) !important;
-    border-color: rgba(255, 255, 255, 0.1) !important;
-}
-
-/* Form controls */
-input[type=text],
-input[type=number],
-input[type=password],
-textarea,
-select {
-    background: rgba(255, 255, 255, 0.05) !important;
-    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3) !important;
-}
-
-/* Inner "elevated" chips/buttons used black tints meant for a white panel —
-   flip them to light tints so they're visible on the dark surface. */
-.sidebar-status-card,
-.page-section-sidebar {
-    background: rgba(255, 255, 255, 0.05) !important;
-    border-color: rgba(255, 255, 255, 0.1) !important;
-}
-
-/* Mobile nav overlay should dim, not whiten, the screen */
-.sidebar-overlay {
-    background: rgba(0, 0, 0, 0.6) !important;
-    backdrop-filter: blur(4px);
-}
-
-/* Pills/badges used dark text on dim chips — brighten for contrast on dark.
-   (Button text colors now live in the consolidated button block at end of file.) */
-.pill-info {
-    color: #8ec5ff !important;
-}
-
-.pill-ok {
-    color: #73ebb5 !important;
-}
-
-.pill-err {
-    color: #f6a2ad !important;
-}
-
-.pill-warn {
-    color: #f7d17c !important;
-}
-
-/* Chat composer had a double border: the floating container border plus the
-   textarea's own border (inherited from the broad `textarea` rules). Drop the
-   inner textarea border/inset shadow so only the container border shows. */
-.chat-textarea {
-    border: none !important;
-    background: transparent !important;
-    box-shadow: none !important;
-}
-
-.chat-textarea:focus {
-    border: none !important;
-    box-shadow: none !important;
-}
-
 /* ════════════════════════════════════════════════════════════════════════════
    POLISHED BUTTON SYSTEM  ·  global final layer (wins the cascade)
    ----------------------------------------------------------------------------
@@ -4036,8 +3954,8 @@ select {
     min-height: var(--btn-h) !important;
     padding: 0 var(--btn-px) !important;
     border-radius: var(--btn-radius) !important;
-    border: 1px solid rgba(255, 255, 255, 0.14) !important;
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.085), rgba(255, 255, 255, 0.035)) !important;
+    border: 1px solid color-mix(in srgb, var(--text) 20%, transparent) !important;
+    background: var(--bg-card) !important;
     color: var(--text) !important;
     font-size: var(--btn-fs) !important;
     font-weight: 600 !important;
@@ -4046,7 +3964,7 @@ select {
     cursor: pointer !important;
     white-space: nowrap !important;
     text-decoration: none !important;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 1px 2px rgba(0, 0, 0, 0.22) !important;
+    box-shadow: 0 1px 2px color-mix(in srgb, var(--text) 8%, transparent) !important;
     transition: transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1),
         background 0.18s ease, border-color 0.18s ease,
         box-shadow 0.25s ease, color 0.18s ease, filter 0.18s ease !important;
@@ -4056,9 +3974,9 @@ select {
 .btn-icon:hover,
 .btn-styled:hover {
     transform: translateY(-1px) !important;
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.08)) !important;
-    border-color: rgba(255, 255, 255, 0.24) !important;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 8px 20px rgba(0, 0, 0, 0.3) !important;
+    background: color-mix(in srgb, var(--text) 6%, var(--bg-card)) !important;
+    border-color: color-mix(in srgb, var(--text) 32%, transparent) !important;
+    box-shadow: 0 3px 10px color-mix(in srgb, var(--text) 12%, transparent) !important;
 }
 
 .btn:active {
@@ -4077,7 +3995,7 @@ select {
 
 .btn:focus-visible {
     outline: none !important;
-    box-shadow: 0 0 0 3px rgba(69, 241, 198, 0.32) !important;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent) !important;
 }
 
 /* ── Sizing variants ──────────────────────────────────────────────────────── */
@@ -4102,11 +4020,11 @@ select {
 .btn-success,
 .btn-execute,
 .btn-fc-add {
-    background: linear-gradient(135deg, #45f1c6 0%, #2bd4de 100%) !important;
+    background: var(--accent) !important;
     border-color: transparent !important;
-    color: #03211a !important;
+    color: var(--bg-card) !important;
     font-weight: 700 !important;
-    box-shadow: 0 6px 18px rgba(43, 212, 222, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.28) !important;
+    box-shadow: 0 1px 3px color-mix(in srgb, var(--accent) 45%, transparent) !important;
 }
 
 .btn-save:hover,
@@ -4114,66 +4032,66 @@ select {
 .btn-execute:hover,
 .btn-fc-add:hover {
     transform: translateY(-1px) !important;
-    /* Re-declare the gradient: the generic `.btn:hover` above swaps the
-       background for a translucent dark tint, which would leave this button's
-       near-black text unreadable on hover. */
-    background: linear-gradient(135deg, #45f1c6 0%, #2bd4de 100%) !important;
-    filter: brightness(1.06) !important;
+    /* Re-declare the fill: the generic `.btn:hover` above swaps the background
+       for a neutral tint, which would leave this button's surface-colored text
+       unreadable on hover. */
+    background: var(--accent) !important;
+    filter: brightness(1.08) !important;
     border-color: transparent !important;
-    box-shadow: 0 10px 26px rgba(43, 212, 222, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.34) !important;
+    box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 45%, transparent) !important;
 }
 
 /* ── Primary · blue gradient ──────────────────────────────────────────────── */
 .btn-primary {
-    background: linear-gradient(135deg, #6cb5ff 0%, #45c8f0 100%) !important;
+    background: var(--blue) !important;
     border-color: transparent !important;
-    color: #041322 !important;
+    color: var(--bg-card) !important;
     font-weight: 700 !important;
-    box-shadow: 0 6px 18px rgba(69, 200, 240, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.28) !important;
+    box-shadow: 0 1px 3px color-mix(in srgb, var(--blue) 45%, transparent) !important;
 }
 
 .btn-primary:hover {
     transform: translateY(-1px) !important;
-    /* Same as .btn-save:hover — keep the gradient so the dark label stays
-       readable (generic .btn:hover would darken the background). */
-    background: linear-gradient(135deg, #6cb5ff 0%, #45c8f0 100%) !important;
-    filter: brightness(1.06) !important;
+    /* Same as .btn-save:hover — keep the fill so the label stays readable
+       (generic .btn:hover would swap in a neutral tint). */
+    background: var(--blue) !important;
+    filter: brightness(1.08) !important;
     border-color: transparent !important;
-    box-shadow: 0 10px 26px rgba(69, 200, 240, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.34) !important;
+    box-shadow: 0 4px 12px color-mix(in srgb, var(--blue) 45%, transparent) !important;
 }
 
 /* ── Destructive · soft red ───────────────────────────────────────────────── */
 .btn-danger,
 .btn-auth-disconnect,
 .btn-fc-remove {
-    background: linear-gradient(135deg, rgba(244, 118, 118, 0.18), rgba(244, 118, 118, 0.1)) !important;
-    border-color: rgba(244, 118, 118, 0.3) !important;
-    color: #ff9ba3 !important;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 1px 2px rgba(0, 0, 0, 0.2) !important;
+    background: var(--bg-card) !important;
+    border-color: color-mix(in srgb, var(--red) 50%, transparent) !important;
+    color: var(--red) !important;
+    box-shadow: none !important;
 }
 
 .btn-danger:hover,
 .btn-auth-disconnect:hover,
 .btn-fc-remove:hover {
     transform: translateY(-1px) !important;
-    background: linear-gradient(135deg, rgba(244, 118, 118, 0.28), rgba(244, 118, 118, 0.18)) !important;
-    border-color: rgba(244, 118, 118, 0.48) !important;
-    color: #ffb3b9 !important;
-    box-shadow: 0 8px 20px rgba(244, 118, 118, 0.24) !important;
+    background: var(--redDim) !important;
+    border-color: color-mix(in srgb, var(--red) 70%, transparent) !important;
+    color: var(--red) !important;
+    box-shadow: 0 3px 10px color-mix(in srgb, var(--red) 20%, transparent) !important;
 }
 
 /* ── Warning · soft amber ─────────────────────────────────────────────────── */
 .btn-warn {
-    background: linear-gradient(135deg, rgba(247, 209, 124, 0.18), rgba(247, 209, 124, 0.1)) !important;
-    border-color: rgba(247, 209, 124, 0.3) !important;
-    color: #f7d17c !important;
+    background: var(--bg-card) !important;
+    border-color: color-mix(in srgb, var(--yellow) 55%, transparent) !important;
+    color: var(--yellow) !important;
 }
 
 .btn-warn:hover {
     transform: translateY(-1px) !important;
-    background: linear-gradient(135deg, rgba(247, 209, 124, 0.28), rgba(247, 209, 124, 0.18)) !important;
-    border-color: rgba(247, 209, 124, 0.48) !important;
-    box-shadow: 0 8px 20px rgba(247, 209, 124, 0.22) !important;
+    background: var(--yellowDim) !important;
+    border-color: color-mix(in srgb, var(--yellow) 75%, transparent) !important;
+    box-shadow: 0 3px 10px color-mix(in srgb, var(--yellow) 22%, transparent) !important;
 }
 
 /* ── Neutral / ghost group · light tint so they're visible on dark ────────── */
@@ -4192,9 +4110,9 @@ select {
 .btn-pin-history,
 .btn-tab-action,
 .btn-reconnect-inline {
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.085), rgba(255, 255, 255, 0.035)) !important;
-    border-color: rgba(255, 255, 255, 0.14) !important;
-    color: var(--text) !important;
+    background: var(--bg-card) !important;
+    border-color: color-mix(in srgb, var(--text) 18%, transparent) !important;
+    color: color-mix(in srgb, var(--text) 88%, transparent) !important;
 }
 
 .btn-ghost:hover,
@@ -4213,10 +4131,10 @@ select {
 .btn-tab-action:hover,
 .btn-reconnect-inline:hover {
     transform: translateY(-1px) !important;
-    background: linear-gradient(180deg, rgba(69, 241, 198, 0.16), rgba(69, 241, 198, 0.05)) !important;
-    border-color: rgba(69, 241, 198, 0.4) !important;
-    color: #eafff9 !important;
-    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
+    background: var(--accentDim) !important;
+    border-color: color-mix(in srgb, var(--accent) 45%, transparent) !important;
+    color: color-mix(in srgb, var(--accent) 65%, var(--text)) !important;
+    box-shadow: none !important;
 }
 
 /* ── Square icon-only buttons ─────────────────────────────────────────────── */
@@ -4228,15 +4146,15 @@ select {
 }
 
 .icon-action-btn:hover {
-    border-color: rgba(69, 241, 198, 0.4) !important;
+    border-color: color-mix(in srgb, var(--accent) 45%, transparent) !important;
     color: var(--accent) !important;
 }
 
-/* Delete-style icon buttons glow red on hover */
+/* Delete-style icon buttons go red on hover */
 .icon-action-btn.text-error:hover {
-    background: rgba(244, 118, 118, 0.16) !important;
-    border-color: rgba(244, 118, 118, 0.4) !important;
-    color: #ff9ba3 !important;
+    background: var(--redDim) !important;
+    border-color: color-mix(in srgb, var(--red) 50%, transparent) !important;
+    color: var(--red) !important;
 }
 
 /* ── Chat send button · square gradient FAB in the chat composer ──────────── */
@@ -4250,9 +4168,9 @@ select {
     padding: 0;
     flex-shrink: 0;
     border: none;
-    border-radius: 12px;
-    background: linear-gradient(135deg, #45f1c6, #59b8ff);
-    color: #06131a;
+    border-radius: var(--r-md);
+    background: var(--accent);
+    color: var(--bg-card);
     font-size: 18px;
     cursor: pointer;
     box-shadow: none;
@@ -4261,24 +4179,24 @@ select {
 
 .btn-chat-send:not(:disabled):hover {
     transform: translateY(-1px) scale(1.03);
-    filter: brightness(1.06);
-    box-shadow: 0 12px 26px rgba(94, 234, 212, 0.34);
+    filter: brightness(1.08);
+    box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 40%, transparent);
 }
 
 .btn-chat-send:disabled {
-    background: rgba(0, 0, 0, 0.05);
-    color: rgba(244, 242, 237, 0.28);
+    background: var(--surface2);
+    color: var(--muted);
     box-shadow: none;
     cursor: not-allowed;
 }
 
 .btn-chat-send.is-stop {
-    background: linear-gradient(135deg, #ff8a80, #ff5a5f);
-    color: #1a0606;
+    background: var(--red);
+    color: var(--bg-card);
 }
 
 .btn-chat-send.is-stop:not(:disabled):hover {
-    box-shadow: 0 12px 26px rgba(255, 90, 95, 0.34);
+    box-shadow: 0 4px 12px color-mix(in srgb, var(--red) 40%, transparent);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -4381,14 +4299,16 @@ select {
     }
 }
 
+
 /* ════════════════════════════════════════════════════════════════════════════
-   SYNAPSE · design system v3 — the authoritative visual layer
+   GRAPHITE LAB · design system v4 — the authoritative visual layer
    ----------------------------------------------------------------------------
-   The page-by-page redesign (2026-07): neural identity. Void backdrop,
-   membrane surfaces, one electric Signal accent, per-page neurotransmitter
-   tints, Space Grotesk display / Instrument Sans body / IBM Plex Mono data.
-   This layer deliberately wins the cascade over the legacy layers above;
-   those shrink as pages migrate and are deleted in the final cleanup.
+   The page-by-page redesign (2026-07): a dim lab instrument. Graphite
+   workspace, soft-ink type, hairline rules, hard edges, one signal-teal
+   accent, IBM Plex Mono for every data readout. The workflow canvas is a
+   deeper dark surface — an instrument well inside the dim app (scoped token
+   override at the end of this layer). This layer wins the cascade over the
+   legacy layers above; those die in the final cleanup.
    ════════════════════════════════════════════════════════════════════════════ */
 
 /* ── Base typography ──────────────────────────────────────────────────────── */
@@ -4408,199 +4328,153 @@ kbd,
 }
 
 ::selection {
-    background: color-mix(in srgb, var(--accent) 28%, transparent);
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
-/* ── Backdrop: the void ───────────────────────────────────────────────────── */
+/* ── Backdrop: flat graphite, no gradients, no glows ─────────────────────────── */
 body {
-    background:
-        radial-gradient(1100px 700px at 12% -8%, rgba(69, 241, 198, 0.055), transparent 60%),
-        radial-gradient(950px 700px at 96% 108%, rgba(143, 140, 255, 0.06), transparent 62%),
-        linear-gradient(168deg, #0a0c13 0%, var(--bg) 48%, #05060a 100%);
+    background: var(--bg);
 }
 
-/* ── Shell panels: membranes floating on the void ─────────────────────────── */
+body::before {
+    content: none;
+}
+
+/* ── Shell: flat planes separated by hairlines (no floating panels) ───────── */
+.app-shell {
+    padding: 0;
+    gap: 0;
+}
+
+.sidebar {
+    box-shadow: none;
+}
+
 .sidebar-panel {
-    background:
-        linear-gradient(180deg, rgba(148, 170, 215, 0.05), rgba(148, 170, 215, 0.012) 34%, transparent 72%),
-        var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 20px;
-    box-shadow: 0 24px 60px rgba(2, 4, 9, 0.55);
+    background: var(--surface);
+    border: 0;
+    border-right: 1px solid var(--border);
+    border-radius: 0;
+    box-shadow: none;
+    padding: 14px 12px 12px;
 }
 
 .main {
-    background:
-        linear-gradient(180deg, rgba(148, 170, 215, 0.035), transparent 16%),
-        var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 20px;
-    box-shadow: 0 24px 60px rgba(2, 4, 9, 0.4);
+    background: var(--bg);
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
 }
 
 /* ── Brand ────────────────────────────────────────────────────────────────── */
 .brand-lockup:hover {
-    background: rgba(148, 170, 215, 0.06);
+    background: var(--surface2);
     border-color: transparent;
 }
 
 .logo-img {
-    width: 40px;
-    height: 40px;
-    border-radius: 13px;
-    border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
-    box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 14%, transparent);
+    width: 36px;
+    height: 36px;
+    border-radius: var(--r-md);
+    border: 1px solid var(--border);
+    box-shadow: none;
 }
 
 .logo-text {
     font-family: var(--font-display);
-    font-size: 0.98rem;
+    font-size: 0.95rem;
     font-weight: 700;
-    letter-spacing: 0.24em;
+    letter-spacing: 0.22em;
     color: var(--text);
 }
 
 .logo-subtitle {
-    margin-top: 3px;
+    margin-top: 2px;
     font-family: var(--font-mono);
     font-size: 0.58rem;
     font-weight: 500;
     letter-spacing: 0.16em;
     text-transform: uppercase;
-    color: color-mix(in srgb, var(--accent) 45%, var(--muted));
-}
-
-/* ── Sidebar nav: the axon chain (the signature) ──────────────────────────── */
-.sidebar-nav {
-    position: relative;
-    padding: 4px 0;
-    gap: 2px;
-}
-
-/* the axon: one continuous fiber threading every node */
-.sidebar-nav::before {
-    content: "";
-    position: absolute;
-    left: 24px;
-    top: 16px;
-    bottom: 16px;
-    width: 1px;
-    background: linear-gradient(180deg,
-            transparent,
-            rgba(148, 170, 215, 0.22) 10%,
-            rgba(148, 170, 215, 0.22) 90%,
-            transparent);
-    pointer-events: none;
-}
-
-.nav-item {
-    position: relative;
-    gap: 11px;
-    padding: 7px 10px;
-    border: 1px solid transparent;
-    border-radius: 12px;
-    background: transparent;
     color: var(--muted);
 }
 
+/* ── Sidebar nav: bold tinted glyphs, ink labels, inset rule when active ──── */
+.sidebar-nav {
+    padding: 6px 0;
+    gap: 1px;
+}
+
+.nav-item {
+    gap: 12px;
+    padding: 8px 10px;
+    border: 0;
+    border-radius: var(--r-md);
+    background: transparent;
+    color: color-mix(in srgb, var(--text) 72%, transparent);
+}
+
 .nav-item:hover {
-    background: rgba(148, 170, 215, 0.055);
-    border-color: transparent;
+    background: var(--surface2);
     color: var(--text);
 }
 
 .nav-item.active {
-    background: color-mix(in srgb, var(--nav-tint) 6%, transparent);
-    border-color: color-mix(in srgb, var(--nav-tint) 14%, transparent);
+    background: color-mix(in srgb, var(--nav-tint) 9%, transparent);
     color: var(--text);
-    box-shadow: none;
+    box-shadow: inset 3px 0 0 var(--nav-tint);
 }
 
-/* the legacy active-indicator bar/dot is replaced by the firing node */
+/* the legacy active bar/dot pseudo-element is retired */
 .nav-item::before,
 .nav-item.active::before {
     content: none;
 }
 
-/* nodes on the fiber: opaque chips mask the line where they sit */
 .nav-icon {
-    width: 28px;
-    min-width: 28px;
-    height: 28px;
+    width: 22px;
+    min-width: 22px;
+    height: 22px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: 10px;
-    background: color-mix(in srgb, var(--nav-tint, var(--muted)) 7%, var(--surface));
-    border: 1px solid color-mix(in srgb, var(--nav-tint, var(--muted)) 20%, transparent);
-    color: color-mix(in srgb, var(--nav-tint, var(--muted)) 80%, #ffffff);
-    transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+    background: none;
+    border: 0;
+    color: var(--nav-tint, var(--muted));
 }
 
 .nav-icon svg {
-    width: 16px;
-    height: 16px;
-}
-
-.nav-item:hover .nav-icon {
-    background: color-mix(in srgb, var(--nav-tint) 13%, var(--surface));
-    border-color: color-mix(in srgb, var(--nav-tint) 38%, transparent);
-}
-
-/* the firing node */
-.nav-item.active .nav-icon {
-    background: color-mix(in srgb, var(--nav-tint) 20%, var(--surface));
-    border-color: color-mix(in srgb, var(--nav-tint) 60%, transparent);
-    color: color-mix(in srgb, var(--nav-tint) 90%, #ffffff);
-    animation: synapse-fire 3s ease-in-out infinite;
-}
-
-@keyframes synapse-fire {
-
-    0%,
-    100% {
-        box-shadow: 0 0 8px color-mix(in srgb, var(--nav-tint) 22%, transparent);
-    }
-
-    50% {
-        box-shadow: 0 0 18px color-mix(in srgb, var(--nav-tint) 48%, transparent);
-    }
+    width: 20px;
+    height: 20px;
 }
 
 .nav-label {
-    font-size: 0.83rem;
+    font-size: 0.85rem;
     font-weight: 600;
     letter-spacing: 0.005em;
 }
 
-.nav-description {
-    font-size: 0.66rem;
-    color: var(--muted);
-}
-
-.nav-item.active .nav-description {
-    color: color-mix(in srgb, var(--nav-tint) 40%, var(--muted));
-}
-
-/* ── Topbar ───────────────────────────────────────────────────────────────── */
+/* ── Topbar: a graphite band under a hairline ────────────────────────────────── */
 .shell-topbar {
-    padding: 12px 18px 8px;
+    padding: 12px 22px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
 }
 
 .shell-page-dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 999px;
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
     background: var(--page-tint, var(--accent));
-    box-shadow: 0 0 10px color-mix(in srgb, var(--page-tint, var(--accent)) 70%, transparent);
-    transition: background 0.25s ease, box-shadow 0.25s ease;
+    box-shadow: none;
+    transition: background 0.25s ease;
 }
 
 .shell-page-heading {
     font-family: var(--font-display);
-    font-size: 1.04rem;
+    font-size: 1.05rem;
     font-weight: 600;
     letter-spacing: 0.015em;
+    color: var(--text);
 }
 
 .shell-page-pill {
@@ -4617,22 +4491,24 @@ body {
 }
 
 .shell-icon-btn {
-    border-radius: 11px;
+    border-radius: var(--r-md);
     border: 1px solid var(--border);
-    background: rgba(148, 170, 215, 0.05);
+    background: var(--bg-card);
+    color: var(--text);
     box-shadow: none;
 }
 
 .shell-icon-btn:hover {
-    background: rgba(148, 170, 215, 0.1);
-    border-color: rgba(148, 170, 215, 0.2);
+    background: var(--surface2);
+    border-color: color-mix(in srgb, var(--text) 25%, transparent);
 }
 
 .shell-status-chip {
-    min-height: 30px;
-    padding: 0 11px;
+    min-height: 28px;
+    padding: 0 10px;
     border: 1px solid var(--border);
-    background: transparent;
+    border-radius: var(--r-md);
+    background: var(--bg-card);
     font-family: var(--font-mono);
     font-size: 0.64rem;
     font-weight: 500;
@@ -4642,13 +4518,13 @@ body {
 }
 
 .shell-status-chip:has(.ws-dot.connected) {
-    border-color: color-mix(in srgb, var(--green) 26%, transparent);
-    color: color-mix(in srgb, var(--green) 70%, var(--muted));
+    border-color: color-mix(in srgb, var(--green) 40%, transparent);
+    color: var(--green);
 }
 
 .shell-status-chip:has(.ws-dot.disconnected) {
-    border-color: color-mix(in srgb, var(--red) 30%, transparent);
-    color: color-mix(in srgb, var(--red) 75%, var(--muted));
+    border-color: color-mix(in srgb, var(--red) 45%, transparent);
+    color: var(--red);
 }
 
 .ws-dot {
@@ -4658,34 +4534,56 @@ body {
 
 .ws-dot.connected {
     background: var(--green);
-    box-shadow: 0 0 8px color-mix(in srgb, var(--green) 60%, transparent);
+    box-shadow: none;
 }
 
-/* ── Focus: the signal ring ───────────────────────────────────────────────── */
+/* ── Content plane ────────────────────────────────────────────────────────── */
+.main-scroll {
+    padding: 0;
+}
+
+.page {
+    padding: 18px 22px 30px;
+}
+
+/* ── Inputs: card-surface fields, hairline borders, signal focus ─────────────────── */
+input[type=text],
+input[type=number],
+input[type=password],
+input[type=search],
+textarea,
+select {
+    background: var(--bg-card) !important;
+    border: 1px solid color-mix(in srgb, var(--text) 18%, transparent) !important;
+    border-radius: var(--r-md) !important;
+    color: var(--text) !important;
+    box-shadow: none !important;
+}
+
 input:focus,
 textarea:focus,
 select:focus,
 .premium-input:focus {
     outline: none;
-    border-color: color-mix(in srgb, var(--accent) 45%, transparent) !important;
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 13%, transparent) !important;
+    border-color: color-mix(in srgb, var(--accent) 60%, transparent) !important;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent) !important;
 }
 
 .chat-input-floating:focus-within {
-    border-color: color-mix(in srgb, var(--accent) 40%, transparent) !important;
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 11%, transparent), var(--shadow-sm) !important;
+    border-color: color-mix(in srgb, var(--accent) 50%, transparent) !important;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent) !important;
 }
 
 /* ── Scrollbars ───────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar-thumb {
-    background: rgba(148, 170, 215, 0.16);
+    background: color-mix(in srgb, var(--text) 18%, transparent);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: rgba(148, 170, 215, 0.28);
+    background: color-mix(in srgb, var(--text) 30%, transparent);
 }
 
-/* ── SYNAPSE kit · shared components for redesigned pages ─────────────────────
+/* ── GRAPHITE LAB kit · shared components for redesigned pages ───────────────────
    Pages migrate onto these; the premium-card / form-group-modern era classes
    above are legacy and disappear once no page references them. */
 
@@ -4701,7 +4599,7 @@ select:focus,
     align-items: center;
     justify-content: space-between;
     gap: 10px;
-    margin-bottom: 14px;
+    margin-bottom: 16px;
     min-height: var(--search-h);
 }
 
@@ -4714,15 +4612,14 @@ select:focus,
 
 .page-readout .readout-em {
     color: var(--text);
-    font-weight: 500;
+    font-weight: 600;
 }
 
 .panel {
-    background:
-        linear-gradient(180deg, rgba(148, 170, 215, 0.04), transparent 30%),
-        var(--bg-card);
+    background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: var(--r-lg);
+    box-shadow: var(--shadow-sm);
     overflow: hidden;
 }
 
@@ -4731,9 +4628,9 @@ select:focus,
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding: 11px 16px;
-    border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
-    background: rgba(148, 170, 215, 0.025);
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
 }
 
 .panel-title {
@@ -4743,7 +4640,7 @@ select:focus,
     font-weight: 600;
     letter-spacing: 0.16em;
     text-transform: uppercase;
-    color: color-mix(in srgb, var(--text) 80%, var(--muted));
+    color: color-mix(in srgb, var(--text) 78%, transparent);
 }
 
 .panel-count {
@@ -4759,7 +4656,7 @@ select:focus,
 
 .list-row {
     padding: 11px 16px 12px;
-    border-top: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
+    border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
     transition: background 0.15s ease;
 }
 
@@ -4768,7 +4665,7 @@ select:focus,
 }
 
 .list-row:hover {
-    background: rgba(148, 170, 215, 0.035);
+    background: color-mix(in srgb, var(--text) 2.5%, transparent);
 }
 
 .row-line {
@@ -4783,6 +4680,7 @@ select:focus,
     font-weight: 600;
     min-width: 0;
     overflow-wrap: anywhere;
+    color: var(--text);
 }
 
 .row-desc {
@@ -4804,13 +4702,13 @@ select:focus,
     font-size: 0.63rem;
     letter-spacing: 0.01em;
     padding: 2px 7px;
-    border-radius: 6px;
-    border: 1px solid color-mix(in srgb, var(--teal) 24%, transparent);
+    border-radius: var(--r-sm);
+    border: 1px solid color-mix(in srgb, var(--teal) 35%, transparent);
     background: color-mix(in srgb, var(--teal) 7%, transparent);
-    color: color-mix(in srgb, var(--teal) 78%, var(--text));
+    color: var(--teal);
 }
 
-/* Boolean state: a synapse either fires or it doesn't */
+/* Boolean state: a clean lab switch */
 .switch {
     position: relative;
     width: 34px;
@@ -4818,7 +4716,7 @@ select:focus,
     flex-shrink: 0;
     padding: 0;
     border-radius: 999px;
-    border: 1px solid var(--border);
+    border: 1px solid color-mix(in srgb, var(--text) 22%, transparent);
     background: var(--surface2);
     cursor: pointer;
     transition: background 0.2s ease, border-color 0.2s ease;
@@ -4832,19 +4730,21 @@ select:focus,
     width: 13px;
     height: 13px;
     border-radius: 999px;
-    background: var(--muted);
-    transition: transform 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+    background: var(--bg-card);
+    border: 1px solid color-mix(in srgb, var(--text) 25%, transparent);
+    box-sizing: border-box;
+    transition: transform 0.2s ease, background 0.2s ease, border-color 0.2s ease;
 }
 
 .switch[aria-checked="true"] {
-    background: color-mix(in srgb, var(--accent) 22%, var(--surface2));
-    border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+    background: var(--accent);
+    border-color: var(--accent);
 }
 
 .switch[aria-checked="true"]::after {
     transform: translateX(15px);
-    background: var(--accent);
-    box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 55%, transparent);
+    background: var(--bg-card);
+    border-color: transparent;
 }
 
 .switch:focus-visible {
@@ -4858,8 +4758,9 @@ select:focus,
     align-items: center;
     gap: 6px;
     padding: 44px 20px;
-    border: 1px dashed rgba(148, 170, 215, 0.2);
+    border: 1px dashed color-mix(in srgb, var(--text) 25%, transparent);
     border-radius: var(--r-lg);
+    background: none;
     text-align: center;
 }
 
@@ -4873,43 +4774,70 @@ select:focus,
 .empty-hint {
     font-family: var(--font-mono);
     font-style: normal;
-    /* a legacy .empty-hint (Memories era) sets italic — data readouts don't slant */
     font-size: 0.68rem;
     color: var(--muted);
 }
 
-/* ── Responsive (re-asserts breakpoint behavior my base rules override) ───── */
-@media (min-width: 768px) {
-    .sidebar.collapsed .sidebar-nav::before {
-        left: 50%;
-        transform: translateX(-50%);
-    }
+/* ── The instrument well: Workflows keeps its dark canvas ─────────────────────
+   The canvas, node system and NodeDetails were designed against the original
+   dark palette; re-declaring the tokens on the page subtree (and on the
+   teleported NodeDetails/cURL overlays) flips every var() consumer back to
+   dark, including the token-driven buttons. */
+#page-workflows,
+.nd-overlay,
+.curl-modal-overlay {
+    color-scheme: dark;
+    --bg: #0a0a0c;
+    --bg-card: #1b1b20;
+    --surface: #16161a;
+    --surface2: #1f1f25;
+    --border: rgba(255, 255, 255, 0.09);
+    --text: #f2f7ff;
+    --muted: #a6a6b2;
+    --accent: #56e6c8;
+    --accentDim: rgba(86, 230, 200, 0.2);
+    --green: #73ebb5;
+    --greenDim: #10372b;
+    --red: #f6a2ad;
+    --redDim: #41191d;
+    --yellow: #f7d17c;
+    --yellowDim: #463015;
+    --teal: #8ec5ff;
+    --blue: #56a6ff;
+    --purple: #8f8cff;
+    --shadow-sm: 0 16px 36px rgba(0, 0, 0, 0.22);
+    --shadow-lg: 0 28px 64px rgba(0, 0, 0, 0.28);
+    color: var(--text);
 }
 
+#page-workflows {
+    background: var(--bg);
+}
+
+/* ── Responsive ───────────────────────────────────────────────────────────── */
 @media (max-width: 960px) {
     .shell-page-heading {
-        font-size: 0.94rem;
+        font-size: 0.95rem;
     }
 }
 
 @media (max-width: 640px) {
     .shell-topbar {
-        padding: 10px 12px 6px;
+        padding: 10px 12px;
     }
 
     .sidebar-panel,
     .main {
-        border-radius: 16px;
+        border-radius: 0;
+    }
+
+    .page {
+        padding: 12px 12px 22px;
     }
 }
 
 /* ── Motion discipline ────────────────────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
-    .nav-item.active .nav-icon {
-        animation: none;
-        box-shadow: 0 0 12px color-mix(in srgb, var(--nav-tint) 30%, transparent);
-    }
-
     .page.active {
         animation: none;
     }
@@ -4917,7 +4845,98 @@ select:focus,
     .btn,
     .switch,
     .switch::after,
-    .list-row {
+    .list-row,
+    .nav-item {
         transition: none !important;
     }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   LEGACY SURFACE REMAP · final layer
+   ----------------------------------------------------------------------------
+   The legacy layers above were written against pale panels and hardcode white
+   surfaces / ink text. Re-map those onto the theme tokens so the graphite
+   palette (and the workflows instrument well, which re-declares the same
+   tokens) reads correctly everywhere. Token-driven on purpose — no literal
+   colors — so a future palette change needs no edits here. Dies together with
+   the legacy layers in the final cleanup.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* Cards, modals, login card, toast, chat composer (all forced white above) */
+.premium-card,
+.card,
+.mem-card,
+.modal,
+.login-card,
+.toast {
+    background: var(--bg-card) !important;
+    border: 1px solid var(--border) !important;
+}
+
+.chat-input-floating {
+    background: var(--bg-card) !important;
+    border: 1px solid var(--border) !important;
+}
+
+.custom-node {
+    background: var(--bg-card) !important;
+    border-color: var(--border) !important;
+}
+
+/* Mobile nav drawer was frosted white; overlay should dim, not whiten */
+.sidebar {
+    background: var(--surface);
+    border-right-color: var(--border);
+}
+
+.sidebar-overlay {
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+
+/* Inner chips tinted for a white panel — flip to text-based tints */
+.sidebar-status,
+.sidebar-status-card,
+.page-section-sidebar {
+    background: color-mix(in srgb, var(--text) 4%, transparent);
+    border-color: var(--border);
+}
+
+/* Pills pair token dim-backgrounds with hardcoded ink text — use the
+   semantic token for the text too */
+.pill-ok {
+    color: var(--green);
+}
+
+.pill-warn {
+    color: var(--yellow);
+}
+
+.pill-err {
+    color: var(--red);
+}
+
+.pill-info {
+    color: var(--teal);
+}
+
+/* Chat bubbles + tool trace: cream/ink-tint scheme from the light era */
+.chat-bubble {
+    border-color: var(--border);
+}
+
+.chat-msg.user .chat-bubble {
+    background: color-mix(in srgb, var(--accent) 16%, var(--bg-card));
+    color: var(--text);
+}
+
+.chat-msg.agent .chat-bubble {
+    background: color-mix(in srgb, var(--text) 4%, transparent);
+    color: var(--text);
+}
+
+.tool-trace {
+    background: color-mix(in srgb, var(--text) 3%, transparent);
+    border-color: var(--border);
 }

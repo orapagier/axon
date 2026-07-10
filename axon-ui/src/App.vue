@@ -29,78 +29,78 @@ const NAV = [
     id: 'chat',
     label: 'Chat',
     description: 'Agent conversations and runs',
-    tint: '#5eead4',
-    icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10h10M7 14h6M6 19l-2 2V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    tint: '#3ecfae',
+    icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H9l-5 4V6a2 2 0 0 1 2-2Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M8.5 9h7M8.5 12.5h4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
   },
   {
     id: 'models',
     label: 'Models',
     description: 'Providers, routing, and quotas',
-    tint: '#8ec5ff',
-    icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3Zm0 0v18M4 7.5l8 4.5 8-4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    tint: '#6ea3ef',
+    icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10 2.5V6M14 2.5V6M10 18v3.5M14 18v3.5M2.5 10H6M2.5 14H6M18 10h3.5M18 14h3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
   },
   {
     id: 'tools',
     label: 'Tools',
     description: 'Runtime tool inventory',
-    tint: '#c4b5fd',
-    icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5a4 4 0 0 0 5 5l-8.5 8.5a2.12 2.12 0 1 1-3-3L16 7a4 4 0 0 0-2-2Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 19 3 21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+    tint: '#948ceb',
+    icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   },
   {
     id: 'memories',
     label: 'Memories',
     description: 'Short and long term context',
-    tint: '#f0abfc',
-    icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 4A3.5 3.5 0 0 0 6 7.5v1A2.5 2.5 0 0 0 3.5 11v2A2.5 2.5 0 0 0 6 15.5v1A3.5 3.5 0 0 0 9.5 20h5a3.5 3.5 0 0 0 3.5-3.5v-1A2.5 2.5 0 0 0 20.5 13v-2A2.5 2.5 0 0 0 18 8.5v-1A3.5 3.5 0 0 0 14.5 4h-5Z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M9 9h6M9 12h6M9 15h3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+    tint: '#d879c9',
+    icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>',
   },
   {
     id: 'tasks',
     label: 'Tasks',
     description: 'Schedulers and automation jobs',
-    tint: '#fbd38d',
-    icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 2v4M16 2v4M4 10h16M6 5h12a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m10 14 1.5 1.5L15 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    tint: '#d9ac55',
+    icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 2v4M16 2v4M4 10h16M6 5h12a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="m10 14 1.5 1.5L15 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   },
   {
     id: 'workflows',
     label: 'Workflows',
     description: 'Visual automation canvas',
-    tint: '#fda4af',
-    icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="18" cy="12" r="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="6" cy="18" r="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 7.2 15.5 10.8M8.5 16.8l7-3.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+    tint: '#e8808f',
+    icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="2.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="18" cy="12" r="2.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="6" cy="18" r="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8.5 7.2 15.5 10.8M8.5 16.8l7-3.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
   },
   {
     id: 'crm',
     label: 'CRM',
     description: 'Leads, deals, and organizations',
-    tint: '#f9a8d4',
-    icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="9.5" cy="7.5" r="3.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M21 21v-2a4 4 0 0 0-3-3.87M15.5 4.13a3.5 3.5 0 0 1 0 6.75" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+    tint: '#e07bb5',
+    icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="9.5" cy="7.5" r="3.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M21 21v-2a4 4 0 0 0-3-3.87M15.5 4.13a3.5 3.5 0 0 1 0 6.75" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
   },
   {
     id: 'services',
     label: 'Services',
     description: 'External integrations and auth',
-    tint: '#86efac',
-    icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 6v6c0 5 3.4 9.7 8 10 4.6-.3 8-5 8-10V6l-8-4Z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M9.5 12 11 13.5 14.5 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    tint: '#4cc98a',
+    icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 2.5V8M15 2.5V8M6 8h12l-1.2 5.5a5 5 0 0 1-9.6 0L6 8Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 17.5v4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
   },
   {
     id: 'files',
     label: 'Files',
     description: 'Shared uploads and outputs',
-    tint: '#a5b4fc',
-    icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M14 3v5h5M9 13h6M9 17h6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+    tint: '#8b94ea',
+    icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4.2a2 2 0 0 1 1.4.6L12.4 7H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>',
   },
   {
     id: 'docs',
     label: 'Docs',
     description: 'Searchable product documentation',
-    tint: '#fde68a',
-    icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5a2 2 0 0 1 2-2h5v16H6a2 2 0 0 0-2 2V5Zm16 0a2 2 0 0 0-2-2h-5v16h5a2 2 0 0 1 2 2V5Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8 7h1.5M8 10h1.5M15 7h1.5M15 10h1.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+    tint: '#cfa953',
+    icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6c-1.8-1.3-4.3-2-8-2v14c3.7 0 6.2.7 8 2 1.8-1.3 4.3-2 8-2V4c-3.7 0-6.2.7-8 2Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M12 6v14" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
   },
   {
     id: 'settings',
     label: 'Settings',
     description: 'System configuration',
-    tint: '#cbd5e1',
-    icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5A3.5 3.5 0 1 0 12 15.5 3.5 3.5 0 0 0 12 8.5Z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M19.4 15a1 1 0 0 0 .2 1.1l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1 1 0 0 0-1.1-.2 1 1 0 0 0-.6.9V20a2 2 0 1 1-4 0v-.2a1 1 0 0 0-.6-.9 1 1 0 0 0-1.1.2l-.1.1a2 2 0 0 1-2.8-2.8l.1-.1a1 1 0 0 0 .2-1.1 1 1 0 0 0-.9-.6H4a2 2 0 1 1 0-4h.2a1 1 0 0 0 .9-.6 1 1 0 0 0-.2-1.1l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1 1 0 0 0 1.1.2 1 1 0 0 0 .6-.9V4a2 2 0 1 1 4 0v.2a1 1 0 0 0 .6.9 1 1 0 0 0 1.1-.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1 1 0 0 0-.2 1.1 1 1 0 0 0 .9.6H20a2 2 0 1 1 0 4h-.2a1 1 0 0 0-.9.6Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>',
+    tint: '#97a2b2',
+    icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5A3.5 3.5 0 1 0 12 15.5 3.5 3.5 0 0 0 12 8.5Z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M19.4 15a1 1 0 0 0 .2 1.1l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1 1 0 0 0-1.1-.2 1 1 0 0 0-.6.9V20a2 2 0 1 1-4 0v-.2a1 1 0 0 0-.6-.9 1 1 0 0 0-1.1.2l-.1.1a2 2 0 0 1-2.8-2.8l.1-.1a1 1 0 0 0 .2-1.1 1 1 0 0 0-.9-.6H4a2 2 0 1 1 0-4h.2a1 1 0 0 0 .9-.6 1 1 0 0 0-.2-1.1l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1 1 0 0 0 1.1.2 1 1 0 0 0 .6-.9V4a2 2 0 1 1 4 0v.2a1 1 0 0 0 .6.9 1 1 0 0 0 1.1-.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1 1 0 0 0-.2 1.1 1 1 0 0 0 .9.6H20a2 2 0 1 1 0 4h-.2a1 1 0 0 0-.9.6Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>',
   },
 ]
 
@@ -287,11 +287,8 @@ async function logout() {
             />
             <span
               v-if="!isSidebarCollapsed"
-              class="nav-copy"
-            >
-              <span class="nav-label">{{ item.label }}</span>
-              <span class="nav-description">{{ item.description }}</span>
-            </span>
+              class="nav-label"
+            >{{ item.label }}</span>
           </button>
         </nav>
       </div>
