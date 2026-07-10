@@ -6,8 +6,17 @@ import { confirmDialog } from '../lib/confirm.js'
 import { fmtTokens, timeAgo } from '../lib/utils.js'
 import Modal from '../components/Modal.vue'
 import Pill from '../components/Pill.vue'
+import SearchInput from '../components/SearchInput.vue'
 
 const models = ref([])
+const modelSearch = ref('')
+const filteredModels = computed(() => {
+  const q = modelSearch.value.trim().toLowerCase()
+  if (!q) return models.value
+  return models.value.filter(
+    (m) => m.name.toLowerCase().includes(q) || (m.role || '').toLowerCase().includes(q)
+  )
+})
 const modalOpen = ref(false)
 const editing = ref(false)
 const form = ref({
