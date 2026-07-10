@@ -473,10 +473,10 @@ onUnmounted(() => {
             </div>
           </div>
           <div
-            v-if="credentials.length === 0"
+            v-if="filteredCredentials.length === 0"
             class="empty-state"
           >
-            No credentials configured.
+            {{ servicesSearch.trim() ? 'No credentials match your search.' : 'No credentials configured.' }}
           </div>
         </div>
       </div>
