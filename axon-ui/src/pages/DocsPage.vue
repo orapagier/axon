@@ -859,28 +859,23 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="docs-page">
+  <div class="page-wrap docs-page">
     <section class="docs-layout">
-      <aside class="docs-index-col">
-        <div class="docs-index-card">
-          <h2>Section Index</h2>
-          <p>{{ visibleSectionsCount }} of {{ DOC_SECTIONS.length }} sections visible</p>
-
-          <nav class="docs-index-list">
-            <button
-              v-for="section in filteredSections"
-              :key="`index-${section.id}`"
-              type="button"
-              class="docs-index-link"
-              :class="{ active: section.id === activeSectionId }"
-              @click="jumpToSection(section.id)"
-            >
-              <span class="docs-index-title">{{ section.title }}</span>
-              <span class="docs-index-summary">{{ section.summary }}</span>
-            </button>
-          </nav>
-        </div>
-      </aside>
+      <nav class="docs-rail">
+        <p class="docs-rail-meta">
+          {{ visibleSectionsCount }} / {{ DOC_SECTIONS.length }} sections
+        </p>
+        <button
+          v-for="section in filteredSections"
+          :key="`index-${section.id}`"
+          type="button"
+          class="docs-rail-btn"
+          :class="{ active: section.id === activeSectionId }"
+          @click="jumpToSection(section.id)"
+        >
+          <span class="docs-rail-title">{{ section.title }}</span>
+        </button>
+      </nav>
 
       <div class="docs-content-col">
         <template v-if="filteredSections.length">
@@ -889,7 +884,7 @@ onBeforeUnmount(() => {
             :id="`docs-${section.id}`"
             :key="section.id"
             :data-section-id="section.id"
-            class="docs-section-card"
+            class="panel docs-section-card"
             :style="{ '--stagger-delay': `${Math.min(index * 0.05, 0.4)}s` }"
           >
             <header class="docs-section-header">
@@ -898,11 +893,11 @@ onBeforeUnmount(() => {
                 <h2>{{ section.title }}</h2>
                 <p>{{ section.summary }}</p>
               </div>
-              <div class="docs-tag-row">
+              <div class="docs-tag-row chip-row">
                 <span
                   v-for="tag in section.tags"
                   :key="`${section.id}-${tag}`"
-                  class="docs-tag"
+                  class="mono-chip"
                 >
                   {{ tag }}
                 </span>
@@ -997,16 +992,20 @@ onBeforeUnmount(() => {
 
         <section
           v-else
-          class="docs-empty-state"
+          class="empty-state"
         >
-          <h2>No matching sections</h2>
-          <p>Try broader keywords, shorter terms, or clear search to browse the complete guide.</p>
+          <p class="empty-title">
+            No matching sections
+          </p>
+          <p class="empty-hint">
+            Try broader keywords, shorter terms, or clear search to browse the complete guide.
+          </p>
           <button
             type="button"
-            class="btn docs-clear-btn"
+            class="btn btn-ghost"
             @click="clearSearch"
           >
-            Reset Search
+            Reset search
           </button>
         </section>
       </div>
@@ -1016,131 +1015,93 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .docs-page {
-  --docs-ink: #f6f5ef;
-  --docs-muted: #9fb0a8;
-  --docs-card: rgba(18, 24, 23, 0.86);
-  --docs-card-strong: rgba(23, 30, 28, 0.94);
-  --docs-border: rgba(207, 219, 210, 0.14);
-  --docs-accent: #d8e6be;
-  --docs-accent-soft: rgba(216, 230, 190, 0.18);
-  --docs-teal: #b8d6ce;
-  --docs-warning: #dfc48a;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  color: var(--docs-ink);
-  font-family: 'Aptos Display', 'Segoe UI Variable Display', 'Segoe UI', sans-serif;
-}
-
-.docs-clear-btn {
-  /* Uses the `.btn` class — size/colors come from the global --btn-* tokens. */
-  cursor: pointer;
-}
-
-.docs-clear-btn:hover:not(:disabled) {
-  transform: translateY(-1px);
-  background: rgba(255, 255, 255, 0.09);
-}
-
-.docs-clear-btn:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
+  padding-bottom: 60px;
 }
 
 .docs-layout {
   display: grid;
-  grid-template-columns: minmax(230px, 280px) minmax(0, 1fr);
-  gap: 18px;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 26px;
+  align-items: start;
 }
 
-.docs-index-col {
-  min-width: 0;
-}
-
-.docs-index-card {
+/* ── Rail: bare text, hairline on the right, inset accent when active ─────── */
+.docs-rail {
   position: sticky;
   top: 8px;
-  border: 1px solid var(--docs-border);
-  border-radius: 16px;
-  background: var(--docs-card);
-  padding: 14px;
-}
-
-.docs-index-card h2 {
-  font-size: 0.92rem;
-  letter-spacing: 0.01em;
-}
-
-.docs-index-card p {
-  margin-top: 4px;
-  margin-bottom: 12px;
-  font-size: 0.76rem;
-  color: var(--docs-muted);
-}
-
-.docs-index-list {
+  max-height: calc(100vh - 90px);
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 1px;
+  padding-right: 12px;
+  border-right: 1px solid var(--border);
 }
 
-.docs-index-link {
-  width: 100%;
-  border: 1px solid transparent;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.02);
-  color: inherit;
-  text-align: left;
-  padding: 10px;
-  cursor: pointer;
-  transition: border-color 0.16s ease, background 0.16s ease, transform 0.16s ease;
+.docs-rail-meta {
+  margin: 0 0 8px;
+  padding: 0 9px;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  color: var(--muted);
 }
 
-.docs-index-link:hover {
-  border-color: rgba(184, 214, 206, 0.26);
-  background: rgba(184, 214, 206, 0.1);
-  transform: translateX(2px);
-}
-
-.docs-index-link.active {
-  border-color: rgba(216, 230, 190, 0.42);
-  background: rgba(216, 230, 190, 0.14);
-}
-
-.docs-index-title {
+.docs-rail-btn {
   display: block;
-  font-size: 0.8rem;
+  width: 100%;
+  padding: 6px 9px;
+  border: 0;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.78rem;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.docs-rail-btn:hover {
+  background: var(--surface2);
+  color: var(--text);
+}
+
+.docs-rail-btn.active {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--text);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.docs-rail-title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.docs-rail-btn.active .docs-rail-title {
   font-weight: 600;
 }
 
-.docs-index-summary {
-  display: block;
-  margin-top: 5px;
-  font-size: 0.69rem;
-  line-height: 1.45;
-  color: var(--docs-muted);
-}
-
+/* ── Section panels ───────────────────────────────────────────────────────── */
 .docs-content-col {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
 }
 
 .docs-section-card {
-  border: 1px solid var(--docs-border);
-  border-radius: 18px;
-  background: var(--docs-card-strong);
-  overflow: hidden;
   animation: docs-slide-in 0.28s ease both;
   animation-delay: var(--stagger-delay, 0s);
   scroll-margin-top: 10px;
 }
 
 .docs-section-header {
-  padding: 16px 16px 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
   display: flex;
   gap: 12px;
   justify-content: space-between;
@@ -1148,51 +1109,36 @@ onBeforeUnmount(() => {
 }
 
 .docs-section-kicker {
-  display: inline-flex;
-  margin-bottom: 8px;
-  min-height: 24px;
-  align-items: center;
-  border-radius: 999px;
-  padding: 0 9px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.03);
-  font-size: 0.66rem;
-  letter-spacing: 0.08em;
+  display: block;
+  margin-bottom: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--docs-muted);
-  font-weight: 700;
+  color: var(--muted);
 }
 
 .docs-section-header h2 {
-  font-size: 1.16rem;
-  letter-spacing: -0.02em;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text);
 }
 
 .docs-section-header p {
-  margin-top: 7px;
+  margin-top: 6px;
   max-width: 720px;
-  line-height: 1.6;
-  color: rgba(246, 245, 239, 0.74);
+  font-size: 0.78rem;
+  line-height: 1.55;
+  color: var(--muted);
 }
 
 .docs-tag-row {
-  display: flex;
-  flex-wrap: wrap;
+  margin-top: 0;
   justify-content: flex-end;
-  gap: 6px;
-  max-width: 320px;
-}
-
-.docs-tag {
-  min-height: 24px;
-  border-radius: 999px;
-  padding: 0 9px;
-  border: 1px solid rgba(223, 196, 138, 0.24);
-  background: rgba(223, 196, 138, 0.12);
-  color: var(--docs-warning);
-  font-size: 0.66rem;
-  display: inline-flex;
-  align-items: center;
+  max-width: 300px;
+  flex-shrink: 0;
 }
 
 .docs-section-body {
@@ -1203,35 +1149,39 @@ onBeforeUnmount(() => {
 }
 
 .docs-paragraph {
+  font-size: 0.84rem;
   line-height: 1.65;
-  color: rgba(246, 245, 239, 0.87);
+  color: var(--text);
 }
 
 .docs-bullet-block h3,
 .docs-table-block h3,
 .docs-code-block h3 {
   margin-bottom: 8px;
-  font-size: 0.84rem;
-  letter-spacing: 0.04em;
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--docs-muted);
+  color: var(--muted);
 }
 
 .docs-bullet-block ul {
   padding-left: 18px;
   display: grid;
-  gap: 8px;
+  gap: 7px;
 }
 
 .docs-bullet-block li {
-  line-height: 1.58;
-  color: rgba(246, 245, 239, 0.84);
+  font-size: 0.8rem;
+  line-height: 1.6;
+  color: color-mix(in srgb, var(--text) 88%, transparent);
 }
 
 .docs-table-wrap {
   overflow-x: auto;
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
 }
 
 .docs-table-wrap table {
@@ -1242,20 +1192,22 @@ onBeforeUnmount(() => {
 
 .docs-table-wrap th,
 .docs-table-wrap td {
-  padding: 9px 10px;
+  padding: 8px 10px;
   text-align: left;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
   vertical-align: top;
-  font-size: 0.78rem;
+  font-size: 0.76rem;
   line-height: 1.5;
 }
 
 .docs-table-wrap th {
-  background: rgba(255, 255, 255, 0.03);
-  color: var(--docs-muted);
-  letter-spacing: 0.04em;
+  background: var(--surface);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  font-size: 0.68rem;
+  font-size: 0.62rem;
+  font-weight: 600;
 }
 
 .docs-table-wrap tr:last-child td {
@@ -1263,46 +1215,29 @@ onBeforeUnmount(() => {
 }
 
 .docs-code-block pre {
-  border-radius: 12px;
-  border: 1px solid rgba(184, 214, 206, 0.18);
-  background: rgba(10, 14, 13, 0.85);
-  padding: 12px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--text) 2.5%, transparent);
+  padding: 12px 14px;
   overflow-x: auto;
 }
 
 .docs-code-block code {
-  font-family: 'Cascadia Code', 'Fira Code', monospace;
-  font-size: 0.76rem;
-  line-height: 1.55;
-  color: var(--docs-teal);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  line-height: 1.6;
+  color: var(--teal);
   white-space: pre;
 }
 
 .docs-note-block {
-  border-radius: 12px;
-  border-left: 3px solid rgba(216, 230, 190, 0.56);
-  background: rgba(216, 230, 190, 0.1);
+  border-radius: var(--r-sm);
+  border-left: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
   padding: 10px 12px;
-  line-height: 1.58;
-  color: rgba(246, 245, 239, 0.84);
-}
-
-.docs-empty-state {
-  border: 1px solid var(--docs-border);
-  border-radius: 18px;
-  background: var(--docs-card);
-  padding: 28px;
-  text-align: center;
-}
-
-.docs-empty-state h2 {
-  font-size: 1.1rem;
-}
-
-.docs-empty-state p {
-  margin: 10px auto 16px;
-  max-width: 560px;
-  color: var(--docs-muted);
+  font-size: 0.78rem;
+  line-height: 1.6;
+  color: color-mix(in srgb, var(--text) 90%, transparent);
 }
 
 @keyframes docs-slide-in {
@@ -1319,16 +1254,16 @@ onBeforeUnmount(() => {
 @media (max-width: 1160px) {
   .docs-layout {
     grid-template-columns: 1fr;
+    gap: 14px;
   }
 
-  .docs-index-card {
+  .docs-rail {
     position: static;
-  }
-
-  .docs-index-list {
-    max-height: 280px;
-    overflow-y: auto;
-    padding-right: 4px;
+    max-height: 240px;
+    padding-right: 0;
+    padding-bottom: 10px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
   }
 }
 

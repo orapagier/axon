@@ -111,29 +111,19 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="services-page files-page">
-    <div class="page-header-container">
-      <div class="page-header">
-        <h1>Files</h1>
-        <p class="page-desc">
-          Browse and manage files shared between you and the AI agents.
-        </p>
-      </div>
-      <div class="header-actions">
-        <label class="btn btn-save file-upload-label">
-          <span>+ Upload File</span>
-          <input
-            type="file"
-            hidden
-            @change="upload"
-          >
-        </label>
+  <div class="page-wrap files-page">
+    <div class="page-toolbar">
+      <p class="page-readout">
+        <span class="readout-em">{{ incoming.length }}</span> incoming
+        · <span class="readout-em">{{ outgoing.length }}</span> outgoing
+      </p>
+      <div class="toolbar-actions">
         <button
           class="btn btn-danger"
           :disabled="!hasFiles"
           @click="removeAll"
         >
-          Delete All
+          Delete all
         </button>
         <button
           class="btn btn-ghost"
@@ -141,190 +131,180 @@ onMounted(load)
         >
           Refresh
         </button>
+        <label class="btn btn-save file-upload-label">
+          <span>Upload file</span>
+          <input
+            type="file"
+            hidden
+            @change="upload"
+          >
+        </label>
       </div>
     </div>
 
     <div class="files-grid">
-      <section class="premium-card">
-        <div class="card-header-row no-collapse">
-          <div class="card-title-group">
-            <div class="card-icon incoming-icon">
-              IN
-            </div>
-            <h2>Incoming Files</h2>
-          </div>
-          <span class="card-summary">{{ filteredIncoming.length }} files</span>
+      <section class="panel">
+        <div class="panel-head">
+          <h2 class="panel-title">
+            Incoming
+          </h2>
+          <span class="panel-count">{{ filteredIncoming.length }} files</span>
         </div>
 
-        <div class="card-content">
+        <div
+          v-if="filteredIncoming.length === 0"
+          class="panel-empty"
+        >
+          {{ searchQuery.trim() ? 'No incoming files match your search.' : 'No incoming files.' }}
+        </div>
+        <div
+          v-else
+          class="row-list"
+        >
           <div
-            v-if="filteredIncoming.length === 0"
-            class="empty-state"
+            v-for="f in filteredIncoming"
+            :key="f.id"
+            class="list-row file-row"
           >
-            {{ searchQuery.trim() ? 'No incoming files match your search.' : 'No incoming files found.' }}
-          </div>
-          <div
-            v-else
-            class="service-list"
-          >
-            <div
-              v-for="f in filteredIncoming"
-              :key="f.id"
-              class="service-item file-row"
-            >
-              <div class="file-type-icon">
-                {{ getFileExt(f.filename) }}
+            <div class="row-line">
+              <div class="file-ident">
+                <span class="mono-chip file-ext">{{ getFileExt(f.filename) }}</span>
+                <span class="file-name">{{ f.filename }}</span>
               </div>
-              <div class="service-info">
-                <div class="service-name-row">
-                  <div class="service-name-group">
-                    <span class="service-name">{{ f.filename }}</span>
-                  </div>
-                  <div class="service-actions">
-                    <a
-                      class="btn btn-sm btn-ghost icon-action-btn"
-                      :href="`/api/download?path=${encodeURIComponent(f.path)}&api_key=${encodeURIComponent(masterKey)}`"
-                      :download="f.filename"
-                      title="Download file"
-                      aria-label="Download file"
-                    >
-                      <svg
-                        viewBox="0 0 24 24"
-                        aria-hidden="true"
-                      >
-                        <path
-                          d="M12 3v11m0 0 4-4m-4 4-4-4M5 19h14"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="1.8"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                        />
-                      </svg>
-                    </a>
-                    <button
-                      class="btn btn-sm btn-ghost text-error icon-action-btn"
-                      title="Delete file"
-                      aria-label="Delete file"
-                      @click="remove(f.direction || 'incoming', f.id)"
-                    >
-                      <svg
-                        viewBox="0 0 24 24"
-                        aria-hidden="true"
-                      >
-                        <path
-                          d="M4 7h16m-11 0V5h6v2m-7 0v11m4-11v11m4-11v11M7 7l1 13h8l1-13"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="1.8"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                        />
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-                <div class="file-meta-row">
-                  <span class="meta-item">{{ f.mime_type || 'unknown type' }}</span>
-                  <span class="divider">•</span>
-                  <span class="meta-item">{{ fmtBytes(f.size_bytes) }}</span>
-                  <span class="divider">•</span>
-                  <span class="meta-item">{{ timeAgo(f.created_at) }}</span>
-                </div>
+              <div class="file-actions">
+                <a
+                  class="btn btn-xs btn-ghost btn-icon row-action"
+                  :href="`/api/download?path=${encodeURIComponent(f.path)}&api_key=${encodeURIComponent(masterKey)}`"
+                  :download="f.filename"
+                  title="Download file"
+                  aria-label="Download file"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="14"
+                    height="14"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M12 3v11m0 0 4-4m-4 4-4-4M5 19h14"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                </a>
+                <button
+                  class="btn btn-xs btn-ghost btn-icon text-error row-action"
+                  title="Delete file"
+                  aria-label="Delete file"
+                  @click="remove(f.direction || 'incoming', f.id)"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="14"
+                    height="14"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M4 7h16m-11 0V5h6v2m-7 0v11m4-11v11m4-11v11M7 7l1 13h8l1-13"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                </button>
               </div>
             </div>
+            <p class="file-readout">
+              {{ f.mime_type || 'unknown type' }} · {{ fmtBytes(f.size_bytes) }} · {{ timeAgo(f.created_at) }}
+            </p>
           </div>
         </div>
       </section>
 
-      <section class="premium-card">
-        <div class="card-header-row no-collapse">
-          <div class="card-title-group">
-            <div class="card-icon outgoing-icon">
-              OUT
-            </div>
-            <h2>Outgoing Files</h2>
-          </div>
-          <span class="card-summary">{{ filteredOutgoing.length }} files</span>
+      <section class="panel">
+        <div class="panel-head">
+          <h2 class="panel-title">
+            Outgoing
+          </h2>
+          <span class="panel-count">{{ filteredOutgoing.length }} files</span>
         </div>
 
-        <div class="card-content">
+        <div
+          v-if="filteredOutgoing.length === 0"
+          class="panel-empty"
+        >
+          {{ searchQuery.trim() ? 'No outgoing files match your search.' : 'No outgoing files.' }}
+        </div>
+        <div
+          v-else
+          class="row-list"
+        >
           <div
-            v-if="filteredOutgoing.length === 0"
-            class="empty-state"
+            v-for="f in filteredOutgoing"
+            :key="f.id"
+            class="list-row file-row"
           >
-            {{ searchQuery.trim() ? 'No outgoing files match your search.' : 'No outgoing files found.' }}
-          </div>
-          <div
-            v-else
-            class="service-list"
-          >
-            <div
-              v-for="f in filteredOutgoing"
-              :key="f.id"
-              class="service-item file-row"
-            >
-              <div class="file-type-icon outgoing">
-                {{ getFileExt(f.filename) }}
+            <div class="row-line">
+              <div class="file-ident">
+                <span class="mono-chip file-ext">{{ getFileExt(f.filename) }}</span>
+                <span class="file-name">{{ f.filename }}</span>
               </div>
-              <div class="service-info">
-                <div class="service-name-row">
-                  <div class="service-name-group">
-                    <span class="service-name">{{ f.filename }}</span>
-                  </div>
-                  <div class="service-actions">
-                    <a
-                      class="btn btn-sm btn-ghost icon-action-btn"
-                      :href="`/api/download?path=${encodeURIComponent(f.path)}&api_key=${encodeURIComponent(masterKey)}`"
-                      :download="f.filename"
-                      title="Download file"
-                      aria-label="Download file"
-                    >
-                      <svg
-                        viewBox="0 0 24 24"
-                        aria-hidden="true"
-                      >
-                        <path
-                          d="M12 3v11m0 0 4-4m-4 4-4-4M5 19h14"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="1.8"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                        />
-                      </svg>
-                    </a>
-                    <button
-                      class="btn btn-sm btn-ghost text-error icon-action-btn"
-                      title="Delete file"
-                      aria-label="Delete file"
-                      @click="remove(f.direction || 'outgoing', f.id)"
-                    >
-                      <svg
-                        viewBox="0 0 24 24"
-                        aria-hidden="true"
-                      >
-                        <path
-                          d="M4 7h16m-11 0V5h6v2m-7 0v11m4-11v11m4-11v11M7 7l1 13h8l1-13"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="1.8"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                        />
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-                <div class="file-meta-row">
-                  <span class="meta-item">{{ f.mime_type || 'unknown type' }}</span>
-                  <span class="divider">•</span>
-                  <span class="meta-item">{{ fmtBytes(f.size_bytes) }}</span>
-                  <span class="divider">•</span>
-                  <span class="meta-item">{{ timeAgo(f.created_at) }}</span>
-                </div>
+              <div class="file-actions">
+                <a
+                  class="btn btn-xs btn-ghost btn-icon row-action"
+                  :href="`/api/download?path=${encodeURIComponent(f.path)}&api_key=${encodeURIComponent(masterKey)}`"
+                  :download="f.filename"
+                  title="Download file"
+                  aria-label="Download file"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="14"
+                    height="14"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M12 3v11m0 0 4-4m-4 4-4-4M5 19h14"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                </a>
+                <button
+                  class="btn btn-xs btn-ghost btn-icon text-error row-action"
+                  title="Delete file"
+                  aria-label="Delete file"
+                  @click="remove(f.direction || 'outgoing', f.id)"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="14"
+                    height="14"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M4 7h16m-11 0V5h6v2m-7 0v11m4-11v11m4-11v11M7 7l1 13h8l1-13"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                </button>
               </div>
             </div>
+            <p class="file-readout">
+              {{ f.mime_type || 'unknown type' }} · {{ fmtBytes(f.size_bytes) }} · {{ timeAgo(f.created_at) }}
+            </p>
           </div>
         </div>
       </section>
@@ -334,147 +314,79 @@ onMounted(load)
 
 <style scoped>
 .files-page {
-  padding-bottom: 40px;
+  padding-bottom: 60px;
 }
 
-.files-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px;
-  align-items: start;
-}
-
-.premium-card {
-  overflow: hidden;
-  height: 100%;
-}
-
-.card-header-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.card-title-group {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.card-title-group h2 {
-  margin: 0;
-}
-
-.card-icon {
-  width: 28px;
-  height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-}
-
-.incoming-icon {
-  background: rgba(183, 215, 154, 0.12);
-  color: #5a7d2a;
-}
-
-.outgoing-icon {
-  background: rgba(184, 204, 199, 0.12);
-  color: #b7ccc7;
-}
-
-.service-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.file-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 14px;
-}
-
-.file-type-icon {
-  width: 40px;
-  height: 40px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 12px;
-  background: rgba(0, 0, 0, 0.04);
-  border: 1px solid rgba(0, 0, 0, 0.06);
-  font-size: 10px;
-  font-weight: 800;
-  text-transform: uppercase;
-  color: rgba(244, 242, 237, 0.62);
-}
-
-.file-type-icon.outgoing {
-  color: #b7ccc7;
-}
-
-.service-info {
-  flex: 1;
-  min-width: 0;
-}
-
-.service-name-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 6px;
-}
-
-.service-name {
-  font-size: 0.92rem;
-  font-weight: 600;
-  color: #23272e;
-}
-
-.file-meta-row {
+.toolbar-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
 
-.meta-item {
-  font-size: 0.74rem;
-  color: #97a59f;
+.files-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  align-items: start;
 }
 
-.divider {
+.panel-empty {
+  padding: 32px 16px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
   color: var(--muted);
 }
 
-.empty-state {
-  padding: 36px 20px;
-  text-align: center;
-  color: #97a59f;
-  font-size: 0.82rem;
+.file-ident {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  flex: 1;
 }
 
-.text-error {
-  color: #b14a4a !important;
+.file-ext {
+  flex-shrink: 0;
+  text-transform: uppercase;
 }
 
-.icon-action-btn {
-  width: 32px;
-  min-width: 32px;
-  height: 32px;
-  padding: 0 !important;
+.file-name {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
 }
 
-.icon-action-btn svg {
-  width: 15px;
-  height: 15px;
+.file-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.row-action {
+  opacity: 0.25;
+  transition: opacity 0.15s ease;
+}
+
+.file-row:hover .row-action,
+.row-action:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .row-action {
+    opacity: 1;
+  }
+}
+
+.file-readout {
+  margin: 6px 0 0;
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  color: var(--muted);
 }
 
 .file-upload-label span {

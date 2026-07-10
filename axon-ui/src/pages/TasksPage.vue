@@ -5,7 +5,6 @@ import { toast } from '../lib/toast.js'
 import { confirmDialog } from '../lib/confirm.js'
 import { timeAgo } from '../lib/utils.js'
 import Modal from '../components/Modal.vue'
-import Pill from '../components/Pill.vue'
 import { useHeaderSearch } from '../lib/headerSearch.js'
 
 const jobs = ref([])
@@ -175,11 +174,14 @@ async function removeJob(j) {
   load()
 }
 
-function jobStatusType(s) {
-  if (s === 'active') return 'ok'
-  if (s === 'paused') return 'warn'
-  return 'muted'
+function stateKey(j) {
+  if (j.status === 'active') return 'ok'
+  if (j.status === 'paused') return 'warn'
+  return 'off'
 }
+
+const activeCount = computed(() => jobs.value.filter((j) => j.status === 'active').length)
+const pausedCount = computed(() => jobs.value.filter((j) => j.status === 'paused').length)
 
 async function load() {
   const j = await get('/jobs').catch(() => ({ jobs: [] }))
@@ -190,171 +192,167 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="services-page tasks-page">
-    <div class="page-header-container">
-      <div class="page-header">
-        <h1>Tasks</h1>
-        <p class="page-desc">
-          Manage automated cron jobs in one place.
-        </p>
-      </div>
-      <div class="header-actions">
-        <button
-          class="btn btn-save"
-          @click="showJobCreate"
-        >
-          New Job
-        </button>
+  <div class="page-wrap tasks-page">
+    <div class="page-toolbar">
+      <p class="page-readout">
+        <span class="readout-em">{{ jobs.length }}</span> jobs
+        · <span class="readout-em">{{ activeCount }}</span> active
+        <template v-if="pausedCount">
+          · {{ pausedCount }} paused
+        </template>
+      </p>
+      <div class="toolbar-actions">
         <button
           class="btn btn-ghost"
           @click="load"
         >
           Refresh
         </button>
+        <button
+          class="btn btn-save"
+          @click="showJobCreate"
+        >
+          New job
+        </button>
       </div>
     </div>
 
-    <div class="tasks-grid">
-      <section class="premium-card">
-        <div class="card-header-row no-collapse">
-          <div class="card-title-group">
-            <h2>Scheduled Jobs</h2>
-          </div>
-          <span class="card-summary">{{ jobs.length }} active</span>
-        </div>
+    <div
+      v-if="filteredJobs.length === 0"
+      class="empty-state"
+    >
+      <p class="empty-title">
+        {{ jobSearch.trim() ? 'No matching jobs' : 'No scheduled jobs' }}
+      </p>
+      <p class="empty-hint">
+        {{ jobSearch.trim() ? `Nothing matches "${jobSearch.trim()}". Try a different term.` : 'Create a job to automate recurring agent work.' }}
+      </p>
+    </div>
 
+    <section
+      v-else
+      class="panel"
+    >
+      <div class="panel-head">
+        <h2 class="panel-title">
+          Scheduled jobs
+        </h2>
+        <span class="panel-count">{{ filteredJobs.length }} shown</span>
+      </div>
+
+      <div class="row-list">
         <div
-          v-if="filteredJobs.length === 0"
-          class="empty-state"
+          v-for="j in filteredJobs"
+          :key="j.id"
+          class="list-row job-row"
+          :class="{ off: j.status === 'paused' }"
         >
-          {{ jobSearch.trim() ? 'No jobs match your search.' : 'No scheduled jobs found. Create one to automate tasks.' }}
-        </div>
-        <div
-          v-else
-          class="service-list"
-        >
-          <div
-            v-for="j in filteredJobs"
-            :key="j.id"
-            class="service-item job-row"
-            :class="{ disabled: j.status === 'paused' }"
-          >
-            <div class="service-info">
-              <div class="service-name-row">
-                <div class="service-name-group">
-                  <span class="service-name">{{ j.name }}</span>
-                  <Pill
-                    v-if="j.created_by === 'agent'"
-                    type="info"
-                    text="AGENT-CREATED"
-                  />
-                  <Pill
-                    :type="jobStatusType(j.status)"
-                    :text="j.status.toUpperCase()"
-                  />
-                  <Pill
-                    v-if="j.platform !== 'dashboard'"
-                    type="info"
-                    :text="j.platform.toUpperCase()"
-                  />
-                </div>
-                <div class="service-actions">
-                  <button
-                    class="btn btn-sm btn-primary"
-                    @click="runJobNow(j)"
-                  >
-                    Run
-                  </button>
-                  <button
-                    class="btn btn-sm btn-ghost"
-                    @click="showJobEdit(j)"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    v-if="j.status === 'active'"
-                    class="btn btn-sm btn-ghost"
-                    @click="pauseJob(j)"
-                  >
-                    Pause
-                  </button>
-                  <button
-                    v-if="j.status === 'paused'"
-                    class="btn btn-sm btn-save"
-                    @click="resumeJob(j)"
-                  >
-                    Resume
-                  </button>
-                  <button
-                    class="btn btn-sm btn-danger"
-                    @click="removeJob(j)"
-                  >
-                    Delete
-                  </button>
-                </div>
-              </div>
-
-              <div class="job-meta-row">
-                <span class="cron-text">{{ j.cron_expr }}</span>
-                <span class="divider">|</span>
-                <span class="nl-text">{{ j.schedule_nl }}</span>
-              </div>
-
-              <div class="job-task-preview">
-                <div class="preview-label">
-                  Task Instruction
-                </div>
-                <p class="task-text">
-                  {{ j.task }}
-                </p>
-              </div>
-
-              <div class="job-stats-meta">
-                <span class="stat">Runs: <strong>{{ j.run_count }}</strong></span>
-                <span class="divider">|</span>
-                <span class="stat">Last Run: <strong>{{ timeAgo(j.last_run_at) }}</strong></span>
-              </div>
+          <div class="row-line">
+            <div class="job-ident">
+              <span
+                class="state-dot"
+                :class="stateKey(j)"
+                :title="j.status"
+              />
+              <span class="row-title">{{ j.name }}</span>
+              <span
+                v-if="j.created_by === 'agent'"
+                class="mono-chip"
+              >agent</span>
+              <span
+                v-if="j.platform && j.platform !== 'dashboard'"
+                class="mono-chip"
+              >{{ j.platform }}</span>
+              <span
+                class="job-state-label"
+                :class="stateKey(j)"
+              >{{ j.status }}</span>
+            </div>
+            <div class="job-actions">
+              <button
+                class="btn btn-xs btn-ghost row-action"
+                @click="runJobNow(j)"
+              >
+                Run
+              </button>
+              <button
+                class="btn btn-xs btn-ghost row-action"
+                @click="showJobEdit(j)"
+              >
+                Edit
+              </button>
+              <button
+                v-if="j.status === 'active'"
+                class="btn btn-xs btn-ghost row-action"
+                @click="pauseJob(j)"
+              >
+                Pause
+              </button>
+              <button
+                v-if="j.status === 'paused'"
+                class="btn btn-xs btn-save"
+                @click="resumeJob(j)"
+              >
+                Resume
+              </button>
+              <button
+                class="btn btn-xs btn-danger row-action"
+                @click="removeJob(j)"
+              >
+                Delete
+              </button>
             </div>
           </div>
+
+          <div class="job-schedule">
+            <span class="mono-chip">{{ j.cron_expr }}</span>
+            <span
+              v-if="j.schedule_nl && j.schedule_nl !== j.cron_expr"
+              class="job-schedule-nl"
+            >{{ j.schedule_nl }}</span>
+          </div>
+
+          <p class="row-desc job-task">
+            {{ j.task }}
+          </p>
+
+          <p class="job-readout">
+            {{ j.run_count }} runs · last run {{ timeAgo(j.last_run_at) }}
+          </p>
         </div>
-      </section>
-    </div>
+      </div>
+    </section>
   </div>
 
   <Modal
     v-model="jobModalOpen"
     :title="editingJobId ? `Edit Job: ${jobForm.name}` : 'Create Scheduled Job'"
   >
-    <div class="form-container">
-      <div class="form-group-modern">
-        <label>Job Name</label>
+    <div class="job-form">
+      <div class="form-field">
+        <label>Job name</label>
         <input
           v-model="jobForm.name"
           type="text"
-          class="premium-input"
           placeholder="e.g. Daily Summary"
         >
       </div>
-      <div class="form-group-modern">
-        <label>Task / Instruction</label>
+      <div class="form-field">
+        <label>Task / instruction</label>
         <textarea
           v-model="jobForm.task"
           rows="3"
-          class="premium-input textarea-input"
           placeholder="What should the agent do?"
         />
       </div>
 
-      <div class="schedule-builder">
-        <label class="builder-title">Schedule Configuration</label>
+      <fieldset class="schedule-builder">
+        <legend>Schedule</legend>
 
         <div class="builder-grid">
-          <div class="form-group-modern">
-            <label>Trigger Mode</label>
-            <select
-              v-model="scheduleMode"
-              class="premium-input select-input"
-            >
+          <div class="form-field">
+            <label>Trigger mode</label>
+            <select v-model="scheduleMode">
               <option value="minutes">
                 Minutes
               </option>
@@ -375,39 +373,36 @@ onMounted(load)
 
           <div
             v-if="['minutes', 'days'].includes(scheduleMode)"
-            class="form-group-modern"
+            class="form-field"
           >
-            <label>{{ scheduleMode.charAt(0).toUpperCase() + scheduleMode.slice(1) }} Between</label>
+            <label>{{ scheduleMode.charAt(0).toUpperCase() + scheduleMode.slice(1) }} between</label>
             <input
               v-model="scheduleValue"
               type="number"
-              class="premium-input"
               min="1"
             >
           </div>
 
           <div
             v-if="scheduleMode === 'hours'"
-            class="form-group-modern"
+            class="form-field"
           >
-            <label>Hours Between</label>
+            <label>Hours between</label>
             <input
               v-model="scheduleValue"
               type="number"
-              class="premium-input"
               min="1"
             >
           </div>
 
           <div
             v-if="scheduleMode === 'hours'"
-            class="form-group-modern"
+            class="form-field"
           >
-            <label>At Minute</label>
+            <label>At minute</label>
             <input
               v-model="scheduleMinute"
               type="number"
-              class="premium-input"
               min="0"
               max="59"
             >
@@ -415,13 +410,10 @@ onMounted(load)
 
           <div
             v-if="scheduleMode === 'weekly'"
-            class="form-group-modern"
+            class="form-field"
           >
             <label>Day</label>
-            <select
-              v-model="scheduleWeeklyDay"
-              class="premium-input select-input"
-            >
+            <select v-model="scheduleWeeklyDay">
               <option value="MON">
                 Monday
               </option>
@@ -448,13 +440,12 @@ onMounted(load)
 
           <div
             v-if="['days', 'weekly'].includes(scheduleMode)"
-            class="form-group-modern"
+            class="form-field"
           >
-            <label>At Hour</label>
+            <label>At hour</label>
             <input
               v-model="scheduleHour"
               type="number"
-              class="premium-input"
               min="0"
               max="23"
             >
@@ -462,13 +453,12 @@ onMounted(load)
 
           <div
             v-if="['days', 'weekly'].includes(scheduleMode)"
-            class="form-group-modern"
+            class="form-field"
           >
-            <label>At Minute</label>
+            <label>At minute</label>
             <input
               v-model="scheduleMinute"
               type="number"
-              class="premium-input"
               min="0"
               max="59"
             >
@@ -476,39 +466,32 @@ onMounted(load)
 
           <div
             v-if="scheduleMode === 'custom'"
-            class="form-group-modern span-2"
+            class="form-field span-2"
           >
-            <label>Custom Cron Expression</label>
+            <label>Custom cron expression</label>
             <input
               v-model="scheduleCustom"
               type="text"
-              class="premium-input"
               placeholder="e.g. 0 0 9 * * *"
             >
           </div>
         </div>
-      </div>
 
-      <div class="form-group-modern">
-        <label>Generated Cron Preview</label>
-        <input
-          type="text"
-          :value="generatedCron"
-          disabled
-          class="premium-input mono muted-input"
-        >
-      </div>
-      <div class="form-group-modern">
-        <label>Stop Condition (Result contains)</label>
+        <p class="cron-preview">
+          cron <span class="cron-preview-value">{{ generatedCron }}</span>
+        </p>
+      </fieldset>
+
+      <div class="form-field">
+        <label>Stop condition (result contains)</label>
         <input
           v-model="jobForm.stop_condition"
           type="text"
-          class="premium-input"
           placeholder="Optional: stop if output contains this text"
         >
       </div>
     </div>
-    <div class="modal-actions-modern">
+    <div class="modal-actions">
       <button
         class="btn btn-ghost"
         @click="jobModalOpen = false"
@@ -519,7 +502,7 @@ onMounted(load)
         class="btn btn-save"
         @click="saveJob"
       >
-        {{ editingJobId ? 'Save Changes' : 'Schedule' }}
+        {{ editingJobId ? 'Save changes' : 'Schedule' }}
       </button>
     </div>
   </Modal>
@@ -530,138 +513,140 @@ onMounted(load)
   padding-bottom: 60px;
 }
 
-.tasks-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 16px;
-  align-items: start;
-}
-
-.empty-state {
-  padding: 40px;
-  text-align: center;
-  color: var(--muted);
-  font-size: 14px;
-}
-
-.service-item.disabled {
-  opacity: 0.6;
-}
-
-.service-name-row {
+.toolbar-actions {
   display: flex;
-  justify-content: space-between;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
-}
-
-.service-name-group {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.service-actions {
-  display: flex;
   gap: 8px;
+}
+
+/* ── Row identity ─────────────────────────────────────────────────────────── */
+.job-ident {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
   flex-wrap: wrap;
 }
 
-.service-name {
-  font-size: 16px;
-  font-weight: 700;
+.state-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  flex-shrink: 0;
 }
 
-.job-meta-row {
-  margin-top: 12px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
+.state-dot.ok { background: var(--green); }
+.state-dot.warn { background: var(--yellow); }
+.state-dot.off { background: var(--muted); opacity: 0.5; }
 
-.cron-text {
-  font-family: monospace;
-  color: var(--teal);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.nl-text {
-  color: var(--green);
-  font-size: 13px;
-}
-
-.divider {
-  color: var(--muted);
-}
-
-.job-task-preview {
-  margin-top: 14px;
-  background: rgba(0, 0, 0, 0.2);
-  padding: 12px;
-  border-radius: 8px;
-}
-
-.preview-label {
-  font-size: 11px;
-  font-weight: 800;
+.job-state-label {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
-  margin-bottom: 6px;
   color: var(--muted);
 }
 
-.task-text {
-  margin: 0;
-  font-size: 13px;
-  font-family: monospace;
-  line-height: 1.5;
-}
+.job-state-label.warn { color: var(--yellow); }
 
-.job-stats-meta {
-  margin-top: 14px;
+/* ── Row actions: quiet until the row is engaged ──────────────────────────── */
+.job-actions {
   display: flex;
   align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.row-action {
+  opacity: 0.25;
+  transition: opacity 0.15s ease;
+}
+
+.job-row:hover .row-action,
+.row-action:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .row-action {
+    opacity: 1;
+  }
+}
+
+/* ── Schedule + task readouts ─────────────────────────────────────────────── */
+.job-schedule {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
-  font-size: 12px;
+  margin-top: 7px;
+}
+
+.job-schedule-nl {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
   color: var(--muted);
 }
 
-.form-container {
+.job-task {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+}
+
+.job-readout {
+  margin: 8px 0 0;
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  color: var(--muted);
+}
+
+/* A paused job fades back into the membrane. */
+.job-row.off .row-title {
+  color: var(--muted);
+}
+
+.job-row.off .job-schedule,
+.job-row.off .job-task,
+.job-row.off .job-readout {
+  opacity: 0.55;
+}
+
+/* ── Modal form ───────────────────────────────────────────────────────────── */
+.job-form {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  margin-bottom: 20px;
 }
 
-.form-group-modern {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+.form-field label {
+  margin-top: 0;
 }
 
-.form-group-modern label {
-  font-size: 12px;
-  font-weight: 700;
-  text-transform: uppercase;
-  color: var(--muted);
-  letter-spacing: 0.05em;
+.form-field input,
+.form-field select,
+.form-field textarea {
+  margin-bottom: 0;
 }
 
 .schedule-builder {
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 10px;
-  padding: 14px;
-  background: rgba(0, 0, 0, 0.18);
+  margin: 0;
+  padding: 12px 14px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--text) 2%, transparent);
 }
 
-.builder-title {
-  display: block;
-  margin-bottom: 12px;
-  font-size: 11px;
-  font-weight: 800;
-  color: var(--muted);
+.schedule-builder legend {
+  padding: 0 6px;
+  font-family: var(--font-display);
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
+  color: var(--muted);
 }
 
 .builder-grid {
@@ -674,34 +659,38 @@ onMounted(load)
   grid-column: span 2;
 }
 
-.mono {
-  font-family: monospace;
+.cron-preview {
+  margin: 12px 0 0;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--muted);
 }
 
-.muted-input {
-  opacity: 0.75;
+.cron-preview-value {
+  color: var(--accent);
+  font-weight: 600;
 }
 
-.modal-actions-modern {
+.modal-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 12px;
-  padding-top: 16px;
-  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  gap: 10px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
 }
 
-@media (max-width: 960px) {
-  .service-name-row {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
+@media (max-width: 700px) {
   .builder-grid {
     grid-template-columns: 1fr;
   }
 
   .span-2 {
     grid-column: auto;
+  }
+
+  .job-actions {
+    flex-wrap: wrap;
   }
 }
 </style>

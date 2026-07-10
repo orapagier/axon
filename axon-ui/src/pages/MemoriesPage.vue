@@ -4,7 +4,6 @@ import { del, get, post } from '../lib/api.js'
 import { toast } from '../lib/toast.js'
 import { confirmDialog } from '../lib/confirm.js'
 import { fmtTokens, safeJsonParse, timeAgo } from '../lib/utils.js'
-import Pill from '../components/Pill.vue'
 import { useHeaderSearch } from '../lib/headerSearch.js'
 
 const stmRuns = ref([])
@@ -21,8 +20,6 @@ useHeaderSearch('memories', {
 const expandedRuns = ref(new Set())
 const loadedTraces = ref({})
 
-const stmBadge = computed(() => stmRuns.value.length)
-const ltmBadge = computed(() => ltmEntries.value.length)
 const filteredStmRuns = computed(() => {
   const q = memSearch.value.trim().toLowerCase()
   if (!q) return stmRuns.value
@@ -83,9 +80,9 @@ function getTools(r) {
   return safeJsonParse(r.tools_used, []).join(', ')
 }
 
-function statusType(s) {
+function stateKey(s) {
   if (s === 'completed') return 'ok'
-  if (s === 'running') return 'info'
+  if (s === 'running') return 'run'
   return 'err'
 }
 
@@ -96,250 +93,221 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="services-page memories-page">
+  <div class="page-wrap memories-page">
     <div class="memory-grid">
-      <section class="premium-card">
-        <div class="card-header-row no-collapse">
-          <div class="card-title-group">
-            <h2>Short-Term Memory</h2>
+      <section class="panel">
+        <div class="panel-head">
+          <h2 class="panel-title">
+            Short-term memory
+          </h2>
+          <div class="head-actions">
+            <span class="panel-count">{{ filteredStmRuns.length }} runs</span>
+            <button
+              class="btn btn-ghost"
+              @click="loadSTM"
+            >
+              Refresh
+            </button>
           </div>
-          <span class="card-summary">{{ stmBadge }} runs</span>
         </div>
 
-        <div class="action-bar gap-12">
-          <button
-            class="btn btn-ghost"
-            @click="loadSTM"
-          >
-            Refresh
-          </button>
-        </div>
-
-        <div class="service-list">
+        <div class="row-list">
           <div
             v-for="r in filteredStmRuns"
             :key="r.id"
-            class="service-item run-item-row"
-            :class="{ expanded: expandedRuns.has(r.id) }"
+            class="list-row run-row"
           >
-            <div class="service-info">
-              <div
-                class="service-name-row clickable"
-                @click="toggleRun(r.id)"
+            <div
+              class="row-line run-line"
+              role="button"
+              tabindex="0"
+              @click="toggleRun(r.id)"
+              @keydown.enter="toggleRun(r.id)"
+            >
+              <div class="run-ident">
+                <span
+                  class="state-dot"
+                  :class="stateKey(r.status)"
+                  :title="r.status"
+                />
+                <span class="run-task-text">{{ String(r.task || 'No task description').slice(0, 100) }}</span>
+              </div>
+              <div class="run-meta">
+                <span
+                  class="run-state-label"
+                  :class="stateKey(r.status)"
+                >{{ r.status }}</span>
+                <span class="run-time">{{ r.platform }} · {{ timeAgo(r.created_at) }}</span>
+                <svg
+                  class="collapse-icon"
+                  :class="{ rotated: expandedRuns.has(r.id) }"
+                  viewBox="0 0 24 24"
+                  width="13"
+                  height="13"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="m9 6 6 6-6 6"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </div>
+            </div>
+
+            <div
+              v-if="expandedRuns.has(r.id)"
+              class="run-expanded"
+            >
+              <p class="run-facts">
+                {{ r.iterations }} iterations · {{ fmtTokens(r.total_tokens) }} tokens
+                <template v-if="getModels(r)">
+                  · {{ getModels(r) }}
+                </template>
+              </p>
+              <p
+                v-if="getTools(r)"
+                class="run-facts"
               >
-                <div class="service-name-group">
-                  <span class="run-task-text">{{ String(r.task || 'No task description').slice(0, 100) }}</span>
-                </div>
-                <div class="service-actions run-actions-right">
-                  <Pill
-                    :type="statusType(r.status)"
-                    :text="r.status"
-                  />
-                  <Pill
-                    type="muted"
-                    :text="r.platform"
-                  />
-                  <span class="time-text">{{ timeAgo(r.created_at) }}</span>
-                  <svg
-                    class="collapse-icon"
-                    :class="{ rotated: expandedRuns.has(r.id) }"
-                    viewBox="0 0 24 24"
-                    width="14"
-                    height="14"
-                    aria-hidden="true"
-                  >
-                    <path
-                      d="m9 6 6 6-6 6"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    />
-                  </svg>
-                </div>
+                tools: {{ getTools(r) }}
+              </p>
+
+              <div
+                v-if="r.result"
+                class="run-result"
+              >
+                <span class="block-label">result</span>
+                <pre class="result-text">{{ String(r.result) }}</pre>
               </div>
 
-              <div
-                v-if="expandedRuns.has(r.id)"
-                class="run-expanded-content"
+              <button
+                class="btn btn-xs btn-ghost"
+                @click="loadTrace(r.id)"
               >
-                <div class="run-meta-grid">
-                  <div class="meta-item">
-                    <span class="meta-label">Iterations</span>
-                    <span class="meta-value">{{ r.iterations }}</span>
-                  </div>
-                  <div class="meta-item">
-                    <span class="meta-label">Tokens</span>
-                    <span class="meta-value">{{ fmtTokens(r.total_tokens) }}</span>
-                  </div>
-                  <div class="meta-item">
-                    <span class="meta-label">Models</span>
-                    <span class="meta-value">{{ getModels(r) || '-' }}</span>
-                  </div>
-                  <div class="meta-item">
-                    <span class="meta-label">Tools</span>
-                    <span class="meta-value">{{ getTools(r) || '-' }}</span>
+                {{ loadedTraces[r.id] ? 'Refresh trace' : 'Load tool trace' }}
+              </button>
+
+              <div
+                v-if="loadedTraces[r.id]"
+                class="trace-explorer"
+              >
+                <div
+                  v-if="loadedTraces[r.id].iterations?.length"
+                  class="trace-section"
+                >
+                  <span class="block-label">iteration history</span>
+                  <div
+                    v-for="it in loadedTraces[r.id].iterations"
+                    :key="it.iteration"
+                    class="trace-entry"
+                  >
+                    <div class="trace-entry-head">
+                      <span class="trace-entry-title">iteration {{ it.iteration }}</span>
+                      <span class="trace-entry-meta">{{ it.duration_ms != null ? (it.duration_ms / 1000).toFixed(1) + 's' : '?s' }}</span>
+                    </div>
+                    <p class="trace-entry-body">
+                      {{ it.model_name }} · {{ it.tokens }} tokens
+                    </p>
                   </div>
                 </div>
 
                 <div
-                  v-if="r.result"
-                  class="run-result-box"
+                  v-if="loadedTraces[r.id].tool_calls?.length"
+                  class="trace-section"
                 >
-                  <div class="box-label">
-                    Output Result
-                  </div>
-                  <pre class="result-text">{{ String(r.result) }}</pre>
-                </div>
-
-                <button
-                  class="btn btn-sm btn-ghost trace-btn"
-                  @click="loadTrace(r.id)"
-                >
-                  {{ loadedTraces[r.id] ? 'Refresh Trace' : 'Load Tool Trace' }}
-                </button>
-
-                <div
-                  v-if="loadedTraces[r.id]"
-                  class="trace-explorer"
-                >
+                  <span class="block-label">tool calls</span>
                   <div
-                    v-if="loadedTraces[r.id].iterations?.length"
-                    class="trace-section"
+                    v-for="(tc, i) in loadedTraces[r.id].tool_calls"
+                    :key="i"
+                    class="trace-entry"
                   >
-                    <div class="section-header">
-                      ITERATION HISTORY
+                    <div class="trace-entry-head">
+                      <span
+                        class="trace-entry-title"
+                        :class="{ err: tc.error }"
+                      >{{ tc.tool_name }}</span>
+                      <span class="trace-entry-meta">
+                        {{ tc.duration_ms || 0 }}ms{{ tc.parallel ? ' · parallel' : '' }} · {{ tc.error ? 'error' : 'ok' }}
+                      </span>
                     </div>
-                    <div class="trace-timeline">
-                      <div
-                        v-for="it in loadedTraces[r.id].iterations"
-                        :key="it.iteration"
-                        class="trace-log-entry"
-                      >
-                        <div class="entry-header">
-                          <span class="entry-title">Iteration {{ it.iteration }}</span>
-                          <span class="entry-meta">{{ it.duration_ms != null ? (it.duration_ms / 1000).toFixed(1) + 's' : '?s' }}</span>
-                        </div>
-                        <div class="entry-body">
-                          Model: <code>{{ it.model_name }}</code> | Tokens: {{ it.tokens }}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div
-                    v-if="loadedTraces[r.id].tool_calls?.length"
-                    class="trace-section"
-                  >
-                    <div class="section-header">
-                      TOOL CALLS
-                    </div>
-                    <div class="tool-calls-list">
-                      <div
-                        v-for="(tc, i) in loadedTraces[r.id].tool_calls"
-                        :key="i"
-                        class="tool-call-entry"
-                      >
-                        <div class="entry-header">
-                          <span class="tool-name">{{ tc.tool_name }}</span>
-                          <div class="entry-actions">
-                            <span class="entry-meta">{{ tc.duration_ms || 0 }}ms {{ tc.parallel ? 'parallel' : '' }}</span>
-                            <Pill
-                              :type="tc.error ? 'err' : 'ok'"
-                              :text="tc.error ? 'error' : 'ok'"
-                            />
-                          </div>
-                        </div>
-                        <div class="entry-body">
-                          <div
-                            v-if="tc.args"
-                            class="code-snippet"
-                          >
-                            <div class="snippet-label">
-                              Arguments
-                            </div>
-                            <pre><code>{{ String(tc.args) }}</code></pre>
-                          </div>
-                          <div
-                            v-if="tc.result"
-                            class="code-snippet result"
-                          >
-                            <div class="snippet-label">
-                              Result
-                            </div>
-                            <pre><code>{{ String(tc.result) }}</code></pre>
-                          </div>
-                          <div
-                            v-if="tc.error"
-                            class="error-text"
-                          >
-                            Error: {{ tc.error }}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
+                    <pre
+                      v-if="tc.args"
+                      class="trace-snippet"
+                    >{{ String(tc.args) }}</pre>
+                    <pre
+                      v-if="tc.result"
+                      class="trace-snippet"
+                    >{{ String(tc.result) }}</pre>
+                    <p
+                      v-if="tc.error"
+                      class="trace-error"
+                    >
+                      {{ tc.error }}
+                    </p>
                   </div>
                 </div>
               </div>
             </div>
           </div>
+
           <div
             v-if="filteredStmRuns.length === 0"
-            class="empty-state"
+            class="panel-empty"
           >
-            {{ memSearch.trim() ? 'No runs match your search.' : 'No short-term memories found.' }}
+            {{ memSearch.trim() ? 'No runs match your search.' : 'No short-term memories yet.' }}
           </div>
         </div>
       </section>
 
-      <section class="premium-card">
-        <div class="card-header-row no-collapse">
-          <div class="card-title-group">
-            <h2>Long-Term Memory</h2>
+      <section class="panel">
+        <div class="panel-head">
+          <h2 class="panel-title">
+            Long-term memory
+          </h2>
+          <div class="head-actions">
+            <span class="panel-count">{{ ltmEntries.length }} entries</span>
+            <button
+              class="btn btn-ghost"
+              @click="loadLTM"
+            >
+              Load recent
+            </button>
           </div>
-          <span class="card-summary">{{ ltmBadge }} entries</span>
         </div>
 
-        <div class="action-bar gap-12">
-          <button
-            class="btn btn-ghost"
-            @click="loadLTM"
-          >
-            Load Recent
-          </button>
-        </div>
-
-        <div class="service-list">
+        <div class="row-list">
           <div
             v-for="e in ltmEntries"
             :key="e.id"
-            class="service-item memory-entry"
+            class="list-row memory-row"
           >
-            <div class="memory-top-row">
-              <div class="memory-content-text">
+            <div class="row-line memory-line">
+              <p class="memory-content">
                 {{ e.content }}
-              </div>
+              </p>
               <button
-                class="btn btn-sm btn-ghost btn-icon delete-btn-top"
+                class="btn btn-xs btn-danger row-action"
+                title="Delete memory"
                 @click="deleteMemory(e.id)"
               >
-                x
+                Delete
               </button>
             </div>
-            <div class="memory-meta-row">
-              <span class="source-pill">{{ e.source || 'Unknown Source' }}</span>
-              <span class="divider">|</span>
-              <span class="time-text">{{ timeAgo(e.created_at) }}</span>
+            <p class="memory-readout">
+              <span class="mono-chip">{{ e.source || 'unknown' }}</span>
+              {{ timeAgo(e.created_at) }}
               <template v-if="e.score != null">
-                <span class="divider">|</span>
-                <span class="match-score">{{ (e.score * 100).toFixed(0) }}% match</span>
+                · <span class="memory-score">{{ (e.score * 100).toFixed(0) }}% match</span>
               </template>
-            </div>
+            </p>
           </div>
+
           <div
             v-if="ltmEntries.length === 0"
-            class="empty-state"
+            class="panel-empty"
           >
             No knowledge entries found. Try searching or load recent.
           </div>
@@ -357,62 +325,85 @@ onMounted(() => {
 .memory-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  gap: 14px;
   align-items: start;
 }
 
-.action-bar {
-  padding: 16px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+.head-actions {
   display: flex;
-  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
 }
 
-.gap-12 {
-  gap: 12px;
+.panel-empty {
+  padding: 32px 16px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--muted);
 }
 
-.run-item-row .clickable {
+/* ── Run rows ─────────────────────────────────────────────────────────────── */
+.run-line {
   cursor: pointer;
 }
 
-.run-task-text {
-  font-size: 15px;
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex: 1;
-}
-
-.run-item-row .service-name-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 20px;
-}
-
-.service-name-group {
+.run-ident {
   display: flex;
   align-items: center;
-  flex: 1;
+  gap: 9px;
   min-width: 0;
+  flex: 1;
 }
 
-.run-actions-right {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+.state-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
   flex-shrink: 0;
 }
 
-.time-text {
-  font-size: 12px;
+.state-dot.ok { background: var(--green); }
+.state-dot.run { background: var(--blue); }
+.state-dot.err { background: var(--red); }
+
+.run-task-text {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.run-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.run-state-label {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   color: var(--muted);
+}
+
+.run-state-label.err { color: var(--red); }
+.run-state-label.run { color: var(--blue); }
+
+.run-time {
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  color: var(--muted);
+  white-space: nowrap;
 }
 
 .collapse-icon {
   flex-shrink: 0;
+  color: var(--muted);
   opacity: 0.6;
   transition: transform 0.15s ease;
 }
@@ -421,25 +412,44 @@ onMounted(() => {
   transform: rotate(90deg);
 }
 
-.run-expanded-content {
-  margin-top: 20px;
-  padding-top: 20px;
-  border-top: 1px solid rgba(0, 0, 0, 0.05);
+/* ── Expanded run detail ──────────────────────────────────────────────────── */
+.run-expanded {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
 }
 
-.run-meta-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 14px;
-  margin-bottom: 20px;
+.run-facts {
+  margin: 0 0 8px;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  line-height: 1.6;
+  color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
-.run-result-box {
-  margin-bottom: 16px;
+.block-label {
+  display: block;
+  margin-bottom: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.run-result {
+  margin-bottom: 10px;
 }
 
 .result-text {
-  font-size: 13px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--text) 2.5%, transparent);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
@@ -447,60 +457,123 @@ onMounted(() => {
   overflow-y: auto;
 }
 
-.memory-entry {
+.trace-explorer {
+  margin-top: 12px;
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
-.memory-top-row {
+.trace-entry {
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: var(--r-md);
+  margin-bottom: 6px;
+}
+
+.trace-entry-head {
   display: flex;
+  align-items: baseline;
   justify-content: space-between;
-  align-items: flex-start;
-  gap: 16px;
-}
-
-.delete-btn-top {
-  opacity: 0.5;
-  flex-shrink: 0;
-}
-
-.memory-meta-row {
-  display: flex;
-  align-items: center;
   gap: 10px;
 }
 
-.match-score {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--teal);
+.trace-entry-title {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text);
 }
 
-.empty-state {
-  padding: 40px;
-  text-align: center;
+.trace-entry-title.err {
+  color: var(--red);
+}
+
+.trace-entry-meta {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
   color: var(--muted);
-  font-size: 14px;
+  white-space: nowrap;
+}
+
+.trace-entry-body {
+  margin: 4px 0 0;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  color: var(--muted);
+}
+
+.trace-snippet {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.trace-error {
+  margin: 6px 0 0;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  color: var(--red);
+}
+
+/* ── Long-term rows ───────────────────────────────────────────────────────── */
+.memory-line {
+  align-items: flex-start;
+}
+
+.memory-content {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  font-size: 0.8rem;
+  line-height: 1.55;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.row-action {
+  opacity: 0.25;
+  transition: opacity 0.15s ease;
+}
+
+.memory-row:hover .row-action,
+.row-action:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .row-action {
+    opacity: 1;
+  }
+}
+
+.memory-readout {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 0;
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  color: var(--muted);
+}
+
+.memory-score {
+  color: var(--accent);
+  font-weight: 600;
 }
 
 @media (max-width: 960px) {
   .memory-grid {
     grid-template-columns: 1fr;
-  }
-
-  .action-bar {
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .run-item-row .service-name-row {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .run-actions-right {
-    flex-wrap: wrap;
   }
 }
 </style>

@@ -96,10 +96,11 @@
     --font-body: 'Instrument Sans', -apple-system, 'Segoe UI', sans-serif;
     --font-mono: 'IBM Plex Mono', Consolas, 'SFMono-Regular', monospace;
 
-    /* Radius scale — hard lab edges */
-    --r-sm: 3px;
-    --r-md: 4px;
-    --r-lg: 6px;
+    /* Radius scale — softly rounded, never pill. sm: chips/badges,
+       md: buttons/inputs/nav, lg: cards/panels/modals. */
+    --r-sm: 6px;
+    --r-md: 8px;
+    --r-lg: 12px;
 
     /* Button sizing — SINGLE SOURCE OF TRUTH.
        Every standard button derives its size from these tokens via the global
@@ -111,7 +112,7 @@
        only in horizontal padding / font for denser or roomier rows. */
     --btn-h: 27px;
     --btn-px: 12px;
-    --btn-radius: 4px;
+    --btn-radius: 8px;
     --btn-fs: 0.72rem;
     --btn-gap: 6px;
     --btn-sm-h: var(--btn-h);
@@ -120,7 +121,7 @@
     --btn-sm-fs: 0.71rem;
     --btn-xs-h: var(--btn-h);
     --btn-xs-px: 9px;
-    --btn-xs-radius: 4px;
+    --btn-xs-radius: var(--btn-radius);
     --btn-xs-fs: 0.7rem;
 
     /* Search field sizing — SINGLE SOURCE OF TRUTH (see the POLISHED SEARCH
@@ -2849,7 +2850,7 @@ textarea::placeholder {
     .card,
     .modal,
     .login-card {
-        border-radius: 6px !important;
+        border-radius: var(--r-lg) !important;
     }
 
     .card-header-row,
@@ -3127,7 +3128,7 @@ body::before {
     flex-direction: column;
     gap: 10px;
     padding: 13px !important;
-    border-radius: 16px !important;
+    border-radius: var(--r-lg) !important;
     background: rgba(0, 0, 0, 0.025) !important;
     border: 1px solid rgba(0, 0, 0, 0.07) !important;
 }
@@ -3326,7 +3327,7 @@ body::before {
     top: 8px;
     max-height: calc(100vh - 16px);
     overflow-y: auto;
-    border-radius: 16px;
+    border-radius: var(--r-lg);
     border: 1px solid var(--border);
     background: rgba(0, 0, 0, 0.02);
     padding: 12px;
@@ -3341,7 +3342,7 @@ body::before {
 .page-section-nav-btn {
     width: 100%;
     border: 1px solid transparent;
-    border-radius: 12px;
+    border-radius: var(--r-md);
     background: rgba(0, 0, 0, 0.02);
     color: var(--text);
     text-align: left;
@@ -3385,7 +3386,7 @@ body::before {
     background: var(--surface-glow) !important;
     background-color: var(--bg-card) !important;
     border: 1px solid rgba(0, 0, 0, 0.07) !important;
-    border-radius: 18px !important;
+    border-radius: var(--r-lg) !important;
     box-shadow: var(--shadow-sm) !important;
     backdrop-filter: blur(18px);
 }
@@ -3441,7 +3442,7 @@ body::before {
 .wf-run-item,
 .code-snippet,
 .item {
-    border-radius: 16px !important;
+    border-radius: var(--r-md) !important;
     border: 1px solid rgba(0, 0, 0, 0.06) !important;
     background: rgba(0, 0, 0, 0.03) !important;
 }
@@ -3449,7 +3450,7 @@ body::before {
 .stat,
 .stat-item,
 .meta-item {
-    border-radius: 16px !important;
+    border-radius: var(--r-md) !important;
     padding: 12px 14px !important;
     background: rgba(0, 0, 0, 0.03) !important;
     border: 1px solid rgba(0, 0, 0, 0.06) !important;
@@ -3616,7 +3617,7 @@ textarea::placeholder {
 .chat-starter-btn {
     min-height: 64px;
     padding: 14px;
-    border-radius: 16px;
+    border-radius: var(--r-lg);
     border: 1px solid rgba(0, 0, 0, 0.08);
     background:
         linear-gradient(180deg, rgba(0, 0, 0, 0.05), rgba(0, 0, 0, 0.02)),
@@ -3657,7 +3658,7 @@ textarea::placeholder {
 }
 
 .tool-trace {
-    border-radius: 16px;
+    border-radius: var(--r-lg);
     background: rgba(0, 0, 0, 0.03);
     border: 1px solid rgba(0, 0, 0, 0.06);
 }
@@ -3708,7 +3709,7 @@ textarea::placeholder {
 .login-card {
     max-width: 420px !important;
     padding: 28px !important;
-    border-radius: 22px !important;
+    border-radius: var(--r-lg) !important;
     background: rgba(255, 255, 255, 0.9) !important;
 }
 
@@ -3743,7 +3744,7 @@ textarea::placeholder {
 }
 
 .toast {
-    border-radius: 14px !important;
+    border-radius: var(--r-lg) !important;
     background: rgba(255, 255, 255, 0.94) !important;
 }
 
@@ -3843,7 +3844,7 @@ textarea::placeholder {
     .card,
     .modal,
     .login-card {
-        border-radius: 16px !important;
+        border-radius: var(--r-lg) !important;
     }
 
     .card-header-row,
@@ -4881,7 +4882,7 @@ select:focus,
 .chat-input-floating {
     background: var(--bg-card) !important;
     border: 1px solid var(--border) !important;
-    border-radius: 10px !important;
+    border-radius: 14px !important;
     padding: 6px 6px 6px 8px !important;
     box-shadow: none !important;
     backdrop-filter: none;
@@ -4905,7 +4906,7 @@ select:focus,
 .btn-chat-send {
     width: 32px;
     height: 32px;
-    border-radius: 7px;
+    border-radius: var(--r-md);
     align-self: flex-end;
 }
 

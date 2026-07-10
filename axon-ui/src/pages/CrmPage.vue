@@ -427,55 +427,48 @@ onMounted(loadDashboard)
 </script>
 
 <template>
-  <div class="services-page crm-page">
-    <div class="page-header-container">
-      <div class="page-header">
-        <h1>CRM</h1>
-        <p class="page-desc">
-          Leads, deals, organizations, and activity — the agent's customer data.
-        </p>
+  <div class="page-wrap crm-page">
+    <div class="page-toolbar crm-toolbar">
+      <div class="crm-tabs">
+        <button
+          v-for="t in TABS"
+          :key="t.id"
+          class="crm-tab"
+          :class="{ active: tab === t.id }"
+          @click="switchTab(t.id)"
+        >
+          {{ t.label }}
+        </button>
       </div>
-      <div class="header-actions">
-        <button
-          v-if="tab === 'leads'"
-          class="btn btn-save"
-          @click="openLeadCreate"
-        >
-          New Lead
-        </button>
-        <button
-          v-if="tab === 'deals'"
-          class="btn btn-save"
-          @click="openDealCreate()"
-        >
-          New Deal
-        </button>
-        <button
-          v-if="tab === 'orgs'"
-          class="btn btn-save"
-          @click="openOrgCreate"
-        >
-          New Organization
-        </button>
+      <div class="toolbar-actions">
         <button
           class="btn btn-ghost"
           @click="reloadTab"
         >
           Refresh
         </button>
+        <button
+          v-if="tab === 'leads'"
+          class="btn btn-save"
+          @click="openLeadCreate"
+        >
+          New lead
+        </button>
+        <button
+          v-if="tab === 'deals'"
+          class="btn btn-save"
+          @click="openDealCreate()"
+        >
+          New deal
+        </button>
+        <button
+          v-if="tab === 'orgs'"
+          class="btn btn-save"
+          @click="openOrgCreate"
+        >
+          New organization
+        </button>
       </div>
-    </div>
-
-    <div class="crm-tabs">
-      <button
-        v-for="t in TABS"
-        :key="t.id"
-        class="crm-tab"
-        :class="{ active: tab === t.id }"
-        @click="switchTab(t.id)"
-      >
-        {{ t.label }}
-      </button>
     </div>
 
     <!-- ── Dashboard ─────────────────────────────────────────────────────── -->
@@ -488,7 +481,7 @@ onMounted(loadDashboard)
       </div>
       <template v-else>
         <div class="stat-tiles">
-          <div class="premium-card stat-tile">
+          <div class="panel stat-tile">
             <div class="stat-value">
               {{ dash.totals.organizations }}
             </div>
@@ -496,7 +489,7 @@ onMounted(loadDashboard)
               Organizations
             </div>
           </div>
-          <div class="premium-card stat-tile">
+          <div class="panel stat-tile">
             <div class="stat-value">
               {{ dash.totals.leads }}
             </div>
@@ -504,7 +497,7 @@ onMounted(loadDashboard)
               Leads
             </div>
           </div>
-          <div class="premium-card stat-tile">
+          <div class="panel stat-tile">
             <div class="stat-value">
               {{ dash.totals.deals }}
             </div>
@@ -512,7 +505,7 @@ onMounted(loadDashboard)
               Deals
             </div>
           </div>
-          <div class="premium-card stat-tile">
+          <div class="panel stat-tile">
             <div class="stat-value">
               {{ dash.totals.recent_activities }}
             </div>
@@ -523,17 +516,17 @@ onMounted(loadDashboard)
         </div>
 
         <div class="dash-grid">
-          <section class="premium-card">
-            <div class="card-header-row no-collapse">
-              <div class="card-title-group">
-                <h2>Pipeline Health</h2>
-              </div>
+          <section class="panel">
+            <div class="panel-head">
+              <h2 class="panel-title">
+                Pipeline health
+              </h2>
               <span
                 v-if="pipeline"
-                class="card-summary"
+                class="panel-count"
               >win rate {{ pipeline.win_rate_pct }}%</span>
             </div>
-            <div class="card-content kv-list">
+            <div class="panel-body kv-list">
               <div class="kv-row">
                 <span>Active pipeline</span><strong>{{ fmtTotals(dash.pipeline.active_pipeline_value) }}</strong>
               </div>
@@ -552,13 +545,13 @@ onMounted(loadDashboard)
             </div>
           </section>
 
-          <section class="premium-card">
-            <div class="card-header-row no-collapse">
-              <div class="card-title-group">
-                <h2>Lead Status Mix</h2>
-              </div>
+          <section class="panel">
+            <div class="panel-head">
+              <h2 class="panel-title">
+                Lead status mix
+              </h2>
             </div>
-            <div class="card-content kv-list">
+            <div class="panel-body kv-list">
               <div
                 v-for="s in dash.lead_status_counts"
                 :key="s.key"
@@ -573,13 +566,13 @@ onMounted(loadDashboard)
             </div>
           </section>
 
-          <section class="premium-card">
-            <div class="card-header-row no-collapse">
-              <div class="card-title-group">
-                <h2>Stage Rollup</h2>
-              </div>
+          <section class="panel">
+            <div class="panel-head">
+              <h2 class="panel-title">
+                Stage rollup
+              </h2>
             </div>
-            <div class="card-content kv-list">
+            <div class="panel-body kv-list">
               <div
                 v-for="s in dash.deal_stage_rollup"
                 :key="s.stage"
@@ -591,22 +584,22 @@ onMounted(loadDashboard)
             </div>
           </section>
 
-          <section class="premium-card">
-            <div class="card-header-row no-collapse">
-              <div class="card-title-group">
-                <h2>Closing Soon</h2>
-              </div>
-              <span class="card-summary">{{ dash.closing_soon_deals.length }}</span>
+          <section class="panel">
+            <div class="panel-head">
+              <h2 class="panel-title">
+                Closing soon
+              </h2>
+              <span class="panel-count">{{ dash.closing_soon_deals.length }}</span>
             </div>
             <div
               v-if="!dash.closing_soon_deals.length"
-              class="card-content empty-state"
+              class="panel-body panel-empty"
             >
               Nothing closing soon.
             </div>
             <div
               v-else
-              class="card-content mini-list"
+              class="panel-body mini-list"
             >
               <button
                 v-for="d in dash.closing_soon_deals"
@@ -620,22 +613,22 @@ onMounted(loadDashboard)
             </div>
           </section>
 
-          <section class="premium-card">
-            <div class="card-header-row no-collapse">
-              <div class="card-title-group">
-                <h2>Stale Deals</h2>
-              </div>
-              <span class="card-summary">&gt; {{ dash.parameters.stale_days }}d untouched</span>
+          <section class="panel">
+            <div class="panel-head">
+              <h2 class="panel-title">
+                Stale deals
+              </h2>
+              <span class="panel-count">&gt; {{ dash.parameters.stale_days }}d untouched</span>
             </div>
             <div
               v-if="!dash.stale_deals.length"
-              class="card-content empty-state"
+              class="panel-body panel-empty"
             >
               No stale deals.
             </div>
             <div
               v-else
-              class="card-content mini-list"
+              class="panel-body mini-list"
             >
               <button
                 v-for="d in dash.stale_deals"
@@ -674,10 +667,10 @@ onMounted(loadDashboard)
         <span class="filter-count">{{ leadTotal }} lead(s)</span>
       </div>
 
-      <section class="premium-card table-card">
+      <section class="panel table-card">
         <div
           v-if="!leads.length"
-          class="empty-state"
+          class="panel-empty"
         >
           No leads found. Create one or adjust the filter.
         </div>
@@ -811,10 +804,10 @@ onMounted(loadDashboard)
         <span class="filter-count">{{ orgTotal }} organization(s)</span>
       </div>
 
-      <section class="premium-card table-card">
+      <section class="panel table-card">
         <div
           v-if="!orgs.length"
-          class="empty-state"
+          class="panel-empty"
         >
           No organizations found.
         </div>
@@ -866,10 +859,10 @@ onMounted(loadDashboard)
 
     <!-- ── Archived ──────────────────────────────────────────────────────── -->
     <template v-else-if="tab === 'archived'">
-      <section class="premium-card table-card">
+      <section class="panel table-card">
         <div
           v-if="!archived.length"
-          class="empty-state"
+          class="panel-empty"
         >
           No archived records.
         </div>
@@ -925,7 +918,7 @@ onMounted(loadDashboard)
         <aside class="drawer">
           <div
             v-if="drawer.loading || !drawer.data"
-            class="empty-state"
+            class="drawer-empty"
           >
             Loading record…
           </div>
@@ -1038,7 +1031,7 @@ onMounted(loadDashboard)
                     class="mini-row"
                     @click="openDrawer('org', drawer.data.linked.organization.id)"
                   >
-                    <span class="mini-title">🏢 {{ drawer.data.linked.organization.name }}</span>
+                    <span class="mini-title">{{ drawer.data.linked.organization.name }}</span>
                     <span class="mini-meta">organization</span>
                   </button>
                   <button
@@ -1046,7 +1039,7 @@ onMounted(loadDashboard)
                     class="mini-row"
                     @click="openDrawer('lead', drawer.data.linked.lead.id)"
                   >
-                    <span class="mini-title">👤 {{ drawer.data.linked.lead.name }}</span>
+                    <span class="mini-title">{{ drawer.data.linked.lead.name }}</span>
                     <span class="mini-meta">{{ drawer.data.linked.lead.status }}</span>
                   </button>
                   <button
@@ -1055,7 +1048,7 @@ onMounted(loadDashboard)
                     class="mini-row"
                     @click="openDrawer('lead', l.id)"
                   >
-                    <span class="mini-title">👤 {{ l.name }}</span>
+                    <span class="mini-title">{{ l.name }}</span>
                     <span class="mini-meta">{{ l.status }}</span>
                   </button>
                   <button
@@ -1064,12 +1057,12 @@ onMounted(loadDashboard)
                     class="mini-row"
                     @click="openDrawer('deal', d.id)"
                   >
-                    <span class="mini-title">💼 {{ d.title }}</span>
+                    <span class="mini-title">{{ d.title }}</span>
                     <span class="mini-meta">{{ d.stage }} · {{ fmtMoney(d.amount, d.currency) }}</span>
                   </button>
                   <div
                     v-if="!drawer.data.linked.organization && !drawer.data.linked.lead && !(drawer.data.linked.leads || []).length && !(drawer.data.linked.deals || []).length"
-                    class="empty-state slim"
+                    class="drawer-empty slim"
                   >
                     No linked records.
                   </div>
@@ -1080,7 +1073,7 @@ onMounted(loadDashboard)
                 <h3>Activity Timeline</h3>
                 <div
                   v-if="!drawer.data.recent_activities.length"
-                  class="empty-state slim"
+                  class="drawer-empty slim"
                 >
                   No activity yet.
                 </div>
@@ -1454,67 +1447,97 @@ onMounted(loadDashboard)
   padding-bottom: 60px;
 }
 
-/* Tabs */
+/* ── Toolbar: tabs left, actions right ────────────────────────────────────── */
+.crm-toolbar {
+  align-items: center;
+}
+
+.toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
 .crm-tabs {
   display: flex;
-  gap: 6px;
-  margin-bottom: 16px;
+  gap: 2px;
   flex-wrap: wrap;
 }
 
 .crm-tab {
-  padding: 8px 16px;
-  border-radius: 8px;
-  border: 1px solid transparent;
+  padding: 6px 11px;
+  border: 0;
+  border-radius: var(--r-md);
   background: transparent;
   color: var(--muted);
-  font-size: 13px;
-  font-weight: 700;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 500;
   cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
 .crm-tab:hover {
+  background: var(--surface2);
   color: var(--text);
 }
 
 .crm-tab.active {
-  background: rgba(94, 234, 212, 0.08);
-  border-color: rgba(94, 234, 212, 0.25);
-  color: var(--teal);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 
-/* Dashboard */
+/* ── Panel bodies ─────────────────────────────────────────────────────────── */
+.panel-body {
+  padding: 12px 16px 14px;
+}
+
+.panel-empty {
+  padding: 32px 16px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+/* ── Dashboard ────────────────────────────────────────────────────────────── */
 .stat-tiles {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 16px;
+  gap: 14px;
+  margin-bottom: 14px;
 }
 
 .stat-tile {
-  padding: 18px 20px;
-  text-align: left;
+  padding: 14px 16px;
 }
 
 .stat-value {
-  font-size: 28px;
-  font-weight: 800;
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 700;
   line-height: 1.1;
+  letter-spacing: -0.01em;
+  color: var(--text);
 }
 
 .stat-label {
   margin-top: 4px;
-  font-size: 12px;
-  font-weight: 700;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
   color: var(--muted);
 }
 
 .dash-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  gap: 14px;
   align-items: start;
 }
 
@@ -1528,9 +1551,9 @@ onMounted(loadDashboard)
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  padding: 9px 0;
-  border-bottom: 1px solid rgba(128, 128, 128, 0.1);
-  font-size: 13px;
+  padding: 8px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  font-size: 0.78rem;
 }
 
 .kv-row:last-child {
@@ -1541,15 +1564,18 @@ onMounted(loadDashboard)
   color: var(--muted);
 }
 
+.kv-row strong {
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--text);
+  text-align: right;
+}
+
 .mini-list {
   display: flex;
   flex-direction: column;
   gap: 4px;
-}
-
-/* Global .card-content zeroes top padding; give list bodies breathing room below the header. */
-.card-content.mini-list {
-  padding-top: 10px !important;
 }
 
 .mini-row {
@@ -1557,22 +1583,23 @@ onMounted(loadDashboard)
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  padding: 8px 10px;
-  border: none;
-  border-radius: 8px;
-  background: rgba(128, 128, 128, 0.06);
+  padding: 7px 10px;
+  border: 0;
+  border-radius: var(--r-md);
+  background: transparent;
   color: inherit;
   font: inherit;
   text-align: left;
   cursor: pointer;
+  transition: background 0.15s ease;
 }
 
 .mini-row:hover {
-  background: rgba(128, 128, 128, 0.12);
+  background: var(--surface2);
 }
 
 .mini-title {
-  font-size: 13px;
+  font-size: 0.78rem;
   font-weight: 600;
   min-width: 0;
   overflow: hidden;
@@ -1581,32 +1608,28 @@ onMounted(loadDashboard)
 }
 
 .mini-meta {
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
   color: var(--muted);
   white-space: nowrap;
 }
 
-/* Filter bar layout comes from the global .filter-bar / .search-field rules. */
-
+/* ── Filter bar ───────────────────────────────────────────────────────────── */
 .slim-select {
   width: auto;
-  padding-top: 6px;
-  padding-bottom: 6px;
-  font-size: 13px;
+  margin-bottom: 0;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  font-size: 0.76rem;
 }
 
 .filter-count {
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
   color: var(--muted);
-  font-weight: 600;
 }
 
-/* Tables */
-.table-card {
-  padding: 0;
-  overflow: hidden;
-}
-
+/* ── Tables ───────────────────────────────────────────────────────────────── */
 .table-scroll {
   overflow-x: auto;
 }
@@ -1614,24 +1637,26 @@ onMounted(loadDashboard)
 .crm-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: 0.78rem;
 }
 
 .crm-table th {
   text-align: left;
-  padding: 12px 14px;
-  font-size: 11px;
-  font-weight: 800;
+  padding: 9px 14px;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.07em;
   color: var(--muted);
-  border-bottom: 1px solid rgba(128, 128, 128, 0.15);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
   white-space: nowrap;
 }
 
 .crm-table td {
-  padding: 10px 14px;
-  border-bottom: 1px solid rgba(128, 128, 128, 0.08);
+  padding: 9px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
   vertical-align: middle;
 }
 
@@ -1640,7 +1665,7 @@ onMounted(loadDashboard)
 }
 
 .crm-table tr:hover td {
-  background: rgba(128, 128, 128, 0.05);
+  background: color-mix(in srgb, var(--text) 2.5%, transparent);
 }
 
 .clickable {
@@ -1648,16 +1673,17 @@ onMounted(loadDashboard)
 }
 
 .clickable:hover {
-  color: var(--teal);
-  text-decoration: underline;
+  color: var(--accent);
 }
 
 .strong {
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .muted-cell {
   color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
   white-space: nowrap;
 }
 
@@ -1668,7 +1694,24 @@ onMounted(loadDashboard)
   white-space: nowrap;
 }
 
-/* Kanban */
+/* Row actions stay quiet until the row is engaged. */
+.crm-table .row-actions .btn {
+  opacity: 0.25;
+  transition: opacity 0.15s ease;
+}
+
+.crm-table tr:hover .row-actions .btn,
+.crm-table .row-actions .btn:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .crm-table .row-actions .btn {
+    opacity: 1;
+  }
+}
+
+/* ── Kanban ───────────────────────────────────────────────────────────────── */
 .kanban {
   display: grid;
   grid-template-columns: repeat(6, minmax(180px, 1fr));
@@ -1680,9 +1723,9 @@ onMounted(loadDashboard)
 
 .kanban-col {
   min-width: 180px;
-  background: rgba(128, 128, 128, 0.05);
-  border: 1px solid rgba(128, 128, 128, 0.1);
-  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
   padding: 10px;
 }
 
@@ -1694,14 +1737,17 @@ onMounted(loadDashboard)
 }
 
 .kanban-stage {
-  font-size: 12px;
-  font-weight: 800;
+  font-family: var(--font-display);
+  font-size: 0.66rem;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.12em;
+  color: color-mix(in srgb, var(--text) 78%, transparent);
 }
 
 .kanban-meta {
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
   color: var(--muted);
 }
 
@@ -1714,33 +1760,36 @@ onMounted(loadDashboard)
 .kanban-empty {
   text-align: center;
   color: var(--muted);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
   padding: 12px 0;
 }
 
 .kanban-card {
-  background: rgba(128, 128, 128, 0.08);
-  border: 1px solid rgba(128, 128, 128, 0.12);
-  border-radius: 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
   padding: 10px;
   cursor: pointer;
+  transition: border-color 0.15s ease;
 }
 
 .kanban-card:hover {
-  border-color: rgba(94, 234, 212, 0.4);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
 .kanban-title {
-  font-size: 13px;
-  font-weight: 700;
-  margin-bottom: 4px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin-bottom: 3px;
   word-break: break-word;
 }
 
 .kanban-amount {
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
   font-weight: 600;
-  color: var(--teal);
+  color: var(--accent);
   margin-bottom: 8px;
 }
 
@@ -1751,15 +1800,18 @@ onMounted(loadDashboard)
 }
 
 .kanban-close {
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
   color: var(--muted);
 }
 
-/* Drawer */
+/* ── Drawer ───────────────────────────────────────────────────────────────── */
 .drawer-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.45);
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
   z-index: 90;
   display: flex;
   justify-content: flex-end;
@@ -1768,8 +1820,8 @@ onMounted(loadDashboard)
 .drawer {
   width: min(520px, 100vw);
   height: 100%;
-  background: var(--bg, #111);
-  border-left: 1px solid rgba(128, 128, 128, 0.2);
+  background: var(--surface);
+  border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   overflow-y: auto;
@@ -1786,13 +1838,26 @@ onMounted(loadDashboard)
   opacity: 0;
 }
 
+.drawer-empty {
+  padding: 32px 16px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.drawer-empty.slim {
+  padding: 10px 0;
+  text-align: left;
+}
+
 .drawer-head {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
   gap: 12px;
   padding-bottom: 14px;
-  border-bottom: 1px solid rgba(128, 128, 128, 0.15);
+  border-bottom: 1px solid var(--border);
   flex-wrap: wrap;
 }
 
@@ -1806,7 +1871,8 @@ onMounted(loadDashboard)
 
 .drawer-title-group h2 {
   margin: 0;
-  font-size: 18px;
+  font-size: 1rem;
+  font-weight: 600;
 }
 
 .drawer-actions {
@@ -1824,10 +1890,11 @@ onMounted(loadDashboard)
 
 .drawer-section h3 {
   margin: 0 0 8px;
-  font-size: 12px;
-  font-weight: 800;
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.08em;
   color: var(--muted);
 }
 
@@ -1841,13 +1908,13 @@ onMounted(loadDashboard)
 .timeline {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .timeline-item {
-  padding: 10px;
-  border-radius: 8px;
-  background: rgba(128, 128, 128, 0.06);
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: var(--r-md);
 }
 
 .timeline-head {
@@ -1858,21 +1925,22 @@ onMounted(loadDashboard)
 }
 
 .timeline-title {
-  font-size: 13px;
-  font-weight: 700;
+  font-size: 0.78rem;
+  font-weight: 600;
   flex: 1;
   min-width: 0;
 }
 
 .timeline-time {
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
   color: var(--muted);
   white-space: nowrap;
 }
 
 .timeline-body {
   margin: 6px 0 0;
-  font-size: 12px;
+  font-size: 0.74rem;
   color: var(--muted);
   white-space: pre-wrap;
   word-break: break-word;
@@ -1891,6 +1959,11 @@ onMounted(loadDashboard)
 
 .act-form-row input {
   flex: 1;
+  margin-bottom: 0;
+}
+
+.act-form textarea {
+  margin-bottom: 0;
 }
 
 .act-form-actions {
@@ -1898,53 +1971,42 @@ onMounted(loadDashboard)
   justify-content: flex-end;
 }
 
-/* Forms / modals */
+/* ── Forms / modals ───────────────────────────────────────────────────────── */
 .form-container {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  margin-bottom: 20px;
+  margin-bottom: 18px;
 }
 
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 10px 12px;
 }
 
 .form-group-modern {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 
 .form-group-modern label {
-  font-size: 12px;
-  font-weight: 700;
-  text-transform: uppercase;
-  color: var(--muted);
-  letter-spacing: 0.05em;
+  margin: 0;
+}
+
+.form-group-modern input,
+.form-group-modern select,
+.form-group-modern textarea {
+  margin-bottom: 0;
 }
 
 .modal-actions-modern {
   display: flex;
   justify-content: flex-end;
-  gap: 12px;
-  padding-top: 16px;
-  border-top: 1px solid rgba(128, 128, 128, 0.1);
-}
-
-.empty-state {
-  padding: 40px;
-  text-align: center;
-  color: var(--muted);
-  font-size: 14px;
-}
-
-.empty-state.slim {
-  padding: 12px;
-  font-size: 13px;
-  text-align: left;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
 }
 
 @media (max-width: 1100px) {

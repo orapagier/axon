@@ -5,7 +5,6 @@ import { toast } from '../lib/toast.js'
 import { confirmDialog } from '../lib/confirm.js'
 import { fmtTokens, timeAgo } from '../lib/utils.js'
 import Modal from '../components/Modal.vue'
-import Pill from '../components/Pill.vue'
 import { useHeaderSearch } from '../lib/headerSearch.js'
 
 const models = ref([])
@@ -137,9 +136,15 @@ async function reset(m) {
   load()
 }
 
-function statusType(s) {
-  return s === 'available' ? 'ok' : s === 'rate_limited' ? 'warn' : 'err'
+// One visual state per row: disabled overrides live status.
+function stateKey(m) {
+  if (m.enabled === false) return 'off'
+  if (m.status === 'available') return 'ok'
+  if (m.status === 'rate_limited') return 'warn'
+  return 'err'
 }
+
+const STATE_LABEL = { ok: 'available', warn: 'rate limited', err: 'unavailable', off: 'disabled' }
 
 const summary = computed(() => {
   const c = { total: models.value.length, healthy: 0, rateLimited: 0, unavailable: 0, disabled: 0 }
@@ -169,307 +174,280 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="services-page">
-    <div class="page-header-container">
-      <div class="page-header">
-        <h1>Models</h1>
-        <p class="page-desc">
-          Manage your AI providers and monitor rate limits.
-        </p>
-      </div>
-      <div class="header-actions">
+  <div class="page-wrap models-page">
+    <div class="page-toolbar">
+      <p class="page-readout">
+        <span class="readout-em">{{ summary.total }}</span> models
+        · <span class="readout-em">{{ summary.healthy }}</span> healthy
+        <template v-if="summary.rateLimited">
+          · {{ summary.rateLimited }} rate limited
+        </template>
+        <template v-if="summary.unavailable">
+          · {{ summary.unavailable }} unavailable
+        </template>
+        <template v-if="summary.disabled">
+          · {{ summary.disabled }} disabled
+        </template>
+      </p>
+      <div class="toolbar-actions">
         <button
           class="btn btn-ghost"
           @click="enableAll"
         >
-          ⚡ Enable All
+          Enable all
         </button>
         <button
           class="btn btn-ghost"
           @click="disableAll"
         >
-          ⏸ Disable All
-        </button>
-        <button
-          class="btn btn-save"
-          @click="showAdd"
-        >
-          + Add Model
+          Disable all
         </button>
         <button
           class="btn btn-ghost"
           @click="load"
         >
-          ↻ Refresh
+          Refresh
+        </button>
+        <button
+          class="btn btn-save"
+          @click="showAdd"
+        >
+          Add model
         </button>
       </div>
     </div>
 
     <div
       v-if="models.length === 0"
-      class="empty-state-container"
+      class="empty-state"
     >
-      <div class="empty-state">
-        No models configured. Add one to get started.
-      </div>
+      <p class="empty-title">
+        No models configured
+      </p>
+      <p class="empty-hint">
+        Add a model to give the agent a brain to run on.
+      </p>
     </div>
 
-    <template v-else>
-      <div class="models-list">
-        <div class="premium-card">
-          <div class="card-header-row no-collapse">
-            <div class="card-title-group">
-              <h2>Active Models</h2>
+    <div
+      v-else-if="filteredModels.length === 0"
+      class="empty-state"
+    >
+      <p class="empty-title">
+        No matching models
+      </p>
+      <p class="empty-hint">
+        Nothing matches "{{ modelSearch.trim() }}". Try a different term.
+      </p>
+    </div>
+
+    <section
+      v-else
+      class="panel"
+    >
+      <div class="panel-head">
+        <h2 class="panel-title">
+          Model fleet
+        </h2>
+        <span class="panel-count">{{ filteredModels.length }} shown</span>
+      </div>
+
+      <div class="row-list">
+        <div
+          v-for="m in filteredModels"
+          :key="m.name"
+          class="list-row model-row"
+          :class="{ off: m.enabled === false }"
+        >
+          <div class="row-line">
+            <div class="model-ident">
+              <span
+                class="state-dot"
+                :class="stateKey(m)"
+                :title="STATE_LABEL[stateKey(m)]"
+              />
+              <span class="row-title">{{ m.name }}</span>
+              <span
+                v-if="m.role"
+                class="mono-chip"
+              >{{ m.role }}</span>
+              <span
+                class="model-state-label"
+                :class="stateKey(m)"
+              >{{ STATE_LABEL[stateKey(m)] }}</span>
             </div>
-            <div class="fleet-summary">
-              <span class="fleet-total">{{ summary.total }} configured</span>
-              <span
-                class="fleet-stat"
-                :class="{ dim: summary.healthy === 0 }"
+            <div class="model-actions">
+              <button
+                class="btn btn-xs btn-ghost row-action"
+                @click="showEdit(m)"
               >
-                <i class="dot ok" />{{ summary.healthy }} healthy
-              </span>
-              <span
-                class="fleet-stat"
-                :class="{ dim: summary.rateLimited === 0 }"
+                Edit
+              </button>
+              <button
+                v-if="m.consecutive_errors > 0 || (m.status && m.status !== 'available')"
+                class="btn btn-xs btn-ghost row-action"
+                @click="reset(m)"
               >
-                <i class="dot warn" />{{ summary.rateLimited }} rate limited
-              </span>
-              <span
-                class="fleet-stat"
-                :class="{ dim: summary.unavailable === 0 }"
+                Reset
+              </button>
+              <button
+                class="btn btn-xs btn-danger row-action"
+                @click="remove(m)"
               >
-                <i class="dot err" />{{ summary.unavailable }} unavailable
-              </span>
-              <span
-                class="fleet-stat"
-                :class="{ dim: summary.disabled === 0 }"
-              >
-                <i class="dot muted" />{{ summary.disabled }} disabled
-              </span>
+                Delete
+              </button>
+              <button
+                class="switch"
+                type="button"
+                role="switch"
+                :aria-checked="m.enabled === false ? 'false' : 'true'"
+                :aria-label="`${m.enabled === false ? 'Enable' : 'Disable'} ${m.name}`"
+                :title="m.enabled === false ? 'Enable' : 'Disable'"
+                @click="toggle(m)"
+              />
             </div>
           </div>
 
-          <div
-            v-if="filteredModels.length === 0"
-            class="empty-state"
-          >
-            No models match your search.
+          <div class="model-meta">
+            <span class="mono-chip">{{ m.provider }}</span>
+            <span class="mono-chip">P{{ m.priority }}</span>
+            <span class="model-id">{{ m.model_id }}</span>
+            <span class="model-readout">
+              {{ m.total_calls }} calls
+              · {{ fmtTokens(m.total_input_tokens) }} in / {{ fmtTokens(m.total_output_tokens) }} out
+              · <span :class="{ 'readout-err': m.consecutive_errors > 0 }">{{ m.consecutive_errors }} errors</span>
+              <template v-if="m.rate_limit_reset_at">
+                · resets {{ timeAgo(m.rate_limit_reset_at) }}
+              </template>
+            </span>
           </div>
+
           <div
-            v-else
-            class="service-list"
+            v-if="getPct(m) !== null"
+            class="rate-row"
+            :title="`${m.rl_snapshot.tokens_remaining_per_min} / ${m.rl_snapshot.tokens_limit_per_min} tokens remaining`"
           >
-            <div
-              v-for="m in filteredModels"
-              :key="m.name"
-              class="service-item model-row"
-              :class="{ disabled: m.enabled === false }"
-            >
-              <div class="service-info">
-                <div class="service-name-row">
-                  <div class="service-name-group">
-                    <span class="service-name">{{ m.name }}</span>
-                    <Pill
-                      v-if="m.enabled === false"
-                      type="muted"
-                      text="Disabled"
-                    />
-                    <Pill
-                      :type="statusType(m.status)"
-                      :text="m.status"
-                    />
-                    <template v-if="m.role">
-                      <Pill
-                        type="info"
-                        :text="m.role.toUpperCase()"
-                      />
-                    </template>
-                  </div>
-                  <div class="service-actions">
-                    <button
-                      class="btn btn-sm btn-ghost"
-                      @click="showEdit(m)"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      v-if="m.consecutive_errors > 0 || (m.status && m.status !== 'available')"
-                      class="btn btn-sm btn-ghost"
-                      @click="reset(m)"
-                    >
-                      Reset
-                    </button>
-                    <button
-                      class="btn btn-sm btn-ghost"
-                      @click="toggle(m)"
-                    >
-                      {{ m.enabled === false ? 'Enable' : 'Disable' }}
-                    </button>
-                    <button
-                      class="btn btn-sm btn-danger"
-                      @click="remove(m)"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                </div>
-
-                <div class="model-meta-line">
-                  <span class="provider-pill">{{ m.provider }}</span>
-                  <span class="model-id-text">{{ m.model_id }}</span>
-                  <span class="priority-pill">P{{ m.priority }}</span>
-                  <span class="meta-sep">·</span>
-                  <span>{{ m.total_calls }} calls</span>
-                  <span class="meta-sep">·</span>
-                  <span>{{ fmtTokens(m.total_input_tokens) }} in / {{ fmtTokens(m.total_output_tokens) }} out</span>
-                  <span class="meta-sep">·</span>
-                  <span :class="{ 'text-danger': m.consecutive_errors > 0 }">{{ m.consecutive_errors }} errors</span>
-                  <template v-if="m.rate_limit_reset_at">
-                    <span class="meta-sep">·</span>
-                    <span>resets {{ timeAgo(m.rate_limit_reset_at) }}</span>
-                  </template>
-                </div>
-
-                <div
-                  v-if="getPct(m) !== null"
-                  class="rate-limit-row"
-                >
-                  <div
-                    class="premium-progress"
-                    :title="`${m.rl_snapshot.tokens_remaining_per_min} / ${m.rl_snapshot.tokens_limit_per_min} tokens remaining`"
-                  >
-                    <div
-                      class="progress-fill"
-                      :style="{ width: getPct(m) + '%' }"
-                    />
-                  </div>
-                  <span class="rate-limit-pct">{{ getPct(m) }}% left</span>
-                </div>
-              </div>
+            <div class="rate-track">
+              <div
+                class="rate-fill"
+                :style="{ width: getPct(m) + '%' }"
+              />
             </div>
+            <span class="rate-pct">{{ getPct(m) }}% left</span>
           </div>
         </div>
       </div>
-    </template>
+    </section>
   </div>
 
   <Modal
     v-model="modalOpen"
     :title="editing ? `Edit Model: ${form.name}` : 'Add AI Model'"
-    :max-width="'780px'"
+    :max-width="'720px'"
   >
-    <div class="model-modal-body">
-      <div class="form-container">
-        <div class="form-row-modern">
-          <div class="form-group-modern flex-1">
-            <label>Internal Name</label>
-            <input
-              v-model="form.name"
-              type="text"
-              :disabled="editing"
-              class="premium-input"
-              placeholder="e.g. gpt-4-prod"
-            >
-          </div>
-          <div class="form-group-modern flex-1">
-            <label>Provider</label>
-            <select
-              v-model="form.provider"
-              class="premium-input select-input"
-            >
-              <option
-                v-for="p in PROVIDERS"
-                :key="p.value"
-                :value="p.value"
-              >
-                {{ p.label }}
-              </option>
-            </select>
-          </div>
-        </div>
-        <div class="form-group-modern">
-          <label>Model ID</label>
+    <div class="model-form">
+      <div class="form-grid">
+        <div class="form-field">
+          <label>Internal name</label>
           <input
-            v-model="form.model_id"
+            v-model="form.name"
             type="text"
-            class="premium-input"
-            placeholder="e.g. gpt-4o"
+            :disabled="editing"
+            placeholder="e.g. gpt-4-prod"
           >
         </div>
-        <div class="form-group-modern">
-          <label>API Key</label>
-          <input
-            v-model="form.api_key"
-            type="password"
-            class="premium-input"
-            placeholder="••••••••••••••••"
-          >
-        </div>
-        <div class="form-group-modern">
-          <label>Base URL (Optional)</label>
-          <input
-            v-model="form.base_url"
-            type="text"
-            class="premium-input"
-            placeholder="https://api.openai.com/v1"
-          >
-        </div>
-        <div class="form-row-modern">
-          <div class="form-group-modern flex-1">
-            <label>Priority</label>
-            <input
-              v-model="form.priority"
-              type="number"
-              class="premium-input"
+        <div class="form-field">
+          <label>Provider</label>
+          <select v-model="form.provider">
+            <option
+              v-for="p in PROVIDERS"
+              :key="p.value"
+              :value="p.value"
             >
-          </div>
-          <div class="form-group-modern flex-1">
-            <label>Role</label>
-            <select
-              v-model="form.role"
-              class="premium-input select-input"
-            >
-              <option value="">
-                General
-              </option>
-              <optgroup label="Specialists">
-                <option value="router">
-                  Router (cron / tool select)
-                </option>
-                <option value="tool_writer">
-                  Tool Writer
-                </option>
-                <option value="quality_checker">
-                  Quality Checker
-                </option>
-                <option value="memory_compressor">
-                  Memory Compressor
-                </option>
-                <option value="watcher">
-                  Watcher
-                </option>
-                <option value="image_model">
-                  Image Model (vision)
-                </option>
-              </optgroup>
-              <option value="paid_model">
-                Paid Fallback
-              </option>
-            </select>
-          </div>
-        </div>
-        <div class="form-group-modern">
-          <label>Max Tokens</label>
-          <input
-            v-model="form.max_tokens"
-            type="number"
-            class="premium-input"
-          >
+              {{ p.label }}
+            </option>
+          </select>
         </div>
       </div>
+
+      <div class="form-field">
+        <label>Model ID</label>
+        <input
+          v-model="form.model_id"
+          type="text"
+          placeholder="e.g. gpt-4o"
+        >
+      </div>
+
+      <div class="form-field">
+        <label>API key</label>
+        <input
+          v-model="form.api_key"
+          type="password"
+          placeholder="••••••••••••••••"
+        >
+      </div>
+
+      <div class="form-field">
+        <label>Base URL (optional)</label>
+        <input
+          v-model="form.base_url"
+          type="text"
+          placeholder="https://api.openai.com/v1"
+        >
+      </div>
+
+      <div class="form-grid">
+        <div class="form-field">
+          <label>Priority</label>
+          <input
+            v-model="form.priority"
+            type="number"
+          >
+        </div>
+        <div class="form-field">
+          <label>Role</label>
+          <select v-model="form.role">
+            <option value="">
+              General
+            </option>
+            <optgroup label="Specialists">
+              <option value="router">
+                Router (cron / tool select)
+              </option>
+              <option value="tool_writer">
+                Tool Writer
+              </option>
+              <option value="quality_checker">
+                Quality Checker
+              </option>
+              <option value="memory_compressor">
+                Memory Compressor
+              </option>
+              <option value="watcher">
+                Watcher
+              </option>
+              <option value="image_model">
+                Image Model (vision)
+              </option>
+            </optgroup>
+            <option value="paid_model">
+              Paid Fallback
+            </option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-field">
+        <label>Max tokens</label>
+        <input
+          v-model="form.max_tokens"
+          type="number"
+        >
+      </div>
     </div>
-    <div class="modal-actions-modern">
+
+    <div class="modal-actions">
       <button
         class="btn btn-ghost"
         @click="modalOpen = false"
@@ -480,395 +458,187 @@ onMounted(load)
         class="btn btn-save"
         @click="save"
       >
-        Save Model
+        Save model
       </button>
     </div>
   </Modal>
 </template>
 
 <style scoped>
-.services-page {
+.models-page {
   padding-bottom: 60px;
 }
 
-.page-header-container {
+.toolbar-actions {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  margin-bottom: 18px;
-}
-
-.page-header h1 {
-  font-size: 22px;
-  font-weight: 800;
-  letter-spacing: -0.02em;
-  margin-bottom: 4px;
-  background: linear-gradient(90deg, #1e2433, #6c5ce7);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-
-.page-desc {
-  color: var(--muted);
-  font-size: 13px;
-  margin: 0;
-}
-
-/* Premium Cards */
-.premium-card {
-  background: rgba(255, 255, 255, 0.4);
-  backdrop-filter: blur(20px);
-  border: 1px solid rgba(0, 0, 0, 0.05);
-  border-radius: 12px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
-  margin-bottom: 16px;
-  overflow: hidden;
-  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.card-header-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 20px;
-  background: rgba(0, 0, 0, 0.1);
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
 }
 
-.fleet-summary {
+/* ── Row identity ─────────────────────────────────────────────────────────── */
+.model-ident {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 9px;
+  min-width: 0;
   flex-wrap: wrap;
 }
 
-.fleet-total {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text);
-}
-
-.fleet-stat {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--muted);
-  white-space: nowrap;
-}
-
-.fleet-stat.dim {
-  opacity: 0.45;
-}
-
-.dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  display: inline-block;
+.state-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
   flex-shrink: 0;
 }
 
-.dot.ok { background: #00cec9; }
-.dot.warn { background: #f59e0b; }
-.dot.err { background: #ff7675; }
-.dot.muted { background: var(--muted); }
+.state-dot.ok { background: var(--green); }
+.state-dot.warn { background: var(--yellow); }
+.state-dot.err { background: var(--red); }
+.state-dot.off { background: var(--muted); opacity: 0.5; }
 
-.card-title-group h2 {
-  font-size: 13px;
-  font-weight: 800;
-  color: var(--text);
-  letter-spacing: 0.1em;
+.model-state-label {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
-  margin: 0;
+  color: var(--muted);
 }
 
-.service-list {
+.model-state-label.warn { color: var(--yellow); }
+.model-state-label.err { color: var(--red); }
+
+/* ── Row actions: quiet until the row is engaged ──────────────────────────── */
+.model-actions {
   display: flex;
-  flex-direction: column;
-}
-
-.service-item {
-  padding: 12px 20px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
-  transition: background 0.2s;
-}
-
-.service-item:hover {
-  background: rgba(0, 0, 0, 0.02);
-}
-
-.service-item:last-child {
-  border-bottom: none;
-}
-
-.service-item.disabled {
-  opacity: 0.6;
-}
-
-.service-info {
-  width: 100%;
-}
-
-.service-name-row {
-  display: flex;
-  justify-content: space-between;
   align-items: center;
-  margin-bottom: 6px;
-  gap: 12px;
-  flex-wrap: wrap;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
-.service-name-group {
+.row-action {
+  opacity: 0.25;
+  transition: opacity 0.15s ease;
+}
+
+.model-row:hover .row-action,
+.row-action:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .row-action {
+    opacity: 1;
+  }
+}
+
+/* ── Meta line ────────────────────────────────────────────────────────────── */
+.model-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  margin-top: 7px;
+}
+
+.model-id {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.model-readout {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  color: var(--muted);
+}
+
+.readout-err {
+  color: var(--red);
+}
+
+/* ── Rate-limit meter: hairline track, signal fill ────────────────────────── */
+.rate-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  flex-wrap: wrap;
+  margin-top: 8px;
 }
 
-.service-name {
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--text);
-}
-
-.model-meta-line {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.meta-sep {
-  opacity: 0.4;
-}
-
-.provider-pill {
-  font-size: 10px;
-  font-weight: 800;
-  text-transform: uppercase;
-  color: #a29bfe;
-  background: rgba(162, 155, 254, 0.1);
-  padding: 1px 7px;
-  border-radius: 4px;
-}
-
-.model-id-text {
-  font-size: 12px;
-  color: var(--muted);
-  font-family: 'Fira Code', monospace;
-}
-
-.priority-pill {
-  font-size: 10px;
-  font-weight: 700;
-  color: var(--muted);
-  background: rgba(0, 0, 0, 0.05);
-  padding: 1px 6px;
-  border-radius: 4px;
-}
-
-.text-danger {
-  color: #ff7675;
-}
-
-/* Rate Limit Bar */
-.rate-limit-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 6px;
-}
-
-.premium-progress {
-  flex: 1;
-  max-width: 200px;
-  height: 4px;
-  background: rgba(0, 0, 0, 0.05);
-  border-radius: 10px;
+.rate-track {
+  flex: 0 1 180px;
+  height: 3px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 10%, transparent);
   overflow: hidden;
 }
 
-.progress-fill {
+.rate-fill {
   height: 100%;
-  background: linear-gradient(90deg, #6c5ce7, #a29bfe);
-  border-radius: 10px;
-  transition: width 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.4s ease;
 }
 
-.rate-limit-pct {
-  font-size: 11px;
+.rate-pct {
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
   color: var(--muted);
   white-space: nowrap;
 }
 
-.empty-state-container {
-  padding: 60px 0;
-  text-align: center;
-}
-
-.empty-state {
+/* A disabled model fades back into the membrane. */
+.model-row.off .row-title {
   color: var(--muted);
-  font-style: italic;
-  font-size: 15px;
 }
 
-/* Modal Modernization */
-.form-container {
+.model-row.off .model-meta,
+.model-row.off .rate-row {
+  opacity: 0.55;
+}
+
+/* ── Modal form ───────────────────────────────────────────────────────────── */
+.model-form {
   display: flex;
   flex-direction: column;
-  gap: 20px;
-  margin-bottom: 24px;
-}
-
-.model-modal-body {
+  gap: 12px;
   max-height: calc(100vh - 250px);
   overflow-y: auto;
   padding-right: 4px;
 }
 
-.form-group-modern {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
 }
 
-.form-group-modern label {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+.form-field label {
+  margin-top: 0;
 }
 
-.form-row-modern {
-  display: flex;
-  gap: 16px;
+.form-field input,
+.form-field select {
+  margin-bottom: 0;
 }
 
-.flex-1 { flex: 1; }
-
-.premium-input {
-  width: 100%;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 10px;
-  color: var(--text);
-  padding: 12px 16px;
-  font-size: 14px;
-  font-family: inherit;
-  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-  outline: none;
-}
-
-.premium-input::placeholder {
-  color: rgba(237, 244, 247, 0.35);
-}
-
-.premium-input:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-.premium-input:focus {
-  background: rgba(255, 255, 255, 0.09);
-  border-color: var(--teal);
-  box-shadow: 0 0 0 3px rgba(129, 230, 217, 0.15);
-}
-
-.select-input {
-  appearance: none;
-  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' opacity='0.5'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
-  background-repeat: no-repeat;
-  background-position: right 12px center;
-  background-size: 16px;
-  padding-right: 40px;
-}
-
-/* Dropdown options render with OS colors — force dark-theme readable values */
-.select-input option {
-  background: var(--surface);
-  color: var(--text);
-}
-
-.modal-actions-modern {
+.modal-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 12px;
-  padding-top: 20px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  gap: 10px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
 }
 
-/* Enhanced Buttons */
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 10px 20px;
-  font-size: 13px;
-  font-weight: 700;
-  border-radius: 10px;
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-  cursor: pointer;
-  border: 1px solid transparent;
-}
-
-.btn-sm {
-  padding: 8px 16px;
-  font-size: 12px;
-}
-
-.btn-save {
-  background: linear-gradient(135deg, #00b894 0%, #00cec9 100%);
-  color: #fff;
-  box-shadow: 0 4px 15px rgba(0, 206, 201, 0.2);
-}
-
-.btn-save:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 25px rgba(0, 206, 201, 0.3);
-}
-
-.btn-primary {
-  background: linear-gradient(135deg, #6c5ce7 0%, #a29bfe 100%);
-  color: #fff;
-}
-
-.btn-ghost {
-  background: rgba(0, 0, 0, 0.05);
-  border: 1px solid rgba(0, 0, 0, 0.1);
-  color: var(--text);
-}
-
-.btn-ghost:hover {
-  background: rgba(0, 0, 0, 0.1);
-}
-
-.btn-danger {
-  background: rgba(244, 63, 94, 0.1);
-  color: #fb7185;
-  border: 1px solid rgba(244, 63, 94, 0.2);
-}
-
-.btn-danger:hover {
-  background: rgba(244, 63, 94, 0.2);
-  color: var(--text);
-}
-
-@media (max-width: 768px) {
-  .form-row-modern {
-    flex-direction: column;
-    gap: 20px;
+@media (max-width: 700px) {
+  .form-grid {
+    grid-template-columns: 1fr;
   }
 
-  .model-modal-body {
-    max-height: calc(100vh - 220px);
+  .model-actions {
+    flex-wrap: wrap;
   }
 }
 </style>
