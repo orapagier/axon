@@ -97,6 +97,16 @@ let messagingPollInterval
 
 const credentials = ref([])
 const credModal = ref(false)
+const servicesSearch = ref('')
+function byName(list, nameOf) {
+  const q = servicesSearch.value.trim().toLowerCase()
+  if (!q) return list
+  return list.filter((item) => nameOf(item).toLowerCase().includes(q))
+}
+const filteredCredentials = computed(() => byName(credentials.value, (c) => c.name))
+const filteredMcpServers = computed(() => byName(mcpServers.value, (n) => n))
+const filteredSshServers = computed(() => byName(sshServers.value, (s) => s.name))
+const filteredWsAccounts = computed(() => byName(wsAccounts.value, (a) => a.name))
 const credForm = ref({ name: '', service: 'telegram', fields: [{ key: 'access_token', value: '' }] })
 const testingCred = ref(null)
 
