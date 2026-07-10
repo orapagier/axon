@@ -570,7 +570,10 @@ watch(disabled, (newVal) => {
             @keydown.esc.prevent="cancelRename"
             @blur="commitRename(c)"
           >
-          <template v-else>
+          <div
+            v-else
+            class="conv-item-text"
+          >
             <span
               class="conv-title"
               title="Double-click to rename"
@@ -585,7 +588,7 @@ watch(disabled, (newVal) => {
                 :key="i"
               ><mark v-if="seg.mark">{{ seg.text }}</mark><template v-else>{{ seg.text }}</template></template>
             </span>
-          </template>
+          </div>
           <button
             class="conv-del"
             type="button"
