@@ -51,6 +51,13 @@ mime_guess          = "2"
 # a C compiler, which the workspace already requires (rusqlite bundled, etc).
 russh               = { version = "0.60.3", default-features = false, features = ["ring", "rsa", "flate2"] }
 base64              = "0.22"
+# Crypto node JWT sign/verify (HS/RS/ES/PS/EdDSA). Its `ring` backend is
+# already in the tree via russh + sqlx's rustls, so the real additions are
+# just the small pure-Rust pem/simple_asn1 parsers.
+jsonwebtoken        = "9"
+# Crypto node TOTP (RFC 6238): the default TOTP algorithm is HMAC-SHA1, which
+# sha2 can't provide. Same RustCrypto family as the in-tree sha2/hmac.
+sha1                = "0.10"
 urlencoding = "2.1.3"
 reqwest-eventsource = "0.6.0"
 aes-gcm = "0.10.3"

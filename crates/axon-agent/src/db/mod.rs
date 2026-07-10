@@ -166,6 +166,12 @@ const MIGRATIONS: &[Migration] = &[
         sql: include_str!("migrations/0023_classifier_to_text_analysis.sql"),
         tolerant_dup_column: false,
     },
+    Migration {
+        version: 24,
+        name: "workflow_dedupe_seen",
+        sql: include_str!("migrations/0024_workflow_dedupe_seen.sql"),
+        tolerant_dup_column: false,
+    },
 ];
 
 const SEED_SQL: &str = include_str!("seed.sql");

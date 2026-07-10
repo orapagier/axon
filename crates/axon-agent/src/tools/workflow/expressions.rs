@@ -145,6 +145,75 @@ pub(crate) fn register_expression_natives(context: &mut Context) {
     );
 }
 
+// ── Per-item context ($item / $index / $ancestor) ────────────────────────────
+
+/// Reserved node-id under which the engine injects a synthetic "current item"
+/// result during per-item fan-out (Loop bodies and `for_each` nodes). It is
+/// filtered out of `$node` / `$results` / `$items` / `$prevNode`; scripts and
+/// `{{ }}` expressions see it as `$item` / `$index` (plus `$json`/`$input`
+/// overrides when the context sets `override_json`, the `for_each` case).
+pub(crate) const ITEM_CONTEXT_KEY: &str = "__item__";
+
+/// Split the synthetic item-context entry (if any) out of a result list,
+/// returning its output wrapper. The list keeps only real node results.
+fn take_item_context(results: &mut Vec<NodeResult>) -> Option<Value> {
+    let idx = results
+        .iter()
+        .position(|r| r.node_id == ITEM_CONTEXT_KEY)?;
+    Some(results.remove(idx).output)
+}
+
+/// JS prelude defining the per-item globals and the `$ancestor()` lineage
+/// helper. Without an item context the globals are null and `$ancestor(name)`
+/// degrades to the named node's whole output. `$ancestor` prefers an explicit
+/// `__idx` stamp on the current item (survives Filter/Sort reshaping — see
+/// Split Out's `stampIndex` and for_each's `for_each_stamp_index`), falling
+/// back to the iteration index (positional alignment).
+fn item_bindings_script(ctx: Option<&Value>) -> String {
+    let bindings = match ctx {
+        Some(c) => {
+            let item = serde_json::to_string(c.get("item").unwrap_or(&Value::Null))
+                .unwrap_or_else(|_| "null".to_string());
+            let index = c.get("index").and_then(|v| v.as_i64()).unwrap_or(-1);
+            let is_first = c.get("is_first").and_then(|v| v.as_bool()).unwrap_or(false);
+            let is_last = c.get("is_last").and_then(|v| v.as_bool()).unwrap_or(false);
+            let total = c.get("total").and_then(|v| v.as_i64()).unwrap_or(0);
+            let override_json = c
+                .get("override_json")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let overrides = if override_json {
+                "$input = $item; $json = $item;"
+            } else {
+                ""
+            };
+            format!(
+                "var $item = {item}; var $index = {index}; var $isFirst = {is_first}; \
+                 var $isLast = {is_last}; var $total = {total}; {overrides}"
+            )
+        }
+        None => "var $item = null; var $index = null; var $isFirst = null; \
+                 var $isLast = null; var $total = null;"
+            .to_string(),
+    };
+    format!(
+        r#"{bindings}
+function $ancestor(name) {{
+    var n = $node[name];
+    if (n === undefined && typeof name === 'string') n = $node[name.toLowerCase()];
+    if (n === undefined || n === null) return null;
+    var out = (n.data === undefined) ? null : n.data;
+    var idx = null;
+    if ($item !== null && typeof $item === 'object' && !Array.isArray($item) && $item.__idx !== undefined) idx = $item.__idx;
+    else if (typeof $index === 'number' && $index >= 0) idx = $index;
+    if (idx === null || out === null) return out;
+    if (Array.isArray(out)) return (out[idx] === undefined) ? null : out[idx];
+    if (typeof out === 'object' && Array.isArray(out.items)) return (out.items[idx] === undefined) ? null : out.items[idx];
+    return out;
+}}"#
+    )
+}
+
 /// Strip `{{ expression }}` wrappers from a JS script so that dragged-in
 /// expressions become plain JavaScript references.
 /// E.g. `const item = {{ $node["Gmail"].data }};`
@@ -174,7 +243,10 @@ pub(crate) async fn execute_js_node(
     // $node is injected as a native JS variable, so $node["Name"].data works.
     let script = strip_expression_wrappers(raw_script);
 
-    let results_copy = results.to_vec();
+    // Per-item fan-out context (Loop body / for_each): surfaced as $item/$index,
+    // never as a $node/$results entry.
+    let mut results_copy = results.to_vec();
+    let item_ctx = take_item_context(&mut results_copy);
     let node_id = node.id.clone();
     let node_name = node.name.clone();
     let wf_id = workflow_id.to_string();
@@ -334,6 +406,13 @@ var $env = {env};
             .eval(Source::from_bytes(helpers.as_bytes()))
             .map_err(|e| format!("Helper injection error: {}", e))?;
 
+        // ── $item / $index / $ancestor (per-item fan-out context) ─────────
+        context
+            .eval(Source::from_bytes(
+                item_bindings_script(item_ctx.as_ref()).as_bytes(),
+            ))
+            .map_err(|e| format!("Item binding injection error: {}", e))?;
+
         // ── Execute the user script ───────────────────────────────────────
         let wrapped = format!("(function() {{\n{}\n}})()", script);
         match context.eval(Source::from_bytes(wrapped.as_bytes())) {
@@ -433,8 +512,16 @@ pub(crate) fn evaluate_js_expression(
     let mut context = boa_engine::Context::default();
     register_expression_natives(&mut context);
 
+    // Per-item fan-out context — bound as $item/$index below, hidden from $node.
+    let item_ctx = results
+        .get(ITEM_CONTEXT_KEY)
+        .map(|r| r.output.clone());
+
     let mut nodes_map = serde_json::Map::new();
     for (key, res) in results {
+        if res.node_id == ITEM_CONTEXT_KEY {
+            continue;
+        }
         let mut node_obj = serde_json::Map::new();
         node_obj.insert("output".to_string(), res.output.clone());
         node_obj.insert("data".to_string(), res.output.clone());
@@ -461,7 +548,10 @@ pub(crate) fn evaluate_js_expression(
     // expressions and full JS-node scripts see the same globals. Identity-bound
     // helpers ($nodeId/$nodeName/$execution) are intentionally omitted — a field
     // expression has no "current node" context.
-    let mut ordered: Vec<&NodeResult> = results.values().collect();
+    let mut ordered: Vec<&NodeResult> = results
+        .values()
+        .filter(|r| r.node_id != ITEM_CONTEXT_KEY)
+        .collect();
     ordered.sort_by_key(|r| r.position);
     let prev = ordered.last();
     let input_json = prev
@@ -513,6 +603,14 @@ pub(crate) fn evaluate_js_expression(
 
     if context
         .eval(boa_engine::Source::from_bytes(setup_script.as_bytes()))
+        .is_err()
+    {
+        return None;
+    }
+    if context
+        .eval(boa_engine::Source::from_bytes(
+            item_bindings_script(item_ctx.as_ref()).as_bytes(),
+        ))
         .is_err()
     {
         return None;
@@ -1031,7 +1129,7 @@ pub(crate) fn parse_path_pointer(path: &str) -> String {
 
 #[cfg(test)]
 mod resolve_tests {
-    use super::{resolve_value, resolve_value_scoped, NodeResult};
+    use super::{resolve_value, resolve_value_scoped, NodeResult, ITEM_CONTEXT_KEY};
     use serde_json::{json, Value};
     use std::collections::{HashMap, HashSet};
 
@@ -1049,6 +1147,28 @@ mod resolve_tests {
         }
     }
 
+    /// Synthetic per-item context, shaped like `item_context_result` in the
+    /// engine (workflow.rs).
+    fn with_item(
+        mut m: HashMap<String, NodeResult>,
+        item: Value,
+        index: usize,
+        override_json: bool,
+    ) -> HashMap<String, NodeResult> {
+        let mut ctx = node(
+            ITEM_CONTEXT_KEY,
+            json!({
+                "item": item, "index": index, "total": 3,
+                "is_first": index == 0, "is_last": index == 2,
+                "override_json": override_json,
+            }),
+        );
+        ctx.node_id = ITEM_CONTEXT_KEY.to_string();
+        ctx.position = i64::MAX / 2;
+        m.insert(ITEM_CONTEXT_KEY.to_string(), ctx);
+        m
+    }
+
     fn results() -> HashMap<String, NodeResult> {
         let mut m = HashMap::new();
         let get = node(
@@ -1062,6 +1182,101 @@ mod resolve_tests {
         );
         m.insert(trig.node_id.clone(), trig);
         m
+    }
+
+    // ── Per-item context: $item / $index / $json override / $ancestor ────────
+
+    // $item and $index resolve to the current fan-out item and its index.
+    #[test]
+    fn item_and_index_bind_from_context() {
+        let m = with_item(results(), json!({ "sku": "A-7" }), 1, true);
+        assert_eq!(
+            resolve_value("{{ $item.sku }}", &m),
+            Value::String("A-7".into())
+        );
+        assert_eq!(resolve_value("{{ $index }}", &m), json!(1));
+    }
+
+    // for_each (override_json=true): $json IS the current item — n8n semantics.
+    #[test]
+    fn json_overridden_to_item_when_for_each() {
+        let m = with_item(results(), json!({ "sku": "A-7" }), 0, true);
+        assert_eq!(
+            resolve_value("{{ $json.sku }}", &m),
+            Value::String("A-7".into())
+        );
+    }
+
+    // Loop bodies (override_json=false): $json keeps its historical meaning;
+    // only $item points at the current item.
+    #[test]
+    fn json_not_overridden_in_loop_context() {
+        let m = with_item(results(), json!({ "sku": "A-7" }), 0, false);
+        assert_eq!(resolve_value("{{ $json.sku }}", &m), Value::Null);
+        assert_eq!(
+            resolve_value("{{ $item.sku }}", &m),
+            Value::String("A-7".into())
+        );
+    }
+
+    // The synthetic context never leaks into $node.
+    #[test]
+    fn item_context_hidden_from_node_map() {
+        let m = with_item(results(), json!({ "sku": "A-7" }), 0, true);
+        assert_eq!(resolve_value("{{ $node['__item__'] }}", &m), Value::Null);
+    }
+
+    // $ancestor joins by the item's explicit __idx stamp when present…
+    #[test]
+    fn ancestor_prefers_idx_stamp() {
+        let mut base = results();
+        let src = node("Orders", json!([{ "customer": "ana" }, { "customer": "bo" }]));
+        base.insert(src.node_id.clone(), src);
+        // Iteration index says 0, but the __idx stamp says 1 (e.g. a Filter
+        // upstream dropped item 0) — the stamp must win.
+        let m = with_item(base, json!({ "sku": "A-7", "__idx": 1 }), 0, true);
+        assert_eq!(
+            resolve_value("{{ $ancestor('Orders').customer }}", &m),
+            Value::String("bo".into())
+        );
+    }
+
+    // …and falls back to positional alignment ($index) without a stamp.
+    #[test]
+    fn ancestor_falls_back_to_position() {
+        let mut base = results();
+        let src = node("Orders", json!([{ "customer": "ana" }, { "customer": "bo" }]));
+        base.insert(src.node_id.clone(), src);
+        let m = with_item(base, json!({ "sku": "A-7" }), 1, true);
+        assert_eq!(
+            resolve_value("{{ $ancestor('Orders').customer }}", &m),
+            Value::String("bo".into())
+        );
+    }
+
+    // Outside any per-item context $ancestor degrades to the whole output.
+    #[test]
+    fn ancestor_without_context_returns_whole_output() {
+        let mut base = results();
+        let src = node("Orders", json!([{ "customer": "ana" }]));
+        base.insert(src.node_id.clone(), src);
+        assert_eq!(
+            resolve_value("{{ $ancestor('Orders') }}", &base),
+            json!([{ "customer": "ana" }])
+        );
+    }
+
+    // An {items:[…]} wrapper (loop/for_each aggregate output) is unwrapped.
+    #[test]
+    fn ancestor_unwraps_items_wrapper() {
+        let mut base = results();
+        let src = node("Quotes", json!({ "items": [{ "fee": 5 }, { "fee": 9 }] }));
+        base.insert(src.node_id.clone(), src);
+        let m = with_item(base, json!({ "sku": "A-7" }), 1, true);
+        assert_eq!(
+            resolve_value("{{ $ancestor('Quotes').fee }}", &m),
+            json!(9)
+        );
     }
 
     // The original bug: a dragged-in $node[...] reference sitting inside prose

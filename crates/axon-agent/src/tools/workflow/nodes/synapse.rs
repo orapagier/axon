@@ -606,6 +606,13 @@ pub(crate) async fn execute_http_node(config: &Value, state: &AppState) -> Resul
                 if let Some(v) = vars {
                     gql.insert("variables".to_string(), v);
                 }
+                if let Some(op) = config
+                    .get("graphqlOperationName")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                {
+                    gql.insert("operationName".to_string(), json!(op.trim()));
+                }
                 Some(Value::Object(gql))
             }
             _ => None,

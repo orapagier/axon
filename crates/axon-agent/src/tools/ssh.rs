@@ -307,7 +307,12 @@ impl SshTool {
 
         Ok(serde_json::json!({
             "output": format!("Downloaded {} bytes from {} to local path: {}", stdout.len(), remote_path, staged_path.display()),
-            "message": format!("File downloaded successfully. You can now access it at this local path to upload/send to the user: {}", staged_path.display())
+            "message": format!("File downloaded successfully. You can now access it at this local path to upload/send to the user: {}", staged_path.display()),
+            // Structured fields (additive) so the workflow SSH node can build a
+            // standard binary descriptor without parsing the message string.
+            "local_path": staged_path.display().to_string(),
+            "file_name": filename,
+            "size": stdout.len(),
         }))
     }
 

@@ -3,7 +3,11 @@
 //! recent"). It's a small pipeline applied in a fixed, sensible order:
 //!
 //!   1. Remove Duplicates (`dedupe`) — drop repeat items, keeping the first, by a
-//!      key field (or the whole item when no key is given).
+//!      key field (or the whole item when no key is given). With
+//!      `dedupeScope: "acrossRuns"` the seen-set persists in SQLite
+//!      (`workflow_dedupe_seen`), so only items never let through in ANY prior
+//!      run survive — n8n's "Remove Duplicates across executions", which pairs
+//!      with polling triggers ("only new RSS entries / DB rows").
 //!   2. Sort (`sort`) — order by one or more field rules, each asc/desc and typed
 //!      (auto / number / string / date). A blank field sorts the item itself.
 //!   3. Limit (`limit`) — keep the first or last N items.
@@ -19,6 +23,9 @@ use crate::tools::workflow::{
 use serde_json::Value;
 use std::cmp::Ordering;
 use std::collections::HashSet;
+
+/// Per-node cap on persisted seen-keys (oldest evicted past it).
+const DEDUPE_MAX_ENTRIES_DEFAULT: usize = 10_000;
 
 /// Turn the primary input into an item list — same convention as the other list
 /// nodes (array = items, Null = none, else a single item; `array_path` unwraps a
@@ -121,6 +128,138 @@ fn dedupe_key(item: &Value, fields: &[String]) -> String {
     }
 }
 
+/// The configured dedupe key fields (comma-separated `dedupeBy`).
+fn dedupe_fields(config: &Value) -> Vec<String> {
+    config
+        .get("dedupeBy")
+        .and_then(|v| v.as_str())
+        .map(|s| {
+            s.split(',')
+                .map(|x| x.trim().to_string())
+                .filter(|x| !x.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Cross-run dedupe: drop items whose key hash is already in
+/// `workflow_dedupe_seen` for this (workflow, node). When `record` is set
+/// (real full runs) fresh keys are persisted and the per-node cap enforced;
+/// test/partial runs only read, so editor experiments never eat real events.
+pub(crate) fn dedupe_across_runs(
+    conn: &rusqlite::Connection,
+    config: &Value,
+    items: Vec<Value>,
+    workflow_id: &str,
+    node_id: &str,
+    record: bool,
+) -> Result<Vec<Value>, String> {
+    use sha2::{Digest, Sha256};
+    let fields = dedupe_fields(config);
+    let db = |e: rusqlite::Error| format!("Cross-run dedupe DB error: {e}");
+
+    // Explicit reset: forget everything this node has seen, then process.
+    if config
+        .get("dedupeReset")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+        && record
+    {
+        conn.execute(
+            "DELETE FROM workflow_dedupe_seen WHERE workflow_id = ?1 AND node_id = ?2",
+            rusqlite::params![workflow_id, node_id],
+        )
+        .map_err(db)?;
+    }
+
+    let mut fresh = Vec::with_capacity(items.len());
+    for item in items {
+        let hash = hex::encode(Sha256::digest(dedupe_key(&item, &fields).as_bytes()));
+        if record {
+            // 1 row changed = never seen before; INSERT OR IGNORE also makes
+            // within-batch repeats atomic.
+            let inserted = conn
+                .execute(
+                    "INSERT OR IGNORE INTO workflow_dedupe_seen (workflow_id, node_id, key_hash) \
+                     VALUES (?1, ?2, ?3)",
+                    rusqlite::params![workflow_id, node_id, hash],
+                )
+                .map_err(db)?;
+            if inserted > 0 {
+                fresh.push(item);
+            }
+        } else {
+            let seen: bool = conn
+                .query_row(
+                    "SELECT 1 FROM workflow_dedupe_seen \
+                     WHERE workflow_id = ?1 AND node_id = ?2 AND key_hash = ?3",
+                    rusqlite::params![workflow_id, node_id, hash],
+                    |_| Ok(true),
+                )
+                .unwrap_or(false);
+            if !seen {
+                fresh.push(item);
+            }
+        }
+    }
+
+    if record {
+        let cap = cfg_usize(config, "dedupeMaxEntries")
+            .filter(|n| *n > 0)
+            .unwrap_or(DEDUPE_MAX_ENTRIES_DEFAULT);
+        conn.execute(
+            "DELETE FROM workflow_dedupe_seen WHERE workflow_id = ?1 AND node_id = ?2 \
+             AND rowid NOT IN (SELECT rowid FROM workflow_dedupe_seen \
+                 WHERE workflow_id = ?1 AND node_id = ?2 \
+                 ORDER BY first_seen DESC, rowid DESC LIMIT ?3)",
+            rusqlite::params![workflow_id, node_id, cap as i64],
+        )
+        .map_err(db)?;
+    }
+    Ok(fresh)
+}
+
+/// Engine entry point: the full pipeline including cross-run dedupe. `record`
+/// is false for test/partial runs (and loop/for_each units), which check the
+/// persisted seen-set without writing to it.
+pub(crate) fn execute_with_state(
+    config: &Value,
+    input: &Value,
+    state: &crate::state::AppState,
+    workflow_id: &str,
+    node_id: &str,
+    record: bool,
+) -> Result<Value, String> {
+    let across_runs = config
+        .get("dedupe")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+        && config.get("dedupeScope").and_then(|v| v.as_str()) == Some("acrossRuns");
+    if !across_runs {
+        return execute(config, input);
+    }
+    // In-run stage 1 first (cheap), then the persisted filter, then sort/limit:
+    // run execute() on the cross-run survivors with dedupe disabled so the
+    // sort/limit stages apply unchanged.
+    let array_path = config.get("arrayPath").and_then(|v| v.as_str());
+    let mut items = to_items(input, array_path);
+    let fields = dedupe_fields(config);
+    let mut seen: HashSet<String> = HashSet::new();
+    items.retain(|it| seen.insert(dedupe_key(it, &fields)));
+
+    let conn = state.db.get().map_err(|e| format!("DB pool: {e}"))?;
+    let items = dedupe_across_runs(&conn, config, items, workflow_id, node_id, record)?;
+
+    let mut rest = config.clone();
+    if let Some(o) = rest.as_object_mut() {
+        o.insert("dedupe".to_string(), Value::Bool(false));
+        // Already unwrapped above — re-applying the path to the plain array
+        // would resolve to nothing and silently drop every item.
+        o.remove("arrayPath");
+    }
+    execute(&rest, &Value::Array(items))
+}
+
 pub(crate) fn execute(config: &Value, input: &Value) -> Result<Value, String> {
     let array_path = config.get("arrayPath").and_then(|v| v.as_str());
     let mut items = to_items(input, array_path);
@@ -129,16 +268,7 @@ pub(crate) fn execute(config: &Value, input: &Value) -> Result<Value, String> {
 
     // 1. Remove duplicates (keep first occurrence).
     if enabled("dedupe") {
-        let fields: Vec<String> = config
-            .get("dedupeBy")
-            .and_then(|v| v.as_str())
-            .map(|s| {
-                s.split(',')
-                    .map(|x| x.trim().to_string())
-                    .filter(|x| !x.is_empty())
-                    .collect()
-            })
-            .unwrap_or_default();
+        let fields = dedupe_fields(config);
         let mut seen: HashSet<String> = HashSet::new();
         items.retain(|it| seen.insert(dedupe_key(it, &fields)));
     }
@@ -180,6 +310,112 @@ mod tests {
 
     fn sort_rule(field: &str, order: &str, ty: &str) -> Value {
         json!({ "field": field, "order": order, "type": ty })
+    }
+
+    /// In-memory DB with the 0024 schema, for the cross-run dedupe stage.
+    fn dedupe_conn() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(include_str!(
+            "../../../db/migrations/0024_workflow_dedupe_seen.sql"
+        ))
+        .unwrap();
+        conn
+    }
+
+    // First run records and passes everything; the second run only passes
+    // items it has never seen.
+    #[test]
+    fn across_runs_drops_previously_seen() {
+        let conn = dedupe_conn();
+        let cfg = json!({ "dedupe": true, "dedupeScope": "acrossRuns", "dedupeBy": "id" });
+        let run1 = dedupe_across_runs(
+            &conn,
+            &cfg,
+            vec![json!({ "id": 1 }), json!({ "id": 2 })],
+            "wf",
+            "n1",
+            true,
+        )
+        .unwrap();
+        assert_eq!(run1.len(), 2);
+
+        let run2 = dedupe_across_runs(
+            &conn,
+            &cfg,
+            vec![json!({ "id": 2 }), json!({ "id": 3 })],
+            "wf",
+            "n1",
+            true,
+        )
+        .unwrap();
+        assert_eq!(run2, vec![json!({ "id": 3 })]);
+    }
+
+    // record=false (test/partial runs): checks the seen-set but never writes,
+    // so the same fresh item stays fresh for the next real run.
+    #[test]
+    fn across_runs_readonly_does_not_record() {
+        let conn = dedupe_conn();
+        let cfg = json!({ "dedupe": true, "dedupeScope": "acrossRuns", "dedupeBy": "id" });
+        let a = dedupe_across_runs(&conn, &cfg, vec![json!({ "id": 1 })], "wf", "n1", false)
+            .unwrap();
+        assert_eq!(a.len(), 1);
+        // Still unseen — the read-only pass recorded nothing.
+        let b = dedupe_across_runs(&conn, &cfg, vec![json!({ "id": 1 })], "wf", "n1", true)
+            .unwrap();
+        assert_eq!(b.len(), 1);
+        // …but the real run did record.
+        let c = dedupe_across_runs(&conn, &cfg, vec![json!({ "id": 1 })], "wf", "n1", true)
+            .unwrap();
+        assert!(c.is_empty());
+    }
+
+    // Two nodes never share a seen-set, even in the same workflow.
+    #[test]
+    fn across_runs_scoped_per_node() {
+        let conn = dedupe_conn();
+        let cfg = json!({ "dedupe": true, "dedupeScope": "acrossRuns", "dedupeBy": "id" });
+        dedupe_across_runs(&conn, &cfg, vec![json!({ "id": 1 })], "wf", "n1", true).unwrap();
+        let other = dedupe_across_runs(&conn, &cfg, vec![json!({ "id": 1 })], "wf", "n2", true)
+            .unwrap();
+        assert_eq!(other.len(), 1);
+    }
+
+    // dedupeReset forgets the node's history before processing.
+    #[test]
+    fn across_runs_reset_clears_history() {
+        let conn = dedupe_conn();
+        let cfg = json!({ "dedupe": true, "dedupeScope": "acrossRuns", "dedupeBy": "id" });
+        dedupe_across_runs(&conn, &cfg, vec![json!({ "id": 1 })], "wf", "n1", true).unwrap();
+        let reset_cfg = json!({
+            "dedupe": true, "dedupeScope": "acrossRuns", "dedupeBy": "id", "dedupeReset": true,
+        });
+        let again =
+            dedupe_across_runs(&conn, &reset_cfg, vec![json!({ "id": 1 })], "wf", "n1", true)
+                .unwrap();
+        assert_eq!(again.len(), 1);
+    }
+
+    // The per-node cap evicts oldest entries so the table stays bounded.
+    #[test]
+    fn across_runs_cap_evicts_oldest() {
+        let conn = dedupe_conn();
+        let cfg = json!({
+            "dedupe": true, "dedupeScope": "acrossRuns", "dedupeBy": "id",
+            "dedupeMaxEntries": 2,
+        });
+        for i in 0..5 {
+            dedupe_across_runs(&conn, &cfg, vec![json!({ "id": i })], "wf", "n1", true)
+                .unwrap();
+        }
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM workflow_dedupe_seen WHERE workflow_id='wf' AND node_id='n1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2);
     }
 
     fn cfg(extra: Value) -> Value {

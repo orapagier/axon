@@ -616,6 +616,233 @@ fn primary_input(direct_inputs: &std::collections::BTreeMap<String, Vec<Value>>)
         .unwrap_or(Value::Null)
 }
 
+/// Synthetic per-item context injected into a fan-out unit's temp results under
+/// [`ITEM_CONTEXT_KEY`]. The expression layer strips it from `$node`/`$results`
+/// and binds it as `$item`/`$index` (with `$json`/`$input` overridden to the
+/// item when `override_json` — the `for_each` case, matching n8n's per-item
+/// `$json`; Loop bodies keep the historical `$json` meaning).
+fn item_context_result(current: &Value, idx: usize, total: usize, override_json: bool) -> NodeResult {
+    NodeResult {
+        node_id: ITEM_CONTEXT_KEY.to_string(),
+        node_name: ITEM_CONTEXT_KEY.to_string(),
+        node_type: "item".to_string(),
+        // Far past any real canvas position so it can never be mistaken for a
+        // predecessor; the expression layer filters it out before ordering.
+        position: i64::MAX / 2,
+        status: "success".to_string(),
+        output: json!({
+            "item": current,
+            "index": idx,
+            "total": total,
+            "is_first": idx == 0,
+            "is_last": idx + 1 == total,
+            "override_json": override_json,
+        }),
+        duration_ms: 0,
+        error: None,
+        attempts: 1,
+    }
+}
+
+/// Whether this node requests n8n-style per-item execution (`for_each`) and,
+/// if so, the items of its primary-input array. `None` means "run normally":
+/// the flag is off, the node type can't fan out, or the input isn't a
+/// non-empty list (graceful single run instead of a hard error).
+fn for_each_items(
+    node: &WorkflowNode,
+    can_iterate: bool,
+    direct_inputs: &std::collections::BTreeMap<String, Vec<Value>>,
+) -> Option<Vec<Value>> {
+    let requested = node
+        .config
+        .get("for_each")
+        .map(|v| v.as_bool().unwrap_or(v.as_str() == Some("true")))
+        .unwrap_or(false);
+    if !requested || !can_iterate {
+        return None;
+    }
+    let input = primary_input(direct_inputs);
+    let path = node.config.get("for_each_path").and_then(|v| v.as_str());
+    match extract_items_for_loop(&input, path) {
+        Ok(items) if !items.is_empty() => Some(items),
+        _ => None,
+    }
+}
+
+/// Fan a `for_each` node out over its primary-input items: one dispatch per
+/// item (or per batch slice), each with the item bound as `$item`/`$json` and
+/// handed down as the unit's primary input. Mirrors the Loop fan-out's
+/// parallelism/batching/continue-on-fail semantics; per-unit retries apply via
+/// `execute_node_by_type` exactly as they do for loop units.
+#[allow(clippy::too_many_arguments)]
+async fn execute_for_each_fanout(
+    node: &WorkflowNode,
+    items: Vec<Value>,
+    state: &AppState,
+    trigger_source: &str,
+    workflow_id: &str,
+    run_id: &str,
+    node_results: &std::collections::HashMap<String, NodeResult>,
+    node_ancestors: &std::collections::HashSet<String>,
+) -> (Result<Value, String>, u32) {
+    let knob = |key: &str| cfg_usize(&node.config, key).filter(|n| *n > 0);
+    let parallelism = knob("for_each_parallelism").unwrap_or(1);
+    let batch_size = knob("for_each_batch_size").unwrap_or(1);
+    let max_items = knob("for_each_max").unwrap_or(100_000);
+    // Stamp each output item with `__idx` (its source-item index) so a later
+    // `$ancestor()` can join back here even after Filter/Sort reshaping.
+    let stamp_index = node
+        .config
+        .get("for_each_stamp_index")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    if items.len() > max_items {
+        return (
+            Err(format!(
+                "for_each: {} items exceeds the {} cap. Raise 'for_each_max' if this is intentional.",
+                items.len(),
+                max_items
+            )),
+            1,
+        );
+    }
+
+    let units: Vec<(usize, Value)> = if batch_size > 1 {
+        items
+            .chunks(batch_size)
+            .enumerate()
+            .map(|(i, c)| (i, Value::Array(c.to_vec())))
+            .collect()
+    } else {
+        items.iter().enumerate().map(|(i, it)| (i, it.clone())).collect()
+    };
+    let unit_count = units.len();
+
+    let build_unit = |idx: usize, current: &Value| {
+        let mut temp_results = node_results.clone();
+        temp_results.insert(
+            ITEM_CONTEXT_KEY.to_string(),
+            item_context_result(current, idx, unit_count, true),
+        );
+        let item_config = interpolate_config(
+            &node.config,
+            &temp_results,
+            state,
+            Some(node_ancestors),
+            run_id,
+        );
+        // The unit's primary input IS the item — a for_each Soma/htmlExtract/
+        // etc. transforms the item, not the whole upstream array.
+        let mut unit_inputs = std::collections::BTreeMap::new();
+        unit_inputs.insert("input_main_0".to_string(), vec![current.clone()]);
+        (item_config, temp_results, unit_inputs)
+    };
+
+    let stamp = |idx: usize, v: Value| -> Value {
+        if !stamp_index {
+            return v;
+        }
+        match v {
+            Value::Object(mut o) => {
+                o.entry("__idx".to_string()).or_insert(json!(idx));
+                Value::Object(o)
+            }
+            other => other,
+        }
+    };
+
+    let mut unit_outputs = Vec::new();
+    let mut unit_errors = Vec::new();
+    let mut max_unit_attempts: u32 = 0;
+
+    if parallelism > 1 {
+        // buffered() preserves input order, so outputs stay item-aligned.
+        use futures::StreamExt;
+        let futs = units.into_iter().map(|(idx, current)| {
+            let (item_config, temp_results, unit_inputs) = build_unit(idx, &current);
+            async move {
+                let (r, a) = execute_node_by_type(
+                    node,
+                    &item_config,
+                    state,
+                    trigger_source,
+                    workflow_id,
+                    run_id,
+                    &temp_results,
+                    &unit_inputs,
+                    // A Wait inside a for_each can't durably suspend.
+                    false,
+                )
+                .await;
+                (idx, current, r, a)
+            }
+        });
+        let collected: Vec<(usize, Value, Result<Value, String>, u32)> =
+            futures::stream::iter(futs).buffered(parallelism).collect().await;
+        for (idx, item, r, a) in collected {
+            max_unit_attempts = max_unit_attempts.max(a);
+            match r {
+                Ok(v) => unit_outputs.push(stamp(idx, v)),
+                Err(e) => unit_errors.push(json!({
+                    "index": idx, "item": item, "error": e, "attempts": a
+                })),
+            }
+        }
+    } else {
+        for (idx, current) in units {
+            let (item_config, temp_results, unit_inputs) = build_unit(idx, &current);
+            let (r, a) = execute_node_by_type(
+                node,
+                &item_config,
+                state,
+                trigger_source,
+                workflow_id,
+                run_id,
+                &temp_results,
+                &unit_inputs,
+                false,
+            )
+            .await;
+            max_unit_attempts = max_unit_attempts.max(a);
+            match r {
+                Ok(v) => unit_outputs.push(stamp(idx, v)),
+                Err(e) => {
+                    unit_errors.push(json!({
+                        "index": idx, "item": current, "error": e, "attempts": a
+                    }));
+                    if !node.continue_on_fail {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    let result = if !unit_errors.is_empty() && !node.continue_on_fail {
+        Err(format!(
+            "for_each failed in node '{}' ({} errors)",
+            node.name,
+            unit_errors.len()
+        ))
+    } else {
+        Ok(json!({
+            "_axon_for_each": {
+                "enabled": true,
+                "count": unit_count,
+                "parallelism": parallelism,
+                "batch_size": batch_size
+            },
+            "items": unit_outputs,
+            "count": unit_count,
+            "total": unit_count,
+            "error_count": unit_errors.len(),
+            "errors": unit_errors
+        }))
+    };
+    (result, max_unit_attempts.max(1))
+}
+
 async fn execute_node_dispatch(
     node: &WorkflowNode,
     config: &Value,
@@ -638,6 +865,9 @@ async fn execute_node_dispatch(
             nodes::trigger::execute(config, state, trigger_source, workflow_id, run_id).await
         }
         "synapse" => nodes::synapse::execute_http_node(config, state).await,
+        // GraphQL rides the Synapse engine (same auth modes) with query/
+        // variables config and real error semantics (errors arrive as HTTP 200).
+        "graphql" => nodes::graphql::execute(config, state).await,
         // Self-contained fetch+parse, same shape as Synapse: the feed URL is a
         // config field, not a primary-input fallback.
         "rss" => nodes::rss::execute(config).await,
@@ -650,6 +880,12 @@ async fn execute_node_dispatch(
         "database" => nodes::database::execute(config).await,
         "facebook" => nodes::facebook::execute(config).await,
         "shell" => nodes::shell::execute(config).await,
+        // Remote command / SFTP upload+download against a saved server,
+        // reusing the agent's host-key-pinned SSH stack.
+        "ssh" => {
+            let input = primary_input(direct_inputs);
+            nodes::ssh::execute(config, state, &input).await
+        }
         "javascript" => {
             // Sort by position for deterministic $results[N] ordering.
             // HashMap iteration order is random, which caused the JS node
@@ -667,6 +903,19 @@ async fn execute_node_dispatch(
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             execute_js_node(raw_script, node, &vec, workflow_id, run_id).await
+        }
+        "python" => {
+            // Same raw-script convention as the JS node (interpolate_config
+            // would mangle the source); the bridge exposes _json/_node/
+            // _results/_item as real Python variables instead of {{ }}.
+            let mut vec: Vec<_> = node_results.values().cloned().collect();
+            vec.sort_by_key(|r| r.position);
+            let raw_script = node
+                .config
+                .get("script")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            nodes::python::execute(raw_script, node, &vec, config).await
         }
         "cortex" => nodes::cortex::execute_cortex_node(config, state, workflow_id, &node.id).await,
         // Text Analysis: one node, four operations — each still dispatches to its
@@ -721,6 +970,8 @@ async fn execute_node_dispatch(
         "ifCondition" => nodes::condition::execute_if_condition_node(config),
         "switch" => nodes::condition::execute_switch_node(config),
         "merge" => nodes::merge::execute(config, direct_inputs),
+        // Fan-in like Merge: A on input_main_0, B on input_main_1.
+        "compareDatasets" => nodes::compare_datasets::execute(config, direct_inputs),
         "filter" => {
             // Same primary-input convention as Soma/$json, expected to be an
             // array (the list-node convention). Filter keeps/drops items
@@ -742,9 +993,18 @@ async fn execute_node_dispatch(
         }
         "sortLimit" => {
             // Sort / Limit / Remove Duplicates pipeline. Same primary-input
-            // convention as the other list nodes.
+            // convention as the other list nodes. `durable_allowed` doubles as
+            // "this is a real full run": cross-run dedupe only RECORDS seen
+            // keys then (test/partial runs and loop units read-only).
             let input = primary_input(direct_inputs);
-            nodes::sort_limit::execute(config, &input)
+            nodes::sort_limit::execute_with_state(
+                config,
+                &input,
+                state,
+                workflow_id,
+                &node.id,
+                durable_allowed,
+            )
         }
         "dateTime" => {
             // Utility transform. Primary input feeds `includeInputFields`; the
@@ -1681,11 +1941,12 @@ impl WorkflowEngine {
                         "loop"
                             | "ifCondition"
                             | "switch"
-                            // Merge is fan-IN: it must never be mapped per-item even
-                            // when placed directly after a Loop — it consumes the
-                            // loop's aggregated output as one input and joins it with
-                            // the other branch.
+                            // Merge/Compare Datasets are fan-IN: they must never be
+                            // mapped per-item even when placed directly after a Loop
+                            // — they consume the loop's aggregated output as one
+                            // input and join it with the other branch.
                             | "merge"
+                            | "compareDatasets"
                             | "trigger"
                             | "circadian"
                             | "stimulus"
@@ -1712,7 +1973,30 @@ impl WorkflowEngine {
                     &node_results,
                 );
 
-                let (result, attempts): (Result<Value, String>, u32) = if can_iterate {
+                // n8n-style per-item execution: `for_each` fans this node out
+                // over its primary-input array with $item/$json bound per item.
+                // A Loop marker upstream takes precedence (can't do both).
+                let for_each_units = if iteration_source_id.is_none() {
+                    for_each_items(node, can_iterate, &direct_inputs)
+                } else {
+                    None
+                };
+
+                let (result, attempts): (Result<Value, String>, u32) = if let Some(items) =
+                    for_each_units
+                {
+                    execute_for_each_fanout(
+                        node,
+                        items,
+                        state,
+                        trigger_source,
+                        workflow_id,
+                        &run_id,
+                        &node_results,
+                        &node_ancestors,
+                    )
+                    .await
+                } else if can_iterate {
                     if let Some(source_node_id) = iteration_source_id {
                         if let Some(source_result) = node_results.get(&source_node_id) {
                             if let Some(items) =
@@ -1770,6 +2054,13 @@ impl WorkflowEngine {
                                             out_obj.insert("total".to_string(), json!(unit_count));
                                         }
                                     }
+                                    // $item/$index/$ancestor inside the loop body.
+                                    // override_json=false: $json keeps its historical
+                                    // meaning here (backward compatible); use $item.
+                                    temp_results.insert(
+                                        ITEM_CONTEXT_KEY.to_string(),
+                                        item_context_result(current, idx, unit_count, false),
+                                    );
                                     let item_config = interpolate_config(
                                         &node.config,
                                         &temp_results,

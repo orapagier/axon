@@ -130,6 +130,13 @@ pub(crate) fn execute(config: &Value, input: &Value) -> Result<Value, String> {
         .map(str::trim)
         .filter(|s| !s.is_empty());
     let array_path = config.get("arrayPath").and_then(|v| v.as_str());
+    // Stamp each exploded item with `__idx` (its output position) so a later
+    // `$ancestor()` can join back to this node even after Filter/Sort
+    // reshaping. Off by default: the key is visible data downstream.
+    let stamp_index = config
+        .get("stampIndex")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     let sources = to_items(input, array_path);
     let split_first = first_segment(&field).to_string();
@@ -161,6 +168,10 @@ pub(crate) fn execute(config: &Value, input: &Value) -> Result<Value, String> {
                 _ => {
                     item.insert(dest_key.clone(), el);
                 }
+            }
+            if stamp_index {
+                item.entry("__idx".to_string())
+                    .or_insert_with(|| Value::from(out.len()));
             }
             out.push(Value::Object(item));
         }
@@ -313,6 +324,19 @@ mod tests {
     fn blank_field_errors() {
         let err = execute(&cfg("", json!({})), &json!({ "items": [] })).unwrap_err();
         assert!(err.contains("Field to Split Out"), "got: {err}");
+    }
+
+    // stampIndex marks each exploded item with its output position (__idx) so
+    // $ancestor() can join back after downstream reshaping; an existing __idx
+    // on the element is preserved (lineage from an earlier stamp wins).
+    #[test]
+    fn stamp_index_marks_items() {
+        let input = json!({ "items": [{ "sku": "A" }, { "sku": "B" }] });
+        let out = execute(&cfg("items", json!({ "stampIndex": true })), &input).unwrap();
+        assert_eq!(
+            out,
+            json!([{ "sku": "A", "__idx": 0 }, { "sku": "B", "__idx": 1 }])
+        );
     }
 
     // arrayPath unwraps a wrapper before iterating source items.
