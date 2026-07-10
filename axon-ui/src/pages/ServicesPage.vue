@@ -442,7 +442,7 @@ onUnmounted(() => {
         
         <div class="service-list">
           <div
-            v-for="c in credentials"
+            v-for="c in filteredCredentials"
             :key="c.id"
             class="service-item"
           >
