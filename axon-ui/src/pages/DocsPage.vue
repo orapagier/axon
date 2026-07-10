@@ -342,7 +342,7 @@ const DOC_SECTIONS = [
     blocks: [
       {
         type: 'paragraph',
-        text: 'Workflow nodes can call every CRM tool. The chat agent gets read tools by default (list/get/search/overview/pipeline/dashboard/change-feed/export/backup); write tools (create/update/delete/convert/archive/restore) are workflow-only unless Settings -> CRM -> "Allow the chat agent to call CRM write tools" (crm.agent_write_tools) is enabled. The toggle applies immediately, no restart needed.',
+        text: 'Workflow nodes can call every CRM tool. The chat agent gets read tools by default (list/get/search/overview/pipeline/dashboard/change-feed/export/backup); write tools (create/update/delete/convert/archive/restore) are off by default and gated per-tool on the Tools page — flip a tool\'s Enable toggle to grant the chat agent that specific write action. Applies immediately, no restart needed.',
       },
       {
         type: 'table',
