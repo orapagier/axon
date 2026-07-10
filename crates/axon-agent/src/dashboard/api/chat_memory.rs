@@ -47,6 +47,12 @@ pub async fn search_conversations(
     let fts_query = format!("\"{}\"", q.replace('"', "\"\""));
     let mut items: Vec<Value> = Vec::new();
     if let Ok(conn) = state.db.get() {
+        // No GROUP BY here: SQLite's snippet()/highlight()/bm25() auxiliary
+        // functions only work against a row that's a direct FTS5 match, and
+        // error out ("unable to use function ... in the requested context")
+        // once the query plan introduces a GROUP BY. Instead fetch matches
+        // ordered by most-recently-matched message and dedupe to one (the
+        // most relevant) row per conversation in application code below.
         if let Ok(mut s) = conn.prepare(
             "SELECT c.id, c.title, c.updated_at,
                     snippet(short_term_fts, 0, '<mark>', '</mark>', '…', 8) AS snippet
@@ -54,19 +60,29 @@ pub async fn search_conversations(
              JOIN short_term ON short_term.id = short_term_fts.rowid
              JOIN conversations c ON c.id = short_term.session_id
              WHERE short_term_fts MATCH ?1
-             GROUP BY c.id
-             ORDER BY c.updated_at DESC
-             LIMIT 50",
+             ORDER BY short_term.created_at DESC
+             LIMIT 200",
         ) {
             if let Ok(iter) = s.query_map(rusqlite::params![fts_query], |r| {
-                Ok(json!({
-                    "id": r.get::<_, String>(0)?,
-                    "title": r.get::<_, String>(1)?,
-                    "updated_at": r.get::<_, String>(2)?,
-                    "snippet": r.get::<_, String>(3)?,
-                }))
+                Ok((
+                    r.get::<_, String>(0)?,
+                    json!({
+                        "id": r.get::<_, String>(0)?,
+                        "title": r.get::<_, String>(1)?,
+                        "updated_at": r.get::<_, String>(2)?,
+                        "snippet": r.get::<_, String>(3)?,
+                    }),
+                ))
             }) {
-                items = iter.filter_map(|r| r.ok()).collect();
+                let mut seen = std::collections::HashSet::new();
+                for (id, row) in iter.filter_map(|r| r.ok()) {
+                    if items.len() >= 50 {
+                        break;
+                    }
+                    if seen.insert(id) {
+                        items.push(row);
+                    }
+                }
             }
         }
     }
