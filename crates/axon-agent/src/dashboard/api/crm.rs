@@ -3,10 +3,10 @@
 //! Every handler forwards to `state.mcp.call("axon-mcp", "crm_*", args)` so the
 //! UI reuses the exact tool logic — validation, teaching errors, duplicate
 //! guards — with zero duplicated SQL. The dashboard is the human operator, so
-//! these routes are not subject to the agent-side CRM write gating
-//! (`crm.agent_write_tools`); they sit behind `require_auth` like every other
-//! `/api` route. Hard deletes are deliberately not exposed — the UI offers
-//! archive/restore only.
+//! these routes are not subject to the agent-side CRM write gating (the
+//! ToolsPage Enable toggle over `CRM_WRITE_TOOLS`, see `tools/registry.rs`);
+//! they sit behind `require_auth` like every other `/api` route. Hard deletes
+//! are deliberately not exposed — the UI offers archive/restore only.
 
 use crate::state::AppState;
 use axum::extract::{Path, Query, State};
