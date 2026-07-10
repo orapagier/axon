@@ -66,6 +66,15 @@ const activeCategory = computed(() => {
   return categoryEntries.value.find((item) => item.key === key) || null
 })
 
+const filteredCategoryRows = computed(() => {
+  const rows = activeCategory.value?.rows || []
+  const q = settingsSearch.value.trim().toLowerCase()
+  if (!q) return rows
+  return rows.filter(
+    (s) => s.key.toLowerCase().includes(q) || (s.description || '').toLowerCase().includes(q)
+  )
+})
+
 const showingPatterns = computed(() => activeSection.value === 'router:patterns')
 const showingRouterTest = computed(() => activeSection.value === 'router:test')
 
