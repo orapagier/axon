@@ -651,7 +651,7 @@ onUnmounted(() => {
         
         <div class="service-list">
           <div
-            v-for="a in wsAccounts"
+            v-for="a in filteredWsAccounts"
             :key="a.id"
             class="service-item"
           >
