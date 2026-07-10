@@ -408,6 +408,12 @@ onUnmounted(() => {
         <span style="margin-right:8px">↻</span> Refresh
       </button>
     </div>
+
+    <SearchInput
+      v-model="servicesSearch"
+      placeholder="Search credentials, MCP servers, SSH servers, web search accounts…"
+    />
+
     <!-- Credentials -->
     <div
       class="premium-card collapsible"
