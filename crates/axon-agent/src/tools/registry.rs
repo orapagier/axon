@@ -992,8 +992,10 @@ mod tests {
         assert!(!agent_after_toggle.contains(&"crm_lead_create".to_string()));
         assert!(!agent_after_toggle.contains(&"telegram_send_message".to_string()));
 
-        // The workflow path sees everything regardless of the toggle.
-        let workflow = names(r.all_enabled().await);
+        // The workflow path (node palette + dispatch) sees everything
+        // regardless of the toggle — `all()`/`run()` don't filter on
+        // `enabled` at all, unlike `all_enabled()`/`all_enabled_for_agent`.
+        let workflow = names(r.all().await);
         for name in [
             "crm_lead_create",
             "crm_lead_list",
