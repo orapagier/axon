@@ -867,6 +867,16 @@ watch(disabled, (newVal) => {
   border-color: rgba(148, 163, 184, 0.45);
 }
 
+.conv-search {
+  margin-bottom: 8px;
+}
+
+.conv-search-input {
+  width: 100%;
+  font-size: 0.82rem;
+  padding: 7px 10px;
+}
+
 .conv-list {
   flex: 1;
   overflow-y: auto;
