@@ -217,18 +217,24 @@ onMounted(load)
           <span class="card-summary">{{ jobs.length }} active</span>
         </div>
 
+        <SearchInput
+          v-if="jobs.length"
+          v-model="jobSearch"
+          placeholder="Search jobs by name, status, or platform…"
+        />
+
         <div
-          v-if="jobs.length === 0"
+          v-if="filteredJobs.length === 0"
           class="empty-state"
         >
-          No scheduled jobs found. Create one to automate tasks.
+          {{ jobSearch.trim() ? 'No jobs match your search.' : 'No scheduled jobs found. Create one to automate tasks.' }}
         </div>
         <div
           v-else
           class="service-list"
         >
           <div
-            v-for="j in jobs"
+            v-for="j in filteredJobs"
             :key="j.id"
             class="service-item job-row"
             :class="{ disabled: j.status === 'paused' }"
