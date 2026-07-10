@@ -278,10 +278,10 @@ onMounted(() => {
             </div>
           </div>
           <div
-            v-if="stmRuns.length === 0"
+            v-if="filteredStmRuns.length === 0"
             class="empty-state"
           >
-            No short-term memories found.
+            {{ stmSearch.trim() ? 'No runs match your search.' : 'No short-term memories found.' }}
           </div>
         </div>
       </section>
