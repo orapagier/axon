@@ -249,9 +249,18 @@ onMounted(load)
           </div>
         </div>
 
-        <div class="service-list">
+        <div
+          v-if="filteredModels.length === 0"
+          class="empty-state"
+        >
+          No models match your search.
+        </div>
+        <div
+          v-else
+          class="service-list"
+        >
           <div
-            v-for="m in models"
+            v-for="m in filteredModels"
             :key="m.name"
             class="service-item model-row"
             :class="{ disabled: m.enabled === false }"
