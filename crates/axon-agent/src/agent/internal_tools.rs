@@ -109,10 +109,7 @@ pub(crate) async fn handle_internal(
                 .and_then(|v| v.as_u64())
                 .unwrap_or(5)
                 .clamp(1, 10) as usize;
-            let all = state
-                .tools
-                .all_enabled_for_agent(state.settings.crm_agent_write_tools())
-                .await;
+            let all = state.tools.all_enabled_for_agent().await;
             let matches = crate::agent::tool_discovery::search(&query, &all, max);
             if matches.is_empty() {
                 return Ok(serde_json::json!({
