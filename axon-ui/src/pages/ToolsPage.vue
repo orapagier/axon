@@ -3,11 +3,26 @@ import { computed, onMounted, ref } from 'vue'
 import { get, post, put } from '../lib/api.js'
 import { toast } from '../lib/toast.js'
 import Pill from '../components/Pill.vue'
+import SearchInput from '../components/SearchInput.vue'
 
 const bySource = ref({})
+const searchQuery = ref('')
+
+const filteredBySource = computed(() => {
+  const q = searchQuery.value.trim().toLowerCase()
+  if (!q) return bySource.value
+  const out = {}
+  for (const [key, tools] of Object.entries(bySource.value)) {
+    const matches = tools.filter(
+      (t) => t.name.toLowerCase().includes(q) || (t.description || '').toLowerCase().includes(q)
+    )
+    if (matches.length) out[key] = matches
+  }
+  return out
+})
 
 const sections = computed(() =>
-  Object.entries(bySource.value)
+  Object.entries(filteredBySource.value)
     .map(([key, tools]) => ({
       key,
       title: `${String(key).toUpperCase()} TOOLS`,
