@@ -6,8 +6,20 @@ import { confirmDialog } from '../lib/confirm.js'
 import { timeAgo } from '../lib/utils.js'
 import Modal from '../components/Modal.vue'
 import Pill from '../components/Pill.vue'
+import SearchInput from '../components/SearchInput.vue'
 
 const jobs = ref([])
+const jobSearch = ref('')
+const filteredJobs = computed(() => {
+  const q = jobSearch.value.trim().toLowerCase()
+  if (!q) return jobs.value
+  return jobs.value.filter(
+    (j) =>
+      (j.name || '').toLowerCase().includes(q) ||
+      (j.status || '').toLowerCase().includes(q) ||
+      (j.platform || '').toLowerCase().includes(q)
+  )
+})
 const jobModalOpen = ref(false)
 const editingJobId = ref(null)
 const jobForm = ref({
