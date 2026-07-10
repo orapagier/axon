@@ -577,7 +577,7 @@ onUnmounted(() => {
         
         <div class="service-list">
           <div
-            v-for="s in sshServers"
+            v-for="s in filteredSshServers"
             :key="s.name"
             class="service-item"
           >
