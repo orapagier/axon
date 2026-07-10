@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { connectWs, wsSend, wsStatus } from '../lib/ws.js'
 import { get, put, del } from '../lib/api.js'
 import { toast } from '../lib/toast.js'
