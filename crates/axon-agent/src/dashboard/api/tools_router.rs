@@ -40,6 +40,9 @@ pub async fn toggle_tool(
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
     state.tools.set_enabled(&name, enabled).await;
+    if let Err(e) = crate::tools::overrides::upsert(&state.db, &name, enabled) {
+        tracing::warn!("Failed to persist tool override for '{}': {}", name, e);
+    }
     Json(json!({"ok": true}))
 }
 
