@@ -208,6 +208,12 @@ onMounted(load)
       </div>
     </div>
     
+    <SearchInput
+      v-if="models.length"
+      v-model="modelSearch"
+      placeholder="Search models by name or role…"
+    />
+
     <div
       v-else
       class="models-list"
