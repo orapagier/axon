@@ -687,10 +687,10 @@ onUnmounted(() => {
             </div>
           </div>
           <div
-            v-if="wsAccounts.length === 0"
+            v-if="filteredWsAccounts.length === 0"
             class="empty-state"
           >
-            No Tavily accounts configured.
+            {{ servicesSearch.trim() ? 'No web search accounts match your search.' : 'No Tavily accounts configured.' }}
           </div>
         </div>
       </div>
