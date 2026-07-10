@@ -4318,8 +4318,7 @@ select {
 .btn-download-action,
 .btn-pin-history,
 .btn-tab-action,
-.btn-reconnect-inline,
-.search-btn-styled {
+.btn-reconnect-inline {
     background: linear-gradient(180deg, rgba(255, 255, 255, 0.085), rgba(255, 255, 255, 0.035)) !important;
     border-color: rgba(255, 255, 255, 0.14) !important;
     color: var(--text) !important;
@@ -4339,8 +4338,7 @@ select {
 .btn-download-action:hover,
 .btn-pin-history:hover,
 .btn-tab-action:hover,
-.btn-reconnect-inline:hover,
-.search-btn-styled:hover {
+.btn-reconnect-inline:hover {
     transform: translateY(-1px) !important;
     background: linear-gradient(180deg, rgba(86, 230, 200, 0.18), rgba(86, 230, 200, 0.06)) !important;
     border-color: rgba(86, 230, 200, 0.42) !important;
@@ -4458,6 +4456,20 @@ select {
 .filter-bar .search-field {
     margin-bottom: 0;
     flex: 1 1 220px;
+}
+
+/* Rows that contain a search field center their controls vertically so the
+   (slightly taller) field and the buttons sit on one visual line. */
+.action-bar:has(.search-field) {
+    align-items: center;
+}
+
+/* Filter dropdowns that ride alongside a search field match its height. */
+.filter-bar select {
+    height: var(--search-h);
+    min-height: var(--search-h);
+    padding-top: 0;
+    padding-bottom: 0;
 }
 
 /* Page-header rows: keep the field compact so it reads as a control next to

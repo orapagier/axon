@@ -290,6 +290,59 @@ const DOC_SECTIONS = [
     ],
   },
   {
+    id: 'workflow-lineage-and-new-nodes',
+    category: 'Automation',
+    title: 'Per-Item Lineage and n8n Parity Nodes',
+    summary: 'For-each execution with $ancestor lineage, plus GraphQL, Compare Datasets, Python, SSH, JWT/TOTP/encrypt crypto, and cross-run dedupe.',
+    tags: ['workflows', 'for_each', 'lineage', 'ancestor', 'graphql', 'python', 'ssh', 'jwt', 'totp', 'dedupe', 'compare', 'n8n'],
+    blocks: [
+      {
+        type: 'paragraph',
+        text: 'These capabilities close the remaining gaps against n8n\'s core node set — and in several places go past it. Everything is opt-in: existing workflows behave exactly as before.',
+      },
+      {
+        type: 'bullet',
+        title: 'Per-item lineage ("For Each Item")',
+        items: [
+          'Any request/transform node has a "For Each Item" toggle in its Settings tab: it maps over the input array, binding $item / $index and (for these) $json to the current item — no explicit Loop node.',
+          'Parallelism knob runs items concurrently (a real edge over n8n\'s single-threaded per-item loop); Stamp Lineage Index adds __idx to each output.',
+          '$ancestor("Node Name") in any expression resolves to the SPECIFIC upstream item this one came from — by the __idx stamp if present, otherwise by position. It is n8n\'s paired-item mapping without the fragile "can\'t determine which item" failures, because lineage is explicit.',
+          'Split Out has a matching "Stamp Lineage Index" option so a downstream $ancestor() still joins correctly after Filter/Sort reshuffle the list.',
+        ],
+      },
+      {
+        type: 'table',
+        title: 'New nodes',
+        columns: ['Node', 'What it does', 'Beyond n8n'],
+        rows: [
+          ['GraphQL', 'Query/mutation with variables, operationName, every HTTP auth mode.', 'Treats the errors[] array in an HTTP-200 body as a real failure.'],
+          ['Compare Datasets', 'Diff two lists by key into same / different / a_only / b_only + counts.', 'One composable output object instead of four forced branches.'],
+          ['Python', 'Runs real CPython on the host with _json / _item / _node / _results globals.', 'Full native packages (pandas, requests) — n8n\'s Python is a WASM sandbox.'],
+          ['SSH', 'Remote command + SFTP upload/download against a saved server.', 'Reuses the agent\'s host-key-pinned SSH stack and destructive-command guards.'],
+        ],
+      },
+      {
+        type: 'table',
+        title: 'Extended nodes',
+        columns: ['Node', 'New operations / options', 'Use'],
+        rows: [
+          ['Crypto', 'JWT sign & verify (HS/RS/ES/PS/EdDSA), TOTP generate & verify, AES-256-GCM encrypt/decrypt.', 'Mint/check API tokens, 2FA codes, encrypt a field at rest — was hash/HMAC/UUID only.'],
+          ['Sort / Limit / Dedupe', 'Dedupe Scope "Across all runs" (persistent), with a per-node key cap and reset.', 'Pair with a polling trigger for "only new items"; test runs check but never record.'],
+        ],
+      },
+      {
+        type: 'note',
+        text: 'Cross-run dedupe records seen-keys only on real full runs — manual/step runs in the editor check the memory read-only, so experimenting never eats real events. This is stricter (and safer) than n8n, whose manual runs pollute its dedupe store.',
+      },
+      {
+        type: 'code',
+        title: 'Example: per-item enrichment with lineage',
+        language: 'text',
+        code: "[Webhook: 3 orders]\n  -> [Synapse: shipping quote]   For Each Item = on, Stamp Lineage Index = on\n  -> [Soma: compose message]     For Each Item = on\n         text = \"Hi {{ $ancestor('Webhook').customer }}, \" +\n                \"your quote is {{ $json.quote }}\"\n\nEach message automatically gets the customer from the SAME order that\nproduced its quote — no manual field carrying, no Merge gymnastics.",
+      },
+    ],
+  },
+  {
     id: 'crm-data-model',
     category: 'CRM',
     title: 'CRM Data Model — Orgs, Leads, Deals, Activities',
@@ -818,6 +871,7 @@ watch(
 
 onMounted(() => {
   window.addEventListener('keydown', handleGlobalKeydown)
+  nextTick(() => searchInput.value?.focus())
 })
 
 onBeforeUnmount(() => {
@@ -1073,13 +1127,14 @@ onBeforeUnmount(() => {
 
 .docs-search-row input {
   width: 100%;
-  min-height: 42px;
-  border-radius: 11px;
+  height: var(--search-h);
+  min-height: var(--search-h);
+  border-radius: 8px;
   border: 1px solid var(--docs-border);
   background: rgba(255, 255, 255, 0.05);
   color: var(--docs-ink);
-  padding: 0 14px;
-  font-size: 0.9rem;
+  padding: 0 12px;
+  font-size: var(--search-fs);
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 

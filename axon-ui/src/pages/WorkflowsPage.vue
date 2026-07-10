@@ -3165,12 +3165,13 @@ onUnmounted(() => {
 
   .palette-search-input {
     width: 100%;
+    height: var(--search-h);
     background: rgba(0, 0, 0, 0.2);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 8px;
-    padding: 6px 10px;
+    padding: 0 10px;
     color: white;
-    font-size: 12px;
+    font-size: var(--search-fs);
     outline: none;
     transition: border-color 0.2s;
   }
@@ -4023,9 +4024,11 @@ onUnmounted(() => {
 
 .workflow-menu-search {
   width: 100%;
+  height: var(--search-h);
   margin-bottom: 10px;
-  padding: 9px 11px;
-  border-radius: 12px;
+  padding: 0 11px;
+  font-size: var(--search-fs);
+  border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.04);
   color: #f4f2ed;
@@ -4145,7 +4148,7 @@ onUnmounted(() => {
 }
 
 .palette-search-input {
-  border-radius: 14px;
+  border-radius: 8px;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.08);
 }

@@ -5,6 +5,7 @@ import { get, put, del } from '../lib/api.js'
 import { toast } from '../lib/toast.js'
 import { confirmDialog } from '../lib/confirm.js'
 import { renderMarkdown } from '../lib/markdown.js'
+import SearchInput from '../components/SearchInput.vue'
 
 // Each message: { role:'user'|'agent'|'trace', text, meta?, trace:[], thinking?:boolean }
 const messages = ref([])
@@ -534,14 +535,12 @@ watch(disabled, (newVal) => {
         <span>New chat</span>
       </button>
 
-      <div class="conv-search">
-        <input
-          v-model="historySearch"
-          type="search"
-          class="premium-input conv-search-input"
-          placeholder="Search chat history…"
-        >
-      </div>
+      <SearchInput
+        v-model="historySearch"
+        :autofocus="false"
+        class="conv-search"
+        placeholder="Search chat history…"
+      />
 
       <div class="conv-list">
         <p
@@ -869,12 +868,6 @@ watch(disabled, (newVal) => {
 
 .conv-search {
   margin-bottom: 8px;
-}
-
-.conv-search-input {
-  width: 100%;
-  font-size: 0.82rem;
-  padding: 7px 10px;
 }
 
 .conv-list {
