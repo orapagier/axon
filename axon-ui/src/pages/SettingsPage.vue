@@ -3,8 +3,10 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { get, post, put } from '../lib/api.js'
 import { toast } from '../lib/toast.js'
 import Pill from '../components/Pill.vue'
+import SearchInput from '../components/SearchInput.vue'
 
 const byCategory = ref({})
+const settingsSearch = ref('')
 const patternsText = ref('[\n]')
 const testMsg = ref('')
 const testResult = ref(null)
