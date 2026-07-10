@@ -139,6 +139,11 @@ onMounted(load)
       </div>
     </div>
 
+    <SearchInput
+      v-model="searchQuery"
+      placeholder="Search files by name…"
+    />
+
     <div class="files-grid">
       <section class="premium-card">
         <div class="card-header-row no-collapse">
@@ -148,22 +153,22 @@ onMounted(load)
             </div>
             <h2>Incoming Files</h2>
           </div>
-          <span class="card-summary">{{ incoming.length }} files</span>
+          <span class="card-summary">{{ filteredIncoming.length }} files</span>
         </div>
 
         <div class="card-content">
           <div
-            v-if="incoming.length === 0"
+            v-if="filteredIncoming.length === 0"
             class="empty-state"
           >
-            No incoming files found.
+            {{ searchQuery.trim() ? 'No incoming files match your search.' : 'No incoming files found.' }}
           </div>
           <div
             v-else
             class="service-list"
           >
             <div
-              v-for="f in incoming"
+              v-for="f in filteredIncoming"
               :key="f.id"
               class="service-item file-row"
             >
