@@ -540,10 +540,10 @@ onUnmounted(() => {
             </div>
           </div>
           <div
-            v-if="mcpServers.length === 0"
+            v-if="filteredMcpServers.length === 0"
             class="empty-state"
           >
-            No MCP servers connected.
+            {{ servicesSearch.trim() ? 'No MCP servers match your search.' : 'No MCP servers connected.' }}
           </div>
         </div>
       </div>
