@@ -56,26 +56,34 @@ fn text_from_value(v: &Value) -> Option<String> {
     }
 }
 
-/// Resolve the point ID for an upsert: an explicit configured value (string or
-/// number) is used verbatim — a numeric-looking value becomes Qdrant's `Num`
+/// An explicitly configured point ID (string or number), or `None` when the
+/// field is blank/absent. A numeric-looking value becomes Qdrant's `Num`
 /// variant, anything else rides as the `Uuid`-oneof string variant (Qdrant
 /// validates UUID format server-side; a malformed id surfaces as that error).
-/// Blank/absent auto-generates a fresh UUID v4.
-fn resolve_point_id(configured: Option<&Value>) -> PointId {
+/// Shared by upsert and delete so both accept the same id shapes — an
+/// expression resolving to a JSON number works identically in either.
+fn explicit_point_id(configured: Option<&Value>) -> Option<PointId> {
     match configured {
         Some(Value::String(s)) if !s.trim().is_empty() => {
             let s = s.trim();
-            match s.parse::<u64>() {
+            Some(match s.parse::<u64>() {
                 Ok(n) => PointId::from(n),
                 Err(_) => PointId::from(s.to_string()),
-            }
+            })
         }
-        Some(Value::Number(n)) => match n.as_u64() {
+        Some(Value::Number(n)) => Some(match n.as_u64() {
             Some(u) => PointId::from(u),
             None => PointId::from(n.to_string()),
-        },
-        _ => PointId::from(uuid::Uuid::new_v4().to_string()),
+        }),
+        _ => None,
     }
+}
+
+/// Resolve the point ID for an upsert: an explicit configured value is used
+/// verbatim; blank/absent auto-generates a fresh UUID v4.
+fn resolve_point_id(configured: Option<&Value>) -> PointId {
+    explicit_point_id(configured)
+        .unwrap_or_else(|| PointId::from(uuid::Uuid::new_v4().to_string()))
 }
 
 fn point_id_to_string(id: Option<&PointId>) -> String {
@@ -305,18 +313,11 @@ async fn search(
 }
 
 async fn delete(config: &Value, qdrant: &Qdrant, collection: &str) -> Result<Value, String> {
-    let id = config
-        .get("id")
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
+    let id = explicit_point_id(config.get("id"));
     let conditions = filter_rows(config);
 
-    if let Some(id_str) = id {
-        let pid = match id_str.parse::<u64>() {
-            Ok(n) => PointId::from(n),
-            Err(_) => PointId::from(id_str.to_string()),
-        };
+    if let Some(pid) = id {
+        let id_str = point_id_to_string(Some(&pid));
         qdrant
             .delete_points(
                 DeletePointsBuilder::new(collection)
@@ -447,6 +448,24 @@ mod tests {
             id.point_id_options,
             Some(PointIdOptions::Uuid("my-key".to_string()))
         );
+    }
+
+    // Delete reads its id through the same helper as upsert, so an expression
+    // resolving to a JSON number (not just a string) counts as an explicit id
+    // instead of silently falling through to the filter branch.
+    #[test]
+    fn explicit_point_id_accepts_number_and_string_but_not_blank() {
+        assert_eq!(
+            explicit_point_id(Some(&json!(7))),
+            Some(PointId::from(7u64))
+        );
+        assert_eq!(
+            explicit_point_id(Some(&json!("7"))),
+            Some(PointId::from(7u64))
+        );
+        assert_eq!(explicit_point_id(Some(&json!("  "))), None);
+        assert_eq!(explicit_point_id(Some(&Value::Null)), None);
+        assert_eq!(explicit_point_id(None), None);
     }
 
     #[test]

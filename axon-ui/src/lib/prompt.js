@@ -7,6 +7,9 @@ export const promptState = ref(null)
 
 export function promptDialog(message, defaultValue = '', options = {}) {
   return new Promise((resolve) => {
+    // A dialog opened while another is up displaces it — resolve the old one
+    // as "cancelled" so its awaiting caller doesn't hang forever.
+    promptState.value?.resolve(null)
     promptState.value = {
       title: options.title ?? 'Enter a value',
       message,

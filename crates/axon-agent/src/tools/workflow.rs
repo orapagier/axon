@@ -673,7 +673,11 @@ async fn execute_node_dispatch(
         // own already-tested executor module (classifier/information_extractor/
         // summarize/sentiment), just routed by an `operation` field instead of by
         // separate node types. Default 'classify' matches the flagship of the four.
-        "textAnalysis" => {
+        // "classifier" is the node's pre-consolidation type name: migration 0023
+        // renames stored rows, but workflow_versions snapshots and imported
+        // bundles can still carry it — those configs have no `operation`, so the
+        // classify default routes them correctly.
+        "textAnalysis" | "classifier" => {
             let operation = config
                 .get("operation")
                 .and_then(|v| v.as_str())

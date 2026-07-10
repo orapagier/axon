@@ -166,6 +166,13 @@ function parseHandleType(handleId) {
  * Create initial node data structure
  */
 export function createNodeData(id, type, name, config = {}, enabled = true) {
+  // Legacy type from before Classifier was consolidated into Text Analysis.
+  // Migration 0023 renames stored rows, but version-restore snapshots and
+  // imported bundles can still carry the old name; classify is its operation.
+  if (type === 'classifier') {
+    type = 'textAnalysis'
+    config = { operation: 'classify', ...config }
+  }
   const isTrigger = type === 'trigger'
   // Output handles: fixed for most nodes, but config-derived for dynamic ones
   // like Switch (one handle per rule + optional Default).

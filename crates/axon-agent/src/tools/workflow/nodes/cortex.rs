@@ -1,15 +1,7 @@
 use crate::providers::types::ContentBlock;
 use crate::state::AppState;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use once_cell::sync::Lazy;
 use serde_json::Value;
-
-static MEDIA_HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
-    reqwest::Client::builder()
-        .user_agent("axon-agent/1.0")
-        .build()
-        .expect("build shared media-fetch HTTP client")
-});
 
 /// Resolve the Cortex node's `media` config field (already expression-
 /// resolved by the workflow engine) into a provider-ready `ContentBlock::Image`.
@@ -48,8 +40,12 @@ async fn resolve_media_to_image_block(media: &Value) -> Result<ContentBlock, Str
     };
 
     if raw.starts_with("http://") || raw.starts_with("https://") {
-        let resp = MEDIA_HTTP_CLIENT
+        // Shared 30s-timeout client (crate::http) so a media host that accepts
+        // the connection but never responds can't hang the workflow run; some
+        // hosts reject UA-less requests, so keep the UA per-request.
+        let resp = crate::http::shared_30s()
             .get(&raw)
+            .header(reqwest::header::USER_AGENT, "axon-agent/1.0")
             .send()
             .await
             .map_err(|e| format!("Failed to fetch media URL '{}': {}", raw, e))?;

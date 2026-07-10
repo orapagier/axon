@@ -24,8 +24,13 @@ set -u
 cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0
 git add -A
 
-# Nothing staged -> nothing to back up.
-git diff-index --quiet HEAD && exit 0
+# Nothing staged -> nothing new to commit, but still push anything a previous
+# run (or another hook that commits without pushing) left unpushed. Without
+# this, a competing commit hook could starve the push forever.
+if git diff-index --quiet HEAD; then
+  git push origin HEAD >/dev/null 2>&1 || true
+  exit 0
+fi
 
 log_file="${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/auto-backup.log"
 

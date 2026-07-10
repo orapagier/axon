@@ -7,6 +7,9 @@ export const confirmState = ref(null)
 
 export function confirmDialog(message, options = {}) {
   return new Promise((resolve) => {
+    // A dialog opened while another is up displaces it — resolve the old one
+    // as "cancelled" so its awaiting caller doesn't hang forever.
+    confirmState.value?.resolve(false)
     confirmState.value = {
       title: options.title ?? 'Are you sure?',
       message,

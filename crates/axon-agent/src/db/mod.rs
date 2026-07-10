@@ -160,6 +160,12 @@ const MIGRATIONS: &[Migration] = &[
         sql: include_str!("migrations/0022_short_term_fts.sql"),
         tolerant_dup_column: false,
     },
+    Migration {
+        version: 23,
+        name: "classifier_to_text_analysis",
+        sql: include_str!("migrations/0023_classifier_to_text_analysis.sql"),
+        tolerant_dup_column: false,
+    },
 ];
 
 const SEED_SQL: &str = include_str!("seed.sql");

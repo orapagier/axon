@@ -68,6 +68,7 @@ finetune/merged/
 finetune/gguf/*.gguf
 finetune/llama.cpp/
 finetune/models/
+finetune/train.pid
 
 # auto-backup hook debug log (regenerated each run, not meant for history)
 .claude/hooks/auto-backup.log
