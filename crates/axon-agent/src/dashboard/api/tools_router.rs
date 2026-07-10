@@ -126,10 +126,7 @@ pub async fn test_routing(
         .get("message")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    let tools = state
-        .tools
-        .all_enabled_for_agent(state.settings.crm_agent_write_tools())
-        .await;
+    let tools = state.tools.all_enabled_for_agent().await;
     let (matched, info) = state.tool_router.filter_tools(msg, &tools, &[]).await;
     Json(json!({
         "matched_tools": matched.iter().map(|t| &t.name).collect::<Vec<_>>(),
