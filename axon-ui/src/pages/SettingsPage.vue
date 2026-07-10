@@ -180,6 +180,7 @@ async function runRetentionNow() {
 
 function selectSection(id) {
   activeSection.value = id
+  settingsSearch.value = ''
 }
 
 function isSecret(s) {
