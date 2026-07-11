@@ -483,6 +483,7 @@ const DOC_SECTIONS = [
           ['Webhook (generic)', 'Push', 'Any caller POSTs /webhook/external/:workflow_id'],
           ['Gmail', 'Poll', 'Background loop checks for new mail on the configured interval'],
           ['CRM', 'Poll', 'Background loop diffs crm_changes_since against a stored cursor'],
+          ['RSS', 'Poll', 'Background loop fetches the feed and fires only on entries with unseen guid/link'],
         ],
       },
       {

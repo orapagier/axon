@@ -65,25 +65,15 @@ fn parse_feed(body: &str, max_items: usize) -> Result<Value, String> {
     Ok(Value::Array(entries))
 }
 
-pub(crate) async fn execute(config: &Value) -> Result<Value, String> {
-    let url = config
-        .get("url")
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .unwrap_or("");
-    if url.is_empty() {
-        return Err("RSS Read: set the Feed URL".to_string());
-    }
-
-    let ignore_ssl = config
-        .get("ignoreSSL")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    // 0 = no limit, matching Extract from File's maxRows convention. cfg_usize
-    // (not a raw .as_u64()) because the UI's number widget can emit either a
-    // JSON number or a string.
-    let max_items = cfg_usize(config, "maxItems").unwrap_or(0);
-
+/// Fetch a feed URL and return its parsed entries. Shared by the RSS Read
+/// action node and the Stimulus RSS trigger (`check_and_trigger_rss` /
+/// `execute_rss_trigger` in workflow.rs), so both emit the exact same
+/// entry rows.
+pub(crate) async fn fetch_feed(
+    url: &str,
+    ignore_ssl: bool,
+    max_items: usize,
+) -> Result<Value, String> {
     let params = HttpRequestParams {
         method: "GET".to_string(),
         url: url.to_string(),
@@ -104,6 +94,28 @@ pub(crate) async fn execute(config: &Value) -> Result<Value, String> {
         .ok_or_else(|| "RSS Read: fetched body was not text".to_string())?;
 
     parse_feed(body, max_items)
+}
+
+pub(crate) async fn execute(config: &Value) -> Result<Value, String> {
+    let url = config
+        .get("url")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .unwrap_or("");
+    if url.is_empty() {
+        return Err("RSS Read: set the Feed URL".to_string());
+    }
+
+    let ignore_ssl = config
+        .get("ignoreSSL")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    // 0 = no limit, matching Extract from File's maxRows convention. cfg_usize
+    // (not a raw .as_u64()) because the UI's number widget can emit either a
+    // JSON number or a string.
+    let max_items = cfg_usize(config, "maxItems").unwrap_or(0);
+
+    fetch_feed(url, ignore_ssl, max_items).await
 }
 
 #[cfg(test)]

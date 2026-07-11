@@ -162,6 +162,7 @@ export const NODE_TYPES = {
                     { name: 'Webhook', value: 'webhook' },
                     { name: 'GitHub', value: 'github' },
                     { name: 'Facebook', value: 'facebook' },
+                    { name: 'RSS', value: 'rss' },
                     { name: 'CRM', value: 'crm' },
                     { name: 'Nociceptor (Failure Handler)', value: 'error' },
                 ],
@@ -448,6 +449,39 @@ export const NODE_TYPES = {
                 default: false,
                 displayOptions: { show: { type: ['gmail'] } },
                 hint: 'Save every attachment & inline image to data/files and attach their paths (email.files[]). The full decoded body, signature/quote split, parsed sender, links and contacts are always included on each email.',
+            },
+            // ── RSS Trigger Fields ──
+            {
+                displayName: 'Feed URL',
+                name: 'rss_url',
+                type: 'string',
+                default: '',
+                placeholder: 'https://example.com/feed.xml',
+                displayOptions: { show: { type: ['rss'] } },
+                hint: 'The RSS/Atom/JSON Feed to watch. Works with any public feed — blogs, GitHub releases, subreddits, YouTube channels, Google Alerts, podcasts.',
+            },
+            {
+                displayName: 'Poll Interval (minutes)',
+                name: 'poll_interval',
+                type: 'number',
+                default: 5,
+                displayOptions: { show: { type: ['rss'] } },
+                hint: 'How often to check the feed for new items (in minutes). Minimum: 1.',
+            },
+            {
+                displayName: 'Max Items per Poll',
+                name: 'rss_max_items',
+                type: 'number',
+                default: 50,
+                displayOptions: { show: { type: ['rss'] } },
+                hint: 'How many of the newest feed entries to consider each poll. Keeps huge archive feeds (e.g. podcasts) from flooding a single fire. 0 = no limit.',
+            },
+            {
+                displayName: 'RSS Trigger Output',
+                name: 'rss_trigger_hint',
+                type: 'notice',
+                default: 'Fires with { trigger: "rss", feed_url, new_item_count, items: [...] } — each item carries { guid, title, link, pubDate, isoDate, content, contentSnippet, categories, creator }, the same rows as the RSS Read node. Only genuinely NEW entries fire (deduped by guid/link); the first poll is a silent baseline. "Execute Step" test-fetches the newest entries without dedup.',
+                displayOptions: { show: { type: ['rss'] } },
             },
             // ── CRM Trigger Fields ──
             {

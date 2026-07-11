@@ -1,5 +1,7 @@
 use crate::state::AppState;
-use crate::tools::workflow::{execute_crm_trigger, execute_gmail_trigger, trigger_data};
+use crate::tools::workflow::{
+    execute_crm_trigger, execute_gmail_trigger, execute_rss_trigger, trigger_data,
+};
 use serde_json::{json, Value};
 
 pub(crate) async fn execute(
@@ -34,6 +36,16 @@ pub(crate) async fn execute(
             Err(e) => {
                 tracing::warn!("Gmail trigger fetch failed: {}", e);
                 Ok(json!({"trigger": trigger_source, "gmail_error": e}))
+            }
+        }
+    } else if trigger_type == Some("rss") {
+        // Background fires consume the new entries staged by
+        // check_and_trigger_rss; a manual Execute Step live-fetches the feed.
+        match execute_rss_trigger(config, workflow_id, run_id).await {
+            Ok(data) => Ok(data),
+            Err(e) => {
+                tracing::warn!("RSS trigger fetch failed: {}", e);
+                Ok(json!({"trigger": trigger_source, "rss_error": e}))
             }
         }
     } else if trigger_type == Some("crm") {

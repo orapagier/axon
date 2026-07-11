@@ -411,6 +411,110 @@ async fn enrich_gmail_emails(state: &AppState, emails: Vec<Value>, download: boo
     enriched
 }
 
+// ── RSS Trigger Executor ──────────────────────────────────────────────────────
+
+/// Read the Stimulus RSS trigger's config fields. `rss_url` is required; the
+/// per-poll item cap defaults to 50 (feeds list newest first) so a giant
+/// archive feed — podcasts keep every episode — can't flood a poll or blow
+/// out the seen-key window.
+fn rss_trigger_cfg(config: &Value) -> (String, usize) {
+    let url = config
+        .get("rss_url")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .unwrap_or("")
+        .to_string();
+    let max_items = cfg_usize(config, "rss_max_items").unwrap_or(50);
+    (url, max_items)
+}
+
+/// Dedup key for a feed entry: guid (feed-rs's entry id) with link then title
+/// fallbacks, since real-world feeds are inconsistent about populating guid.
+fn rss_entry_key(entry: &Value) -> Option<String> {
+    for field in ["guid", "link", "title"] {
+        if let Some(s) = entry.get(field).and_then(|v| v.as_str()) {
+            let s = s.trim();
+            if !s.is_empty() {
+                return Some(s.to_string());
+            }
+        }
+    }
+    None
+}
+
+pub(crate) async fn execute_rss_trigger(
+    config: &Value,
+    workflow_id: &str,
+    run_id: &str,
+) -> Result<Value, String> {
+    // Pre-fetched data from the background poller, staged for THIS run (only
+    // genuinely new entries, set by check_and_trigger_rss()).
+    if let Some(trigger_data) = trigger_data::take(run_id) {
+        tracing::info!(
+            "RSS trigger: using pre-fetched new feed items for workflow {}",
+            workflow_id
+        );
+        return Ok(trigger_data);
+    }
+
+    // Fallback: manual "Execute Step" click — a live fetch of the newest
+    // entries WITHOUT dedup (a non-destructive test fetch, like the Gmail
+    // trigger's manual path), so testing the node always shows real rows.
+    let (url, max_items) = rss_trigger_cfg(config);
+    if url.is_empty() {
+        return Err("RSS trigger: set the Feed URL".to_string());
+    }
+    let items = nodes::rss::fetch_feed(&url, false, max_items).await?;
+    let count = items.as_array().map(|a| a.len()).unwrap_or(0);
+    Ok(json!({
+        "trigger": "rss",
+        "feed_url": url,
+        "new_item_count": count,
+        "items": items,
+    }))
+}
+
+#[cfg(test)]
+mod rss_trigger_tests {
+    use super::{rss_entry_key, rss_trigger_cfg};
+    use serde_json::json;
+
+    // guid wins when present — it's the feed's own identity for the entry.
+    #[test]
+    fn key_prefers_guid() {
+        let e = json!({ "guid": "urn:1", "link": "https://x.test/a", "title": "A" });
+        assert_eq!(rss_entry_key(&e), Some("urn:1".into()));
+    }
+
+    // Feeds without guids fall back to link, then title; whitespace-only
+    // values are treated as absent so the fallback chain keeps going.
+    #[test]
+    fn key_falls_back_link_then_title() {
+        let e = json!({ "guid": "  ", "link": "https://x.test/a", "title": "A" });
+        assert_eq!(rss_entry_key(&e), Some("https://x.test/a".into()));
+        let e = json!({ "guid": null, "link": null, "title": "Only Title" });
+        assert_eq!(rss_entry_key(&e), Some("Only Title".into()));
+    }
+
+    // An entry with no identity at all yields None — it can never fire,
+    // which beats firing on every poll forever.
+    #[test]
+    fn keyless_entry_is_none() {
+        assert_eq!(rss_entry_key(&json!({})), None);
+    }
+
+    // Config defaults: 50-item cap, trimmed URL; string-encoded numbers
+    // (what the UI's number widget can emit) parse too.
+    #[test]
+    fn cfg_defaults_and_string_numbers() {
+        let (url, max) = rss_trigger_cfg(&json!({ "rss_url": " https://x.test/feed " }));
+        assert_eq!(url, "https://x.test/feed");
+        assert_eq!(max, 50);
+        let (_, max) = rss_trigger_cfg(&json!({ "rss_url": "u", "rss_max_items": "0" }));
+        assert_eq!(max, 0);
+    }
+}
+
 /// Parse a positive integer from a config field that may arrive as a JSON
 /// number or a string (the UI emits both depending on the widget).
 pub(crate) fn cfg_usize(config: &Value, key: &str) -> Option<usize> {
@@ -1747,7 +1851,7 @@ impl WorkflowEngine {
         // (narrowed separately by the pin below) — starts from every trigger node.
         let entry_trigger_type: Option<&str> = match trigger_source {
             "telegram" | "gmail" | "whatsapp" | "webhook" | "github" | "facebook" | "cron"
-            | "crm" => Some(trigger_source),
+            | "crm" | "rss" => Some(trigger_source),
             // An error run (A3) starts ONLY from error-type trigger nodes; a normal
             // run never does (handled by `is_error_trigger` exclusion below).
             "error" => Some("error"),
@@ -3222,7 +3326,7 @@ impl WorkflowEngine {
 
     fn trigger_priority(trigger_type: &str) -> u8 {
         match trigger_type {
-            "gmail" | "crm" => 3,
+            "gmail" | "crm" | "rss" => 3,
             "cron" | "watcher" => 2,
             _ => 1,
         }
@@ -3616,7 +3720,7 @@ impl WorkflowEngine {
                          FROM workflows w
                          LEFT JOIN workflow_nodes wn ON wn.workflow_id = w.id AND wn.node_type IN ('trigger', 'circadian', 'stimulus')
                          WHERE w.enabled = 1
-                    ) WHERE trigger_type IN ('cron', 'watcher', 'gmail', 'crm')"
+                    ) WHERE trigger_type IN ('cron', 'watcher', 'gmail', 'crm', 'rss')"
                 )
                     .and_then(|mut s| s.query_map([], |r| Ok(Workflow {
                         id: r.get(0)?, name: r.get(1)?, description: String::new(), enabled: true,
@@ -3689,6 +3793,37 @@ impl WorkflowEngine {
                                 tracing::debug!("Gmail trigger '{}': no new emails", wf_name)
                             }
                             Err(e) => tracing::warn!("Gmail trigger '{}' failed: {}", wf_name, e),
+                        }
+                    });
+                } else if wf.trigger_type == "rss" {
+                    // RSS trigger: same poll-first watcher pattern as Gmail —
+                    // only fire when the feed has genuinely new entries.
+                    if !should_trigger(&wf, state.settings.agent_utc_offset_hours()) {
+                        continue;
+                    }
+                    if Self::is_workflow_run_active(state.as_ref(), &wf.id) {
+                        tracing::info!(
+                            "Workflow '{}' ({}) already running; skip duplicate RSS trigger",
+                            wf.name,
+                            wf.id
+                        );
+                        continue;
+                    }
+
+                    let s = state.clone();
+                    let wf_id = wf.id.clone();
+                    let wf_name = wf.name.clone();
+                    tokio::spawn(async move {
+                        match check_and_trigger_rss(&wf_id, &wf_name, &wf.trigger_config, &s).await
+                        {
+                            Ok(true) => tracing::info!(
+                                "RSS trigger '{}': new feed items found, workflow triggered",
+                                wf_name
+                            ),
+                            Ok(false) => {
+                                tracing::debug!("RSS trigger '{}': no new items", wf_name)
+                            }
+                            Err(e) => tracing::warn!("RSS trigger '{}' failed: {}", wf_name, e),
                         }
                     });
                 } else if wf.trigger_type == "crm" {
@@ -3982,6 +4117,132 @@ async fn check_and_trigger_gmail(
             }
         }
     }
+
+    Ok(true)
+}
+
+/// RSS watcher: fetches the feed, compares entry keys (guid/link/title)
+/// against stored seen keys, and only triggers the workflow when genuinely
+/// new entries appear. Stages the new entries so the stimulus node injects
+/// them as trigger output. Same poll-first pattern as the Gmail watcher.
+async fn check_and_trigger_rss(
+    workflow_id: &str,
+    workflow_name: &str,
+    trigger_config: &Value,
+    state: &AppState,
+) -> Result<bool, String> {
+    let (url, max_items) = rss_trigger_cfg(trigger_config);
+    if url.is_empty() {
+        return Err("no Feed URL configured".to_string());
+    }
+
+    let fetched = nodes::rss::fetch_feed(&url, false, max_items).await?;
+    let entries = fetched.as_array().cloned().unwrap_or_default();
+
+    let current_keys: Vec<String> = entries.iter().filter_map(rss_entry_key).collect();
+
+    // Load previously seen entry keys from the DB
+    let seen_keys: Vec<String> = {
+        let conn = state.db.get().map_err(|e| e.to_string())?;
+        conn.query_row(
+            "SELECT json_extract(trigger_config, '$.rss_last_seen_ids') FROM workflows WHERE id = ?1",
+            rusqlite::params![workflow_id],
+            |r| r.get::<_, Option<String>>(0),
+        )
+        .ok()
+        .flatten()
+        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+        .unwrap_or_default()
+    };
+    let seen_set: std::collections::HashSet<&str> =
+        seen_keys.iter().map(|s| s.as_str()).collect();
+
+    // Find genuinely new entries (key not in seen_keys). An entry with no
+    // derivable key never fires — better silent than firing forever.
+    let new_entries: Vec<&Value> = entries
+        .iter()
+        .filter(|e| {
+            rss_entry_key(e)
+                .map(|k| !seen_set.contains(k.as_str()))
+                .unwrap_or(false)
+        })
+        .collect();
+
+    // Update the seen keys in the DB. Cap at 500 — 10× the default 50-entry
+    // fetch cap, so entries sliding out of the window can't cycle back in as
+    // "new" (feeds re-list their whole tail on every fetch, unlike Gmail).
+    let mut updated_keys = seen_keys.clone();
+    for k in &current_keys {
+        if !updated_keys.contains(k) {
+            updated_keys.push(k.clone());
+        }
+    }
+    if updated_keys.len() > 500 {
+        updated_keys = updated_keys.split_off(updated_keys.len() - 500);
+    }
+
+    {
+        let conn = state.db.get().map_err(|e| e.to_string())?;
+        let keys_json = serde_json::to_string(&updated_keys).unwrap_or_else(|_| "[]".into());
+        conn.execute(
+            "UPDATE workflows SET trigger_config = json_set(trigger_config, '$.rss_last_seen_ids', json(?1)) WHERE id = ?2",
+            rusqlite::params![keys_json, workflow_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    if new_entries.is_empty() {
+        // First poll (no seen keys stored yet): baseline — don't trigger
+        if seen_keys.is_empty() && !current_keys.is_empty() {
+            tracing::info!(
+                "RSS trigger '{}': first poll — stored {} baseline entry keys (silent)",
+                workflow_name,
+                current_keys.len()
+            );
+        }
+        return Ok(false);
+    }
+
+    tracing::info!(
+        "RSS trigger '{}': {} new item(s) detected (out of {} fetched)",
+        workflow_name,
+        new_entries.len(),
+        entries.len()
+    );
+
+    let new_owned: Vec<Value> = new_entries.into_iter().cloned().collect();
+    let new_count = new_owned.len();
+
+    // Stage the new entries keyed by a pre-generated run id so THIS run's
+    // execute_rss_trigger picks it up (a concurrent run of the same workflow
+    // can't consume it). run_inner's cleanup guard discards it if unconsumed.
+    let run_id = uuid::Uuid::new_v4().to_string();
+    trigger_data::stage(
+        &run_id,
+        json!({
+            "trigger": "rss",
+            "feed_url": url,
+            "new_item_count": new_count,
+            "items": new_owned,
+        }),
+    );
+
+    // B3: hold a concurrency slot across the inline run so rss-triggered runs
+    // honor the same cap as other triggers. The seen keys were already
+    // committed above, so a queue-full *shed* would silently drop these items
+    // — in that rare case fall back to running unbounded rather than losing
+    // them (same trade-off as the Gmail watcher).
+    let _slot = acquire_run_slot(state).await;
+    if _slot.is_none() {
+        tracing::warn!(
+            "RSS trigger '{}': run queue full; running unbounded to avoid dropping {} item(s)",
+            workflow_name,
+            new_count
+        );
+    }
+    WorkflowEngine::run_with_trigger(workflow_id, state, "rss", None, false, Some(run_id))
+        .await
+        .map_err(|e| e.to_string())?;
 
     Ok(true)
 }
@@ -4559,8 +4820,8 @@ fn should_trigger(wf: &Workflow, utc_offset_hours: i32) -> bool {
     }
 
     // 2. Fallback to legacy interval-based polling
-    let mut mins = if wf.trigger_type == "gmail" || wf.trigger_type == "crm" {
-        // Gmail/CRM triggers use poll_interval from config (default 5 min)
+    let mut mins = if matches!(wf.trigger_type.as_str(), "gmail" | "crm" | "rss") {
+        // Gmail/CRM/RSS triggers use poll_interval from config (default 5 min)
         wf.trigger_config
             .get("poll_interval")
             .and_then(|v| {
