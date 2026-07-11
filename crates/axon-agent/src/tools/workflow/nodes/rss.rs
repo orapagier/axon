@@ -8,16 +8,47 @@
 //! Output is a bare array of entries (the list-node convention, so it composes
 //! with Loop/Filter/Aggregate/Sort-Limit directly), each row using the field
 //! names n8n's RSS Feed Read node uses for developer familiarity: `title`,
-//! `link`, `pubDate` (RFC 2822), `isoDate` (RFC 3339), `content`
-//! (content:encoded / Atom content, when present), `contentSnippet`
-//! (summary/description, plain), `categories`, `creator`, `guid`. Feeds are
-//! wildly inconsistent about what they populate — a missing field is `null`/
-//! `[]`, never a hard error.
+//! `link`, `pubDate` (RFC 2822), `isoDate` (RFC 3339), `content` (the item's
+//! HTML body: content:encoded / Atom content, falling back to the plain
+//! description — most RSS 2.0 feeds, e.g. hnrss, only ship a description),
+//! `contentSnippet` (that body with tags stripped to plain text, n8n-style),
+//! `categories`, `creator`, `guid`. Feeds are wildly inconsistent about what
+//! they populate — a missing field is `null`/`[]`, never a hard error.
 
 use crate::tools::http::{HttpRequestParams, HttpRequestTool};
 use crate::tools::workflow::cfg_usize;
 use feed_rs::model::Entry;
 use serde_json::{json, Value};
+
+/// Strip HTML down to plain text for `contentSnippet`: drop tags, decode the
+/// common entities, and collapse whitespace runs — mirroring n8n's rss-parser,
+/// whose contentSnippet is the tag-free version of the item body.
+fn strip_html(html: &str) -> String {
+    let mut text = String::with_capacity(html.len());
+    let mut in_tag = false;
+    for ch in html.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => {
+                in_tag = false;
+                // Keep a separator where a tag stood so "<p>a</p><p>b</p>"
+                // doesn't fuse into "ab" (collapsed to one space below).
+                text.push(' ');
+            }
+            c if !in_tag => text.push(c),
+            _ => {}
+        }
+    }
+    let decoded = text
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'");
+    decoded.split_whitespace().collect::<Vec<_>>().join(" ")
+}
 
 fn entry_to_json(e: &Entry) -> Value {
     let title = e.title.as_ref().map(|t| t.content.clone());
@@ -25,11 +56,25 @@ fn entry_to_json(e: &Entry) -> Value {
     let when = e.published.or(e.updated);
     let pub_date = when.map(|d| d.to_rfc2822());
     let iso_date = when.map(|d| d.to_rfc3339());
-    let content = e.content.as_ref().and_then(|c| c.body.clone());
-    let content_snippet = e
+    // The item's body. RSS 2.0 feeds without content:encoded (the common
+    // case — hnrss, most blog engines' default output) carry it in
+    // <description>, which feed-rs surfaces as `summary`; fall back so
+    // `content` is only null when the feed truly ships no body at all.
+    let summary = e
         .summary
         .as_ref()
         .map(|s| s.content.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let content = e
+        .content
+        .as_ref()
+        .and_then(|c| c.body.clone())
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| summary.clone());
+    let content_snippet = summary
+        .as_deref()
+        .or(content.as_deref())
+        .map(strip_html)
         .filter(|s| !s.is_empty());
     let categories: Vec<Value> = e
         .categories
@@ -165,6 +210,9 @@ mod tests {
     </feed>"#;
 
     // RSS 2.0 items map to title/link/guid/pubDate/contentSnippet/categories.
+    // A description-only item (no content:encoded — the common case) still
+    // fills `content` with the description HTML and `contentSnippet` with its
+    // tag-stripped plain text, like n8n's rss-parser.
     #[test]
     fn parses_rss2_items() {
         let out = parse_feed(RSS2, 0).unwrap();
@@ -174,11 +222,24 @@ mod tests {
         assert_eq!(arr[0]["link"], json!("https://example.test/first"));
         assert_eq!(arr[0]["guid"], json!("https://example.test/first"));
         assert_eq!(arr[0]["categories"], json!(["rust", "backend"]));
+        assert_eq!(arr[0]["content"], json!("<p>Hello world</p>"));
+        assert_eq!(arr[0]["contentSnippet"], json!("Hello world"));
         assert!(arr[0]["pubDate"].as_str().unwrap().contains("2025"));
         assert!(arr[0]["isoDate"]
             .as_str()
             .unwrap()
             .starts_with("2025-01-06"));
+    }
+
+    // strip_html: tags out, entities decoded, whitespace collapsed.
+    #[test]
+    fn strip_html_flattens_to_plain_text() {
+        assert_eq!(
+            strip_html("<p>A &amp; B</p>\n<hr>\n<p>Points:&nbsp;186</p>"),
+            "A & B Points: 186"
+        );
+        assert_eq!(strip_html("<p>a</p><p>b</p>"), "a b");
+        assert_eq!(strip_html("plain already"), "plain already");
     }
 
     // Atom entries map authors→creator and content→content (HTML body kept as-is).
