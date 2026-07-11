@@ -129,9 +129,9 @@ if ! $SKIP_BUILD; then
     cp -r crates/axon-agent/static "$DIST_DIR/core/"
     cp -r crates/axon-agent/config "$DIST_DIR/core/"
     cp -r crates/axon-agent/tools "$DIST_DIR/core/"
-    if [ -d "crates/axon-agent/data" ]; then
-        cp -r crates/axon-agent/data "$DIST_DIR/core/"
-    fi
+    # data/ is runtime state (uploads, generated files, axon-backup-*.db) and is
+    # NOT shipped: the server keeps its own data/ across deploys (set aside and
+    # restored in the remote step) and the app recreates data/files on demand.
     # Copy memory assets but skip locked/local database files
     mkdir -p "$DIST_DIR/core/memory"
     if [ -d "crates/axon-agent/memory" ]; then
@@ -366,6 +366,14 @@ ssh $SSH_OPTS "$TARGET_SERVER" "bash -s" <<REMOTE
         fi
     done
 
+    # ── Set aside the server's data/ (Files area) before the wipe ──
+    # The bundle no longer ships data/ — the server's copy is the only one.
+    sudo rm -rf "$REMOTE_DIR/.axon_data_keep"
+    if [ -d "$REMOTE_DIR/axon/core/data" ]; then
+        sudo mv "$REMOTE_DIR/axon/core/data" "$REMOTE_DIR/.axon_data_keep"
+        echo "    ✅ data/ set aside for restore"
+    fi
+
     # ── Wipe old deployment (database will be restored) ──
     echo "  🧹 Wiping $REMOTE_DIR/axon/ ..."
     sudo rm -rf $REMOTE_DIR/mcp $REMOTE_DIR/qdrant $REMOTE_DIR/run.sh
@@ -379,6 +387,14 @@ ssh $SSH_OPTS "$TARGET_SERVER" "bash -s" <<REMOTE
     echo "  📦 Extracting new deployment..."
     sudo tar -xzf $DEPLOY_FILE
     sudo chown -R \$(whoami):\$(whoami) . 2>/dev/null || true
+
+    # ── Put the server's data/ back (bundle doesn't ship one) ──
+    if [ -d "$REMOTE_DIR/.axon_data_keep" ]; then
+        sudo rm -rf core/data
+        sudo mv "$REMOTE_DIR/.axon_data_keep" core/data
+        sudo chown -R \$(whoami):\$(whoami) core/data 2>/dev/null || true
+        echo "    ✅ Server data/ restored"
+    fi
 
     # ── Install Qdrant ──
     if [ -d "qdrant" ]; then
