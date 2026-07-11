@@ -651,7 +651,12 @@ fn primary_input(direct_inputs: &std::collections::BTreeMap<String, Vec<Value>>)
 /// and binds it as `$item`/`$index` (with `$json`/`$input` overridden to the
 /// item when `override_json` — the `for_each` case, matching n8n's per-item
 /// `$json`; Loop bodies keep the historical `$json` meaning).
-fn item_context_result(current: &Value, idx: usize, total: usize, override_json: bool) -> NodeResult {
+fn item_context_result(
+    current: &Value,
+    idx: usize,
+    total: usize,
+    override_json: bool,
+) -> NodeResult {
     NodeResult {
         node_id: ITEM_CONTEXT_KEY.to_string(),
         node_name: ITEM_CONTEXT_KEY.to_string(),
@@ -745,7 +750,11 @@ async fn execute_for_each_fanout(
             .map(|(i, c)| (i, Value::Array(c.to_vec())))
             .collect()
     } else {
-        items.iter().enumerate().map(|(i, it)| (i, it.clone())).collect()
+        items
+            .iter()
+            .enumerate()
+            .map(|(i, it)| (i, it.clone()))
+            .collect()
     };
     let unit_count = units.len();
 
@@ -809,7 +818,10 @@ async fn execute_for_each_fanout(
             }
         });
         let collected: Vec<(usize, Value, Result<Value, String>, u32)> =
-            futures::stream::iter(futs).buffered(parallelism).collect().await;
+            futures::stream::iter(futs)
+                .buffered(parallelism)
+                .collect()
+                .await;
         for (idx, item, r, a) in collected {
             max_unit_attempts = max_unit_attempts.max(a);
             match r {
@@ -2744,38 +2756,6 @@ impl WorkflowEngine {
         let failed_nodes: Vec<&NodeResult> =
             results_vec.iter().filter(|r| r.status == "error").collect();
         if !failed_nodes.is_empty() {
-            let mut detail_lines = vec![
-                format!("workflow_id={}", workflow_id),
-                format!("run_id={}", run_id),
-            ];
-            for failed in failed_nodes.iter().take(5) {
-                detail_lines.push(format!(
-                    "- node='{}' type='{}' error={}",
-                    failed.node_name,
-                    failed.node_type,
-                    failed.error.as_deref().unwrap_or("unknown")
-                ));
-            }
-            if failed_nodes.len() > 5 {
-                detail_lines.push(format!(
-                    "- ... and {} additional node errors",
-                    failed_nodes.len() - 5
-                ));
-            }
-
-            if let Err(e) = send_global_error_notification(
-                state,
-                "workflow.engine",
-                &format!("Workflow '{}' reported execution errors", workflow_name),
-                &detail_lines.join("\n"),
-                None,
-                None,
-            )
-            .await
-            {
-                tracing::warn!("Workflow global error notification failed: {}", e);
-            }
-
             // Error workflow (A3): hand off the failure to a designated handler so
             // the operator can notify/compensate (the n8n "Error Trigger" pattern).
             // Resolution: this workflow's `error_workflow_id` → global default
@@ -2794,7 +2774,10 @@ impl WorkflowEngine {
             //     Error Trigger for those, so a failing test run while building can't
             //     spam the production error handler. Real event triggers now carry
             //     their own source (telegram/webhook/gmail/…), not "manual".
-            // The global notification above still fires for any errored node.
+            // A spawned handler owns operator notification; the global Telegram
+            // fallback below only fires when no handler takes the failure, so a
+            // configured error workflow doesn't double-notify.
+            let mut handled_by_error_workflow = false;
             if trigger_source != "error" && trigger_source != "manual" && workflow_status == "error"
             {
                 // Resolve the handler id (workflow-level, then global default).
@@ -2878,12 +2861,15 @@ impl WorkflowEngine {
                             None,
                             Some(payload),
                         ) {
-                            Ok(child) => tracing::info!(
-                                "Workflow '{}' failed — spawned error workflow {} (run {})",
-                                workflow_id,
-                                error_wf_id,
-                                child
-                            ),
+                            Ok(child) => {
+                                handled_by_error_workflow = true;
+                                tracing::info!(
+                                    "Workflow '{}' failed — spawned error workflow {} (run {})",
+                                    workflow_id,
+                                    error_wf_id,
+                                    child
+                                );
+                            }
                             Err(e) => {
                                 tracing::warn!(
                                     "Failed to spawn error workflow {}: {}",
@@ -2893,6 +2879,43 @@ impl WorkflowEngine {
                             }
                         }
                     }
+                }
+            }
+
+            // Global fallback: no handler took the failure (manual run,
+            // continue_on_fail-only errors, unset/ineligible handler, or a
+            // failed spawn) — notify the operator chat directly.
+            if !handled_by_error_workflow {
+                let mut detail_lines = vec![
+                    format!("workflow_id={}", workflow_id),
+                    format!("run_id={}", run_id),
+                ];
+                for failed in failed_nodes.iter().take(5) {
+                    detail_lines.push(format!(
+                        "- node='{}' type='{}' error={}",
+                        failed.node_name,
+                        failed.node_type,
+                        failed.error.as_deref().unwrap_or("unknown")
+                    ));
+                }
+                if failed_nodes.len() > 5 {
+                    detail_lines.push(format!(
+                        "- ... and {} additional node errors",
+                        failed_nodes.len() - 5
+                    ));
+                }
+
+                if let Err(e) = send_global_error_notification(
+                    state,
+                    "workflow.engine",
+                    &format!("Workflow '{}' reported execution errors", workflow_name),
+                    &detail_lines.join("\n"),
+                    None,
+                    None,
+                )
+                .await
+                {
+                    tracing::warn!("Workflow global error notification failed: {}", e);
                 }
             }
         }
