@@ -3448,38 +3448,6 @@ onUnmounted(() => {
                       <span class="toggle-label">Add __idx to each output so $ancestor() joins back after Filter/Sort</span>
                     </div>
                   </div>
-                  <!-- Pinned data (A4): manual runs use the saved output instead of
-                   executing the node. Production/trigger runs always execute. -->
-                  <div class="form-row row-boolean-field">
-                    <label class="field-label">Pinned Data</label>
-                    <div
-                      class="toggle-field"
-                      style="flex-direction:column; align-items:flex-start; gap:6px;"
-                    >
-                      <template v-if="node.data.pinnedData != null">
-                        <span
-                          class="toggle-label"
-                          style="color:#a78bfa;"
-                        >Pinned — manual runs use saved data, not executing</span>
-                        <button
-                          class="btn-curl-import"
-                          @click="unpinOutput"
-                        >
-                          Unpin
-                        </button>
-                      </template>
-                      <template v-else>
-                        <button
-                          class="btn-curl-import"
-                          :disabled="!nodeResult || nodeResult.output == null"
-                          @click="pinOutput"
-                        >
-                          Pin output
-                        </button>
-                        <span class="field-hint">Saves this node's last output so manual runs skip execution and reuse it. Run the node first.</span>
-                      </template>
-                    </div>
-                  </div>
                 </div>
               </div>
 
@@ -3569,6 +3537,28 @@ onUnmounted(() => {
                     @click="outputMode = 'json'"
                   >
                     JSON
+                  </button>
+                  <!-- Pinned data (A4): manual runs reuse the saved output instead
+                   of executing the node. Production/trigger runs always execute. -->
+                  <button
+                    class="btn-pin-output"
+                    :class="{ pinned: node.data.pinnedData != null }"
+                    :disabled="node.data.pinnedData == null && (!nodeResult || nodeResult.output == null)"
+                    :title="node.data.pinnedData != null
+                      ? 'Pinned — manual runs reuse this data without executing. Click to unpin.'
+                      : (nodeResult && nodeResult.output != null
+                        ? 'Pin this output — manual runs reuse it without executing'
+                        : 'Run this node first to pin its output')"
+                    @click="node.data.pinnedData != null ? unpinOutput() : pinOutput()"
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      width="12"
+                      height="12"
+                    ><path
+                      fill="currentColor"
+                      d="M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z"
+                    /></svg>
                   </button>
                 </div>
               </div>
@@ -3986,6 +3976,12 @@ onUnmounted(() => {
 }
 .col-toggles button:hover { color: #f2f7ff; }
 .col-toggles button.active { background: #2a2a32; color: #f2f7ff; box-shadow: 0 1px 4px rgba(0,0,0,0.4); }
+/* Pin-output button: rides in the OUTPUT view-mode group after Schema/Table/JSON.
+   Violet when a pin is active (same accent the settings toggle used). */
+.col-toggles button.btn-pin-output { display: flex; align-items: center; padding: 4px 8px; }
+.col-toggles button.btn-pin-output:disabled { color: #55555f; cursor: default; }
+.col-toggles button.btn-pin-output.pinned { background: rgba(167, 139, 250, 0.16); color: #a78bfa; }
+.col-toggles button.btn-pin-output.pinned:hover { color: #c4b5fd; }
 
 .col-content { flex: 1; overflow-y: auto; padding: 16px; }
 .col-content::-webkit-scrollbar { width: 4px; }

@@ -616,6 +616,22 @@ fn error_output_enabled(config: &Value) -> bool {
     }
 }
 
+/// Every node id reachable by following edges downstream from `start`
+/// (inclusive). Used to pull a routed error branch into a step/partial run,
+/// so the whole branch fires — not just its first node.
+fn downstream_ids(edges: &[WorkflowEdge], start: &str) -> std::collections::HashSet<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut stack = vec![start.to_string()];
+    while let Some(id) = stack.pop() {
+        if seen.insert(id.clone()) {
+            for e in edges.iter().filter(|e| e.source_id == id) {
+                stack.push(e.target_id.clone());
+            }
+        }
+    }
+    seen
+}
+
 /// Flatten a node's `direct_inputs` down to one primary-input `Value`, for the
 /// single-input node types (everything except Merge). Every input handle is
 /// realistically just `input_main_0` for these (only Merge declares a second
@@ -2509,6 +2525,24 @@ impl WorkflowEngine {
 
             let mut skip_stack: Vec<String> = Vec::new();
             for e in edges.iter().filter(|e| e.source_id == current_id) {
+                // Error Output cascade: a step/partial run stops at its target, but
+                // when a Cortex routes a failure down its error branch the whole
+                // point of the toggle is what fires next — so the taken error edge
+                // pulls its downstream subtree into the run instead of dying at the
+                // required-paths filter below. Success keeps step semantics: the
+                // run never continues past its target on the main output.
+                if target_node_id.is_some()
+                    && !required_node_ids.contains(&e.target_id)
+                    && e.source_handle.as_deref() == Some("output_main_1")
+                    && node.node_type == "cortex"
+                    && error_output_enabled(&node.config)
+                    && node_results
+                        .get(&current_id)
+                        .is_some_and(|r| r.status == "error")
+                {
+                    required_node_ids.extend(downstream_ids(&edges, &e.target_id));
+                }
+
                 // If this is a partial run, only continue down required paths
                 if target_node_id.is_some() && !required_node_ids.contains(&e.target_id) {
                     continue;
@@ -4889,8 +4923,38 @@ mod multi_input_plumbing_tests {
 
 #[cfg(test)]
 mod error_output_tests {
-    use super::error_output_enabled;
+    use super::{downstream_ids, error_output_enabled, WorkflowEdge};
     use serde_json::json;
+
+    fn edge(source: &str, target: &str) -> WorkflowEdge {
+        WorkflowEdge {
+            id: format!("{source}-{target}"),
+            workflow_id: "wf".into(),
+            source_id: source.into(),
+            target_id: target.into(),
+            source_handle: None,
+            target_handle: None,
+        }
+    }
+
+    // The error-branch cascade must pull in the WHOLE downstream subtree of the
+    // error edge's target (chains and diamonds), and stop at unreachable nodes.
+    #[test]
+    fn downstream_ids_walks_full_subtree() {
+        let edges = vec![
+            edge("err1", "err2"),
+            edge("err2", "err3"),
+            edge("err2", "err3b"),
+            edge("err3b", "err3"), // diamond re-join must not loop forever
+            edge("other", "elsewhere"),
+        ];
+        let ids = downstream_ids(&edges, "err1");
+        assert_eq!(ids.len(), 4);
+        for want in ["err1", "err2", "err3", "err3b"] {
+            assert!(ids.contains(want), "missing {want}");
+        }
+        assert!(!ids.contains("other") && !ids.contains("elsewhere"));
+    }
 
     // The toggle gates edge routing from the RAW stored config, so both the
     // native boolean and its string forms (an fx-mode literal) must count.
