@@ -150,6 +150,9 @@ pub(crate) async fn handle_internal(
         "run_synapse" => handle_run_saved_http_request(args, state).await,
         "list_workflows" => handle_list_workflows(state).await,
         "run_workflow" => handle_run_workflow(args, state).await,
+        "get_workflow" => handle_get_workflow(args, state).await,
+        "upsert_workflow" => handle_upsert_workflow(args, state).await,
+        "list_node_types" => handle_list_node_types(args),
         "image_tool" => crate::tools::image_tool::handle_image(args).await,
         // These reuse the workflow-node executors directly: the agent's tool args
         // share the same shape as the node `config` they read from. We first fill
@@ -482,6 +485,229 @@ async fn handle_run_workflow(
     }
 }
 
+async fn handle_get_workflow(
+    args: serde_json::Value,
+    state: AppState,
+) -> anyhow::Result<serde_json::Value> {
+    let name_or_id = args
+        .get("name_or_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let conn = state
+        .db
+        .get()
+        .map_err(|e| anyhow::anyhow!("DB error: {}", e))?;
+    let wf_id = conn
+        .query_row(
+            "SELECT id FROM workflows WHERE id = ?1 OR name = ?1 LIMIT 1",
+            rusqlite::params![name_or_id],
+            |r| r.get::<_, String>(0),
+        )
+        .ok()
+        .ok_or_else(|| anyhow::anyhow!("Workflow '{}' not found", name_or_id))?;
+    crate::dashboard::api::load_workflow_detail(&conn, &wf_id)
+        .ok_or_else(|| anyhow::anyhow!("Workflow '{}' not found", name_or_id))
+}
+
+async fn handle_upsert_workflow(
+    args: serde_json::Value,
+    state: AppState,
+) -> anyhow::Result<serde_json::Value> {
+    // Accept the declared shape ({workflow: {...}}) but also the workflow
+    // fields inlined at the top level — models produce both.
+    let payload = match args.get("workflow") {
+        Some(serde_json::Value::Object(_)) => args.get("workflow").cloned().unwrap(),
+        _ if args.get("name").is_some() || args.get("id").is_some() => args.clone(),
+        _ => {
+            return Ok(serde_json::json!({
+                "error": "Pass the full workflow as an object under the `workflow` key."
+            }))
+        }
+    };
+
+    // Reject unknown node types and dangling edges here, with guidance,
+    // instead of saving a workflow that only fails once it runs.
+    if let Some(nodes) = payload.get("nodes").and_then(|v| v.as_array()) {
+        // Engine-accepted aliases that aren't palette keys (see the node_type
+        // dispatch in tools/workflow.rs).
+        const ENGINE_ALIASES: &[&str] = &["trigger", "circadian", "classifier", "workflow"];
+        let palette = node_types();
+        let mut bad_types: Vec<String> = vec![];
+        let mut node_ids: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        let mut missing_id = false;
+        for n in nodes {
+            let t = n.get("node_type").and_then(|v| v.as_str()).unwrap_or("");
+            let known = palette.get(t).is_some()
+                || ENGINE_ALIASES.contains(&t)
+                || t == "mcp"
+                || t.starts_with("mcp_");
+            if !known && !bad_types.iter().any(|b| b == t) {
+                bad_types.push(t.to_string());
+            }
+            match n.get("id").and_then(|v| v.as_str()) {
+                Some(id) => {
+                    node_ids.insert(id);
+                }
+                None => missing_id = true,
+            }
+        }
+        if !bad_types.is_empty() {
+            return Ok(serde_json::json!({
+                "error": format!(
+                    "Unknown node_type(s): {}. Use list_node_types to see valid types and their config schemas.",
+                    bad_types.join(", ")
+                )
+            }));
+        }
+        if let Some(edges) = payload.get("edges").and_then(|v| v.as_array()) {
+            let dangling: Vec<String> = edges
+                .iter()
+                .flat_map(|e| ["source_id", "target_id"].map(|k| e.get(k).and_then(|v| v.as_str())))
+                .flatten()
+                .filter(|id| !node_ids.contains(id))
+                .map(str::to_string)
+                .collect();
+            if !dangling.is_empty() {
+                let hint = if missing_id {
+                    " Give every node an explicit `id` and reference those ids in edges."
+                } else {
+                    ""
+                };
+                return Ok(serde_json::json!({
+                    "error": format!(
+                        "Edge(s) reference node id(s) not present in `nodes`: {}. `nodes`/`edges` replace the existing ones entirely, so edges may only reference ids from this save.{}",
+                        dangling.join(", "), hint
+                    )
+                }));
+            }
+        }
+    }
+
+    // Create-vs-edit guardrails: an edit must point at a real workflow, and a
+    // create must not silently shadow an existing name (duplicate names make
+    // run_workflow's name resolution ambiguous).
+    let editing_id = payload
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    {
+        let conn = state
+            .db
+            .get()
+            .map_err(|e| anyhow::anyhow!("DB error: {}", e))?;
+        match &editing_id {
+            Some(id) => {
+                let exists = conn
+                    .query_row(
+                        "SELECT 1 FROM workflows WHERE id = ?1",
+                        rusqlite::params![id],
+                        |_| Ok(()),
+                    )
+                    .is_ok();
+                if !exists {
+                    return Ok(serde_json::json!({
+                        "error": format!(
+                            "No workflow with id '{}'. Omit `id` to create a new workflow, or use the id from get_workflow to edit an existing one.",
+                            id
+                        )
+                    }));
+                }
+            }
+            None => {
+                if let Some(name) = payload.get("name").and_then(|v| v.as_str()) {
+                    if let Ok(existing) = conn.query_row(
+                        "SELECT id FROM workflows WHERE name = ?1 LIMIT 1",
+                        rusqlite::params![name],
+                        |r| r.get::<_, String>(0),
+                    ) {
+                        return Ok(serde_json::json!({
+                            "error": format!(
+                                "A workflow named '{}' already exists (id {}). Include that id to edit it, or pick a different name to create a separate workflow.",
+                                name, existing
+                            )
+                        }));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(crate::dashboard::api::upsert_workflow_core(&state, payload).await)
+}
+
+/// Trimmed node-palette schemas, generated from axon-ui/src/lib/nodes.js by
+/// axon-ui/scripts/export-node-types.mjs (re-run it when the palette changes;
+/// run.bat and the deploy scripts do so before every UI build).
+const NODE_TYPES_JSON: &str = include_str!("../../assets/node_types.json");
+
+fn node_types() -> &'static serde_json::Value {
+    static CACHE: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| {
+        serde_json::from_str(NODE_TYPES_JSON).unwrap_or_else(|e| {
+            tracing::error!("node_types.json asset is malformed: {}", e);
+            serde_json::json!({})
+        })
+    })
+}
+
+fn handle_list_node_types(args: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+    let palette = node_types()
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("node palette asset is malformed"))?;
+    let requested: Vec<String> = args
+        .get("types")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|t| t.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if requested.is_empty() {
+        let index: Vec<serde_json::Value> = palette
+            .iter()
+            .map(|(k, v)| {
+                serde_json::json!({
+                    "type": k,
+                    "displayName": v.get("displayName").cloned().unwrap_or_default(),
+                    "description": v.get("description").cloned().unwrap_or_default(),
+                })
+            })
+            .collect();
+        return Ok(serde_json::json!({
+            "node_types": index,
+            "hint": "Call again with types: [\"<type>\", ...] (max 5) for a node's full config schema before building its config."
+        }));
+    }
+    // Full schemas run 5–20k chars each; keep a single result from flooding
+    // the model's tool-result budget.
+    if requested.len() > 5 {
+        return Ok(serde_json::json!({
+            "error": "Request at most 5 node types per call."
+        }));
+    }
+    let unknown: Vec<String> = requested
+        .iter()
+        .filter(|t| !palette.contains_key(*t))
+        .cloned()
+        .collect();
+    if !unknown.is_empty() {
+        return Ok(serde_json::json!({
+            "error": format!(
+                "Unknown node type(s): {}. Call list_node_types without arguments for the valid list.",
+                unknown.join(", ")
+            )
+        }));
+    }
+    let mut out = serde_json::Map::new();
+    for t in &requested {
+        out.insert(t.clone(), palette[t].clone());
+    }
+    Ok(serde_json::Value::Object(out))
+}
+
 async fn handle_ssh(args: serde_json::Value, state: AppState) -> anyhow::Result<serde_json::Value> {
     let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("");
     let server = args
@@ -698,5 +924,37 @@ async fn handle_memory(
             Ok(serde_json::json!({"deleted":true}))
         }
         other => anyhow::bail!("Unknown memory action: {}", other),
+    }
+}
+
+#[cfg(test)]
+mod node_types_tests {
+    use super::handle_list_node_types;
+
+    #[test]
+    fn embedded_palette_parses_and_indexes() {
+        let idx = handle_list_node_types(serde_json::json!({})).unwrap();
+        let types = idx.get("node_types").and_then(|v| v.as_array()).unwrap();
+        assert!(types.len() >= 40, "palette unexpectedly small: {}", types.len());
+        assert!(types.iter().any(|t| t["type"] == "cortex"));
+        assert!(types.iter().any(|t| t["type"] == "stimulus"));
+        // Compact index must stay compact — it is returned whole to the model.
+        assert!(serde_json::to_string(&idx).unwrap().len() < 30_000);
+    }
+
+    #[test]
+    fn detail_lookup_returns_full_schema_and_rejects_unknowns() {
+        let detail =
+            handle_list_node_types(serde_json::json!({"types": ["cortex"]})).unwrap();
+        assert!(detail["cortex"]["properties"].is_array());
+
+        let err = handle_list_node_types(serde_json::json!({"types": ["nope"]})).unwrap();
+        assert!(err["error"].as_str().unwrap().contains("nope"));
+
+        let too_many = handle_list_node_types(
+            serde_json::json!({"types": ["a", "b", "c", "d", "e", "f"]}),
+        )
+        .unwrap();
+        assert!(too_many["error"].as_str().unwrap().contains("at most 5"));
     }
 }

@@ -131,14 +131,27 @@ const CRM_WRITE_TOOLS: &[&str] = &[
     "crm_record_restore",
 ];
 
-/// True for any tool in [`SOCIAL_WRITE_TOOLS`], [`CRM_WRITE_TOOLS`], or
-/// [`MESSAGING_WRITE_TOOLS`] — the "sensitive write tool" set that the agent
-/// gate defaults to `enabled: false` for at boot (see
-/// `ToolRegistry::apply_agent_gate_defaults`), regardless of what the
-/// underlying source (MCP/internal registration) set. An operator opts a
+/// Workflow *write* tools. Same standing pattern as the other gated groups,
+/// with one extra caveat: a workflow can contain any node (social posts, CRM
+/// writes, shell), and workflow nodes bypass the per-tool agent gate — so
+/// enabling `upsert_workflow` transitively grants the agent everything a
+/// workflow can do (it can author a workflow around any gated tool and
+/// `run_workflow` it). The agent keeps the read/run tools (list_workflows,
+/// get_workflow, run_workflow, list_node_types) unconditionally; deleting
+/// workflows is deliberately not a tool at all — that stays with the operator.
+const WORKFLOW_WRITE_TOOLS: &[&str] = &["upsert_workflow"];
+
+/// True for any tool in [`SOCIAL_WRITE_TOOLS`], [`CRM_WRITE_TOOLS`],
+/// [`MESSAGING_WRITE_TOOLS`], or [`WORKFLOW_WRITE_TOOLS`] — the "sensitive
+/// write tool" set that the agent gate defaults to `enabled: false` for at
+/// boot (see `ToolRegistry::apply_agent_gate_defaults`), regardless of what
+/// the underlying source (MCP/internal registration) set. An operator opts a
 /// specific tool back in via the ToolsPage Enable toggle.
 pub fn is_gated_write_tool(name: &str) -> bool {
-    SOCIAL_WRITE_TOOLS.contains(&name) || CRM_WRITE_TOOLS.contains(&name) || MESSAGING_WRITE_TOOLS.contains(&name)
+    SOCIAL_WRITE_TOOLS.contains(&name)
+        || CRM_WRITE_TOOLS.contains(&name)
+        || MESSAGING_WRITE_TOOLS.contains(&name)
+        || WORKFLOW_WRITE_TOOLS.contains(&name)
 }
 
 fn internal_tools() -> Vec<ToolDefinition> {
@@ -324,6 +337,40 @@ fn internal_tools() -> Vec<ToolDefinition> {
                 }
             }),
             vec!["name_or_id".into()],
+        ),
+        ToolDefinition::internal(
+            "get_workflow",
+            "Get one workflow's full definition: trigger, every node with its config, and the edges connecting them. The returned JSON is exactly the shape upsert_workflow accepts, so to edit a workflow: get_workflow, modify the result, then pass it back to upsert_workflow.",
+            json!({
+                "name_or_id": {
+                    "type": "string",
+                    "description": "The name or ID of the workflow to fetch"
+                }
+            }),
+            vec!["name_or_id".into()],
+        ),
+        ToolDefinition::internal(
+            "list_node_types",
+            "Describe the workflow node palette. Without arguments, returns a compact index of every node type (name + description). Pass `types` to get the full config schema (properties, options, defaults, input/output handles) for specific node types — do this before building a node's config. Request at most 5 types per call; results are large.",
+            json!({
+                "types": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Node type keys (e.g. [\"cortex\", \"telegram\"]) to return full config schemas for. Omit to get the compact index."
+                }
+            }),
+            vec![],
+        ),
+        ToolDefinition::internal(
+            "upsert_workflow",
+            "Create or edit a workflow on the Workflows page. To CREATE: omit `id`; provide name, trigger_type (usually a 'stimulus' node plus matching trigger_type), nodes, and edges. To EDIT: call get_workflow first, modify the returned JSON, and pass the whole thing back including its `id` — `nodes` and `edges` REPLACE the existing ones entirely, so always send the complete lists, never a partial diff. Node `config` schemas come from list_node_types. Edges are {source_id, target_id, source_handle?, target_handle?} referencing node ids. A version snapshot is taken before every save, so edits are recoverable from the workflow's version history.",
+            json!({
+                "workflow": {
+                    "type": "object",
+                    "description": "The full workflow: {id?, name, description?, enabled?, trigger_type, trigger_config?, error_workflow_id?, nodes: [{id?, node_type, name, config, enabled?, position_x?, position_y?, continue_on_fail?, retries?, retry_wait_ms?, retry_backoff?}], edges: [{source_id, target_id, source_handle?, target_handle?}]}"
+                }
+            }),
+            vec!["workflow".into()],
         ),
         crate::tools::telegram::trigger_tool_definition(),
         crate::tools::whatsapp::tool_definition(),
@@ -962,6 +1009,9 @@ mod tests {
             "fb_create_post",        // social write — gated
             "telegram_send_message", // messaging write — gated
             "gmail_list",            // unrelated — always agent-callable
+            "upsert_workflow",       // workflow write — gated
+            "get_workflow",          // workflow read — always agent-callable
+            "list_node_types",       // workflow read — always agent-callable
         ] {
             r.register(def(name)).await;
         }
@@ -979,9 +1029,12 @@ mod tests {
         let agent_default = names(r.all_enabled_for_agent().await);
         assert!(agent_default.contains(&"crm_lead_list".to_string()));
         assert!(agent_default.contains(&"gmail_list".to_string()));
+        assert!(agent_default.contains(&"get_workflow".to_string()));
+        assert!(agent_default.contains(&"list_node_types".to_string()));
         assert!(!agent_default.contains(&"crm_lead_create".to_string()));
         assert!(!agent_default.contains(&"fb_create_post".to_string()));
         assert!(!agent_default.contains(&"telegram_send_message".to_string()));
+        assert!(!agent_default.contains(&"upsert_workflow".to_string()));
 
         // The ToolsPage Enable toggle (set_enabled) is the only thing that
         // grants agent access to a gated tool, and it grants exactly that

@@ -10,7 +10,7 @@ pub async fn get_workflows(State(state): State<AppState>) -> Json<Value> {
     let mut stmt = match conn.prepare(
         // Most-recently added or edited workflow first: updated_at is bumped on
         // every save; COALESCE falls back to created_at for rows predating it.
-        "SELECT id, name, description, enabled, trigger_type, trigger_config, last_run_at, last_status, created_at, error_workflow_id FROM workflows ORDER BY COALESCE(updated_at, created_at) DESC, created_at DESC"
+        "SELECT id FROM workflows ORDER BY COALESCE(updated_at, created_at) DESC, created_at DESC",
     ) {
         Ok(s) => s,
         Err(e) => {
@@ -18,87 +18,109 @@ pub async fn get_workflows(State(state): State<AppState>) -> Json<Value> {
             return Json(json!({"workflows": []}));
         }
     };
-    let rows = match stmt.query_map([], |r| {
-        let wf_id: String = r.get(0)?;
-        Ok((wf_id, json!({
-            "id": r.get::<_, String>(0)?,
-            "name": r.get::<_, String>(1)?,
-            "description": r.get::<_, Option<String>>(2)?.unwrap_or_default(),
-            "enabled": r.get::<_, i64>(3)? != 0,
-            "trigger_type": r.get::<_, Option<String>>(4)?.unwrap_or_else(|| "manual".to_string()),
-            "trigger_config": serde_json::from_str::<Value>(&r.get::<_, Option<String>>(5)?.unwrap_or_else(|| "{}".to_string())).unwrap_or(json!({})),
-            "last_run_at": r.get::<_, Option<String>>(6)?,
-            "last_status": r.get::<_, Option<String>>(7)?.unwrap_or_else(|| "idle".to_string()),
-            "created_at": r.get::<_, Option<String>>(8)?.unwrap_or_default(),
-            // Error workflow (A3): the handler to run when this workflow fails.
-            "error_workflow_id": r.get::<_, Option<String>>(9)?,
-        })))
-    }) {
-        Ok(r) => r,
+    let ids: Vec<String> = match stmt.query_map([], |r| r.get::<_, String>(0)) {
+        Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
         Err(e) => {
             tracing::error!("Failed to query workflows: {}", e);
             return Json(json!({"workflows": []}));
         }
     };
-    let workflows: Vec<Value> = rows.filter_map(|r| r.ok()).map(|(wf_id, mut wf)| {
-        // Load nodes for this workflow
-        if let Ok(mut nstmt) = conn.prepare(
-            "SELECT id, workflow_id, position, node_type, name, config, enabled, position_x, position_y, continue_on_fail, retries, retry_wait_ms, retry_backoff, pinned_data FROM workflow_nodes WHERE workflow_id = ?1 ORDER BY position ASC"
-        ) {
-            let nodes: Vec<Value> = nstmt.query_map(rusqlite::params![wf_id], |r| {
-                Ok(json!({
-                    "id": r.get::<_, String>(0)?,
-                    "workflow_id": r.get::<_, String>(1)?,
-                    "position": r.get::<_, i64>(2)?,
-                    "node_type": r.get::<_, String>(3)?,
-                    "name": r.get::<_, String>(4)?,
-                    "config": serde_json::from_str::<Value>(&r.get::<_, Option<String>>(5)?.unwrap_or_else(|| "{}".to_string())).unwrap_or(json!({})),
-                    "enabled": r.get::<_, i64>(6)? != 0,
-                    "position_x": r.get::<_, f64>(7)?,
-                    "position_y": r.get::<_, f64>(8)?,
-                    "continue_on_fail": r.get::<_, i64>(9)? != 0,
-                    "retries": r.get::<_, i64>(10).unwrap_or(0),
-                    "retry_wait_ms": r.get::<_, i64>(11).unwrap_or(0),
-                    "retry_backoff": r.get::<_, Option<String>>(12)?.unwrap_or_else(|| "fixed".to_string()),
-                    // Pinned output (A4): parsed JSON value, or null when not pinned.
-                    "pinned_data": r.get::<_, Option<String>>(13)?
-                        .filter(|s| !s.trim().is_empty())
-                        .and_then(|s| serde_json::from_str::<Value>(&s).ok()),
-                }))
-            }).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
-            if let Some(obj) = wf.as_object_mut() {
-                obj.insert("nodes".to_string(), json!(nodes));
-            }
-        }
-
-        // Load edges for this workflow
-        if let Ok(mut estmt) = conn.prepare(
-            "SELECT id, workflow_id, source_id, target_id, source_handle, target_handle FROM workflow_edges WHERE workflow_id = ?1"
-        ) {
-            let edges: Vec<Value> = estmt.query_map(rusqlite::params![wf_id], |r| {
-                Ok(json!({
-                    "id": r.get::<_, String>(0)?,
-                    "workflow_id": r.get::<_, String>(1)?,
-                    "source_id": r.get::<_, String>(2)?,
-                    "target_id": r.get::<_, String>(3)?,
-                    "source_handle": r.get::<_, Option<String>>(4)?,
-                    "target_handle": r.get::<_, Option<String>>(5)?,
-                }))
-            }).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
-            if let Some(obj) = wf.as_object_mut() {
-                obj.insert("edges".to_string(), json!(edges));
-            }
-        }
-
-        wf
-    }).collect();
+    let workflows: Vec<Value> = ids
+        .iter()
+        .filter_map(|id| load_workflow_detail(&conn, id))
+        .collect();
     Json(json!({"workflows": workflows}))
+}
+
+/// One workflow with its nodes and edges, in exactly the JSON shape that
+/// `upsert_workflow` accepts back — so get → modify → save round-trips.
+/// Shared by GET /api/workflows and the agent's `get_workflow` internal tool.
+pub fn load_workflow_detail(conn: &rusqlite::Connection, wf_id: &str) -> Option<Value> {
+    let mut wf = conn
+        .query_row(
+            "SELECT id, name, description, enabled, trigger_type, trigger_config, last_run_at, last_status, created_at, error_workflow_id FROM workflows WHERE id = ?1",
+            rusqlite::params![wf_id],
+            |r| {
+                Ok(json!({
+                    "id": r.get::<_, String>(0)?,
+                    "name": r.get::<_, String>(1)?,
+                    "description": r.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                    "enabled": r.get::<_, i64>(3)? != 0,
+                    "trigger_type": r.get::<_, Option<String>>(4)?.unwrap_or_else(|| "manual".to_string()),
+                    "trigger_config": serde_json::from_str::<Value>(&r.get::<_, Option<String>>(5)?.unwrap_or_else(|| "{}".to_string())).unwrap_or(json!({})),
+                    "last_run_at": r.get::<_, Option<String>>(6)?,
+                    "last_status": r.get::<_, Option<String>>(7)?.unwrap_or_else(|| "idle".to_string()),
+                    "created_at": r.get::<_, Option<String>>(8)?.unwrap_or_default(),
+                    // Error workflow (A3): the handler to run when this workflow fails.
+                    "error_workflow_id": r.get::<_, Option<String>>(9)?,
+                }))
+            },
+        )
+        .ok()?;
+
+    // Load nodes for this workflow
+    if let Ok(mut nstmt) = conn.prepare(
+        "SELECT id, workflow_id, position, node_type, name, config, enabled, position_x, position_y, continue_on_fail, retries, retry_wait_ms, retry_backoff, pinned_data FROM workflow_nodes WHERE workflow_id = ?1 ORDER BY position ASC"
+    ) {
+        let nodes: Vec<Value> = nstmt.query_map(rusqlite::params![wf_id], |r| {
+            Ok(json!({
+                "id": r.get::<_, String>(0)?,
+                "workflow_id": r.get::<_, String>(1)?,
+                "position": r.get::<_, i64>(2)?,
+                "node_type": r.get::<_, String>(3)?,
+                "name": r.get::<_, String>(4)?,
+                "config": serde_json::from_str::<Value>(&r.get::<_, Option<String>>(5)?.unwrap_or_else(|| "{}".to_string())).unwrap_or(json!({})),
+                "enabled": r.get::<_, i64>(6)? != 0,
+                "position_x": r.get::<_, f64>(7)?,
+                "position_y": r.get::<_, f64>(8)?,
+                "continue_on_fail": r.get::<_, i64>(9)? != 0,
+                "retries": r.get::<_, i64>(10).unwrap_or(0),
+                "retry_wait_ms": r.get::<_, i64>(11).unwrap_or(0),
+                "retry_backoff": r.get::<_, Option<String>>(12)?.unwrap_or_else(|| "fixed".to_string()),
+                // Pinned output (A4): parsed JSON value, or null when not pinned.
+                "pinned_data": r.get::<_, Option<String>>(13)?
+                    .filter(|s| !s.trim().is_empty())
+                    .and_then(|s| serde_json::from_str::<Value>(&s).ok()),
+            }))
+        }).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+        if let Some(obj) = wf.as_object_mut() {
+            obj.insert("nodes".to_string(), json!(nodes));
+        }
+    }
+
+    // Load edges for this workflow
+    if let Ok(mut estmt) = conn.prepare(
+        "SELECT id, workflow_id, source_id, target_id, source_handle, target_handle FROM workflow_edges WHERE workflow_id = ?1"
+    ) {
+        let edges: Vec<Value> = estmt.query_map(rusqlite::params![wf_id], |r| {
+            Ok(json!({
+                "id": r.get::<_, String>(0)?,
+                "workflow_id": r.get::<_, String>(1)?,
+                "source_id": r.get::<_, String>(2)?,
+                "target_id": r.get::<_, String>(3)?,
+                "source_handle": r.get::<_, Option<String>>(4)?,
+                "target_handle": r.get::<_, Option<String>>(5)?,
+            }))
+        }).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+        if let Some(obj) = wf.as_object_mut() {
+            obj.insert("edges".to_string(), json!(edges));
+        }
+    }
+
+    Some(wf)
 }
 
 pub async fn upsert_workflow(
     State(state): State<AppState>,
     Json(payload): Json<Value>,
 ) -> Json<Value> {
+    Json(upsert_workflow_core(&state, payload).await)
+}
+
+/// Create-or-update core shared by POST /api/workflows and the agent's
+/// `upsert_workflow` internal tool. Omitted `id` creates a new workflow;
+/// `nodes`/`edges` are replace-all when present and left untouched when absent.
+pub async fn upsert_workflow_core(state: &AppState, payload: Value) -> Value {
     let id = payload
         .get("id")
         .and_then(|v| v.as_str())
@@ -281,9 +303,9 @@ pub async fn upsert_workflow(
             }
         }
 
-        Json(json!({"ok": true, "id": id}))
+        json!({"ok": true, "id": id})
     } else {
-        Json(json!({"ok": false, "error": "DB error"}))
+        json!({"ok": false, "error": "DB error"})
     }
 }
 

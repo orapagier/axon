@@ -240,6 +240,7 @@ pub fn derive_is_mutating(name: &str) -> bool {
         "publish",
         "rename",
         "insert",
+        "upsert",
         "schedule",
         "resize",
         "format",
@@ -339,6 +340,8 @@ mod tests {
             "gdrive_download_binary",
             "get_settings",
             "list_workflows",
+            "get_workflow",
+            "list_node_types",
             "list_synapses",
         ] {
             assert!(!derive_is_mutating(name), "{name} should be read-only");
@@ -358,6 +361,7 @@ mod tests {
             "gtasks_complete_task",
             "gdrive_delete",
             "run_workflow",
+            "upsert_workflow",
             "shell_tool",
             "ssh_tool",
         ] {
