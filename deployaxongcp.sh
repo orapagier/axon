@@ -13,9 +13,13 @@ GCP_INSTANCE="$AXON_GCP_INSTANCE"
 GCP_ZONE="$AXON_GCP_ZONE"
 REMOTE_USER="$AXON_GCP_USER"
 REMOTE_DIR="${AXON_REMOTE_DIR//$'\r'/}"
-DEPLOY_FILE="axon_deploy.tar.gz"
+# DEPLOY_FILE/DIST_DIR are gcp-specific (not shared with deploycham.sh) so
+# that `--skip-build` can never silently re-upload a bundle the OTHER script
+# built — that previously shipped GCP's .env (and its Telegram bot token) to
+# cham's server when the scripts shared "dist/" + "axon_deploy.tar.gz".
+DEPLOY_FILE="axon_deploy_gcp.tar.gz"
 DEPLOY_FILE="${DEPLOY_FILE//$'\r'/}"
-DIST_DIR="$ROOT_DIR/dist"
+DIST_DIR="$ROOT_DIR/dist-gcp"
 DIST_DIR="${DIST_DIR//$'\r'/}"
 
 # gcloud SSH/SCP helpers

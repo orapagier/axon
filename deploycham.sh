@@ -9,9 +9,13 @@ ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 : "${CHAM_REMOTE_DIR:?Set CHAM_REMOTE_DIR in .deploy.env — see .deploy.env.example}"
 TARGET_SERVER="${CHAM_TARGET_SERVER//$'\r'/}"
 REMOTE_DIR="${CHAM_REMOTE_DIR//$'\r'/}"
-DEPLOY_FILE="axon_deploy.tar.gz"
+# DEPLOY_FILE/DIST_DIR are cham-specific (not shared with deployaxongcp.sh) so
+# that `--skip-build` can never silently re-upload a bundle the OTHER script
+# built — that previously shipped GCP's .env (and its Telegram bot token) to
+# this server when the scripts shared "dist/" + "axon_deploy.tar.gz".
+DEPLOY_FILE="axon_deploy_cham.tar.gz"
 DEPLOY_FILE="${DEPLOY_FILE//$'\r'/}"
-DIST_DIR="$ROOT_DIR/dist"
+DIST_DIR="$ROOT_DIR/dist-cham"
 DIST_DIR="${DIST_DIR//$'\r'/}"
 
 # SSH options: using default SSH agent/keys
