@@ -87,7 +87,12 @@ struct GenTool {
 struct GenFnDecl {
     name: String,
     description: String,
-    parameters: Value,
+    /// `None` for zero-parameter tools: Gemini's native API rejects
+    /// `{"type":"object","properties":{}}` with 400 INVALID_ARGUMENT
+    /// ("properties: should be non-empty for OBJECT type") — the field must
+    /// be omitted entirely, unlike the OpenAI-compat shim which tolerated it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parameters: Option<Value>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -127,6 +132,11 @@ struct GenResp {
     #[serde(default)]
     candidates: Vec<GenCandidate>,
     usage_metadata: Option<GenUsage>,
+    /// Mid-stream errors (e.g. quota exhausted after the 200 was committed)
+    /// arrive as an `{"error": {...}}` SSE frame. Without this field the
+    /// frame would deserialize as an empty-but-valid response (`candidates`
+    /// is `#[serde(default)]`) and the failure would be silently swallowed.
+    error: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -141,6 +151,15 @@ struct GenCandidate {
 struct GenUsage {
     prompt_token_count: Option<u32>,
     candidates_token_count: Option<u32>,
+    /// Thinking tokens are reported separately from `candidatesTokenCount`
+    /// but bill as output — both are summed into `output_tokens`.
+    thoughts_token_count: Option<u32>,
+}
+
+impl GenUsage {
+    fn output_total(&self) -> u32 {
+        self.candidates_token_count.unwrap_or(0) + self.thoughts_token_count.unwrap_or(0)
+    }
 }
 
 static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
@@ -289,13 +308,16 @@ fn to_gen_tools(tools: &[ToolDefinition]) -> Vec<GenTool> {
                 params = json!({});
             }
             super::openai_compat::sanitize_schema(&mut params);
+            let has_properties = params.as_object().is_some_and(|o| !o.is_empty());
             GenFnDecl {
                 name: t.name.clone(),
                 description: t.description.clone(),
-                parameters: json!({
-                    "type": "object",
-                    "properties": params,
-                    "required": t.required
+                parameters: has_properties.then(|| {
+                    json!({
+                        "type": "object",
+                        "properties": params,
+                        "required": t.required
+                    })
                 }),
             }
         })
@@ -485,9 +507,16 @@ async fn call_streaming(
             let parsed: GenResp = serde_json::from_str(&data)
                 .with_context(|| "parse streaming response chunk")?;
 
+            if let Some(err) = parsed.error {
+                anyhow::bail!("provider error mid-stream at {}: {}", url, err);
+            }
+
             if let Some(u) = parsed.usage_metadata {
                 usage.input_tokens = u.prompt_token_count.unwrap_or(usage.input_tokens);
-                usage.output_tokens = u.candidates_token_count.unwrap_or(usage.output_tokens);
+                let out = u.output_total();
+                if out > 0 {
+                    usage.output_tokens = out;
+                }
             }
 
             if let Some(candidate) = parsed.candidates.into_iter().next() {
@@ -503,6 +532,19 @@ async fn call_streaming(
                 tool_blocks.extend(chunk_tools);
             }
         }
+    }
+
+    // A healthy stream always ends with a candidate carrying a finishReason.
+    // Seeing none (and no content) means the prompt was blocked — Gemini
+    // returns 200 with a promptFeedback-only frame and no candidates — or the
+    // stream died; surface it instead of returning an empty success (the
+    // pre-token fallback in `call` will then retry non-streaming, where the
+    // same condition produces a proper "empty candidates" error).
+    if finish_reason.is_none() && text.is_empty() && tool_blocks.is_empty() {
+        anyhow::bail!(
+            "stream at {} ended with no candidates (prompt possibly blocked)",
+            url
+        );
     }
 
     Ok(finalize_response(
@@ -527,6 +569,11 @@ pub async fn call(
         .or_else(|| provider_base_url("google"))
         .unwrap_or("https://generativelanguage.googleapis.com/v1beta");
     let base = normalize_base_url_str(base);
+    // Runtime-added DB rows are never refreshed by the boot sync, so one may
+    // still carry the old OpenAI-compat shim base (".../v1beta/openai/") from
+    // before this native adapter existed. That suffix can never be right for
+    // generateContent URLs — strip it rather than 404 every call.
+    let base = base.strip_suffix("/openai").unwrap_or(&base).to_string();
 
     let system_instruction = if system.is_empty() {
         None
@@ -651,7 +698,7 @@ pub async fn call(
         output_tokens: body
             .usage_metadata
             .as_ref()
-            .and_then(|u| u.candidates_token_count)
+            .map(|u| u.output_total())
             .unwrap_or(0),
     };
     Ok(finalize_response(
@@ -776,11 +823,17 @@ mod tests {
         let gen_tools = to_gen_tools(&tools);
         assert_eq!(gen_tools.len(), 1);
         assert_eq!(gen_tools[0].function_declarations.len(), 2);
-        let params_a = &gen_tools[0].function_declarations[0].parameters;
+        let params_a = gen_tools[0].function_declarations[0]
+            .parameters
+            .as_ref()
+            .unwrap();
         assert_eq!(
             params_a.pointer("/properties/x/type").and_then(|v| v.as_str()),
             Some("string")
         );
+        // Zero-parameter tools must omit `parameters` entirely — Gemini 400s
+        // on an empty-properties OBJECT schema.
+        assert!(gen_tools[0].function_declarations[1].parameters.is_none());
     }
 
     #[test]
@@ -839,6 +892,32 @@ mod tests {
         };
         let cfg = build_generation_config(&model, 1500, &options).unwrap();
         assert!(cfg.thinking_config.is_none());
+    }
+
+    #[test]
+    fn error_frames_deserialize_with_error_field_set() {
+        // Without GenResp.error, an `{"error": {...}}` SSE frame would parse
+        // as an empty-but-valid response and the failure would be swallowed.
+        let parsed: GenResp =
+            serde_json::from_str(r#"{"error":{"code":429,"message":"quota"}}"#).unwrap();
+        assert!(parsed.error.is_some());
+        assert!(parsed.candidates.is_empty());
+    }
+
+    #[test]
+    fn usage_output_total_includes_thinking_tokens() {
+        let u = GenUsage {
+            prompt_token_count: Some(10),
+            candidates_token_count: Some(100),
+            thoughts_token_count: Some(250),
+        };
+        assert_eq!(u.output_total(), 350);
+        let u = GenUsage {
+            prompt_token_count: Some(10),
+            candidates_token_count: Some(100),
+            thoughts_token_count: None,
+        };
+        assert_eq!(u.output_total(), 100);
     }
 
     #[test]

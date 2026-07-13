@@ -103,7 +103,7 @@ enabled    = true
 [[models]]
 name       = "gemini-samuzzielorapa"
 provider   = "google"
-model_id   = "gemini-3.1-flash-live-preview"
+model_id   = "gemini-3.1-flash-lite"
 api_key    = "${GEMINI_API_KEY_SAMUZZIELORAPA}"
 role       = ""
 priority   = 1

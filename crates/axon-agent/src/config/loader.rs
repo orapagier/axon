@@ -102,8 +102,8 @@ pub fn sync_toml_models(conn: &rusqlite::Connection, toml_models: Vec<ModelRecor
     for m in toml_models {
         current_names.push(m.name.clone());
         let _ = conn.execute(
-            "INSERT INTO models (name, provider, model_id, api_key, base_url, timeout_secs, priority, max_tokens, enabled, role, origin)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'toml')
+            "INSERT INTO models (name, provider, model_id, api_key, base_url, timeout_secs, priority, max_tokens, enabled, role, thinking_mode, origin)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'toml')
              ON CONFLICT(name) DO UPDATE SET
                 provider=excluded.provider,
                 model_id=excluded.model_id,
@@ -114,6 +114,7 @@ pub fn sync_toml_models(conn: &rusqlite::Connection, toml_models: Vec<ModelRecor
                 max_tokens=excluded.max_tokens,
                 enabled=excluded.enabled,
                 role=excluded.role,
+                thinking_mode=excluded.thinking_mode,
                 origin='toml'",
             rusqlite::params![
                 m.name,
@@ -125,7 +126,8 @@ pub fn sync_toml_models(conn: &rusqlite::Connection, toml_models: Vec<ModelRecor
                 m.priority,
                 m.max_tokens,
                 if m.enabled { 1 } else { 0 },
-                m.role
+                m.role,
+                m.thinking_mode
             ],
         );
     }
@@ -280,6 +282,26 @@ mod tests {
         sync_toml_models(&conn, vec![toml_model("a")]);
         assert_eq!(origin_of(&conn, "a").as_deref(), Some("toml"));
         assert_eq!(origin_of(&conn, "b"), None);
+    }
+
+    #[test]
+    fn thinking_mode_round_trips_through_boot_sync() {
+        // Regression: the sync upsert used to omit thinking_mode entirely, so
+        // a `thinking_mode = "level"` set in models.toml never reached the DB
+        // and (since the boot path loads models from the DB) never activated.
+        let conn = test_db();
+        let mut m = toml_model("thinker");
+        m.thinking_mode = Some("level".into());
+        sync_toml_models(&conn, vec![m]);
+        let loaded = load_models_from_db(&conn).unwrap();
+        let thinker = loaded.iter().find(|m| m.name == "thinker").unwrap();
+        assert_eq!(thinker.thinking_mode.as_deref(), Some("level"));
+
+        // Clearing it in the TOML clears it in the DB on the next boot.
+        sync_toml_models(&conn, vec![toml_model("thinker")]);
+        let loaded = load_models_from_db(&conn).unwrap();
+        let thinker = loaded.iter().find(|m| m.name == "thinker").unwrap();
+        assert_eq!(thinker.thinking_mode, None);
     }
 
     #[test]
