@@ -632,10 +632,10 @@ const foveaUpstreamImageOptions = computed(() => {
   const seen = new Set()
 
   for (const upstreamNode of props.upstreamNodes || []) {
-    const result = getNodeResult(upstreamNode.id)
-    if (!result) continue
+    const output = getUpstreamData(upstreamNode.id)
+    if (!output) continue
     const nodeLabel = upstreamNode?.data?.label || upstreamNode?.id || 'Upstream node'
-    collectUpstreamImageOptions(result.output, seen, options, nodeLabel)
+    collectUpstreamImageOptions(output, seen, options, nodeLabel)
   }
 
   return options
@@ -683,13 +683,33 @@ function isImageUrl(icon) {
 }
 
 
-function getUpstreamData(nodeId) {
+// An errored result is not reusable data: show its error (via getUpstreamError)
+// and drop the "Has Data" badge, so the panel matches Execute Step's decision to
+// re-run the whole chain rather than reuse this upstream output.
+function upstreamRunOutput(nodeId) {
   const res = getNodeResult(nodeId)
-  // An errored result is not reusable data: show its error (via getUpstreamError)
-  // and drop the "Has Data" badge, so the panel matches Execute Step's decision to
-  // re-run the whole chain rather than reuse this upstream output.
   if (!res || res.error || !res.output) return null
   return res.output
+}
+
+function getUpstreamPin(nodeId) {
+  const nid = String(nodeId)
+  const un = (props.upstreamNodes || []).find(n => String(n.id) === nid)
+  return un?.data?.pinnedData ?? null
+}
+
+// True when the INPUT panel is showing a node's pin rather than a run result.
+function isUpstreamPinned(nodeId) {
+  return upstreamRunOutput(nodeId) == null && getUpstreamPin(nodeId) != null
+}
+
+function getUpstreamData(nodeId) {
+  // No (usable) run result → fall back to the node's pin, mirroring both
+  // displayedOutput and the engine: a manual run never executes a pinned node,
+  // it routes the pin downstream — so the pin IS this node's input, even after
+  // a reload (pinnedData round-trips through the workflow payload; lastRun
+  // does not survive).
+  return upstreamRunOutput(nodeId) ?? getUpstreamPin(nodeId)
 }
 
 function getUpstreamError(nodeId) {
@@ -2042,7 +2062,8 @@ onUnmounted(() => {
                       <span
                         v-if="getUpstreamData(un.id)"
                         class="dn-meta"
-                      >{{ inputMode === 'json' ? '{ JSON }' : 'Has Data' }}</span>
+                        :class="{ 'pinned-meta': isUpstreamPinned(un.id) }"
+                      >{{ isUpstreamPinned(un.id) ? '📌 Pinned' : (inputMode === 'json' ? '{ JSON }' : 'Has Data') }}</span>
                     </div>
                 
                     <div
