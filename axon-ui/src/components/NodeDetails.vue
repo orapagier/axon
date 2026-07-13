@@ -549,6 +549,14 @@ const nodeResult = computed(() => {
   return res?.status === 'skipped' ? null : res
 })
 
+// What the OUTPUT panel renders: the last run's output, else the pinned data.
+// pinnedData round-trips through the workflow payload while lastRun does not
+// survive a reload — without this fallback a pinned node opened fresh showed an
+// empty panel even though manual runs still reuse the pin.
+const displayedOutput = computed(() => nodeResult.value?.output ?? props.node.data.pinnedData ?? null)
+// True while the panel is showing the pin rather than a real run result.
+const showingPinned = computed(() => nodeResult.value?.output == null && props.node.data.pinnedData != null)
+
 const errorDisplay = computed(() => {
   const err = nodeResult.value?.error
   if (!err) return null
@@ -1126,7 +1134,7 @@ const nodeDefinition = computed(() => {
 })
 
 const tableData = computed(() => {
-  const output = nodeResult.value?.output
+  const output = displayedOutput.value
   const file = nodeResult.value?.file
   if (file && !output) return [file]
   if (!output) return []
@@ -1222,7 +1230,7 @@ async function copyErrorDetails() {
 }
 
 async function copyOutput() {
-  const data = nodeResult.value?.output
+  const data = displayedOutput.value
   if (!data) return
   
   const text = formatOutput(data)
@@ -3606,16 +3614,23 @@ onUnmounted(() => {
 
                 <!-- Output Data View -->
                 <div
-                  v-else-if="nodeResult?.output || nodeResult?.file"
+                  v-else-if="displayedOutput != null || nodeResult?.file"
                   class="output-data"
                 >
                   <div
                     class="dn-head"
                     style="display: flex; justify-content: space-between; width: 100%;"
                   >
-                    <span class="dn-meta success-meta">✓ Execution Successful</span>
+                    <span
+                      v-if="showingPinned"
+                      class="dn-meta pinned-meta"
+                    >📌 Pinned — manual runs reuse this data</span>
+                    <span
+                      v-else
+                      class="dn-meta success-meta"
+                    >✓ Execution Successful</span>
                     <button
-                      v-if="nodeResult?.output"
+                      v-if="displayedOutput != null"
                       class="btn-copy-output"
                       title="Copy Output to Clipboard"
                       @click="copyOutput"
@@ -3677,9 +3692,9 @@ onUnmounted(() => {
                     </div>
 
                     <pre
-                      v-if="outputMode === 'json' && nodeResult?.output"
+                      v-if="outputMode === 'json' && displayedOutput != null"
                       class="data-json"
-                    >{{ formatOutput(nodeResult.output) }}</pre>
+                    >{{ formatOutput(displayedOutput) }}</pre>
                     <div
                       v-else-if="outputMode === 'table'"
                       class="output-table"
@@ -3702,8 +3717,8 @@ onUnmounted(() => {
                       v-else
                       class="data-tree"
                     >
-                      <div 
-                        v-for="field in getSchema(nodeResult.output)" 
+                      <div
+                        v-for="field in getSchema(displayedOutput)"
                         :key="field.fullPath" 
                         class="dt-row"
                         draggable="true"
@@ -3910,7 +3925,9 @@ onUnmounted(() => {
   white-space: nowrap; cursor: text;
   padding: 3px 8px; border-radius: 6px;
   transition: background 0.15s;
-  display: flex; align-items: center; gap: 8px;
+  /* Baseline, not center: the 10px subtitle otherwise sits visibly higher
+     than the 14px label and the surrounding breadcrumb text. */
+  display: flex; align-items: baseline; gap: 8px;
 }
 .nd-header-title:hover { background: rgba(255, 255, 255, 0.06); }
 .nd-header-subtitle { font-size: 10px; font-weight: 500; color: #a6a6b2; text-transform: uppercase; letter-spacing: 0.07em; }
@@ -3982,6 +3999,8 @@ onUnmounted(() => {
 .col-toggles button.btn-pin-output:disabled { color: #55555f; cursor: default; }
 .col-toggles button.btn-pin-output.pinned { background: rgba(167, 139, 250, 0.16); color: #a78bfa; }
 .col-toggles button.btn-pin-output.pinned:hover { color: #c4b5fd; }
+/* Output-panel banner when the panel shows the pin instead of a run result. */
+.dn-meta.pinned-meta { color: #a78bfa; }
 
 .col-content { flex: 1; overflow-y: auto; padding: 16px; }
 .col-content::-webkit-scrollbar { width: 4px; }
