@@ -25,10 +25,17 @@ describe('ServicesPage — credential secrecy', () => {
     wrapper = mount(ServicesPage)
     await flushPromises()
 
-    const tokenInputs = wrapper.findAll('.token-input-compact')
-    expect(tokenInputs.length).toBeGreaterThan(0)
-    for (const input of tokenInputs) {
-      expect(input.attributes('type')).toBe('password')
+    const tokenButtons = wrapper.findAll('button').filter((b) => b.text() === 'Token')
+    expect(tokenButtons.length).toBeGreaterThan(0)
+    for (const btn of tokenButtons) {
+      await btn.trigger('click')
+      await wrapper.vm.$nextTick()
+
+      // Modal content renders via <Teleport to="body">, so it's outside
+      // wrapper's own root — query the real DOM directly.
+      const input = document.querySelector('input[placeholder="Paste bot token…"]')
+      expect(input).not.toBeNull()
+      expect(input.getAttribute('type')).toBe('password')
     }
   })
 
@@ -36,15 +43,11 @@ describe('ServicesPage — credential secrecy', () => {
     wrapper = mount(ServicesPage)
     await flushPromises()
 
-    const addButton = wrapper
-      .findAll('.btn-premium-action')
-      .find((b) => b.text().includes('Add Secure Credential'))
+    const addButton = wrapper.findAll('button').find((b) => b.text().includes('Add secure credential'))
     expect(addButton).toBeTruthy()
     await addButton.trigger('click')
     await wrapper.vm.$nextTick()
 
-    // Modal content renders via <Teleport to="body">, so it's outside
-    // wrapper's own root — query the real DOM directly.
     const keyInput = document.querySelector('input[placeholder^="Key"]')
     const valueInput = document.querySelector('input[placeholder="Value"]')
     expect(keyInput).not.toBeNull()
@@ -56,9 +59,8 @@ describe('ServicesPage — credential secrecy', () => {
     wrapper = mount(ServicesPage)
     await flushPromises()
 
-    const openButton = wrapper
-      .findAll('.btn-premium-action')
-      .find((b) => b.text().includes('Connect MCP Server'))
+    const openButton = wrapper.findAll('button').find((b) => b.text().includes('Connect MCP server'))
+    expect(openButton).toBeTruthy()
     await openButton.trigger('click')
     await wrapper.vm.$nextTick()
 
@@ -71,16 +73,15 @@ describe('ServicesPage — credential secrecy', () => {
     wrapper = mount(ServicesPage)
     await flushPromises()
 
-    const openButton = wrapper
-      .findAll('.btn-premium-action')
-      .find((b) => b.text().includes('Register SSH Server'))
+    const openButton = wrapper.findAll('button').find((b) => b.text().includes('Register SSH server'))
+    expect(openButton).toBeTruthy()
     await openButton.trigger('click')
     await wrapper.vm.$nextTick()
 
     // Password field only renders once auth_type is switched off the
     // default 'key' mode. The <select> is teleported along with the rest of
     // the modal, so drive it via a native DOM event rather than VTU's find().
-    const authSelect = document.querySelector('select.select-input')
+    const authSelect = document.querySelector('select')
     authSelect.value = 'password'
     authSelect.dispatchEvent(new Event('change'))
     await wrapper.vm.$nextTick()
@@ -94,9 +95,8 @@ describe('ServicesPage — credential secrecy', () => {
     wrapper = mount(ServicesPage)
     await flushPromises()
 
-    const openButton = wrapper
-      .findAll('.btn-premium-action')
-      .find((b) => b.text().includes('Add Tavily Account'))
+    const openButton = wrapper.findAll('button').find((b) => b.text().includes('Add Tavily account'))
+    expect(openButton).toBeTruthy()
     await openButton.trigger('click')
     await wrapper.vm.$nextTick()
 
