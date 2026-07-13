@@ -2558,23 +2558,10 @@ onUnmounted(() => {
               >
             </div>
             <button
-              v-if="isExecuting"
-              class="btn btn-sm workflow-action-btn btn-danger"
-              @click="stopWorkflow"
+              class="btn btn-sm workflow-action-btn btn-success"
+              @click="save"
             >
-              Stop
-            </button>
-            <button
-              class="btn btn-sm workflow-action-btn btn-danger"
-              @click="removeWorkflow"
-            >
-              Delete
-            </button>
-            <button
-              class="btn btn-sm workflow-action-btn btn-neutral"
-              @click.stop="loadHistory"
-            >
-              History
+              Save
             </button>
             <button
               class="btn btn-sm workflow-action-btn btn-primary"
@@ -2583,10 +2570,23 @@ onUnmounted(() => {
               Run
             </button>
             <button
-              class="btn btn-sm workflow-action-btn btn-success"
-              @click="save"
+              v-if="isExecuting"
+              class="btn btn-sm workflow-action-btn btn-danger"
+              @click="stopWorkflow"
             >
-              Save
+              Stop
+            </button>
+            <button
+              class="btn btn-sm workflow-action-btn btn-neutral"
+              @click.stop="loadHistory"
+            >
+              History
+            </button>
+            <button
+              class="btn btn-sm workflow-action-btn btn-danger"
+              @click="removeWorkflow"
+            >
+              Delete
             </button>
           </div>
         </header>
@@ -4089,6 +4089,22 @@ onUnmounted(() => {
   gap: 8px;
 }
 
+@media (min-width: 769px) {
+  .workflow-toolbar,
+  .toolbar-left,
+  .toolbar-right {
+    align-items: center;
+  }
+
+  .workflow-toolbar {
+    flex-wrap: nowrap;
+  }
+
+  .toolbar-right {
+    flex-wrap: nowrap;
+  }
+}
+
 .workflow-action-btn {
   /* Structural only — color comes from the global .btn-primary/.btn-success/
      .btn-danger/.btn-neutral palette in style.css (single source of truth). */
@@ -4097,13 +4113,19 @@ onUnmounted(() => {
 }
 
 .wf-title-input {
+  display: inline-flex;
+  align-items: center;
   width: auto;
+  box-sizing: border-box;
+  height: var(--btn-sm-h);
+  margin: 0;
   min-width: 120px;
   max-width: min(100%, 320px);
   font-size: 0.9rem;
   font-weight: 700;
+  line-height: 1;
   letter-spacing: -0.03em;
-  padding: 0 0 2px 0;
+  padding: 0;
   border: 0 !important;
   border-radius: 0 !important;
   background: transparent !important;
@@ -4305,4 +4327,3 @@ onUnmounted(() => {
   flex: 1;
 }
 </style>
-
