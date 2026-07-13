@@ -79,7 +79,10 @@ fn to_ollama_msgs(messages: &[Message], system: &str) -> Vec<OllamaMsg> {
                 let tcs: Vec<OllamaTc> = blocks
                     .iter()
                     .filter_map(|b| {
-                        if let ContentBlock::ToolUse { id, name, input, .. } = b {
+                        if let ContentBlock::ToolUse {
+                            id, name, input, ..
+                        } = b
+                        {
                             Some(OllamaTc {
                                 id: Some(id.clone()),
                                 function: OllamaFn {

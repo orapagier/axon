@@ -82,8 +82,7 @@ fn explicit_point_id(configured: Option<&Value>) -> Option<PointId> {
 /// Resolve the point ID for an upsert: an explicit configured value is used
 /// verbatim; blank/absent auto-generates a fresh UUID v4.
 fn resolve_point_id(configured: Option<&Value>) -> PointId {
-    explicit_point_id(configured)
-        .unwrap_or_else(|| PointId::from(uuid::Uuid::new_v4().to_string()))
+    explicit_point_id(configured).unwrap_or_else(|| PointId::from(uuid::Uuid::new_v4().to_string()))
 }
 
 fn point_id_to_string(id: Option<&PointId>) -> String {

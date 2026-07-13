@@ -66,9 +66,8 @@ struct ConnSpec {
 }
 
 fn conn_spec(config: &Value) -> Result<ConnSpec, String> {
-    let host = cfg_str(config, "host").ok_or_else(|| {
-        "FTP node needs a 'host' (inline or from a saved credential)".to_string()
-    })?;
+    let host = cfg_str(config, "host")
+        .ok_or_else(|| "FTP node needs a 'host' (inline or from a saved credential)".to_string())?;
     let port = config
         .get("port")
         .and_then(|v| {
@@ -149,9 +148,7 @@ impl rustls::client::danger::ServerCertVerifier for AcceptAnyCert {
     }
 
     fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        self.0
-            .signature_verification_algorithms
-            .supported_schemes()
+        self.0.signature_verification_algorithms.supported_schemes()
     }
 }
 
@@ -168,9 +165,7 @@ fn tls_connector(allow_invalid_certs: bool) -> AsyncRustlsConnector {
         let roots = rustls::RootCertStore {
             roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
         };
-        builder
-            .with_root_certificates(roots)
-            .with_no_client_auth()
+        builder.with_root_certificates(roots).with_no_client_auth()
     };
     AsyncRustlsConnector::from(tokio_rustls::TlsConnector::from(Arc::new(config)))
 }
@@ -233,11 +228,7 @@ fn list_entry(line: &str) -> Option<Value> {
     })
 }
 
-async fn run_operation(
-    operation: &str,
-    config: &Value,
-    input: &Value,
-) -> Result<Value, String> {
+async fn run_operation(operation: &str, config: &Value, input: &Value) -> Result<Value, String> {
     let spec = conn_spec(config)?;
     let mut ftp = connect(&spec).await?;
 
@@ -359,9 +350,7 @@ pub(crate) async fn execute(config: &Value, input: &Value) -> Result<Value, Stri
         .to_string();
     // Reject unknown operations before dialing the server — the match arm
     // below only exists as an unreachable fallback once past this gate.
-    if !["list", "download", "upload", "delete", "rename", "mkdir"]
-        .contains(&operation.as_str())
-    {
+    if !["list", "download", "upload", "delete", "rename", "mkdir"].contains(&operation.as_str()) {
         return Err(format!(
             "Unknown FTP operation '{operation}' (expected list, download, upload, delete, rename, or mkdir)"
         ));
@@ -524,7 +513,9 @@ mod tests {
 
         // Rename, mkdir, then clean both up.
         execute(
-            &cfg(json!({ "operation": "rename", "remotePath": "up.bin", "newPath": "renamed.bin" })),
+            &cfg(
+                json!({ "operation": "rename", "remotePath": "up.bin", "newPath": "renamed.bin" }),
+            ),
             &Value::Null,
         )
         .await

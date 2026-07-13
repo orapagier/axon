@@ -271,7 +271,11 @@ fn contents_from_messages(messages: &[Message]) -> Vec<GenContent> {
     let id_to_name = tool_names_by_id(messages);
     let mut out: Vec<GenContent> = Vec::new();
     for m in messages {
-        let role = if m.role == "assistant" { "model" } else { "user" };
+        let role = if m.role == "assistant" {
+            "model"
+        } else {
+            "user"
+        };
         let parts = message_to_parts(m, &id_to_name);
         if parts.is_empty() {
             continue;
@@ -504,8 +508,8 @@ async fn call_streaming(
         buffer.push_str(&String::from_utf8_lossy(&chunk).replace("\r\n", "\n"));
 
         for data in super::openai_compat::drain_sse_frames(&mut buffer) {
-            let parsed: GenResp = serde_json::from_str(&data)
-                .with_context(|| "parse streaming response chunk")?;
+            let parsed: GenResp =
+                serde_json::from_str(&data).with_context(|| "parse streaming response chunk")?;
 
             if let Some(err) = parsed.error {
                 anyhow::bail!("provider error mid-stream at {}: {}", url, err);
@@ -686,7 +690,11 @@ pub async fn call(
     }
 
     let body: GenResp = resp.json().await.context("parse response")?;
-    let candidate = body.candidates.into_iter().next().context("empty candidates")?;
+    let candidate = body
+        .candidates
+        .into_iter()
+        .next()
+        .context("empty candidates")?;
     let parts = candidate.content.map(|c| c.parts).unwrap_or_default();
     let (text, tool_blocks) = parts_to_blocks(parts);
     let usage = UsageInfo {
@@ -801,10 +809,12 @@ mod tests {
 
     #[test]
     fn thinking_only_message_produces_zero_contents() {
-        let messages = vec![Message::assistant_with_blocks(vec![ContentBlock::Thinking {
-            thinking: "pondering...".into(),
-            signature: None,
-        }])];
+        let messages = vec![Message::assistant_with_blocks(vec![
+            ContentBlock::Thinking {
+                thinking: "pondering...".into(),
+                signature: None,
+            },
+        ])];
         let contents = contents_from_messages(&messages);
         assert!(contents.is_empty());
     }
@@ -812,12 +822,7 @@ mod tests {
     #[test]
     fn to_gen_tools_wraps_all_declarations_in_one_tool_and_sanitizes_schema() {
         let tools = vec![
-            ToolDefinition::internal(
-                "tool_a",
-                "does a",
-                json!({"x": {"type": "any"}}),
-                vec![],
-            ),
+            ToolDefinition::internal("tool_a", "does a", json!({"x": {"type": "any"}}), vec![]),
             ToolDefinition::internal("tool_b", "does b", json!({}), vec![]),
         ];
         let gen_tools = to_gen_tools(&tools);
@@ -828,7 +833,9 @@ mod tests {
             .as_ref()
             .unwrap();
         assert_eq!(
-            params_a.pointer("/properties/x/type").and_then(|v| v.as_str()),
+            params_a
+                .pointer("/properties/x/type")
+                .and_then(|v| v.as_str()),
             Some("string")
         );
         // Zero-parameter tools must omit `parameters` entirely — Gemini 400s

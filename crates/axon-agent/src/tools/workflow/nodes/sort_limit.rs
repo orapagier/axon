@@ -357,16 +357,16 @@ mod tests {
     fn across_runs_readonly_does_not_record() {
         let conn = dedupe_conn();
         let cfg = json!({ "dedupe": true, "dedupeScope": "acrossRuns", "dedupeBy": "id" });
-        let a = dedupe_across_runs(&conn, &cfg, vec![json!({ "id": 1 })], "wf", "n1", false)
-            .unwrap();
+        let a =
+            dedupe_across_runs(&conn, &cfg, vec![json!({ "id": 1 })], "wf", "n1", false).unwrap();
         assert_eq!(a.len(), 1);
         // Still unseen — the read-only pass recorded nothing.
-        let b = dedupe_across_runs(&conn, &cfg, vec![json!({ "id": 1 })], "wf", "n1", true)
-            .unwrap();
+        let b =
+            dedupe_across_runs(&conn, &cfg, vec![json!({ "id": 1 })], "wf", "n1", true).unwrap();
         assert_eq!(b.len(), 1);
         // …but the real run did record.
-        let c = dedupe_across_runs(&conn, &cfg, vec![json!({ "id": 1 })], "wf", "n1", true)
-            .unwrap();
+        let c =
+            dedupe_across_runs(&conn, &cfg, vec![json!({ "id": 1 })], "wf", "n1", true).unwrap();
         assert!(c.is_empty());
     }
 
@@ -376,8 +376,8 @@ mod tests {
         let conn = dedupe_conn();
         let cfg = json!({ "dedupe": true, "dedupeScope": "acrossRuns", "dedupeBy": "id" });
         dedupe_across_runs(&conn, &cfg, vec![json!({ "id": 1 })], "wf", "n1", true).unwrap();
-        let other = dedupe_across_runs(&conn, &cfg, vec![json!({ "id": 1 })], "wf", "n2", true)
-            .unwrap();
+        let other =
+            dedupe_across_runs(&conn, &cfg, vec![json!({ "id": 1 })], "wf", "n2", true).unwrap();
         assert_eq!(other.len(), 1);
     }
 
@@ -390,9 +390,15 @@ mod tests {
         let reset_cfg = json!({
             "dedupe": true, "dedupeScope": "acrossRuns", "dedupeBy": "id", "dedupeReset": true,
         });
-        let again =
-            dedupe_across_runs(&conn, &reset_cfg, vec![json!({ "id": 1 })], "wf", "n1", true)
-                .unwrap();
+        let again = dedupe_across_runs(
+            &conn,
+            &reset_cfg,
+            vec![json!({ "id": 1 })],
+            "wf",
+            "n1",
+            true,
+        )
+        .unwrap();
         assert_eq!(again.len(), 1);
     }
 
@@ -405,8 +411,7 @@ mod tests {
             "dedupeMaxEntries": 2,
         });
         for i in 0..5 {
-            dedupe_across_runs(&conn, &cfg, vec![json!({ "id": i })], "wf", "n1", true)
-                .unwrap();
+            dedupe_across_runs(&conn, &cfg, vec![json!({ "id": i })], "wf", "n1", true).unwrap();
         }
         let count: i64 = conn
             .query_row(

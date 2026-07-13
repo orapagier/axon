@@ -139,7 +139,10 @@ impl UnifiedResponse {
         self.content
             .iter()
             .filter_map(|b| {
-                if let ContentBlock::ToolUse { id, name, input, .. } = b {
+                if let ContentBlock::ToolUse {
+                    id, name, input, ..
+                } = b
+                {
                     Some(ToolCall {
                         id: id.clone(),
                         name: name.clone(),

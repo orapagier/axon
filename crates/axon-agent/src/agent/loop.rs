@@ -33,9 +33,8 @@ static RE_THINKING_BLOCK: Lazy<regex::Regex> =
 /// <thought>...</thought>, e.g. DeepSeek/Qwen/Gemma via OpenAI-compat gateways)
 /// must never leak it to users. The `regex` crate has no backreferences, so each
 /// tag name gets its own alternative rather than a single `<(\w+)>.*?</\1>`.
-static RE_THINK_TAG: Lazy<regex::Regex> = Lazy::new(|| {
-    regex::Regex::new(r"(?si)<think>.*?</think>|<thought>.*?</thought>").unwrap()
-});
+static RE_THINK_TAG: Lazy<regex::Regex> =
+    Lazy::new(|| regex::Regex::new(r"(?si)<think>.*?</think>|<thought>.*?</thought>").unwrap());
 static RE_STRIP_TOOL_LINE: Lazy<regex::Regex> =
     Lazy::new(|| regex::Regex::new(r"(?im)^\s*Tool:\s*.*$").unwrap());
 static RE_STRIP_PARAMS_LINE: Lazy<regex::Regex> =

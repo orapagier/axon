@@ -4154,8 +4154,7 @@ async fn check_and_trigger_rss(
         .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
         .unwrap_or_default()
     };
-    let seen_set: std::collections::HashSet<&str> =
-        seen_keys.iter().map(|s| s.as_str()).collect();
+    let seen_set: std::collections::HashSet<&str> = seen_keys.iter().map(|s| s.as_str()).collect();
 
     // Find genuinely new entries (key not in seen_keys). An entry with no
     // derivable key never fires — better silent than firing forever.

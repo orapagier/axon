@@ -123,12 +123,12 @@ fn jwt_encoding_key(
     config: &Value,
 ) -> Result<jsonwebtoken::EncodingKey, String> {
     use jsonwebtoken::{Algorithm as A, EncodingKey};
-    let secret = || {
-        cfg_str(config, "secret").ok_or_else(|| "JWT signing needs a 'secret'".to_string())
-    };
+    let secret =
+        || cfg_str(config, "secret").ok_or_else(|| "JWT signing needs a 'secret'".to_string());
     let pem = || {
-        cfg_str(config, "privateKey")
-            .ok_or_else(|| "JWT signing with an asymmetric algorithm needs a PEM 'privateKey'".to_string())
+        cfg_str(config, "privateKey").ok_or_else(|| {
+            "JWT signing with an asymmetric algorithm needs a PEM 'privateKey'".to_string()
+        })
     };
     match alg {
         A::HS256 | A::HS384 | A::HS512 => Ok(EncodingKey::from_secret(secret()?.as_bytes())),
@@ -149,12 +149,12 @@ fn jwt_decoding_key(
     config: &Value,
 ) -> Result<jsonwebtoken::DecodingKey, String> {
     use jsonwebtoken::{Algorithm as A, DecodingKey};
-    let secret = || {
-        cfg_str(config, "secret").ok_or_else(|| "JWT verification needs a 'secret'".to_string())
-    };
+    let secret =
+        || cfg_str(config, "secret").ok_or_else(|| "JWT verification needs a 'secret'".to_string());
     let pem = || {
-        cfg_str(config, "publicKey")
-            .ok_or_else(|| "JWT verification with an asymmetric algorithm needs a PEM 'publicKey'".to_string())
+        cfg_str(config, "publicKey").ok_or_else(|| {
+            "JWT verification with an asymmetric algorithm needs a PEM 'publicKey'".to_string()
+        })
     };
     match alg {
         A::HS256 | A::HS384 | A::HS512 => Ok(DecodingKey::from_secret(secret()?.as_bytes())),
@@ -226,9 +226,11 @@ fn base32_decode(s: &str) -> Result<Vec<u8>, String> {
 
 /// The TOTP secret bytes per `secretEncoding` (base32 default / plain / hex).
 fn totp_secret(config: &Value) -> Result<Vec<u8>, String> {
-    let secret =
-        cfg_str(config, "secret").ok_or_else(|| "TOTP needs a 'secret'".to_string())?;
-    match cfg_str(config, "secretEncoding").as_deref().unwrap_or("base32") {
+    let secret = cfg_str(config, "secret").ok_or_else(|| "TOTP needs a 'secret'".to_string())?;
+    match cfg_str(config, "secretEncoding")
+        .as_deref()
+        .unwrap_or("base32")
+    {
         "plain" => Ok(secret.into_bytes()),
         "hex" => hex::decode(secret.trim()).map_err(|e| format!("Bad hex secret: {e}")),
         _ => base32_decode(&secret),
@@ -390,9 +392,7 @@ pub(crate) fn execute(config: &Value, input: &Value) -> Result<Value, String> {
         }
 
         "jwtSign" => {
-            let alg = jwt_algorithm(
-                cfg_str(config, "algorithm").as_deref().unwrap_or("HS256"),
-            )?;
+            let alg = jwt_algorithm(cfg_str(config, "algorithm").as_deref().unwrap_or("HS256"))?;
             // Claims: an object, or a JSON string that parses to one.
             let mut claims = match config.get("payload") {
                 Some(Value::Object(m)) => m.clone(),
@@ -464,9 +464,7 @@ pub(crate) fn execute(config: &Value, input: &Value) -> Result<Value, String> {
         }
 
         "sign" => {
-            let alg = jwt_algorithm(
-                cfg_str(config, "algorithm").as_deref().unwrap_or("RS256"),
-            )?;
+            let alg = jwt_algorithm(cfg_str(config, "algorithm").as_deref().unwrap_or("RS256"))?;
             let value = val_to_string(&config.get("value").cloned().unwrap_or(Value::Null));
             let key = jwt_encoding_key(alg, config)?;
             // jsonwebtoken signs raw bytes and returns base64url; decode so the
@@ -490,9 +488,7 @@ pub(crate) fn execute(config: &Value, input: &Value) -> Result<Value, String> {
         }
 
         "verifySignature" => {
-            let alg = jwt_algorithm(
-                cfg_str(config, "algorithm").as_deref().unwrap_or("RS256"),
-            )?;
+            let alg = jwt_algorithm(cfg_str(config, "algorithm").as_deref().unwrap_or("RS256"))?;
             let value = val_to_string(&config.get("value").cloned().unwrap_or(Value::Null));
             let key = jwt_decoding_key(alg, config)?;
             // A malformed or forged signature is data, not a config error —
@@ -867,7 +863,10 @@ mod tests {
             b"12345678901234567890".to_vec()
         );
         // Case-insensitive and padding-tolerant.
-        assert_eq!(base32_decode("gezdgnbvgy3tqojq====").unwrap(), b"1234567890".to_vec());
+        assert_eq!(
+            base32_decode("gezdgnbvgy3tqojq====").unwrap(),
+            b"1234567890".to_vec()
+        );
     }
 
     // Generate → verify roundtrip using the node operations end to end.
@@ -993,7 +992,12 @@ mod tests {
     #[test]
     fn sign_verify_ps256_roundtrip() {
         let signed = sign_with("PS256", RSA_PRIV, json!({}));
-        assert!(verify_with("PS256", RSA_PUB, "payload-to-sign", &signed["signature"]));
+        assert!(verify_with(
+            "PS256",
+            RSA_PUB,
+            "payload-to-sign",
+            &signed["signature"]
+        ));
     }
 
     // ECDSA P-256 (ES256): JOSE r‖s signatures, 64 raw bytes.
@@ -1010,7 +1014,12 @@ mod tests {
     #[test]
     fn sign_verify_eddsa_roundtrip() {
         let signed = sign_with("EdDSA", ED_PRIV, json!({}));
-        assert!(verify_with("EdDSA", ED_PUB, "payload-to-sign", &signed["signature"]));
+        assert!(verify_with(
+            "EdDSA",
+            ED_PUB,
+            "payload-to-sign",
+            &signed["signature"]
+        ));
     }
 
     // Every output encoding (hex / base64 / base64url) verifies — the checker

@@ -103,7 +103,11 @@ fn build_globals(results: &[NodeResult]) -> Map<String, Value> {
                 .get("override_json")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
-            let jb = if override_json { item.clone() } else { last_output };
+            let jb = if override_json {
+                item.clone()
+            } else {
+                last_output
+            };
             (item, index, jb)
         }
         None => (Value::Null, Value::Null, last_output),
@@ -275,15 +279,17 @@ mod tests {
 
     /// Skip tests gracefully on machines without Python.
     fn python_available() -> bool {
-        interpreter_candidates(&serde_json::json!({})).iter().any(|bin| {
-            std::process::Command::new(bin)
-                .arg("--version")
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false)
-        })
+        interpreter_candidates(&serde_json::json!({}))
+            .iter()
+            .any(|bin| {
+                std::process::Command::new(bin)
+                    .arg("--version")
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false)
+            })
     }
 
     // The bridge globals mirror the JS context with Python-legal names.

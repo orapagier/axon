@@ -908,7 +908,10 @@ impl ToolRegistry {
     pub async fn apply_agent_gate_defaults(&self) {
         let names: Vec<String> = {
             let m = self.tools.read().await;
-            m.keys().filter(|n| is_gated_write_tool(n)).cloned().collect()
+            m.keys()
+                .filter(|n| is_gated_write_tool(n))
+                .cloned()
+                .collect()
         };
         for name in names {
             self.set_enabled(&name, false).await;

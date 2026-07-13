@@ -935,7 +935,11 @@ mod node_types_tests {
     fn embedded_palette_parses_and_indexes() {
         let idx = handle_list_node_types(serde_json::json!({})).unwrap();
         let types = idx.get("node_types").and_then(|v| v.as_array()).unwrap();
-        assert!(types.len() >= 40, "palette unexpectedly small: {}", types.len());
+        assert!(
+            types.len() >= 40,
+            "palette unexpectedly small: {}",
+            types.len()
+        );
         assert!(types.iter().any(|t| t["type"] == "cortex"));
         assert!(types.iter().any(|t| t["type"] == "stimulus"));
         // Compact index must stay compact — it is returned whole to the model.
@@ -944,17 +948,15 @@ mod node_types_tests {
 
     #[test]
     fn detail_lookup_returns_full_schema_and_rejects_unknowns() {
-        let detail =
-            handle_list_node_types(serde_json::json!({"types": ["cortex"]})).unwrap();
+        let detail = handle_list_node_types(serde_json::json!({"types": ["cortex"]})).unwrap();
         assert!(detail["cortex"]["properties"].is_array());
 
         let err = handle_list_node_types(serde_json::json!({"types": ["nope"]})).unwrap();
         assert!(err["error"].as_str().unwrap().contains("nope"));
 
-        let too_many = handle_list_node_types(
-            serde_json::json!({"types": ["a", "b", "c", "d", "e", "f"]}),
-        )
-        .unwrap();
+        let too_many =
+            handle_list_node_types(serde_json::json!({"types": ["a", "b", "c", "d", "e", "f"]}))
+                .unwrap();
         assert!(too_many["error"].as_str().unwrap().contains("at most 5"));
     }
 }

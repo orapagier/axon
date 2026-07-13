@@ -704,14 +704,11 @@ impl HttpRequestTool {
                         text_mode,
                         ..Default::default()
                     };
-                    let cleaned = dom_smoothie::Readability::new(
-                        text.clone(),
-                        Some(&final_url),
-                        Some(cfg),
-                    )
-                    .and_then(|mut r| r.parse())
-                    .map(|article| article.text_content.to_string())
-                    .unwrap_or_else(|_| text.clone());
+                    let cleaned =
+                        dom_smoothie::Readability::new(text.clone(), Some(&final_url), Some(cfg))
+                            .and_then(|mut r| r.parse())
+                            .map(|article| article.text_content.to_string())
+                            .unwrap_or_else(|_| text.clone());
 
                     (serde_json::json!(cleaned.clone()), Some(cleaned), None)
                 } else {
@@ -886,12 +883,9 @@ mod data_cleaner_tests {
             text_mode: dom_smoothie::TextMode::Markdown,
             ..Default::default()
         };
-        let mut r = dom_smoothie::Readability::new(
-            html,
-            Some("https://example.com/post"),
-            Some(cfg),
-        )
-        .unwrap();
+        let mut r =
+            dom_smoothie::Readability::new(html, Some("https://example.com/post"), Some(cfg))
+                .unwrap();
         let article = r.parse().unwrap();
         let text = article.text_content.to_string();
 

@@ -177,7 +177,10 @@ fn to_oai_msgs(messages: &[Message], system: &str) -> Vec<OaiMsg> {
                     let tcs: Vec<OaiTc> = blocks
                         .iter()
                         .filter_map(|b| {
-                            if let ContentBlock::ToolUse { id, name, input, .. } = b {
+                            if let ContentBlock::ToolUse {
+                                id, name, input, ..
+                            } = b
+                            {
                                 Some(OaiTc {
                                     id: id.clone(),
                                     r#type: "function".into(),
@@ -733,13 +736,10 @@ pub async fn call(
         // re-trigger). Providers word the rejection differently — Groq-hosted
         // Gemma says "thinking level is not supported for this model" rather
         // than mentioning "reasoning" at all — so check both terms.
-        if status.as_u16() == 400
-            && payload.reasoning_effort.is_some()
-            && {
-                let lower = body.to_lowercase();
-                lower.contains("reasoning") || lower.contains("thinking")
-            }
-        {
+        if status.as_u16() == 400 && payload.reasoning_effort.is_some() && {
+            let lower = body.to_lowercase();
+            lower.contains("reasoning") || lower.contains("thinking")
+        } {
             tracing::info!(
                 "Model '{}' rejected reasoning_effort; retrying without it (flagged no_reasoning)",
                 model.name
@@ -818,11 +818,13 @@ mod tests {
 
     #[test]
     fn drain_sse_frames_splits_multiple_events_and_partial_buffer() {
-        let mut buffer = String::from(
-            "data: {\"a\":1}\n\ndata: {\"a\":2}\n\ndata: partial-no-terminator-yet",
-        );
+        let mut buffer =
+            String::from("data: {\"a\":1}\n\ndata: {\"a\":2}\n\ndata: partial-no-terminator-yet");
         let frames = drain_sse_frames(&mut buffer);
-        assert_eq!(frames, vec!["{\"a\":1}".to_string(), "{\"a\":2}".to_string()]);
+        assert_eq!(
+            frames,
+            vec!["{\"a\":1}".to_string(), "{\"a\":2}".to_string()]
+        );
         // The unterminated trailing event stays in the buffer for the next chunk.
         assert_eq!(buffer, "data: partial-no-terminator-yet");
     }

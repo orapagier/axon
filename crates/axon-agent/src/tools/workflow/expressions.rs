@@ -157,9 +157,7 @@ pub(crate) const ITEM_CONTEXT_KEY: &str = "__item__";
 /// Split the synthetic item-context entry (if any) out of a result list,
 /// returning its output wrapper. The list keeps only real node results.
 fn take_item_context(results: &mut Vec<NodeResult>) -> Option<Value> {
-    let idx = results
-        .iter()
-        .position(|r| r.node_id == ITEM_CONTEXT_KEY)?;
+    let idx = results.iter().position(|r| r.node_id == ITEM_CONTEXT_KEY)?;
     Some(results.remove(idx).output)
 }
 
@@ -513,9 +511,7 @@ pub(crate) fn evaluate_js_expression(
     register_expression_natives(&mut context);
 
     // Per-item fan-out context — bound as $item/$index below, hidden from $node.
-    let item_ctx = results
-        .get(ITEM_CONTEXT_KEY)
-        .map(|r| r.output.clone());
+    let item_ctx = results.get(ITEM_CONTEXT_KEY).map(|r| r.output.clone());
 
     let mut nodes_map = serde_json::Map::new();
     for (key, res) in results {
@@ -1230,7 +1226,10 @@ mod resolve_tests {
     #[test]
     fn ancestor_prefers_idx_stamp() {
         let mut base = results();
-        let src = node("Orders", json!([{ "customer": "ana" }, { "customer": "bo" }]));
+        let src = node(
+            "Orders",
+            json!([{ "customer": "ana" }, { "customer": "bo" }]),
+        );
         base.insert(src.node_id.clone(), src);
         // Iteration index says 0, but the __idx stamp says 1 (e.g. a Filter
         // upstream dropped item 0) — the stamp must win.
@@ -1245,7 +1244,10 @@ mod resolve_tests {
     #[test]
     fn ancestor_falls_back_to_position() {
         let mut base = results();
-        let src = node("Orders", json!([{ "customer": "ana" }, { "customer": "bo" }]));
+        let src = node(
+            "Orders",
+            json!([{ "customer": "ana" }, { "customer": "bo" }]),
+        );
         base.insert(src.node_id.clone(), src);
         let m = with_item(base, json!({ "sku": "A-7" }), 1, true);
         assert_eq!(
@@ -1273,10 +1275,7 @@ mod resolve_tests {
         let src = node("Quotes", json!({ "items": [{ "fee": 5 }, { "fee": 9 }] }));
         base.insert(src.node_id.clone(), src);
         let m = with_item(base, json!({ "sku": "A-7" }), 1, true);
-        assert_eq!(
-            resolve_value("{{ $ancestor('Quotes').fee }}", &m),
-            json!(9)
-        );
+        assert_eq!(resolve_value("{{ $ancestor('Quotes').fee }}", &m), json!(9));
     }
 
     // The original bug: a dragged-in $node[...] reference sitting inside prose

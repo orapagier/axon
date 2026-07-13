@@ -44,7 +44,11 @@ pub(crate) fn resolve_local_path(config: &Value, input: &Value) -> Option<String
     // From an upstream binary descriptor (input.binary.* or input.* directly).
     let bin = input.get("binary").unwrap_or(input);
     for key in ["local_path", "localPath", "_axon_file_path", "path"] {
-        if let Some(p) = bin.get(key).and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+        if let Some(p) = bin
+            .get(key)
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+        {
             return Some(p.to_string());
         }
     }
@@ -96,7 +100,8 @@ pub(crate) async fn execute(
                 .filter(|s| !s.is_empty())
                 .ok_or_else(|| "SSH upload needs a 'remotePath'".to_string())?;
             let local_path = resolve_local_path(config, input).ok_or_else(|| {
-                "SSH upload needs a 'localPath' (or a binary file from the previous node)".to_string()
+                "SSH upload needs a 'localPath' (or a binary file from the previous node)"
+                    .to_string()
             })?;
             SshTool::upload_file(&server, remote_path, &local_path, state.clone())
                 .await

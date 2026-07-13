@@ -206,9 +206,12 @@ pub async fn call(
     for b in body.content {
         match b {
             AnthBlock::Text { text } => blocks.push(ContentBlock::text(text)),
-            AnthBlock::ToolUse { id, name, input } => {
-                blocks.push(ContentBlock::ToolUse { id, name, input, signature: None })
-            }
+            AnthBlock::ToolUse { id, name, input } => blocks.push(ContentBlock::ToolUse {
+                id,
+                name,
+                input,
+                signature: None,
+            }),
             AnthBlock::Thinking {
                 thinking,
                 signature,
