@@ -30,9 +30,12 @@ static RE_TOOL_TEXT: Lazy<regex::Regex> =
 static RE_THINKING_BLOCK: Lazy<regex::Regex> =
     Lazy::new(|| regex::Regex::new(r"(?si)\(Thinking:.*?\)").unwrap());
 /// Reasoning models that emit their chain of thought inline (<think>...</think>,
-/// e.g. DeepSeek/Qwen via OpenAI-compat gateways) must never leak it to users.
-static RE_THINK_TAG: Lazy<regex::Regex> =
-    Lazy::new(|| regex::Regex::new(r"(?si)<think>.*?</think>").unwrap());
+/// <thought>...</thought>, e.g. DeepSeek/Qwen/Gemma via OpenAI-compat gateways)
+/// must never leak it to users. The `regex` crate has no backreferences, so each
+/// tag name gets its own alternative rather than a single `<(\w+)>.*?</\1>`.
+static RE_THINK_TAG: Lazy<regex::Regex> = Lazy::new(|| {
+    regex::Regex::new(r"(?si)<think>.*?</think>|<thought>.*?</thought>").unwrap()
+});
 static RE_STRIP_TOOL_LINE: Lazy<regex::Regex> =
     Lazy::new(|| regex::Regex::new(r"(?im)^\s*Tool:\s*.*$").unwrap());
 static RE_STRIP_PARAMS_LINE: Lazy<regex::Regex> =
@@ -2329,6 +2332,15 @@ mod tests {
         // Unclosed tag is left alone rather than eating the whole message.
         let out = strip_reasoning("<think>partial only");
         assert!(out.contains("partial only"));
+    }
+
+    #[test]
+    fn strip_reasoning_removes_thought_tags() {
+        // Gemma emits <thought>...</thought> instead of <think>...</think>.
+        let out = strip_reasoning(
+            "<thought>The user said \"hihihihi\". This is a greeting.</thought>Hello! How can I help you today?",
+        );
+        assert_eq!(out, "Hello! How can I help you today?");
     }
 
     #[test]

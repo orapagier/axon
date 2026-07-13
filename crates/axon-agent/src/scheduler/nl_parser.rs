@@ -47,11 +47,15 @@ pub async fn parse_schedule(
     )
     .await?;
     let text = resp.text_content();
-    let text = if let Some(idx) = text.rfind("</think>") {
-        text[idx + "</think>".len()..].to_string()
-    } else {
-        text.to_string()
-    };
+    // Reasoning models leak their chain of thought as <think>...</think> or, e.g.
+    // Gemma, <thought>...</thought>; only the content after the closing tag is
+    // the actual cron answer.
+    let text = ["</think>", "</thought>"]
+        .iter()
+        .filter_map(|tag| text.rfind(tag).map(|idx| idx + tag.len()))
+        .max()
+        .map(|end| text[end..].to_string())
+        .unwrap_or_else(|| text.to_string());
 
     for line in text.lines() {
         let line = line
