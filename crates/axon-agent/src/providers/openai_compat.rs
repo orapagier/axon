@@ -713,10 +713,15 @@ pub async fn call(
         // whole request with a 400. Strip the field, remember this model
         // can't take it, and retry once (recursion is bounded: no_reasoning
         // makes the retried payload omit the field, so this branch can't
-        // re-trigger).
+        // re-trigger). Providers word the rejection differently — Groq-hosted
+        // Gemma says "thinking level is not supported for this model" rather
+        // than mentioning "reasoning" at all — so check both terms.
         if status.as_u16() == 400
             && payload.reasoning_effort.is_some()
-            && body.to_lowercase().contains("reasoning")
+            && {
+                let lower = body.to_lowercase();
+                lower.contains("reasoning") || lower.contains("thinking")
+            }
         {
             tracing::info!(
                 "Model '{}' rejected reasoning_effort; retrying without it (flagged no_reasoning)",
