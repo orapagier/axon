@@ -793,7 +793,7 @@ use crate::tools::schema::{ToolDefinition, ToolSource};
 pub fn tool_definition() -> ToolDefinition {
     ToolDefinition {
         name: "synapse".to_string(),
-        description: "Execute a raw HTTP request (GET, POST, etc). Use this for ad-hoc API calls or when no specific tool exists for a service.".to_string(),
+        description: "Execute a raw HTTP request (GET, POST, etc). Use this for ad-hoc API calls or when no specific tool exists for a service. To authenticate without inlining a secret, set credential_id or credential to a saved Services-page credential — its stored token/header/url is applied for you.".to_string(),
         parameters: serde_json::json!({
             "url": {"type":"string"},
             "method": {"type":"string", "enum":["GET","POST","PUT","DELETE","PATCH","HEAD","OPTIONS"], "default":"GET"},
@@ -803,7 +803,9 @@ pub fn tool_definition() -> ToolDefinition {
             "response_format": {"type":"string", "enum":["full","text","file"], "default":"text"},
             "limit": {"type":"integer", "description":"Max results for text mode"},
             "proxy": {"type":"string", "description":"Optional proxy URL"},
-            "data_cleaner": {"type":"boolean", "description":"Whether to extract only textual content from HTML responses"}
+            "data_cleaner": {"type":"boolean", "description":"Whether to extract only textual content from HTML responses"},
+            "credential_id": {"type":"string", "description":"Optional ID of a saved credential (Services page) that supplies auth (bearer token / custom header) and optionally the base url — the secret is never exposed to you."},
+            "credential": {"type":"string", "description":"Optional service name of a saved credential to use instead of credential_id (the newest credential with this service name is applied)."}
         }),
         required: vec!["url".to_string()],
         source: ToolSource::Internal,
@@ -831,7 +833,9 @@ pub fn run_saved_tool_definition() -> ToolDefinition {
         parameters: serde_json::json!({
             "name_or_id": { "type":"string", "description":"The name or ID of the saved Synapse" },
             "body_override": { "type":"object", "description":"Optional JSON body to replace the saved one" },
-            "header_overrides": { "type":"object", "description":"Optional headers to merge/replace" }
+            "header_overrides": { "type":"object", "description":"Optional headers to merge/replace" },
+            "credential_id": { "type":"string", "description":"Optional saved-credential ID (Services page) to supply auth for the request instead of stored headers." },
+            "credential": { "type":"string", "description":"Optional service name of a saved credential to use (the newest match is applied)." }
         }),
         required: vec!["name_or_id".to_string()],
         source: ToolSource::Internal,

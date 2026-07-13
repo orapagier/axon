@@ -33,41 +33,132 @@ fn merge_stored_credentials(
         other => return other,
     };
 
-    let data_str = state.db.get().ok().and_then(|conn| {
-        let explicit_id = map
-            .get("credential_id")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-        match explicit_id {
-            Some(id) => conn
-                .query_row(
-                    "SELECT data FROM credentials WHERE id = ?1",
-                    [id.as_str()],
-                    |r| r.get::<_, String>(0),
-                )
-                .ok(),
-            None => conn
-                .query_row(
-                    "SELECT data FROM credentials WHERE service = ?1 ORDER BY created_at DESC LIMIT 1",
-                    [service],
-                    |r| r.get::<_, String>(0),
-                )
-                .ok(),
-        }
-    });
+    let explicit_id = map
+        .get("credential_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
 
-    if let Some(data_str) = data_str {
-        // Encrypted at rest; decrypt_key passes legacy plaintext through.
-        let data_str = crate::crypto::decrypt_key(&data_str);
-        if let Ok(serde_json::Value::Object(cred_map)) = serde_json::from_str(&data_str) {
-            for (k, v) in cred_map {
-                map.entry(k).or_insert(v);
-            }
+    if let Some(cred_map) = load_credential_data(explicit_id.as_deref(), Some(service), state) {
+        for (k, v) in cred_map {
+            map.entry(k).or_insert(v);
         }
     }
 
     serde_json::Value::Object(map)
+}
+
+/// Load and decrypt a credential's `data` object from the Services-page store,
+/// resolving by explicit `cred_id` first, else the most-recently-created
+/// credential whose `service` matches. `None` if neither locates a row.
+fn load_credential_data(
+    cred_id: Option<&str>,
+    service: Option<&str>,
+    state: &AppState,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let conn = state.db.get().ok()?;
+    let data_str = match cred_id.filter(|s| !s.is_empty()) {
+        Some(id) => conn
+            .query_row("SELECT data FROM credentials WHERE id = ?1", [id], |r| {
+                r.get::<_, String>(0)
+            })
+            .ok()?,
+        None => {
+            let svc = service.filter(|s| !s.is_empty())?;
+            conn.query_row(
+                "SELECT data FROM credentials WHERE service = ?1 ORDER BY created_at DESC LIMIT 1",
+                [svc],
+                |r| r.get::<_, String>(0),
+            )
+            .ok()?
+        }
+    };
+    // Encrypted at rest; decrypt_key passes legacy plaintext through.
+    let data_str = crate::crypto::decrypt_key(&data_str);
+    match serde_json::from_str(&data_str) {
+        Ok(serde_json::Value::Object(m)) => Some(m),
+        _ => None,
+    }
+}
+
+/// A credential reference the agent can attach to a generic HTTP call:
+/// `credential_id` (exact) or `credential` (a service name → newest match).
+fn cred_ref_from_args(args: &serde_json::Value) -> (Option<String>, Option<String>) {
+    let pick = |k: &str| {
+        args.get(k)
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+    };
+    (pick("credential_id"), pick("credential"))
+}
+
+/// Apply a Services-page credential to a generic HTTP request. Recognized flat
+/// string fields map onto the request so the agent never sees the secret:
+///   - `url` / `base_url` → default the URL when the call left it empty
+///   - `bearer_token`/`token`/`api_key`/`access_token`/`authBearerToken` → Bearer auth
+///   - `header_name`+`header_value` (or `authHeaderName`/`authHeaderValue`) → custom header
+///
+/// Auth is only injected when the caller hasn't already set `auth` or an explicit
+/// Authorization header, so an inline token always wins.
+fn apply_http_credential(
+    params: &mut crate::tools::http::HttpRequestParams,
+    cred_id: Option<String>,
+    service: Option<String>,
+    state: &AppState,
+) {
+    let Some(cred) = load_credential_data(cred_id.as_deref(), service.as_deref(), state) else {
+        return;
+    };
+    let get = |keys: &[&str]| -> Option<String> {
+        keys.iter().find_map(|k| {
+            cred.get(*k)
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+        })
+    };
+
+    if params.url.trim().is_empty() {
+        if let Some(u) = get(&["url", "base_url"]) {
+            params.url = u;
+        }
+    }
+
+    let has_auth_header = params
+        .headers
+        .as_ref()
+        .and_then(|h| h.as_object())
+        .map(|o| o.keys().any(|k| k.eq_ignore_ascii_case("authorization")))
+        .unwrap_or(false);
+
+    if params.auth.is_none() && !has_auth_header {
+        if let Some(token) = get(&[
+            "bearer_token",
+            "token",
+            "api_key",
+            "access_token",
+            "authBearerToken",
+        ]) {
+            params.auth = Some(crate::tools::http::HttpAuth {
+                auth_type: "bearerAuth".to_string(),
+                user: None,
+                password: None,
+                header_name: None,
+                header_value: Some(token),
+            });
+        } else if let (Some(name), Some(value)) = (
+            get(&["header_name", "authHeaderName"]),
+            get(&["header_value", "authHeaderValue"]),
+        ) {
+            params.auth = Some(crate::tools::http::HttpAuth {
+                auth_type: "headerAuth".to_string(),
+                user: None,
+                password: None,
+                header_name: Some(name),
+                header_value: Some(value),
+            });
+        }
+    }
 }
 
 pub(crate) async fn handle_internal(
@@ -286,7 +377,9 @@ async fn handle_http_request(
     args: serde_json::Value,
     state: AppState,
 ) -> anyhow::Result<serde_json::Value> {
-    let params: crate::tools::http::HttpRequestParams = serde_json::from_value(args)?;
+    let (cred_id, cred_service) = cred_ref_from_args(&args);
+    let mut params: crate::tools::http::HttpRequestParams = serde_json::from_value(args)?;
+    apply_http_credential(&mut params, cred_id, cred_service, &state);
     let tool = crate::tools::http::HttpRequestTool::new();
     match tool.request(params).await {
         Ok(resp) => {
@@ -399,6 +492,11 @@ async fn handle_run_saved_http_request(
         }
         params.headers = Some(serde_json::Value::Object(current));
     }
+
+    // A saved Synapse can also authenticate from a named Services-page credential
+    // instead of storing the token in the request's headers.
+    let (cred_id, cred_service) = cred_ref_from_args(&args);
+    apply_http_credential(&mut params, cred_id, cred_service, &state);
 
     let tool = crate::tools::http::HttpRequestTool::new();
     let first_result = match tool.request(params).await {
