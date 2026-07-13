@@ -51,11 +51,14 @@ So "audio streaming like a live call in all gateways" decomposes into:
 | STT (file) | Groq `whisper-large-v3-turbo` via `POST {base}/audio/transcriptions` (multipart) | Gemini (audio-capable Flash, native multimodal) | Groq Whisper is on the free tier and fast (~1s for a voice note). Same API-key/base-url records we already have. |
 | TTS | Gemini TTS (`gemini-2.5-flash-preview-tts` class, free tier) | Groq PlayAI TTS `POST {base}/audio/speech` (free-tier availability must be verified at build time) | Output WAV/PCM → ffmpeg → OGG/Opus for Telegram `sendVoice`, MP3 for browser/Discord/Slack. |
 | Native audio-in LLM (Cortex "Audio" mode) | Gemini Flash via its OpenAI-compat endpoint (`input_audio` content part, base64 + format) | transcribe-first pipeline (STT → any text model) | Mirrors the existing `image_model` pattern with a new `audio_model` role. |
-| Live streaming STT/TTS (Phase 6) | Gemini Live API (WS, bidirectional PCM, free tier, supports tool calling) | turn-based pipeline above | Only realistic free option for real duplex audio. |
+| Live streaming (Phase 6) | **`gemini-3.1-flash-live-preview`** via Gemini Live API (WS, native audio-to-audio, 128k ctx, free tier — confirmed 2026-07-13) | turn-based pipeline (Phase 1–3) | Recommended model for Live API use cases. **Preview terms — not for production use** per Google. Function calling is sequential/manual — tool calls interrupt the audio stream; see Phase 6 tool-call design. |
 
-New model roles: **`stt_model`**, **`tts_model`**, **`audio_model`** — added to
-`models.toml`, selectable in ModelsPage role dropdown, resolved through the
-existing router role machinery (same as `image_model`).
+New model roles: **`stt_model`**, **`tts_model`**, **`audio_model`** (Cortex node's
+turn-based native audio input), and **`live_model`** (Gemini Live session model,
+e.g. `gemini-3.1-flash-live-preview`) — added to `models.toml`, selectable in
+ModelsPage role dropdown, resolved through the existing router role machinery
+(same as `image_model`). `live_model` is session-based (WS) rather than
+request/response, so it's resolved once per call rather than per-message.
 
 ---
 
@@ -103,13 +106,50 @@ Prerequisite for any Discord voice story, and fixes Discord being send-only.
 - `axon-ui/src/lib/nodes.js`: Mode options → Text | Image | **Audio**; `media` field shown for image *or* audio with updated hint; `audio_processing` dropdown shown only for audio; run npm prebuild to regenerate `node_types.json`.
 - Back-compat: nothing to migrate — new enum value only. `normalizeConfig` untouched.
 
-### Phase 6 — Live call on the dashboard — ~3–4 days
-Two stages, shipping value early:
-- **6a. Turn-based "walkie-talkie" call** (no new external tech):
-  - New `GET /ws/voice` (`dashboard/voice_ws.rs`): binary WS frames = mic audio chunks; JSON frames = control (`start_turn`, `end_turn`, `cancel`).
-  - Client (ChatPage call overlay or a `VoiceCall.vue` component): hold-to-talk or client-side VAD (silence detection on the WebAudio analyser) → send chunk stream → server assembles → STT → agent (existing `run_task_streaming` with the session's context) → TTS → server streams audio back → autoplay. Status ticker shows the live agent trace ("Using gmail…") while it thinks.
-  - Feels like a call; latency ≈ STT 1s + agent 2–30s + TTS 2s. This is the honest ceiling with a tool-using agent in the loop.
-- **6b. True streaming duplex (optional upgrade)**: bridge the browser's PCM stream to a **Gemini Live API** WS session server-side; expose Axon tools to it through Gemini Live tool-calling with a bridge into the existing tool registry; barge-in supported natively. Bigger, riskier (preview API), but the only free path to sub-second conversational latency. Decide after 6a is in users' hands.
+### Phase 6 — Live call on the dashboard — ~3 days
+**Decided 2026-07-13**: target the Gemini Live bridge directly using
+`gemini-3.1-flash-live-preview` (confirmed real, recommended-for-Live-API,
+free-tier as of this date) rather than building a turn-based walkie-talkie as
+an intermediate step. The turn-based pipeline from Phases 1–3 is kept as an
+automatic fallback, not a shipped stage of its own.
+
+- New `GET /ws/voice` (`dashboard/voice_ws.rs`): server-side bridge between the
+  browser's mic stream and a Gemini Live WS session. The API key stays
+  server-side; this endpoint also lets us intercept tool calls and inject
+  results before they reach the client.
+- Session setup: on call start, open a Live session scoped to the chat
+  session's existing context (system prompt = existing `system_context`; tool
+  defs mirrored from the existing tool registry as Live API function
+  declarations). Gemini Live does server-side VAD/turn detection, so the
+  client just streams PCM continuously — no explicit `start_turn`/`end_turn`
+  framing needed.
+- **Tool-call handling — live audio drops, user is told why (explicit product
+  decision)**: Live API function calling is sequential with manual
+  tool-response handling, so a tool-using turn can't stay live end-to-end.
+  When the Live session emits a tool-call event:
+  1. Immediately send a lightweight status event to the client (reuse the
+     humanized status lines from `streaming.rs`, e.g. "Using gmail…") — the
+     call UI switches from its "listening/live" indicator to a "using
+     `<tool>`…" indicator. No TTS synthesis for this cue (adds latency); it's
+     a UI-only signal, consistent with the decision that dropping live audio
+     for a tool call is fine as long as it's communicated to the user.
+  2. Execute the tool call through the **existing tool registry** (same
+     dispatch path as text-mode `run_task_streaming`) — no Live-specific tool
+     implementation.
+  3. Feed the tool result back into the Live session per its manual
+     tool-response protocol so the model continues the turn.
+  4. Resume audio streaming once the model resumes generating; client
+     switches back to the "live" indicator.
+- Client: `VoiceCall.vue` — mic capture (WebAudio → PCM16 chunks), continuous
+  streaming, autoplay of the returned audio stream, and the two-state status
+  strip above (live / using-tool).
+- **Fallback**: if the Live session errors, hits quota, or the preview model
+  is unavailable, degrade automatically to the Phase 1–3 turn-based pipeline
+  (STT → agent → TTS) behind the same call UI, so a preview-API outage
+  doesn't hard-fail the feature.
+- **Production caveat**: Google's preview terms say preview models aren't for
+  production use — flag this before shipping the call feature broadly; the
+  turn-based fallback is the production-safe path if that matters later.
 
 ### Phase 7 (stretch, decide later) — Discord voice channels
 - Join voice channels, stream Opus both ways: voice gateway (separate WS) + UDP + xsalsa20 encryption + Opus encode/decode (`audiopus`/`songbird`). Substantial native deps and RAM cost — must be validated against the 1 GB e2-micro budget before committing. Turn design: VAD on inbound user audio → same STT→agent→TTS pipeline as 6a.
@@ -127,16 +167,24 @@ Two stages, shipping value early:
 | 3 | voice-out everywhere + settings | ~1 d | 1 |
 | 4 | Discord gateway WS (inbound at all) | ~2 d | — (parallel ok) |
 | 5 | Cortex Audio mode | ~1–1.5 d | 1 (for transcribe sub-mode) |
-| 6a | dashboard walkie-talkie call | ~2 d | 1–3 |
-| 6b | Gemini Live duplex bridge | ~2 d+ | 6a |
+| 6 | dashboard live call — Gemini Live bridge (`gemini-3.1-flash-live-preview`) w/ turn-based fallback | ~3 d | 1 (fallback pipeline), existing tool registry |
 | 7 | Discord voice channels | big / stretch | 4, 1–3 |
 
-Recommended order: **1 → 2 → 3 → 5 → 4 → 6a → (6b, 7 re-evaluate)**.
+Recommended order: **1 → 2 → 3 → 5 → 4 → 6 → (7 re-evaluate)**.
 Phases 1+2+3 alone already give "send a voice note, get a spoken answer" on
 Telegram, Slack and the dashboard — most of the perceived feature.
 
 ## 5. Risks & open questions
 
+- **Gemini Live is a preview API**: `gemini-3.1-flash-live-preview` is confirmed
+  real and free-tier as of 2026-07-13, but Google's preview terms exclude
+  production use and rate limits are "not guaranteed" — the Phase 6 fallback
+  to the turn-based pipeline exists specifically to absorb this risk.
+- **Tool calls interrupt live audio (by design)**: decided 2026-07-13 that a
+  tool-using turn dropping out of live streaming is acceptable as long as the
+  user is told why (status indicator, not silence) — see Phase 6 tool-call
+  handling. This sidesteps trying to make Live API's sequential/manual
+  function-calling protocol feel synchronous, which it isn't.
 - **TTS free-tier reality**: Gemini TTS preview quotas and Groq PlayAI TTS terms need a live check at build time; the `tts_model` role keeps this swappable without code changes.
 - **RAM (1 GB e2-micro)**: all audio processing is API-side; ffmpeg runs as a short-lived subprocess (already the case for Fovea video). Discord WS adds one connection; Discord *voice* (Phase 7) is the only real RAM risk.
 - **ffmpeg on the server**: `ffmpeg-sidecar` downloads a static binary — confirm the deploy unit/sandbox allows it (Fovea video implies it already works in prod).
