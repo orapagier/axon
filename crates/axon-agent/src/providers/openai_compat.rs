@@ -44,6 +44,12 @@ struct OaiTc {
     id: String,
     r#type: String,
     function: OaiFn,
+    // Google's OpenAI-compat layer nests a thinking-mode signature here as
+    // `{"google":{"thought_signature":"..."}}`, which must be echoed back
+    // verbatim on the next turn or Gemini 400s with "Function call is
+    // missing a thought_signature". Opaque to every other provider.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    extra_content: Option<Value>,
 }
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct OaiFn {
@@ -96,6 +102,8 @@ struct OaiTcDelta {
     #[serde(rename = "type")]
     r#type: Option<String>,
     function: Option<OaiFnDelta>,
+    #[serde(default)]
+    extra_content: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -110,6 +118,17 @@ struct PartialToolCall {
     r#type: String,
     name: String,
     arguments: String,
+    signature: Option<String>,
+}
+
+/// Pull Gemini's thinking-mode tool-call signature out of the provider-specific
+/// `extra_content` envelope. See `OaiTc::extra_content` for why this exists.
+fn extract_thought_signature(extra_content: &Value) -> Option<String> {
+    extra_content
+        .get("google")
+        .and_then(|g| g.get("thought_signature"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
 }
 
 static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
@@ -177,7 +196,13 @@ fn to_oai_msgs(messages: &[Message], system: &str) -> Vec<OaiMsg> {
                     let tcs: Vec<OaiTc> = blocks
                         .iter()
                         .filter_map(|b| {
-                            if let ContentBlock::ToolUse { id, name, input } = b {
+                            if let ContentBlock::ToolUse {
+                                id,
+                                name,
+                                input,
+                                signature,
+                            } = b
+                            {
                                 Some(OaiTc {
                                     id: id.clone(),
                                     r#type: "function".into(),
@@ -185,6 +210,9 @@ fn to_oai_msgs(messages: &[Message], system: &str) -> Vec<OaiMsg> {
                                         name: name.clone(),
                                         arguments: serde_json::to_string(input).unwrap_or_default(),
                                     },
+                                    extra_content: signature.as_ref().map(|sig| {
+                                        json!({"google": {"thought_signature": sig}})
+                                    }),
                                 })
                             } else {
                                 None
@@ -347,6 +375,7 @@ fn build_unified_response_from_parts(
             },
             name: tc.name,
             input,
+            signature: tc.signature,
         });
     }
 
@@ -409,6 +438,7 @@ async fn call_streaming(
                                     .get("arguments")
                                     .map(|v| v.to_string())
                                     .unwrap_or_else(|| "{}".to_string()),
+                                signature: None,
                             }],
                             StopReason::ToolUse,
                             UsageInfo::default(),
@@ -500,6 +530,11 @@ async fn call_streaming(
                                     entry.arguments.push_str(&arguments);
                                 }
                             }
+                            if let Some(extra) = &tc.extra_content {
+                                if let Some(sig) = extract_thought_signature(extra) {
+                                    entry.signature = Some(sig);
+                                }
+                            }
                         }
                     }
 
@@ -525,6 +560,10 @@ async fn call_streaming(
                             entry.r#type = tc.r#type;
                             entry.name = tc.function.name;
                             entry.arguments = tc.function.arguments;
+                            entry.signature = tc
+                                .extra_content
+                                .as_ref()
+                                .and_then(extract_thought_signature);
                         }
                     } else if let Some(fc) = message.function_call {
                         let entry = partial_tools.entry(0).or_default();
@@ -694,6 +733,7 @@ pub async fn call(
                                     .get("arguments")
                                     .map(|v| v.to_string())
                                     .unwrap_or_else(|| "{}".to_string()),
+                                signature: None,
                             }],
                             StopReason::ToolUse,
                             UsageInfo::default(),
@@ -756,6 +796,7 @@ pub async fn call(
                 r#type: tc.r#type.clone(),
                 name: tc.function.name.clone(),
                 arguments: tc.function.arguments.clone(),
+                signature: tc.extra_content.as_ref().and_then(extract_thought_signature),
             });
         }
     } else if let Some(fc) = &choice.message.function_call {
@@ -764,6 +805,7 @@ pub async fn call(
             r#type: "function".to_string(),
             name: fc.name.clone(),
             arguments: fc.arguments.clone(),
+            signature: None,
         });
     }
     let stop_reason = match choice.finish_reason.as_deref() {
@@ -793,4 +835,51 @@ pub async fn call(
                 .unwrap_or(0),
         },
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_thought_signature_reads_nested_google_field() {
+        let extra = json!({"google": {"thought_signature": "sig-abc123"}});
+        assert_eq!(
+            extract_thought_signature(&extra),
+            Some("sig-abc123".to_string())
+        );
+        assert_eq!(extract_thought_signature(&json!({})), None);
+    }
+
+    #[test]
+    fn to_oai_msgs_replays_thought_signature_on_tool_use() {
+        // Gemini rejects a follow-up turn with "Function call is missing a
+        // thought_signature" unless the signature captured on the prior
+        // ToolUse block is echoed back under extra_content.google.
+        let messages = vec![Message::assistant_with_blocks(vec![ContentBlock::ToolUse {
+            id: "call-1".to_string(),
+            name: "get_weather".to_string(),
+            input: json!({"city": "Tokyo"}),
+            signature: Some("sig-xyz".to_string()),
+        }])];
+        let out = to_oai_msgs(&messages, "");
+        let tcs = out[0].tool_calls.as_ref().expect("tool_calls present");
+        assert_eq!(
+            tcs[0].extra_content,
+            Some(json!({"google": {"thought_signature": "sig-xyz"}}))
+        );
+    }
+
+    #[test]
+    fn to_oai_msgs_omits_extra_content_without_signature() {
+        let messages = vec![Message::assistant_with_blocks(vec![ContentBlock::ToolUse {
+            id: "call-1".to_string(),
+            name: "get_weather".to_string(),
+            input: json!({}),
+            signature: None,
+        }])];
+        let out = to_oai_msgs(&messages, "");
+        let tcs = out[0].tool_calls.as_ref().expect("tool_calls present");
+        assert_eq!(tcs[0].extra_content, None);
+    }
 }

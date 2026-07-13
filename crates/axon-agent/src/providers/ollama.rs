@@ -79,7 +79,7 @@ fn to_ollama_msgs(messages: &[Message], system: &str) -> Vec<OllamaMsg> {
                 let tcs: Vec<OllamaTc> = blocks
                     .iter()
                     .filter_map(|b| {
-                        if let ContentBlock::ToolUse { id, name, input } = b {
+                        if let ContentBlock::ToolUse { id, name, input, .. } = b {
                             Some(OllamaTc {
                                 id: Some(id.clone()),
                                 function: OllamaFn {
@@ -261,6 +261,7 @@ pub async fn call(
                     .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()[..8].to_string()),
                 name: tc.function.name,
                 input: tc.function.arguments,
+                signature: None,
             });
         }
         stop = StopReason::ToolUse;

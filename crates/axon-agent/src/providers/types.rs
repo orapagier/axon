@@ -46,6 +46,13 @@ pub enum ContentBlock {
         id: String,
         name: String,
         input: serde_json::Value,
+        /// Opaque provider signature that must be echoed back verbatim on the
+        /// next turn — e.g. Gemini's `thought_signature`, required when the
+        /// call was made in thinking mode or the provider rejects the follow-up
+        /// with "Function call is missing a thought_signature". `None` for
+        /// providers (Anthropic, Ollama, plain OpenAI) that don't use this.
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        signature: Option<String>,
     },
     ToolResult {
         tool_use_id: String,
@@ -132,7 +139,7 @@ impl UnifiedResponse {
         self.content
             .iter()
             .filter_map(|b| {
-                if let ContentBlock::ToolUse { id, name, input } = b {
+                if let ContentBlock::ToolUse { id, name, input, .. } = b {
                     Some(ToolCall {
                         id: id.clone(),
                         name: name.clone(),

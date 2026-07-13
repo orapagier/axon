@@ -55,6 +55,7 @@ pub(crate) fn repair_tool_call(
             id: format!("repair-{}", &uuid::Uuid::new_v4().to_string()[..8]),
             name,
             input,
+            signature: None,
         });
         RepairDecision::Repaired(resp)
     };

@@ -80,7 +80,7 @@ pub async fn call(
             MessageContent::Text(t) => json!(t),
             MessageContent::Blocks(b) => json!(b.iter().filter_map(|blk| match blk {
                 ContentBlock::Text { text }       => Some(json!({"type":"text","text":text})),
-                ContentBlock::ToolUse { id,name,input } => Some(json!({"type":"tool_use","id":id,"name":name,"input":input})),
+                ContentBlock::ToolUse { id,name,input,.. } => Some(json!({"type":"tool_use","id":id,"name":name,"input":input})),
                 ContentBlock::ToolResult { tool_use_id, content } => Some(json!({"type":"tool_result","tool_use_id":tool_use_id,"content":content})),
                 ContentBlock::Image { media_type, data } => Some(json!({"type":"image","source":{"type":"base64","media_type":media_type,"data":data}})),
                 // Signed thinking blocks must be echoed back verbatim on
@@ -207,7 +207,7 @@ pub async fn call(
         match b {
             AnthBlock::Text { text } => blocks.push(ContentBlock::text(text)),
             AnthBlock::ToolUse { id, name, input } => {
-                blocks.push(ContentBlock::ToolUse { id, name, input })
+                blocks.push(ContentBlock::ToolUse { id, name, input, signature: None })
             }
             AnthBlock::Thinking {
                 thinking,
