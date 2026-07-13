@@ -44,12 +44,6 @@ struct OaiTc {
     id: String,
     r#type: String,
     function: OaiFn,
-    // Google's OpenAI-compat layer nests a thinking-mode signature here as
-    // `{"google":{"thought_signature":"..."}}`, which must be echoed back
-    // verbatim on the next turn or Gemini 400s with "Function call is
-    // missing a thought_signature". Opaque to every other provider.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    extra_content: Option<Value>,
 }
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct OaiFn {
@@ -102,8 +96,6 @@ struct OaiTcDelta {
     #[serde(rename = "type")]
     r#type: Option<String>,
     function: Option<OaiFnDelta>,
-    #[serde(default)]
-    extra_content: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -118,17 +110,6 @@ struct PartialToolCall {
     r#type: String,
     name: String,
     arguments: String,
-    signature: Option<String>,
-}
-
-/// Pull Gemini's thinking-mode tool-call signature out of the provider-specific
-/// `extra_content` envelope. See `OaiTc::extra_content` for why this exists.
-fn extract_thought_signature(extra_content: &Value) -> Option<String> {
-    extra_content
-        .get("google")
-        .and_then(|g| g.get("thought_signature"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
 }
 
 static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
@@ -196,13 +177,7 @@ fn to_oai_msgs(messages: &[Message], system: &str) -> Vec<OaiMsg> {
                     let tcs: Vec<OaiTc> = blocks
                         .iter()
                         .filter_map(|b| {
-                            if let ContentBlock::ToolUse {
-                                id,
-                                name,
-                                input,
-                                signature,
-                            } = b
-                            {
+                            if let ContentBlock::ToolUse { id, name, input, .. } = b {
                                 Some(OaiTc {
                                     id: id.clone(),
                                     r#type: "function".into(),
@@ -210,9 +185,6 @@ fn to_oai_msgs(messages: &[Message], system: &str) -> Vec<OaiMsg> {
                                         name: name.clone(),
                                         arguments: serde_json::to_string(input).unwrap_or_default(),
                                     },
-                                    extra_content: signature.as_ref().map(|sig| {
-                                        json!({"google": {"thought_signature": sig}})
-                                    }),
                                 })
                             } else {
                                 None
@@ -260,7 +232,8 @@ fn to_oai_msgs(messages: &[Message], system: &str) -> Vec<OaiMsg> {
 
 /// Recursively sanitize JSON Schema values: replace non-standard types like "any"
 /// with "string" so providers like Google Gemini don't reject the schema.
-fn sanitize_schema(v: &mut Value) {
+/// Shared with `providers::google` (Gemini's native adapter also needs this).
+pub fn sanitize_schema(v: &mut Value) {
     match v {
         Value::Object(obj) => {
             if let Some(t) = obj
@@ -375,7 +348,7 @@ fn build_unified_response_from_parts(
             },
             name: tc.name,
             input,
-            signature: tc.signature,
+            signature: None,
         });
     }
 
@@ -438,7 +411,6 @@ async fn call_streaming(
                                     .get("arguments")
                                     .map(|v| v.to_string())
                                     .unwrap_or_else(|| "{}".to_string()),
-                                signature: None,
                             }],
                             StopReason::ToolUse,
                             UsageInfo::default(),
@@ -470,21 +442,9 @@ async fn call_streaming(
         let chunk = chunk.context("read streaming chunk")?;
         buffer.push_str(&String::from_utf8_lossy(&chunk).replace("\r\n", "\n"));
 
-        while let Some(split_at) = buffer.find("\n\n") {
-            let event_block = buffer[..split_at].to_string();
-            buffer.drain(..split_at + 2);
-
-            let data_lines: Vec<&str> = event_block
-                .lines()
-                .filter_map(|line| line.strip_prefix("data:"))
-                .map(str::trim_start)
-                .collect();
-
-            if data_lines.is_empty() {
-                continue;
-            }
-
-            let data = data_lines.join("\n");
+        for data in drain_sse_frames(&mut buffer) {
+            // "[DONE]" is OpenAI-specific and has no equivalent in the shared
+            // frame-splitting helper, so it's filtered here rather than there.
             if data == "[DONE]" {
                 continue;
             }
@@ -530,11 +490,6 @@ async fn call_streaming(
                                     entry.arguments.push_str(&arguments);
                                 }
                             }
-                            if let Some(extra) = &tc.extra_content {
-                                if let Some(sig) = extract_thought_signature(extra) {
-                                    entry.signature = Some(sig);
-                                }
-                            }
                         }
                     }
 
@@ -560,10 +515,6 @@ async fn call_streaming(
                             entry.r#type = tc.r#type;
                             entry.name = tc.function.name;
                             entry.arguments = tc.function.arguments;
-                            entry.signature = tc
-                                .extra_content
-                                .as_ref()
-                                .and_then(extract_thought_signature);
                         }
                     } else if let Some(fc) = message.function_call {
                         let entry = partial_tools.entry(0).or_default();
@@ -594,6 +545,33 @@ pub fn retry_after_header(h: &HeaderMap) -> Option<String> {
         .and_then(|v| v.to_str().ok())
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
+}
+
+/// Split accumulated SSE bytes into complete event frames, returning each
+/// frame's joined `data:` payload and leaving any trailing partial event in
+/// `buffer` for the next chunk. Provider-agnostic — shared with
+/// `providers::google`'s streaming path. The OpenAI-specific `"[DONE]"`
+/// sentinel has no equivalent in Gemini's native SSE, so it stays filtered
+/// by each caller rather than here.
+pub fn drain_sse_frames(buffer: &mut String) -> Vec<String> {
+    let mut frames = Vec::new();
+    while let Some(split_at) = buffer.find("\n\n") {
+        let event_block = buffer[..split_at].to_string();
+        buffer.drain(..split_at + 2);
+
+        let data_lines: Vec<&str> = event_block
+            .lines()
+            .filter_map(|line| line.strip_prefix("data:"))
+            .map(str::trim_start)
+            .collect();
+
+        if data_lines.is_empty() {
+            continue;
+        }
+
+        frames.push(data_lines.join("\n"));
+    }
+    frames
 }
 
 pub fn parse_rl_headers(provider: &str, h: &HeaderMap) -> RateLimitSnapshot {
@@ -733,7 +711,6 @@ pub async fn call(
                                     .get("arguments")
                                     .map(|v| v.to_string())
                                     .unwrap_or_else(|| "{}".to_string()),
-                                signature: None,
                             }],
                             StopReason::ToolUse,
                             UsageInfo::default(),
@@ -796,7 +773,6 @@ pub async fn call(
                 r#type: tc.r#type.clone(),
                 name: tc.function.name.clone(),
                 arguments: tc.function.arguments.clone(),
-                signature: tc.extra_content.as_ref().and_then(extract_thought_signature),
             });
         }
     } else if let Some(fc) = &choice.message.function_call {
@@ -805,7 +781,6 @@ pub async fn call(
             r#type: "function".to_string(),
             name: fc.name.clone(),
             arguments: fc.arguments.clone(),
-            signature: None,
         });
     }
     let stop_reason = match choice.finish_reason.as_deref() {
@@ -842,44 +817,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn extract_thought_signature_reads_nested_google_field() {
-        let extra = json!({"google": {"thought_signature": "sig-abc123"}});
-        assert_eq!(
-            extract_thought_signature(&extra),
-            Some("sig-abc123".to_string())
+    fn drain_sse_frames_splits_multiple_events_and_partial_buffer() {
+        let mut buffer = String::from(
+            "data: {\"a\":1}\n\ndata: {\"a\":2}\n\ndata: partial-no-terminator-yet",
         );
-        assert_eq!(extract_thought_signature(&json!({})), None);
-    }
-
-    #[test]
-    fn to_oai_msgs_replays_thought_signature_on_tool_use() {
-        // Gemini rejects a follow-up turn with "Function call is missing a
-        // thought_signature" unless the signature captured on the prior
-        // ToolUse block is echoed back under extra_content.google.
-        let messages = vec![Message::assistant_with_blocks(vec![ContentBlock::ToolUse {
-            id: "call-1".to_string(),
-            name: "get_weather".to_string(),
-            input: json!({"city": "Tokyo"}),
-            signature: Some("sig-xyz".to_string()),
-        }])];
-        let out = to_oai_msgs(&messages, "");
-        let tcs = out[0].tool_calls.as_ref().expect("tool_calls present");
-        assert_eq!(
-            tcs[0].extra_content,
-            Some(json!({"google": {"thought_signature": "sig-xyz"}}))
-        );
-    }
-
-    #[test]
-    fn to_oai_msgs_omits_extra_content_without_signature() {
-        let messages = vec![Message::assistant_with_blocks(vec![ContentBlock::ToolUse {
-            id: "call-1".to_string(),
-            name: "get_weather".to_string(),
-            input: json!({}),
-            signature: None,
-        }])];
-        let out = to_oai_msgs(&messages, "");
-        let tcs = out[0].tool_calls.as_ref().expect("tool_calls present");
-        assert_eq!(tcs[0].extra_content, None);
+        let frames = drain_sse_frames(&mut buffer);
+        assert_eq!(frames, vec!["{\"a\":1}".to_string(), "{\"a\":2}".to_string()]);
+        // The unterminated trailing event stays in the buffer for the next chunk.
+        assert_eq!(buffer, "data: partial-no-terminator-yet");
     }
 }

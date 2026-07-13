@@ -1,4 +1,5 @@
 pub mod anthropic;
+pub mod google;
 pub mod ollama;
 pub mod openai_compat;
 pub mod types;
@@ -44,8 +45,9 @@ pub async fn call_provider_with_options(
     max_tokens: u32,
     options: ProviderCallOptions,
 ) -> anyhow::Result<UnifiedResponse> {
-    match model.provider.as_str() {
+    match normalize_provider_name(&model.provider).as_str() {
         "anthropic" => anthropic::call(model, messages, system, tools, max_tokens, options).await,
+        "google" => google::call(model, messages, system, tools, max_tokens, options).await,
         "ollama" => ollama::call(model, messages, system, tools, max_tokens, options).await,
         _ => openai_compat::call(model, messages, system, tools, max_tokens, options).await,
     }

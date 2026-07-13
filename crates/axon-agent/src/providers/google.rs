@@ -1,0 +1,855 @@
+use super::types::*;
+use super::ProviderCallOptions;
+use crate::tools::schema::ToolDefinition;
+use anyhow::Context;
+use futures::StreamExt;
+use once_cell::sync::Lazy;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::collections::HashMap;
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct GenReq {
+    contents: Vec<GenContent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    system_instruction: Option<GenContent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<GenTool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_config: Option<GenToolConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    generation_config: Option<GenGenerationConfig>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct GenContent {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    role: Option<String>,
+    #[serde(default)]
+    parts: Vec<GenPart>,
+}
+
+/// Flat/untagged wire shape: exactly one of the optional fields is populated
+/// per part. `thought`/`thought_signature` only appear when Gemini's native
+/// `includeThoughts` is requested (we never send it) but are parsed
+/// defensively anyway; `thought_signature` sits directly on the same part as
+/// `function_call` — no wrapper envelope needed, unlike the OpenAI-compat
+/// shim's `extra_content.google.thought_signature` workaround.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+struct GenPart {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    inline_data: Option<GenInlineData>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    function_call: Option<GenFnCall>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    function_response: Option<GenFnResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thought: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thought_signature: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct GenInlineData {
+    mime_type: String,
+    data: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct GenFnCall {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
+    name: String,
+    args: Value,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct GenFnResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
+    name: String,
+    response: Value,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct GenTool {
+    function_declarations: Vec<GenFnDecl>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct GenFnDecl {
+    name: String,
+    description: String,
+    parameters: Value,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct GenToolConfig {
+    function_calling_config: GenFnCallingConfig,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct GenFnCallingConfig {
+    mode: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct GenGenerationConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_output_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thinking_config: Option<GenThinkingConfig>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct GenThinkingConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thinking_budget: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thinking_level: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GenResp {
+    #[serde(default)]
+    candidates: Vec<GenCandidate>,
+    usage_metadata: Option<GenUsage>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GenCandidate {
+    content: Option<GenContent>,
+    finish_reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GenUsage {
+    prompt_token_count: Option<u32>,
+    candidates_token_count: Option<u32>,
+}
+
+static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
+    reqwest::Client::builder()
+        .user_agent("axon-agent/1.0")
+        .build()
+        .expect("build shared Google HTTP client")
+});
+
+/// Pre-scan every `ToolUse` block across the whole conversation so tool
+/// results (which carry only an id) can be resolved to the function name
+/// Gemini's `functionResponse.name` requires.
+fn tool_names_by_id(messages: &[Message]) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    for m in messages {
+        if let MessageContent::Blocks(blocks) = &m.content {
+            for b in blocks {
+                if let ContentBlock::ToolUse { id, name, .. } = b {
+                    out.insert(id.clone(), name.clone());
+                }
+            }
+        }
+    }
+    out
+}
+
+fn message_to_parts(m: &Message, id_to_name: &HashMap<String, String>) -> Vec<GenPart> {
+    match &m.content {
+        MessageContent::Text(t) => {
+            if t.is_empty() {
+                vec![]
+            } else {
+                vec![GenPart {
+                    text: Some(t.clone()),
+                    ..Default::default()
+                }]
+            }
+        }
+        MessageContent::Blocks(blocks) => blocks
+            .iter()
+            .filter_map(|b| match b {
+                ContentBlock::Text { text } => {
+                    if text.is_empty() {
+                        None
+                    } else {
+                        Some(GenPart {
+                            text: Some(text.clone()),
+                            ..Default::default()
+                        })
+                    }
+                }
+                ContentBlock::ToolUse {
+                    id,
+                    name,
+                    input,
+                    signature,
+                } => Some(GenPart {
+                    function_call: Some(GenFnCall {
+                        id: Some(id.clone()),
+                        name: name.clone(),
+                        args: input.clone(),
+                    }),
+                    thought_signature: signature.clone(),
+                    ..Default::default()
+                }),
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                } => {
+                    let name = id_to_name.get(tool_use_id).cloned().unwrap_or_else(|| {
+                        tracing::warn!(
+                            "google: no matching ToolUse for tool_use_id '{}', using fallback function name",
+                            tool_use_id
+                        );
+                        "unknown_function".to_string()
+                    });
+                    Some(GenPart {
+                        function_response: Some(GenFnResponse {
+                            id: Some(tool_use_id.clone()),
+                            name,
+                            response: json!({"result": content}),
+                        }),
+                        ..Default::default()
+                    })
+                }
+                ContentBlock::Image { media_type, data } => Some(GenPart {
+                    inline_data: Some(GenInlineData {
+                        mime_type: media_type.clone(),
+                        data: data.clone(),
+                    }),
+                    ..Default::default()
+                }),
+                // Dropped for cross-provider-failover tolerance: thinking
+                // blocks captured under another provider are never replayed
+                // to Gemini.
+                ContentBlock::Thinking { .. } => None,
+            })
+            .collect(),
+    }
+}
+
+/// One `GenContent` per `Message`, then adjacent same-role entries are
+/// merged. This merge is load-bearing, not defensive padding: `agent/loop.rs`
+/// emits parallel tool results as N separate `Message`s (one
+/// `Message::tool_result()` call per result), but Gemini requires all of a
+/// turn's tool results batched into a single `Content{role:"user"}` with
+/// multiple `functionResponse` parts — this pass is what produces that shape.
+fn contents_from_messages(messages: &[Message]) -> Vec<GenContent> {
+    let id_to_name = tool_names_by_id(messages);
+    let mut out: Vec<GenContent> = Vec::new();
+    for m in messages {
+        let role = if m.role == "assistant" { "model" } else { "user" };
+        let parts = message_to_parts(m, &id_to_name);
+        if parts.is_empty() {
+            continue;
+        }
+        if let Some(last) = out.last_mut() {
+            if last.role.as_deref() == Some(role) {
+                last.parts.extend(parts);
+                continue;
+            }
+        }
+        out.push(GenContent {
+            role: Some(role.to_string()),
+            parts,
+        });
+    }
+    out
+}
+
+fn to_gen_tools(tools: &[ToolDefinition]) -> Vec<GenTool> {
+    let declarations = tools
+        .iter()
+        .map(|t| {
+            let mut params = t.parameters.clone();
+            // Robustness: unwrap an already-full object schema (common if
+            // copy-pasted) to avoid doubled "type":"object" nesting.
+            if let Some(obj) = params.as_object() {
+                if obj.get("type").and_then(|v| v.as_str()) == Some("object") {
+                    if let Some(props) = obj.get("properties") {
+                        params = props.clone();
+                    }
+                }
+            }
+            if !params.is_object() {
+                params = json!({});
+            }
+            super::openai_compat::sanitize_schema(&mut params);
+            GenFnDecl {
+                name: t.name.clone(),
+                description: t.description.clone(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": params,
+                    "required": t.required
+                }),
+            }
+        })
+        .collect();
+    vec![GenTool {
+        function_declarations: declarations,
+    }]
+}
+
+fn build_tool_config(tool_choice: Option<ToolChoice>) -> Option<GenToolConfig> {
+    let mode = match tool_choice {
+        Some(ToolChoice::Required) => "ANY",
+        Some(ToolChoice::None) => "NONE",
+        _ => return None,
+    };
+    Some(GenToolConfig {
+        function_calling_config: GenFnCallingConfig {
+            mode: mode.to_string(),
+        },
+    })
+}
+
+/// Thinking control: opt-in per model via `thinking_mode` in models.toml —
+/// "level" (Gemini 3.x `thinkingLevel`: low/medium/high) or "budget"
+/// (Gemini 2.5-era `thinkingBudget`, same 2048/8192/16384 effort scale and
+/// `max_tokens.saturating_sub(1024)` floor-drop Anthropic's "budget" mode
+/// uses). `model.no_reasoning` (flipped after a 400 rejection) suppresses the
+/// field entirely regardless of `thinking_mode`. Unlike Anthropic, temperature
+/// is never force-dropped when thinking is active.
+fn build_generation_config(
+    model: &ModelRecord,
+    max_tokens: u32,
+    options: &ProviderCallOptions,
+) -> Option<GenGenerationConfig> {
+    let thinking_config = if model.no_reasoning {
+        None
+    } else {
+        match (
+            model.thinking_mode.as_deref(),
+            options.reasoning_effort.as_deref(),
+        ) {
+            (Some("level"), Some(effort)) => {
+                let level = match effort {
+                    "low" => "low",
+                    "high" => "high",
+                    _ => "medium",
+                };
+                Some(GenThinkingConfig {
+                    thinking_budget: None,
+                    thinking_level: Some(level.to_string()),
+                })
+            }
+            (Some("budget"), Some(effort)) => {
+                let budget: i32 = match effort {
+                    "low" => 2048,
+                    "high" => 16384,
+                    _ => 8192,
+                };
+                let budget = budget.min(max_tokens.saturating_sub(1024) as i32);
+                if budget >= 1024 {
+                    Some(GenThinkingConfig {
+                        thinking_budget: Some(budget),
+                        thinking_level: None,
+                    })
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    };
+    Some(GenGenerationConfig {
+        max_output_tokens: Some(max_tokens),
+        temperature: options.temperature,
+        thinking_config,
+    })
+}
+
+/// Gemini always returns `finishReason:"STOP"` whether the turn produced text
+/// or a function call — there is no distinct "tool_calls" reason like OpenAI.
+/// `ToolUse` must be inferred from whether any function-call blocks were
+/// actually parsed, never from `finish_reason` directly.
+fn infer_stop_reason(tool_blocks: &[ContentBlock], finish_reason: Option<&str>) -> StopReason {
+    if !tool_blocks.is_empty() {
+        return StopReason::ToolUse;
+    }
+    match finish_reason {
+        Some("MAX_TOKENS") => StopReason::MaxTokens,
+        _ => StopReason::EndTurn,
+    }
+}
+
+fn parts_to_blocks(parts: Vec<GenPart>) -> (String, Vec<ContentBlock>) {
+    let mut text = String::new();
+    let mut blocks = Vec::new();
+    for part in parts {
+        // Never shown to the user — same anti-leak posture as the `<thought>`
+        // tag fix applied to the OpenAI-compat shim this session.
+        if part.thought == Some(true) {
+            continue;
+        }
+        if let Some(t) = part.text {
+            text.push_str(&t);
+        }
+        if let Some(fc) = part.function_call {
+            blocks.push(ContentBlock::ToolUse {
+                id: fc.id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                name: fc.name,
+                input: fc.args,
+                signature: part.thought_signature,
+            });
+        }
+    }
+    (text, blocks)
+}
+
+/// Deliberately not shared with `openai_compat::build_unified_response_from_parts`:
+/// that one expects string `arguments` needing a JSON-parse round trip, while
+/// Gemini's `args` arrive as already-parsed `Value` — sharing would force a
+/// pointless string round trip.
+fn finalize_response(
+    text: String,
+    tool_blocks: Vec<ContentBlock>,
+    finish_reason: Option<&str>,
+    usage: UsageInfo,
+) -> UnifiedResponse {
+    let stop_reason = infer_stop_reason(&tool_blocks, finish_reason);
+    let mut content = Vec::new();
+    if !text.is_empty() {
+        content.push(ContentBlock::text(text));
+    }
+    content.extend(tool_blocks);
+    UnifiedResponse {
+        content,
+        stop_reason,
+        usage,
+    }
+}
+
+/// Real SSE: each frame is a *complete* `GenerateContentResponse`, and
+/// `functionCall.args` always arrives whole in one frame (Gemini doesn't
+/// token-stream call arguments) — no fragment-merge needed, unlike OpenAI's
+/// `BTreeMap<usize, PartialToolCall>` accumulation. No `[DONE]` sentinel
+/// either; the connection just ends.
+async fn call_streaming(
+    model: &mut ModelRecord,
+    url: &str,
+    payload: &GenReq,
+    stream_sink: StreamSink,
+) -> anyhow::Result<UnifiedResponse> {
+    let resp = HTTP_CLIENT
+        .post(url)
+        .header("x-goog-api-key", &model.api_key)
+        .header("Content-Type", "application/json")
+        .json(payload)
+        .send()
+        .await
+        .with_context(|| format!("HTTP to {}", url))?;
+
+    let rl = super::openai_compat::parse_rl_headers("google", resp.headers());
+    model.rl_snapshot = rl;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let retry_after = super::openai_compat::retry_after_header(resp.headers());
+        let body = resp.text().await.unwrap_or_default();
+        if status.as_u16() == 429 {
+            let suffix = retry_after
+                .map(|ra| format!(" [retry-after:{}]", ra))
+                .unwrap_or_default();
+            anyhow::bail!("rate limit{}: {}", suffix, body);
+        }
+        anyhow::bail!("provider error {} at {}: {}", status, url, body);
+    }
+
+    let mut text = String::new();
+    let mut tool_blocks: Vec<ContentBlock> = Vec::new();
+    let mut usage = UsageInfo::default();
+    let mut finish_reason: Option<String> = None;
+    let mut buffer = String::new();
+    let mut stream = resp.bytes_stream();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.context("read streaming chunk")?;
+        buffer.push_str(&String::from_utf8_lossy(&chunk).replace("\r\n", "\n"));
+
+        for data in super::openai_compat::drain_sse_frames(&mut buffer) {
+            let parsed: GenResp = serde_json::from_str(&data)
+                .with_context(|| "parse streaming response chunk")?;
+
+            if let Some(u) = parsed.usage_metadata {
+                usage.input_tokens = u.prompt_token_count.unwrap_or(usage.input_tokens);
+                usage.output_tokens = u.candidates_token_count.unwrap_or(usage.output_tokens);
+            }
+
+            if let Some(candidate) = parsed.candidates.into_iter().next() {
+                if candidate.finish_reason.is_some() {
+                    finish_reason = candidate.finish_reason;
+                }
+                let parts = candidate.content.map(|c| c.parts).unwrap_or_default();
+                let (chunk_text, chunk_tools) = parts_to_blocks(parts);
+                if !chunk_text.is_empty() {
+                    text.push_str(&chunk_text);
+                    stream_sink.send(chunk_text).await;
+                }
+                tool_blocks.extend(chunk_tools);
+            }
+        }
+    }
+
+    Ok(finalize_response(
+        text,
+        tool_blocks,
+        finish_reason.as_deref(),
+        usage,
+    ))
+}
+
+pub async fn call(
+    model: &mut ModelRecord,
+    messages: &[Message],
+    system: &str,
+    tools: &[ToolDefinition],
+    max_tokens: u32,
+    options: ProviderCallOptions,
+) -> anyhow::Result<UnifiedResponse> {
+    let base = model
+        .base_url
+        .as_deref()
+        .or_else(|| provider_base_url("google"))
+        .unwrap_or("https://generativelanguage.googleapis.com/v1beta");
+    let base = normalize_base_url_str(base);
+
+    let system_instruction = if system.is_empty() {
+        None
+    } else {
+        Some(GenContent {
+            role: None,
+            parts: vec![GenPart {
+                text: Some(system.to_string()),
+                ..Default::default()
+            }],
+        })
+    };
+    let gen_tools = if tools.is_empty() {
+        None
+    } else {
+        Some(to_gen_tools(tools))
+    };
+    // tool_config only applies when tools are present.
+    let tool_config = gen_tools
+        .as_ref()
+        .and_then(|_| build_tool_config(options.tool_choice));
+    let generation_config = build_generation_config(model, max_tokens, &options);
+
+    let payload = GenReq {
+        contents: contents_from_messages(messages),
+        system_instruction,
+        tools: gen_tools,
+        tool_config,
+        generation_config,
+    };
+
+    let model_id = model.model_id.clone();
+    let gen_url = format!("{}/models/{}:generateContent", base, model_id);
+    let stream_url = format!("{}/models/{}:streamGenerateContent?alt=sse", base, model_id);
+
+    if let Some(stream_sink) = options.stream_sink.clone() {
+        match call_streaming(model, &stream_url, &payload, stream_sink.clone()).await {
+            Ok(resp) => return Ok(resp),
+            Err(e) if !stream_sink.has_started() => {
+                tracing::warn!(
+                    "Streaming failed before any tokens for provider 'google' model '{}', retrying non-streaming: {}",
+                    model.model_id,
+                    e
+                );
+            }
+            Err(e) => return Err(e),
+        }
+    }
+
+    let resp = HTTP_CLIENT
+        .post(&gen_url)
+        .header("x-goog-api-key", &model.api_key)
+        .header("Content-Type", "application/json")
+        .json(&payload)
+        .send()
+        .await
+        .with_context(|| format!("HTTP to {}", gen_url))?;
+
+    let rl = super::openai_compat::parse_rl_headers("google", resp.headers());
+    model.rl_snapshot = rl;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let retry_after = super::openai_compat::retry_after_header(resp.headers());
+        let body = resp.text().await.unwrap_or_default();
+        if status.as_u16() == 429 {
+            let suffix = retry_after
+                .map(|ra| format!(" [retry-after:{}]", ra))
+                .unwrap_or_default();
+            anyhow::bail!("rate limit{}: {}", suffix, body);
+        }
+
+        // A model that rejects thinkingConfig 400s the whole request. Strip
+        // it, remember this model can't take it, and retry once (recursion
+        // is bounded: no_reasoning makes build_generation_config omit the
+        // field on the retried payload, so this branch's precondition —
+        // thinking_config being present in the payload we just sent — can't
+        // re-trigger).
+        if status.as_u16() == 400
+            && payload
+                .generation_config
+                .as_ref()
+                .is_some_and(|g| g.thinking_config.is_some())
+            && {
+                let lower = body.to_lowercase();
+                lower.contains("reasoning") || lower.contains("thinking")
+            }
+        {
+            tracing::info!(
+                "Model '{}' rejected thinking config; retrying without it (flagged no_reasoning)",
+                model.name
+            );
+            model.no_reasoning = true;
+            return Box::pin(call(
+                model,
+                messages,
+                system,
+                tools,
+                max_tokens,
+                ProviderCallOptions {
+                    stream_sink: None,
+                    temperature: options.temperature,
+                    tool_choice: options.tool_choice,
+                    reasoning_effort: options.reasoning_effort.clone(),
+                },
+            ))
+            .await;
+        }
+
+        anyhow::bail!("provider error {} at {}: {}", status, gen_url, body);
+    }
+
+    let body: GenResp = resp.json().await.context("parse response")?;
+    let candidate = body.candidates.into_iter().next().context("empty candidates")?;
+    let parts = candidate.content.map(|c| c.parts).unwrap_or_default();
+    let (text, tool_blocks) = parts_to_blocks(parts);
+    let usage = UsageInfo {
+        input_tokens: body
+            .usage_metadata
+            .as_ref()
+            .and_then(|u| u.prompt_token_count)
+            .unwrap_or(0),
+        output_tokens: body
+            .usage_metadata
+            .as_ref()
+            .and_then(|u| u.candidates_token_count)
+            .unwrap_or(0),
+    };
+    Ok(finalize_response(
+        text,
+        tool_blocks,
+        candidate.finish_reason.as_deref(),
+        usage,
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_model(thinking_mode: Option<&str>) -> ModelRecord {
+        ModelRecord {
+            name: "test-google".into(),
+            provider: "google".into(),
+            model_id: "gemini-test".into(),
+            api_key: "k".into(),
+            base_url: None,
+            timeout_secs: None,
+            priority: 1,
+            max_tokens: 8192,
+            enabled: true,
+            role: "".into(),
+            thinking_mode: thinking_mode.map(|s| s.to_string()),
+            no_reasoning: false,
+            status: "available".into(),
+            rate_limit_reset_at: None,
+            consecutive_errors: 0,
+            consecutive_rate_limits: 0,
+            total_calls: 0,
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+            rl_snapshot: Default::default(),
+        }
+    }
+
+    #[test]
+    fn maps_assistant_to_model_and_user_stays_user() {
+        let messages = vec![Message::user("hi"), Message::assistant("hello")];
+        let contents = contents_from_messages(&messages);
+        assert_eq!(contents.len(), 2);
+        assert_eq!(contents[0].role.as_deref(), Some("user"));
+        assert_eq!(contents[1].role.as_deref(), Some("model"));
+    }
+
+    #[test]
+    fn merges_parallel_tool_results_into_one_user_content() {
+        // The actual shape agent/loop.rs produces: parallel tool results are
+        // N separate Message::tool_result() calls, not one message with N
+        // blocks. Gemini requires them batched into a single Content.
+        let messages = vec![
+            Message::assistant_with_blocks(vec![
+                ContentBlock::ToolUse {
+                    id: "call-1".into(),
+                    name: "get_weather".into(),
+                    input: json!({"city": "Tokyo"}),
+                    signature: None,
+                },
+                ContentBlock::ToolUse {
+                    id: "call-2".into(),
+                    name: "get_time".into(),
+                    input: json!({"tz": "JST"}),
+                    signature: None,
+                },
+            ]),
+            Message::tool_result("call-1", json!({"temp_c": 21})),
+            Message::tool_result("call-2", json!({"time": "10:00"})),
+        ];
+        let contents = contents_from_messages(&messages);
+        assert_eq!(contents.len(), 2);
+        assert_eq!(contents[0].role.as_deref(), Some("model"));
+        assert_eq!(contents[0].parts.len(), 2);
+        assert_eq!(contents[1].role.as_deref(), Some("user"));
+        assert_eq!(contents[1].parts.len(), 2);
+        assert!(contents[1]
+            .parts
+            .iter()
+            .all(|p| p.function_response.is_some()));
+    }
+
+    #[test]
+    fn resolves_function_response_name_via_id_lookup() {
+        let messages = vec![
+            Message::assistant_with_blocks(vec![ContentBlock::ToolUse {
+                id: "call-1".into(),
+                name: "get_weather".into(),
+                input: json!({}),
+                signature: None,
+            }]),
+            Message::tool_result("call-1", json!({"temp_c": 21})),
+        ];
+        let contents = contents_from_messages(&messages);
+        let fr = contents[1].parts[0].function_response.as_ref().unwrap();
+        assert_eq!(fr.name, "get_weather");
+        assert_eq!(fr.id.as_deref(), Some("call-1"));
+    }
+
+    #[test]
+    fn thinking_only_message_produces_zero_contents() {
+        let messages = vec![Message::assistant_with_blocks(vec![ContentBlock::Thinking {
+            thinking: "pondering...".into(),
+            signature: None,
+        }])];
+        let contents = contents_from_messages(&messages);
+        assert!(contents.is_empty());
+    }
+
+    #[test]
+    fn to_gen_tools_wraps_all_declarations_in_one_tool_and_sanitizes_schema() {
+        let tools = vec![
+            ToolDefinition::internal(
+                "tool_a",
+                "does a",
+                json!({"x": {"type": "any"}}),
+                vec![],
+            ),
+            ToolDefinition::internal("tool_b", "does b", json!({}), vec![]),
+        ];
+        let gen_tools = to_gen_tools(&tools);
+        assert_eq!(gen_tools.len(), 1);
+        assert_eq!(gen_tools[0].function_declarations.len(), 2);
+        let params_a = &gen_tools[0].function_declarations[0].parameters;
+        assert_eq!(
+            params_a.pointer("/properties/x/type").and_then(|v| v.as_str()),
+            Some("string")
+        );
+    }
+
+    #[test]
+    fn infer_stop_reason_prefers_tool_use_over_stop_finish_reason() {
+        let tool_blocks = vec![ContentBlock::ToolUse {
+            id: "1".into(),
+            name: "f".into(),
+            input: json!({}),
+            signature: None,
+        }];
+        assert_eq!(
+            infer_stop_reason(&tool_blocks, Some("STOP")),
+            StopReason::ToolUse
+        );
+        assert_eq!(
+            infer_stop_reason(&[], Some("MAX_TOKENS")),
+            StopReason::MaxTokens
+        );
+        assert_eq!(infer_stop_reason(&[], Some("STOP")), StopReason::EndTurn);
+        assert_eq!(infer_stop_reason(&[], None), StopReason::EndTurn);
+    }
+
+    #[test]
+    fn build_generation_config_level_mode() {
+        let model = test_model(Some("level"));
+        let options = ProviderCallOptions {
+            reasoning_effort: Some("high".into()),
+            ..Default::default()
+        };
+        let cfg = build_generation_config(&model, 8192, &options).unwrap();
+        let tc = cfg.thinking_config.unwrap();
+        assert_eq!(tc.thinking_level.as_deref(), Some("high"));
+        assert_eq!(tc.thinking_budget, None);
+    }
+
+    #[test]
+    fn build_generation_config_budget_mode() {
+        let model = test_model(Some("budget"));
+        let options = ProviderCallOptions {
+            reasoning_effort: Some("low".into()),
+            ..Default::default()
+        };
+        let cfg = build_generation_config(&model, 8192, &options).unwrap();
+        let tc = cfg.thinking_config.unwrap();
+        assert_eq!(tc.thinking_budget, Some(2048));
+        assert_eq!(tc.thinking_level, None);
+    }
+
+    #[test]
+    fn build_generation_config_drops_budget_under_floor() {
+        let model = test_model(Some("budget"));
+        // max_tokens - 1024 leaves less than 1024 headroom for a "low" (2048) budget.
+        let options = ProviderCallOptions {
+            reasoning_effort: Some("low".into()),
+            ..Default::default()
+        };
+        let cfg = build_generation_config(&model, 1500, &options).unwrap();
+        assert!(cfg.thinking_config.is_none());
+    }
+
+    #[test]
+    fn build_generation_config_suppressed_by_no_reasoning() {
+        let mut model = test_model(Some("level"));
+        model.no_reasoning = true;
+        let options = ProviderCallOptions {
+            reasoning_effort: Some("high".into()),
+            ..Default::default()
+        };
+        let cfg = build_generation_config(&model, 8192, &options).unwrap();
+        assert!(cfg.thinking_config.is_none());
+    }
+}

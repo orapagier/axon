@@ -242,9 +242,12 @@ pub struct ModelRecord {
     pub max_tokens: u32,
     pub enabled: bool,
     pub role: String,
-    /// Anthropic-provider thinking mode (models.toml, optional):
-    /// "adaptive" (Claude 4.6+), "budget" (older Claude models that take a
-    /// thinking token budget), unset/"off" = never send a thinking param.
+    /// Thinking mode (models.toml, optional), provider-specific values:
+    /// Anthropic — "adaptive" (Claude 4.6+), "budget" (older Claude models
+    /// that take a thinking token budget). Google — "level" (Gemini 3.x
+    /// `thinkingLevel`: low/medium/high), "budget" (Gemini 2.5-era
+    /// `thinkingBudget`, same effort-scaling as Anthropic's "budget").
+    /// Unset/"off" = never send a thinking param.
     #[serde(default)]
     pub thinking_mode: Option<String>,
     /// Set at runtime when a provider rejected `reasoning_effort` with a 400;
@@ -573,7 +576,9 @@ pub fn chat_completions_url(base_url: &str) -> String {
 pub fn provider_base_url(p: &str) -> Option<&'static str> {
     let normalized = normalize_provider_name(p);
     match normalized.as_str() {
-        "google" => Some("https://generativelanguage.googleapis.com/v1beta/openai/"),
+        // Native `generateContent`/`streamGenerateContent` base for
+        // `providers::google` — not an OpenAI-compat shim.
+        "google" => Some("https://generativelanguage.googleapis.com/v1beta"),
         "groq" => Some("https://api.groq.com/openai/v1"),
         "cerebras" => Some("https://api.cerebras.ai/v1"),
         "nvidia" => Some("https://integrate.api.nvidia.com/v1"),
@@ -592,7 +597,7 @@ mod tests {
         assert_eq!(normalize_provider_name("gemini"), "google");
         assert_eq!(
             provider_base_url("gemini"),
-            Some("https://generativelanguage.googleapis.com/v1beta/openai/")
+            Some("https://generativelanguage.googleapis.com/v1beta")
         );
     }
 

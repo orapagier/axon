@@ -527,19 +527,26 @@ enabled    = true
 #
 # Provider-agnostic: any provider works in any role.
 #   provider = "anthropic"  → native Anthropic API
+#   provider = "google"     → native Gemini generateContent/streamGenerateContent API
+#                              (aliases: "gemini")
 #   provider = "ollama"     → Ollama API (set base_url)
-#   provider = anything else ("google", "openrouter", "nvidia", "groq",
-#              "cerebras", ...) → OpenAI-compatible API (set base_url unless
-#              the provider has a built-in default)
+#   provider = anything else ("openrouter", "nvidia", "groq", "cerebras", ...)
+#              → OpenAI-compatible API (set base_url unless the provider has
+#              a built-in default)
 #
 # api_key "${VAR}" resolves from the settings DB first, then the environment.
 # The name inside ${...} must match EXACTLY — a mismatch surfaces at runtime
 # as "All models exhausted".
 #
-# thinking_mode (optional, anthropic provider):
-#   "adaptive" — Claude 4.6+ adaptive thinking
-#   "budget"   — older Claude models that take a thinking token budget
-#   "off"      — default; safe for models that reject the parameter
+# thinking_mode (optional):
+#   anthropic provider:
+#     "adaptive" — Claude 4.6+ adaptive thinking
+#     "budget"   — older Claude models that take a thinking token budget
+#   google provider:
+#     "level"    — Gemini 3.x thinkingLevel (low/medium/high)
+#     "budget"   — Gemini 2.5-era thinkingBudget (same effort scale as
+#                  Anthropic's "budget")
+#   "off"        — default; safe for models that reject the parameter
 #
 # role = "image_model": vision-capable models for the Cortex workflow node's
 # Image mode. STRICT — unlike the general pool, this role never falls back
