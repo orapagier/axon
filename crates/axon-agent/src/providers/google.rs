@@ -1003,6 +1003,38 @@ mod tests {
     }
 
     #[test]
+    fn to_gen_tools_strips_non_schema_keys_that_gemini_rejects() {
+        // Reproduces the gemma-4 `Unknown name "displayOptions"` 400: a tool
+        // whose param schema carries n8n's `displayOptions` UI hint. It must be
+        // stripped, while the property itself and its `type` survive.
+        let tools = vec![ToolDefinition::internal(
+            "cron",
+            "schedule",
+            json!({
+                "job_id": {
+                    "type": "string",
+                    "displayOptions": {"show": {"action": ["edit"]}}
+                }
+            }),
+            vec!["job_id".into()],
+        )];
+        let params = to_gen_tools(&tools)[0].function_declarations[0]
+            .parameters
+            .clone()
+            .expect("tool has one property");
+        assert!(
+            params.pointer("/properties/job_id/displayOptions").is_none(),
+            "displayOptions must be stripped before reaching Gemini"
+        );
+        assert_eq!(
+            params
+                .pointer("/properties/job_id/type")
+                .and_then(|v| v.as_str()),
+            Some("string")
+        );
+    }
+
+    #[test]
     fn infer_stop_reason_prefers_tool_use_over_stop_finish_reason() {
         let tool_blocks = vec![ContentBlock::ToolUse {
             id: "1".into(),

@@ -233,34 +233,114 @@ fn to_oai_msgs(messages: &[Message], system: &str) -> Vec<OaiMsg> {
     out
 }
 
-/// Recursively sanitize JSON Schema values: replace non-standard types like "any"
-/// with "string" so providers like Google Gemini don't reject the schema.
-/// Shared with `providers::google` (Gemini's native adapter also needs this).
-pub fn sanitize_schema(v: &mut Value) {
-    match v {
-        Value::Object(obj) => {
-            if let Some(t) = obj
-                .get("type")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-            {
-                let valid = [
-                    "string", "number", "integer", "boolean", "object", "array", "null",
-                ];
-                if !valid.contains(&t.as_str()) {
-                    obj.insert("type".to_string(), json!("string"));
-                }
-            }
-            for val in obj.values_mut() {
-                sanitize_schema(val);
-            }
+/// JSON-Schema keywords we forward to model providers. Any other key found at a
+/// schema-node level is dropped before the request is built.
+///
+/// Strict providers (Google Gemini/Gemma) reject unknown fields with
+/// `400 INVALID_ARGUMENT` ("Unknown name ... Cannot find field"), while lenient
+/// OpenAI-shaped providers silently ignore them. Axon's own tool schemas carry
+/// non-schema UI hints (n8n's `displayOptions`), and MCP tools forward
+/// `inputSchema` verbatim from external servers — so arbitrary keys (`$ref`,
+/// `$schema`, `additionalProperties`, future n8n-isms) can appear. Whitelisting
+/// standard keywords keeps the payload portable across every provider and model;
+/// a blocklist could never enumerate what an MCP server might send.
+const ALLOWED_SCHEMA_KEYS: &[&str] = &[
+    // core / annotations
+    "type",
+    "description",
+    "title",
+    "default",
+    "enum",
+    "const",
+    "format",
+    "nullable",
+    // object
+    "properties",
+    "required",
+    "additionalProperties",
+    "minProperties",
+    "maxProperties",
+    // array
+    "items",
+    "prefixItems",
+    "minItems",
+    "maxItems",
+    "uniqueItems",
+    // string
+    "minLength",
+    "maxLength",
+    "pattern",
+    // number
+    "minimum",
+    "maximum",
+    "exclusiveMinimum",
+    "exclusiveMaximum",
+    "multipleOf",
+    // combinators
+    "anyOf",
+    "allOf",
+    "oneOf",
+    "not",
+];
+
+const VALID_SCHEMA_TYPES: &[&str] = &[
+    "string", "number", "integer", "boolean", "object", "array", "null",
+];
+
+/// Sanitize a JSON-Schema *properties map* (property-name -> subschema) in place
+/// so it is safe to send to any model provider. Shared with `providers::google`
+/// (Gemini's native adapter needs the same treatment).
+///
+/// The input is the map of parameter properties, so its keys are property
+/// *names* (`job_id`, `action`, ...) and must never be filtered — only the
+/// subschema *values* are cleaned. See [`ALLOWED_SCHEMA_KEYS`] for the rules.
+pub fn sanitize_schema(props: &mut Value) {
+    if let Value::Object(map) = props {
+        for subschema in map.values_mut() {
+            sanitize_schema_node(subschema);
         }
-        Value::Array(arr) => {
-            for item in arr.iter_mut() {
-                sanitize_schema(item);
-            }
+    }
+}
+
+/// Sanitize a single schema node: coerce non-standard `type` values, drop keys
+/// that aren't standard JSON-Schema, and recurse into nested schemas.
+fn sanitize_schema_node(v: &mut Value) {
+    let Value::Object(obj) = v else { return };
+
+    // Drop everything that isn't a recognized JSON-Schema keyword. Property
+    // *names* are never inspected here — they live one level up as the keys of a
+    // `properties` map handled by `sanitize_schema`.
+    obj.retain(|k, _| ALLOWED_SCHEMA_KEYS.contains(&k.as_str()));
+
+    // Coerce non-standard types (e.g. n8n's "any") to "string".
+    if let Some(t) = obj.get("type").and_then(Value::as_str) {
+        if !VALID_SCHEMA_TYPES.contains(&t) {
+            obj.insert("type".to_string(), json!("string"));
         }
-        _ => {}
+    }
+
+    // Recurse into every position that holds a nested schema.
+    if let Some(nested) = obj.get_mut("properties") {
+        sanitize_schema(nested);
+    }
+    if let Some(items) = obj.get_mut("items") {
+        match items {
+            Value::Array(arr) => arr.iter_mut().for_each(sanitize_schema_node),
+            other => sanitize_schema_node(other),
+        }
+    }
+    if let Some(ap) = obj.get_mut("additionalProperties") {
+        if ap.is_object() {
+            sanitize_schema_node(ap);
+        }
+    }
+    for key in ["anyOf", "allOf", "oneOf", "prefixItems"] {
+        if let Some(Value::Array(arr)) = obj.get_mut(key) {
+            arr.iter_mut().for_each(sanitize_schema_node);
+        }
+    }
+    if let Some(not) = obj.get_mut("not") {
+        sanitize_schema_node(not);
     }
 }
 
@@ -1006,5 +1086,73 @@ mod tests {
         let png_header = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
         assert_eq!(sniff_image_mime(png_header), "image/png");
         assert_eq!(sniff_image_mime(b"not an image"), "image/png");
+    }
+
+    #[test]
+    fn sanitize_schema_strips_non_schema_keys_but_keeps_property_names() {
+        // A properties map: keys are parameter *names* (must survive), values
+        // are subschemas carrying non-standard keys that strict providers 400 on.
+        let mut props = json!({
+            // n8n UI hint on a scalar param — the actual Gemini/Gemma 400 cause.
+            "job_id": {
+                "type": "string",
+                "description": "keep me",
+                "displayOptions": {"show": {"action": ["edit"]}}
+            },
+            // non-standard type coerced + arbitrary MCP-style junk dropped.
+            "blob": {"type": "any", "$ref": "#/x", "additionalKey": 1},
+            // nested object: junk one level deeper must also be stripped.
+            "cfg": {
+                "type": "object",
+                "displayOptions": {"show": {"action": ["create"]}},
+                "properties": {
+                    "inner": {"type": "string", "typeOptions": {"rows": 4}}
+                }
+            },
+            // array items schema is also cleaned.
+            "items_param": {
+                "type": "array",
+                "items": {"type": "string", "displayOptions": {}}
+            }
+        });
+        sanitize_schema(&mut props);
+
+        // Property names are preserved.
+        assert!(props.get("job_id").is_some());
+        assert!(props.get("blob").is_some());
+        assert!(props.get("cfg").is_some());
+
+        // Non-schema keys are gone at every depth...
+        assert!(props.pointer("/job_id/displayOptions").is_none());
+        assert!(props.pointer("/blob/$ref").is_none());
+        assert!(props.pointer("/blob/additionalKey").is_none());
+        assert!(props.pointer("/cfg/displayOptions").is_none());
+        assert!(props
+            .pointer("/cfg/properties/inner/typeOptions")
+            .is_none());
+        assert!(props.pointer("/items_param/items/displayOptions").is_none());
+
+        // ...while real schema keywords and values are untouched.
+        assert_eq!(
+            props.pointer("/job_id/description").and_then(|v| v.as_str()),
+            Some("keep me")
+        );
+        // Non-standard "any" type is coerced to "string".
+        assert_eq!(
+            props.pointer("/blob/type").and_then(|v| v.as_str()),
+            Some("string")
+        );
+        assert_eq!(
+            props
+                .pointer("/cfg/properties/inner/type")
+                .and_then(|v| v.as_str()),
+            Some("string")
+        );
+        assert_eq!(
+            props
+                .pointer("/items_param/items/type")
+                .and_then(|v| v.as_str()),
+            Some("string")
+        );
     }
 }
