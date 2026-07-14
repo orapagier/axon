@@ -423,7 +423,7 @@ pub async fn unpin_workflow_node(
 /// and `snapshot_workflow_version` (B1 history) so export and history use one
 /// format. Node configs reference credentials only by `credential_id` — secret
 /// material never enters the bundle.
-fn build_workflow_bundle(conn: &rusqlite::Connection, id: &str) -> Option<Value> {
+pub(crate) fn build_workflow_bundle(conn: &rusqlite::Connection, id: &str) -> Option<Value> {
     let wf = conn
         .query_row(
             "SELECT name, description, trigger_type, trigger_config, error_workflow_id FROM workflows WHERE id = ?1",
@@ -536,50 +536,50 @@ pub async fn export_workflow(State(state): State<AppState>, Path(id): Path<Strin
     }
 }
 
-/// Every workflow, each as a full `import_workflow`-compatible bundle, wrapped in
-/// one restorable envelope. Used by the scheduled Google-Drive backup
-/// (`crate::maintenance::run_workflow_drive_backup`) and the manual endpoint.
-/// Each element of `workflows` can be POSTed back to `/api/workflows/import`
-/// as-is. Secrets never leave the box — bundles carry credential *references*,
-/// not values (see `build_workflow_bundle`).
-pub(crate) fn build_all_workflows_backup(conn: &rusqlite::Connection) -> Value {
-    let ids: Vec<String> = conn
-        .prepare(
-            "SELECT id FROM workflows ORDER BY COALESCE(updated_at, created_at) DESC, created_at DESC",
-        )
-        .and_then(|mut stmt| {
-            stmt.query_map([], |r| r.get::<_, String>(0))
-                .map(|rows| rows.filter_map(|r| r.ok()).collect())
-        })
-        .unwrap_or_default();
-
-    let bundles: Vec<Value> = ids
-        .iter()
-        .filter_map(|id| build_workflow_bundle(conn, id))
-        .collect();
-
-    json!({
-        "axon_backup_format": 1,
-        "backed_up_at": chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
-        "count": bundles.len(),
-        "workflows": bundles,
-    })
+/// SHA-256 over a bundle's *definition* — `{workflow, nodes, edges}` only, so
+/// volatile fields (`exported_at`) and derived metadata (`credentials_required`)
+/// never perturb it. This is the single change signal shared by version
+/// snapshots (B1) and the incremental Drive backup: identical hash ⇒ nothing to
+/// re-save / re-upload.
+pub(crate) fn workflow_content_hash(bundle: &Value) -> String {
+    use sha2::{Digest, Sha256};
+    let content = json!({
+        "workflow": bundle.get("workflow"),
+        "nodes": bundle.get("nodes"),
+        "edges": bundle.get("edges"),
+    });
+    let mut h = Sha256::new();
+    h.update(content.to_string().as_bytes());
+    format!("{:x}", h.finalize())
 }
 
-/// Manually trigger an off-instance backup of all workflow definitions to Google
+/// All workflow ids, newest-edited first. Shared listing so the backup routine
+/// and the API agree on ordering.
+pub(crate) fn list_workflow_ids(conn: &rusqlite::Connection) -> Vec<String> {
+    conn.prepare(
+        "SELECT id FROM workflows ORDER BY COALESCE(updated_at, created_at) DESC, created_at DESC",
+    )
+    .and_then(|mut stmt| {
+        stmt.query_map([], |r| r.get::<_, String>(0))
+            .map(|rows| rows.filter_map(|r| r.ok()).collect())
+    })
+    .unwrap_or_default()
+}
+
+/// Manually trigger an off-instance backup of workflow definitions to Google
 /// Drive (POST /api/workflows/backup). Runs regardless of the `workflow_backup.
-/// enabled` schedule flag — a manual click is always an explicit request. Needs
-/// Google connected; returns the same stats the scheduled sweep logs.
+/// enabled` schedule flag — a manual click is always an explicit request. Only
+/// new/changed workflows are uploaded; unchanged ones are skipped. Needs Google
+/// connected; returns the same stats the scheduled sweep logs.
 pub async fn backup_workflows_to_drive(State(state): State<AppState>) -> Json<Value> {
     match crate::maintenance::run_workflow_drive_backup(&state).await {
         Ok(stats) => Json(json!({
             "ok": true,
-            "workflows": stats.workflows,
-            "file_name": stats.file_name,
-            "drive_file_id": stats.drive_file_id,
-            "web_view_link": stats.web_view_link,
-            "pruned_local": stats.pruned_local,
-            "pruned_drive": stats.pruned_drive,
+            "created": stats.created,
+            "updated": stats.updated,
+            "unchanged": stats.unchanged,
+            "deleted": stats.deleted,
+            "errors": stats.errors,
         })),
         Err(e) => Json(json!({ "ok": false, "error": format!("{e:#}") })),
     }
@@ -608,17 +608,7 @@ fn snapshot_workflow_version(
 
     // Hash the content only (exclude the volatile `exported_at`) so an unchanged
     // workflow re-saved repeatedly never spawns duplicate versions.
-    let content = json!({
-        "workflow": bundle.get("workflow"),
-        "nodes": bundle.get("nodes"),
-        "edges": bundle.get("edges"),
-    });
-    let hash = {
-        use sha2::{Digest, Sha256};
-        let mut h = Sha256::new();
-        h.update(content.to_string().as_bytes());
-        format!("{:x}", h.finalize())
-    };
+    let hash = workflow_content_hash(&bundle);
 
     // Latest version for this workflow: (version, content_hash, age in seconds).
     let latest: Option<(i64, Option<String>, i64)> = conn

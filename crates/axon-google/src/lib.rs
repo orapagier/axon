@@ -138,6 +138,7 @@ impl GoogleService {
             Tool::new("gdrive_export", "Export a Google Workspace document (Doc, Sheet, Slide) to a specific format like PDF, XLSX, or DOCX.", schema!({"file_id":{"type":"string"},"mime_type":{"type":"string","enum":["application/pdf","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","application/vnd.openxmlformats-officedocument.wordprocessingml.document","text/csv","text/plain","application/zip"]}}, ["file_id","mime_type"])),
             Tool::new("gdrive_download_binary", "Download a non-text Google Drive file to a local path so the agent can upload/send it.", schema!({"file_id":{"type":"string"}}, ["file_id"])),
             Tool::new("gdrive_upload_binary", "Upload a binary file from a local path to Google Drive.", schema!({"local_path":{"type":"string","description":"Local file path"},"name":{"type":"string","description":"Target file name in Drive"},"mime_type":{"type":"string","default":"application/octet-stream"},"folder_id":{"type":"string"}}, ["local_path","name"])),
+            Tool::new("gdrive_update_binary", "Replace the contents of an existing Google Drive file (by ID) with a local file, updating it in place (same file ID, parents and sharing preserved). Use for versioned/incremental backups instead of creating a new file each time.", schema!({"file_id":{"type":"string","description":"ID of the existing Drive file to overwrite"},"local_path":{"type":"string","description":"Local file path with the new contents"},"name":{"type":"string","description":"Optional new name"},"mime_type":{"type":"string","default":"application/octet-stream"}}, ["file_id","local_path"])),
             Tool::new("gdrive_upload_folder", "Upload a local folder recursively to Google Drive, preserving subfolder structure.", schema!({"local_folder_path":{"type":"string","description":"Local folder path"},"folder_name":{"type":"string","description":"Optional name for the new root folder in Drive"},"parent_folder_id":{"type":"string","description":"Optional destination parent folder ID"},"include_hidden":{"type":"boolean","default":false,"description":"Include hidden files/folders (dot-prefixed names)"}}, ["local_folder_path"])),
             Tool::new("gdrive_delete", "Permanently delete a Google Drive file or folder by ID. Supports bulk deletion with file_ids.", schema!({"file_id":{"type":"string","description":"Single file/folder ID. Can also be an expression that resolves to an array."},"file_ids":{"type":"array","items":{"type":"string"},"description":"Optional array of file/folder IDs for bulk deletion"}}, [])),
             Tool::new("gmail_send_with_attachment", "Send a Gmail email with a file attachment from a local path.", schema!({"to":{"type":"string"},"subject":{"type":"string"},"body":{"type":"string"},"local_path":{"type":"string","description":"Local file path to attach"}}, ["to","subject","body","local_path"])),
@@ -542,6 +543,18 @@ impl GoogleService {
                         .and_then(|v| v.as_str())
                         .unwrap_or("application/octet-stream"),
                     a.get("folder_id").and_then(|v| v.as_str()),
+                )
+                .await
+            }
+            "gdrive_update_binary" => {
+                drive::update_binary(
+                    &self.0,
+                    s("file_id")?,
+                    s("local_path")?,
+                    a.get("name").and_then(|v| v.as_str()),
+                    a.get("mime_type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("application/octet-stream"),
                 )
                 .await
             }

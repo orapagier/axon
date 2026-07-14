@@ -178,6 +178,12 @@ const MIGRATIONS: &[Migration] = &[
         sql: include_str!("migrations/0025_provider_model_cache.sql"),
         tolerant_dup_column: false,
     },
+    Migration {
+        version: 26,
+        name: "workflow_backups",
+        sql: include_str!("migrations/0026_workflow_backups.sql"),
+        tolerant_dup_column: false,
+    },
 ];
 
 const SEED_SQL: &str = include_str!("seed.sql");

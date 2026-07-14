@@ -145,6 +145,58 @@ pub async fn upload_binary(
     Ok(resp)
 }
 
+/// Replace the contents of an existing Drive file (by id) with `local_path`,
+/// keeping the same file id, parents and sharing. Optionally renames it.
+/// Parents are intentionally not touched here — use `move_file` for that.
+pub async fn update_binary(
+    state: &AppState,
+    file_id: &str,
+    local_path: &str,
+    name: Option<&str>,
+    mime_type: &str,
+) -> Result<Value> {
+    let tok = access_token(state).await?;
+    // Update metadata must not carry `parents`; only a rename is allowed here.
+    let meta = match name {
+        Some(n) => json!({ "name": n }),
+        None => json!({}),
+    };
+
+    let data = std::fs::read(local_path)?;
+    let boundary = "axon_mcp_drive_boundary";
+
+    let mut body = Vec::new();
+    body.extend_from_slice(
+        format!(
+            "--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{}\r\n",
+            serde_json::to_string(&meta)?
+        )
+        .as_bytes(),
+    );
+    body.extend_from_slice(format!("--{boundary}\r\nContent-Type: {mime_type}\r\n\r\n").as_bytes());
+    body.extend_from_slice(&data);
+    body.extend_from_slice(format!("\r\n--{boundary}--").as_bytes());
+
+    let resp: Value = state
+        .client
+        .patch(format!(
+            "{UPLOAD}/files/{file_id}?uploadType=multipart&fields=id,name,webViewLink"
+        ))
+        .bearer_auth(&tok)
+        .header(
+            "Content-Type",
+            format!("multipart/related; boundary={boundary}"),
+        )
+        .body(body)
+        .send()
+        .await?
+        .ensure_ok()
+        .await?
+        .json()
+        .await?;
+    Ok(resp)
+}
+
 /// Recursively upload a local folder into Drive, preserving subfolder structure.
 pub async fn upload_folder(
     state: &AppState,

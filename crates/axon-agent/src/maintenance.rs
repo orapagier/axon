@@ -367,212 +367,319 @@ pub async fn run_backup(
     Ok(stats)
 }
 
-// ── Off-instance workflow backups to Google Drive ────────────────────────────
+// ── Off-instance workflow backups to Google Drive (incremental) ──────────────
 //
 // Unlike `run_backup` (raw axon.db/crm.db snapshots that live on the same disk
-// as the data), this exports every workflow *definition* as a portable JSON
-// bundle and pushes it off the box to Google Drive — real disaster recovery for
-// the thing operators build by hand. Bundles carry credential *references*, not
-// secret values, so the file is safe to store in Drive. Each element restores
-// via POST /api/workflows/import.
+// as the data), this exports each workflow *definition* as a portable,
+// import-compatible JSON bundle and pushes it off the box to Google Drive — real
+// disaster recovery for the thing operators build by hand. Bundles carry
+// credential *references*, not secret values, so the files are safe to store in
+// Drive. Each file restores via POST /api/workflows/import.
+//
+// Incremental by content hash: exactly one Drive file per workflow, created once
+// and thereafter UPDATED IN PLACE only when the definition actually changes.
+// Unchanged workflows are skipped entirely; a deleted workflow's orphan file is
+// removed. So backups never pile up and no time-based pruning is needed. State
+// lives in the `workflow_backups` table (workflow_id → last hash + drive id).
 //
 // Opt-in (`workflow_backup.enabled`, default false) since it needs Google
 // connected. Scheduled from `main.rs`; also callable on demand via
 // POST /api/workflows/backup.
 
+/// A workflow whose Drive copy is stale (new or changed) and must be (re)uploaded.
+struct BackupUpload {
+    workflow_id: String,
+    /// Human-readable Drive display name, e.g. `Lead intake [a1b2c3d4].json`.
+    file_name: String,
+    /// Content hash to record once the upload succeeds.
+    hash: String,
+    /// Pretty-printed bundle JSON.
+    bytes: Vec<u8>,
+    /// `Some` → update that Drive file in place; `None` → create a new one.
+    existing_file_id: Option<String>,
+}
+
 #[derive(Default, Debug, serde::Serialize)]
 pub struct WorkflowBackupStats {
-    pub workflows: usize,
-    pub file_name: String,
-    pub drive_file_id: Option<String>,
-    pub web_view_link: Option<String>,
-    pub pruned_local: usize,
-    pub pruned_drive: usize,
+    pub created: usize,
+    pub updated: usize,
+    pub unchanged: usize,
+    /// Orphan Drive files removed (their workflow was deleted).
+    pub deleted: usize,
+    pub errors: usize,
 }
 
 impl fmt::Display for WorkflowBackupStats {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{} workflow(s) → Drive as {} (file_id={}, pruned_local={}, pruned_drive={})",
-            self.workflows,
-            self.file_name,
-            self.drive_file_id.as_deref().unwrap_or("?"),
-            self.pruned_local,
-            self.pruned_drive,
+            "created={}, updated={}, unchanged={}, deleted={}, errors={}",
+            self.created, self.updated, self.unchanged, self.deleted, self.errors,
         )
     }
 }
 
-/// Export every workflow to one restorable JSON envelope, write it under
-/// `data_files_dir()`, upload it to Google Drive via the existing
-/// `gdrive_upload_binary` tool (which handles OAuth/token refresh), then prune
-/// old copies. Runs unconditionally when called — the `enabled` gate lives in
-/// the scheduler loop, so the manual endpoint always works.
+/// Local mirror directory for the JSON bundles: one file per workflow, id-named
+/// and overwritten on each change, so the on-instance copy never piles up either.
+fn workflow_backup_dir() -> PathBuf {
+    axon_core::data_files_dir().join("workflow_backups")
+}
+
+/// Turn a workflow name into a Drive-friendly display-name component.
+fn safe_workflow_name(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| {
+            if c.is_control() || "\\/:*?\"<>|".contains(c) {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let trimmed = cleaned.trim();
+    if trimmed.is_empty() {
+        "workflow".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// Incrementally back up workflow definitions to Google Drive: upload only the
+/// new/changed ones (one file each, updated in place), skip unchanged ones, and
+/// delete files whose workflow was removed. Runs unconditionally when called —
+/// the `enabled` gate lives in the scheduler loop, so the manual endpoint always
+/// works.
 pub async fn run_workflow_drive_backup(
     state: &crate::state::AppState,
 ) -> anyhow::Result<WorkflowBackupStats> {
-    use anyhow::Context;
     let mut stats = WorkflowBackupStats::default();
 
-    // ── 1. Build the combined bundle (blocking SQLite → off the async runtime) ─
+    // ── 1. Decide what to do (one blocking SQLite pass) ───────────────────────
+    //    Produce the upload plan (new/changed) and the orphan list (backup rows
+    //    whose workflow no longer exists), comparing each workflow's current
+    //    content hash to what Drive already holds.
     let db = Arc::clone(&state.db);
-    let (bundle, count) =
-        tokio::task::spawn_blocking(move || -> anyhow::Result<(serde_json::Value, usize)> {
+    #[allow(clippy::type_complexity)]
+    let (uploads, orphans, unchanged): (
+        Vec<BackupUpload>,
+        Vec<(String, Option<String>)>,
+        usize,
+    ) = tokio::task::spawn_blocking(
+        move || -> anyhow::Result<(Vec<BackupUpload>, Vec<(String, Option<String>)>, usize)> {
+            use std::collections::{HashMap, HashSet};
             let conn = db.get()?;
-            let bundle = crate::dashboard::api::build_all_workflows_backup(&conn);
-            let count = bundle.get("count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-            Ok((bundle, count))
-        })
-        .await??;
 
-    if count == 0 {
-        anyhow::bail!("No workflows to back up");
+            // Last-backed-up state: workflow_id → (content_hash, drive_file_id).
+            let mut last: HashMap<String, (String, Option<String>)> = HashMap::new();
+            if let Ok(mut stmt) = conn
+                .prepare("SELECT workflow_id, content_hash, drive_file_id FROM workflow_backups")
+            {
+                if let Ok(rows) = stmt.query_map([], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, Option<String>>(2)?,
+                    ))
+                }) {
+                    for (id, h, fid) in rows.flatten() {
+                        last.insert(id, (h, fid));
+                    }
+                }
+            }
+
+            let mut uploads: Vec<BackupUpload> = Vec::new();
+            let mut unchanged = 0usize;
+            let mut current: HashSet<String> = HashSet::new();
+
+            for id in crate::dashboard::api::list_workflow_ids(&conn) {
+                current.insert(id.clone());
+                let Some(bundle) = crate::dashboard::api::build_workflow_bundle(&conn, &id) else {
+                    continue;
+                };
+                let hash = crate::dashboard::api::workflow_content_hash(&bundle);
+
+                // Unchanged AND we still hold a Drive file id for it → skip.
+                if let Some((prev_hash, Some(_))) = last.get(&id) {
+                    if *prev_hash == hash {
+                        unchanged += 1;
+                        continue;
+                    }
+                }
+
+                let wf_name = bundle
+                    .get("workflow")
+                    .and_then(|w| w.get("name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("workflow");
+                let short = id.get(..8).unwrap_or(id.as_str());
+                let file_name = format!("{} [{}].json", safe_workflow_name(wf_name), short);
+                let bytes = serde_json::to_vec_pretty(&bundle)?;
+                let existing_file_id = last.get(&id).and_then(|(_, fid)| fid.clone());
+
+                uploads.push(BackupUpload {
+                    workflow_id: id,
+                    file_name,
+                    hash,
+                    bytes,
+                    existing_file_id,
+                });
+            }
+
+            // Orphans: backup rows whose workflow no longer exists.
+            let orphans: Vec<(String, Option<String>)> = last
+                .into_iter()
+                .filter(|(id, _)| !current.contains(id))
+                .map(|(id, (_, fid))| (id, fid))
+                .collect();
+
+            Ok((uploads, orphans, unchanged))
+        },
+    )
+    .await??;
+
+    stats.unchanged = unchanged;
+
+    if uploads.is_empty() && orphans.is_empty() {
+        tracing::debug!("Workflow Drive backup: nothing changed");
+        return Ok(stats);
     }
-    stats.workflows = count;
 
-    // ── 2. Write to a local file (also a secondary on-instance copy) ──────────
-    let dir = axon_core::data_files_dir();
+    let dir = workflow_backup_dir();
     std::fs::create_dir_all(&dir)?;
-    let file_name = format!(
-        "axon-workflows-backup-{}.json",
-        chrono::Utc::now().format("%Y%m%d-%H%M%S")
-    );
-    let path = dir.join(&file_name);
-    std::fs::write(&path, serde_json::to_vec_pretty(&bundle)?)?;
-    chmod_owner_only(&path); // bundles hold no secrets, but keep parity with DB backups
-    stats.file_name = file_name.clone();
-
-    // ── 3. Upload to Google Drive (reuses the agent's OAuth via the tool) ─────
     let folder_id = state.settings.workflow_backup_drive_folder_id();
-    let mut upload_args = serde_json::json!({
-        "local_path": path.to_string_lossy(),
-        "name": file_name,
-        "mime_type": "application/json",
-    });
-    if !folder_id.is_empty() {
-        upload_args["folder_id"] = serde_json::json!(folder_id);
-    }
-    let uploaded = state
-        .tools
-        .run("gdrive_upload_binary", upload_args)
-        .await
-        .context("gdrive_upload_binary failed — is Google connected on the Services page?")?;
-    stats.drive_file_id = uploaded
-        .get("id")
-        .and_then(|v| v.as_str())
-        .map(str::to_string);
-    stats.web_view_link = uploaded
-        .get("webViewLink")
-        .and_then(|v| v.as_str())
-        .map(str::to_string);
 
-    // ── 4. Prune local copies to the retention count (newest kept) ────────────
-    let retention = state.settings.workflow_backup_retention();
-    let prune_dir = dir.clone();
-    stats.pruned_local =
-        tokio::task::spawn_blocking(move || prune_local_workflow_backups(&prune_dir, retention))
-            .await
-            .unwrap_or(0);
+    // ── 2. Upload new/changed workflows ───────────────────────────────────────
+    //    Successes are recorded and persisted together after the loop.
+    let mut recorded: Vec<(String, String, Option<String>)> = Vec::new();
+    let mut first_error: Option<anyhow::Error> = None;
 
-    // ── 5. Best-effort prune of old Drive copies — ONLY inside a configured
-    //    folder so we never enumerate/delete in the user's Drive root. The
-    //    gdrive_list tool is capped at 10 results, so this keeps a small rolling
-    //    window; deeper history is left untouched. ─────────────────────────────
-    if !folder_id.is_empty() {
-        stats.pruned_drive = prune_drive_workflow_backups(state, &folder_id, retention)
-            .await
-            .unwrap_or_else(|e| {
-                tracing::warn!("Workflow Drive backup: prune skipped: {:#}", e);
-                0
-            });
-    }
-
-    Ok(stats)
-}
-
-/// Delete local `axon-workflows-backup-*.json` files beyond the newest
-/// `retention`. Timestamped names sort chronologically, so a lexical sort is a
-/// chronological sort. Returns the number removed.
-fn prune_local_workflow_backups(dir: &Path, retention: i64) -> usize {
-    let keep = retention.max(1) as usize;
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return 0;
-    };
-    let mut names: Vec<String> = entries
-        .flatten()
-        .filter_map(|e| {
-            let n = e.file_name().to_string_lossy().to_string();
-            (n.starts_with("axon-workflows-backup-") && n.ends_with(".json")).then_some(n)
-        })
-        .collect();
-    if names.len() <= keep {
-        return 0;
-    }
-    names.sort(); // oldest → newest
-    let mut pruned = 0;
-    for name in &names[..names.len() - keep] {
-        if std::fs::remove_file(dir.join(name)).is_ok() {
-            pruned += 1;
-        }
-    }
-    pruned
-}
-
-/// Best-effort removal of old backup files inside `folder_id`. Lists the folder
-/// (capped at 10, newest-first), keeps `retention`, deletes the rest — scoped by
-/// the `axon-workflows-backup-*.json` name so nothing else in the folder is
-/// touched. Uses the same Drive tools the agent uses.
-async fn prune_drive_workflow_backups(
-    state: &crate::state::AppState,
-    folder_id: &str,
-    retention: i64,
-) -> anyhow::Result<usize> {
-    let keep = retention.max(1) as usize;
-    let listed = state
-        .tools
-        .run(
-            "gdrive_list",
-            serde_json::json!({
-                "max_results": 10,
-                "folder_id": folder_id,
-                "mime_type": "application/json",
-            }),
-        )
-        .await?;
-
-    let mut kept = 0usize;
-    let mut to_delete: Vec<String> = Vec::new();
-    for f in listed
-        .get("files")
-        .and_then(|v| v.as_array())
-        .into_iter()
-        .flatten()
-    {
-        let name = f.get("name").and_then(|v| v.as_str()).unwrap_or("");
-        if !(name.starts_with("axon-workflows-backup-") && name.ends_with(".json")) {
+    for up in uploads {
+        // Local mirror (id-named → overwritten each change, never piles up).
+        let local_path = dir.join(format!("{}.json", up.workflow_id));
+        if let Err(e) = std::fs::write(&local_path, &up.bytes) {
+            tracing::warn!(
+                "Workflow Drive backup: local write failed for {}: {}",
+                up.workflow_id,
+                e
+            );
+            stats.errors += 1;
             continue;
         }
-        kept += 1;
-        if kept > keep {
-            if let Some(id) = f.get("id").and_then(|v| v.as_str()) {
-                to_delete.push(id.to_string());
+        chmod_owner_only(&local_path);
+
+        let is_update = up.existing_file_id.is_some();
+        let result = if let Some(ref fid) = up.existing_file_id {
+            state
+                .tools
+                .run(
+                    "gdrive_update_binary",
+                    serde_json::json!({
+                        "file_id": fid,
+                        "local_path": local_path.to_string_lossy(),
+                        "name": up.file_name,
+                        "mime_type": "application/json",
+                    }),
+                )
+                .await
+        } else {
+            let mut args = serde_json::json!({
+                "local_path": local_path.to_string_lossy(),
+                "name": up.file_name,
+                "mime_type": "application/json",
+            });
+            if !folder_id.is_empty() {
+                args["folder_id"] = serde_json::json!(folder_id);
+            }
+            state.tools.run("gdrive_upload_binary", args).await
+        };
+
+        match result {
+            Ok(v) => {
+                // Update returns the same id; create returns a fresh one. Fall
+                // back to the known id so a sparse response still records state.
+                let new_fid = v
+                    .get("id")
+                    .and_then(|x| x.as_str())
+                    .map(str::to_string)
+                    .or(up.existing_file_id);
+                recorded.push((up.workflow_id, up.hash, new_fid));
+                if is_update {
+                    stats.updated += 1;
+                } else {
+                    stats.created += 1;
+                }
+            }
+            Err(e) => {
+                stats.errors += 1;
+                if first_error.is_none() {
+                    first_error = Some(e);
+                }
             }
         }
     }
 
-    let mut pruned = 0;
-    for id in to_delete {
-        if state
-            .tools
-            .run("gdrive_delete", serde_json::json!({ "file_id": id }))
-            .await
-            .is_ok()
-        {
-            pruned += 1;
+    // ── 3. Remove orphan Drive files + their local mirrors ────────────────────
+    let mut removed_rows: Vec<String> = Vec::new();
+    for (id, fid) in orphans {
+        if let Some(fid) = fid {
+            match state
+                .tools
+                .run("gdrive_delete", serde_json::json!({ "file_id": fid }))
+                .await
+            {
+                Ok(_) => stats.deleted += 1,
+                // Log but still drop the row: retrying a delete that fails on an
+                // already-gone / forbidden file would never start succeeding.
+                Err(e) => tracing::warn!(
+                    "Workflow Drive backup: orphan delete failed for {}: {:#}",
+                    id,
+                    e
+                ),
+            }
+        }
+        let _ = std::fs::remove_file(dir.join(format!("{}.json", id)));
+        removed_rows.push(id);
+    }
+
+    // ── 4. Persist results (one blocking transaction) ─────────────────────────
+    if !recorded.is_empty() || !removed_rows.is_empty() {
+        let db = Arc::clone(&state.db);
+        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            let mut conn = db.get()?;
+            let tx = conn.transaction()?;
+            for (id, hash, fid) in &recorded {
+                tx.execute(
+                    "INSERT INTO workflow_backups (workflow_id, content_hash, drive_file_id, backed_up_at)
+                     VALUES (?1, ?2, ?3, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+                     ON CONFLICT(workflow_id) DO UPDATE SET
+                         content_hash  = excluded.content_hash,
+                         drive_file_id = excluded.drive_file_id,
+                         backed_up_at  = excluded.backed_up_at",
+                    params![id, hash, fid],
+                )?;
+            }
+            for id in &removed_rows {
+                tx.execute(
+                    "DELETE FROM workflow_backups WHERE workflow_id = ?1",
+                    params![id],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
+        .await??;
+    }
+
+    // If nothing at all succeeded but we hit errors, surface the first so the
+    // manual endpoint / logs show *why* (e.g. Google not connected).
+    if stats.created == 0 && stats.updated == 0 && stats.deleted == 0 {
+        if let Some(e) = first_error {
+            return Err(e.context("workflow Drive backup made no progress"));
         }
     }
-    Ok(pruned)
+
+    Ok(stats)
 }
 
 #[cfg(test)]

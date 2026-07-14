@@ -186,15 +186,11 @@ RESPONSE RULES:
     pub fn workflow_backup_interval_hours(&self) -> i64 {
         self.get_int("workflow_backup.interval_hours", 24).max(1)
     }
-    /// Destination Drive folder id. Empty = Drive root. A dedicated folder is
-    /// recommended: Drive-side pruning of old backups only runs when this is set
-    /// (never in the root).
+    /// Destination Drive folder id for newly created backup files. Empty = Drive
+    /// root. Updates always follow the existing file, so this only affects the
+    /// first upload of each workflow.
     pub fn workflow_backup_drive_folder_id(&self) -> String {
         self.get_str("workflow_backup.drive_folder_id", "")
-    }
-    /// How many backup files to keep, locally and (when a folder is set) in Drive.
-    pub fn workflow_backup_retention(&self) -> i64 {
-        self.get_int("workflow_backup.retention", 7).max(1)
     }
     /// Max version snapshots kept per workflow (B1). Labeled snapshots are kept
     /// beyond this cap; only unlabeled ones are pruned oldest-first.
