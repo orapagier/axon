@@ -728,7 +728,7 @@ pub(crate) async fn run_inner(
         let offset = state.settings.agent_utc_offset();
         let now_local = chrono::Utc::now().with_timezone(&offset);
         base_system = format!(
-            "{}\n\n[SYSTEM CLOCK: {}]\n* This is the exact current date & time (operator-local, UTC{}).\n* Use this internally to accurately calculate relative dates (e.g., today, tomorrow, next week, scheduling).\n* Do NOT mention the current time/date to the user unless they asked for it or the task genuinely requires it.",
+            "{}\n\n[SYSTEM CLOCK: {}]\n* This is the exact current date & time (operator-local, UTC{}).\n* Use this internally to accurately calculate relative dates (e.g., today, tomorrow, next week, scheduling).\n* Do NOT mention the current time/date to the user unless they asked for it or the task genuinely requires it.\n* You are UNRELIABLE at deriving day-of-week from a date — you routinely pair a correct date with the wrong weekday. NEVER compute or infer a weekday yourself. The weekday for TODAY is the one in this line above; each calendar event carries its own code-computed `weekday` field — echo that verbatim. For any other date, do not assert a weekday unless a tool provided it. When listing events, label each with ITS OWN `weekday`; do NOT wrap them in a self-invented 'Monday–Sunday' week header whose day names you guessed.",
             base_system,
             now_local.format("%A, %Y-%m-%d %H:%M:%S"),
             offset
