@@ -115,6 +115,11 @@ struct GenGenerationConfig {
     temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     thinking_config: Option<GenThinkingConfig>,
+    /// `["TEXT","IMAGE"]` for image-generation models (e.g.
+    /// gemini-2.5-flash-image); text-only models reject the field, so it is
+    /// only ever set on the dedicated image-generation path.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_modalities: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -397,6 +402,7 @@ fn build_generation_config(
         max_output_tokens: Some(max_tokens),
         temperature: options.temperature,
         thinking_config,
+        response_modalities: None,
     })
 }
 
@@ -717,6 +723,156 @@ pub async fn call(
     ))
 }
 
+/// Request payload for image generation: a single user turn (prompt plus an
+/// optional reference image to edit/restyle) with `responseModalities`
+/// requesting an image back. No system instruction, tools, or thinking —
+/// Gemini image models reject or ignore all three.
+fn build_image_gen_request(prompt: &str, input_image: Option<&ContentBlock>) -> GenReq {
+    let mut parts = vec![GenPart {
+        text: Some(prompt.to_string()),
+        ..Default::default()
+    }];
+    if let Some(ContentBlock::Image { media_type, data }) = input_image {
+        parts.push(GenPart {
+            inline_data: Some(GenInlineData {
+                mime_type: media_type.clone(),
+                data: data.clone(),
+            }),
+            ..Default::default()
+        });
+    }
+    GenReq {
+        contents: vec![GenContent {
+            role: Some("user".to_string()),
+            parts,
+        }],
+        system_instruction: None,
+        tools: None,
+        tool_config: None,
+        generation_config: Some(GenGenerationConfig {
+            max_output_tokens: None,
+            temperature: None,
+            thinking_config: None,
+            response_modalities: Some(vec!["TEXT".to_string(), "IMAGE".to_string()]),
+        }),
+    }
+}
+
+/// Pull the first inline image (plus any narration text) out of a response's
+/// parts. No image part at all means the model refused or isn't an
+/// image-generation model — surface its text so the user sees why.
+fn extract_generated_image(
+    parts: Vec<GenPart>,
+    usage: UsageInfo,
+    model_id: &str,
+) -> anyhow::Result<GeneratedImage> {
+    use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+    let mut text = String::new();
+    let mut image: Option<(String, String)> = None;
+    for part in parts {
+        if part.thought == Some(true) {
+            continue;
+        }
+        if let Some(t) = part.text {
+            text.push_str(&t);
+        }
+        if image.is_none() {
+            if let Some(inline) = part.inline_data {
+                image = Some((inline.mime_type, inline.data));
+            }
+        }
+    }
+    let Some((mime_type, data)) = image else {
+        let detail = if text.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " Model said: {}",
+                text.chars().take(300).collect::<String>()
+            )
+        };
+        anyhow::bail!(
+            "model '{}' returned no image — make sure it is an image-generation model \
+             (e.g. gemini-2.5-flash-image).{}",
+            model_id,
+            detail
+        );
+    };
+    let bytes = BASE64
+        .decode(data.trim())
+        .map_err(|e| anyhow::anyhow!("image base64 decode failed: {}", e))?;
+    Ok(GeneratedImage {
+        bytes,
+        mime_type,
+        text,
+        usage,
+    })
+}
+
+/// Generate an image via `generateContent` with image response modality.
+/// `input_image` optionally supplies a reference image so the prompt can edit
+/// or restyle it (nano-banana-style editing).
+pub async fn generate_image(
+    model: &mut ModelRecord,
+    prompt: &str,
+    input_image: Option<&ContentBlock>,
+) -> anyhow::Result<GeneratedImage> {
+    let base = model
+        .base_url
+        .as_deref()
+        .or_else(|| provider_base_url("google"))
+        .unwrap_or("https://generativelanguage.googleapis.com/v1beta");
+    let base = normalize_base_url_str(base);
+    // Same legacy-shim guard as `call`: strip an OpenAI-compat "/openai" base.
+    let base = base.strip_suffix("/openai").unwrap_or(&base).to_string();
+    let url = format!("{}/models/{}:generateContent", base, model.model_id);
+
+    let payload = build_image_gen_request(prompt, input_image);
+    let resp = HTTP_CLIENT
+        .post(&url)
+        .header("x-goog-api-key", &model.api_key)
+        .header("Content-Type", "application/json")
+        .json(&payload)
+        .send()
+        .await
+        .with_context(|| format!("HTTP to {}", url))?;
+
+    model.rl_snapshot = super::openai_compat::parse_rl_headers("google", resp.headers());
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let retry_after = super::openai_compat::retry_after_header(resp.headers());
+        let body = resp.text().await.unwrap_or_default();
+        if status.as_u16() == 429 {
+            let suffix = retry_after
+                .map(|ra| format!(" [retry-after:{}]", ra))
+                .unwrap_or_default();
+            anyhow::bail!("rate limit{}: {}", suffix, body);
+        }
+        anyhow::bail!("provider error {} at {}: {}", status, url, body);
+    }
+
+    let body: GenResp = resp.json().await.context("parse response")?;
+    let usage = UsageInfo {
+        input_tokens: body
+            .usage_metadata
+            .as_ref()
+            .and_then(|u| u.prompt_token_count)
+            .unwrap_or(0),
+        output_tokens: body
+            .usage_metadata
+            .as_ref()
+            .map(|u| u.output_total())
+            .unwrap_or(0),
+    };
+    let candidate = body
+        .candidates
+        .into_iter()
+        .next()
+        .context("empty candidates (prompt possibly blocked)")?;
+    let parts = candidate.content.map(|c| c.parts).unwrap_or_default();
+    extract_generated_image(parts, usage, &model.model_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -925,6 +1081,73 @@ mod tests {
             thoughts_token_count: None,
         };
         assert_eq!(u.output_total(), 100);
+    }
+
+    #[test]
+    fn image_gen_request_asks_for_image_modality() {
+        let req = build_image_gen_request("a red fox", None);
+        assert_eq!(req.contents.len(), 1);
+        assert_eq!(req.contents[0].role.as_deref(), Some("user"));
+        assert_eq!(req.contents[0].parts.len(), 1);
+        assert_eq!(req.contents[0].parts[0].text.as_deref(), Some("a red fox"));
+        assert!(req.system_instruction.is_none());
+        assert!(req.tools.is_none());
+        let gc = req.generation_config.unwrap();
+        assert_eq!(
+            gc.response_modalities,
+            Some(vec!["TEXT".to_string(), "IMAGE".to_string()])
+        );
+        assert!(gc.thinking_config.is_none());
+    }
+
+    #[test]
+    fn image_gen_request_attaches_reference_image() {
+        let reference = ContentBlock::Image {
+            media_type: "image/png".into(),
+            data: "AAAA".into(),
+        };
+        let req = build_image_gen_request("make it night time", Some(&reference));
+        let parts = &req.contents[0].parts;
+        assert_eq!(parts.len(), 2);
+        let inline = parts[1].inline_data.as_ref().unwrap();
+        assert_eq!(inline.mime_type, "image/png");
+        assert_eq!(inline.data, "AAAA");
+    }
+
+    #[test]
+    fn extract_generated_image_decodes_inline_data_and_keeps_text() {
+        use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+        let parts = vec![
+            GenPart {
+                text: Some("Here is your fox.".into()),
+                ..Default::default()
+            },
+            GenPart {
+                inline_data: Some(GenInlineData {
+                    mime_type: "image/png".into(),
+                    data: BASE64.encode(b"fake-png-bytes"),
+                }),
+                ..Default::default()
+            },
+        ];
+        let img = extract_generated_image(parts, UsageInfo::default(), "gemini-img").unwrap();
+        assert_eq!(img.bytes, b"fake-png-bytes");
+        assert_eq!(img.mime_type, "image/png");
+        assert_eq!(img.text, "Here is your fox.");
+    }
+
+    #[test]
+    fn extract_generated_image_without_image_part_surfaces_model_text() {
+        let parts = vec![GenPart {
+            text: Some("I cannot draw that.".into()),
+            ..Default::default()
+        }];
+        let err = extract_generated_image(parts, UsageInfo::default(), "gemini-img")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("returned no image"), "got: {err}");
+        assert!(err.contains("gemini-img"), "got: {err}");
+        assert!(err.contains("I cannot draw that."), "got: {err}");
     }
 
     #[test]

@@ -428,7 +428,7 @@ onMounted(load)
                 Watcher
               </option>
               <option value="image_model">
-                Image Model (vision)
+                Image Model (vision / generation)
               </option>
             </optgroup>
             <option value="paid_model">

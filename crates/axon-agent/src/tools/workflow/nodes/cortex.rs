@@ -33,7 +33,7 @@ async fn resolve_media_to_image_block(media: &Value) -> Result<ContentBlock, Str
         }
         _ => {
             return Err(
-                "Media is empty. Provide an image URL or a reference to an upstream node's output (e.g. {{ $node[\"HttpNode\"].data.binary }})."
+                "Media is empty. Provide an image URL or a reference to an upstream node's output (e.g. {{ $node[\"HttpNode\"].data.binary }}), or set Image Operation to \"Generate\" to create a new image from the prompt."
                     .to_string(),
             )
         }
@@ -119,6 +119,64 @@ async fn resolve_media_to_image_block(media: &Value) -> Result<ContentBlock, Str
         media_type,
         data: BASE64.encode(&bytes),
     })
+}
+
+fn extension_for_mime(mime: &str) -> &'static str {
+    match mime {
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/webp" => "webp",
+        "image/gif" => "gif",
+        "image/bmp" => "bmp",
+        _ => "png",
+    }
+}
+
+/// Image-mode "Generate": one direct provider call on the user-selected
+/// image model (no agent loop, tools, or memory — generation is a single
+/// request/response), then the image is staged like every other file-producing
+/// node so downstream senders can pick up `data.binary`.
+async fn run_image_generation(
+    state: &AppState,
+    model_name: &str,
+    prompt: &str,
+    input_image: Option<ContentBlock>,
+) -> Result<Value, String> {
+    let img = crate::router::model_router::generate_image_with_model(
+        &state.router,
+        &state.settings,
+        model_name,
+        prompt,
+        input_image.as_ref(),
+    )
+    .await
+    .map_err(|e| format!("Cortex node (Image mode, Generate): {}", e))?;
+
+    let file_name = format!(
+        "cortex_image_{}.{}",
+        chrono::Utc::now().format("%Y%m%d_%H%M%S%3f"),
+        extension_for_mime(&img.mime_type)
+    );
+    let path = crate::files::stage_bytes(&img.bytes, &file_name)
+        .map_err(|e| format!("Cortex node (Image mode, Generate): failed to stage image: {e}"))?;
+    let local_path = path.to_string_lossy().into_owned();
+
+    let output = if img.text.trim().is_empty() {
+        format!("Image generated ({})", file_name)
+    } else {
+        img.text.clone()
+    };
+    Ok(serde_json::json!({
+        "output": output,
+        "filename": file_name,
+        "mime_type": img.mime_type,
+        "size": img.bytes.len(),
+        "binary": crate::tools::telegram::binary_descriptor(
+            &local_path,
+            &file_name,
+            &img.mime_type,
+            img.bytes.len(),
+        ),
+    }))
 }
 
 pub(crate) fn execute_cortex_node<'a>(
@@ -231,6 +289,29 @@ pub(crate) fn execute_cortex_node<'a>(
                 }
             }
             let media_val = config.get("media").cloned().unwrap_or(Value::Null);
+            let operation = config
+                .get("image_operation")
+                .and_then(|v| v.as_str())
+                .unwrap_or("analyze");
+            if operation == "generate" {
+                // Media is optional here: when present it becomes a reference
+                // image for edit/restyle prompts (Gemini only).
+                let has_media = match &media_val {
+                    Value::String(s) => !s.trim().is_empty(),
+                    Value::Object(_) => true,
+                    _ => false,
+                };
+                let input_image = if has_media {
+                    Some(
+                        resolve_media_to_image_block(&media_val)
+                            .await
+                            .map_err(|e| format!("Cortex node (Image mode, Generate): {}", e))?,
+                    )
+                } else {
+                    None
+                };
+                return run_image_generation(state, model_name, &stimulus, input_image).await;
+            }
             Some(
                 resolve_media_to_image_block(&media_val)
                     .await
@@ -286,4 +367,17 @@ pub(crate) fn execute_cortex_node<'a>(
             "output": agent_response
         }))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_mime_to_extension_with_png_fallback() {
+        assert_eq!(extension_for_mime("image/jpeg"), "jpg");
+        assert_eq!(extension_for_mime("image/webp"), "webp");
+        assert_eq!(extension_for_mime("image/png"), "png");
+        assert_eq!(extension_for_mime("application/octet-stream"), "png");
+    }
 }

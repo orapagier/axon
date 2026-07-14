@@ -913,6 +913,126 @@ async fn try_call(
     anyhow::bail!("Unhandled fallback logic error")
 }
 
+/// Call one specific configured model for image generation, with the same
+/// api-key resolution, comma-separated model_id failover, and
+/// success/rate-limit/error bookkeeping as `try_call` — but no pool routing:
+/// image generation is only ever run on an explicitly user-selected model
+/// (the Cortex node validates role = "image_model" before calling this).
+///
+/// The per-attempt timeout is the model's own `timeout_secs` but never less
+/// than 120s: chat-tuned timeouts (15–45s) are too short for image synthesis.
+pub async fn generate_image_with_model(
+    router: &SharedRouter,
+    settings: &RuntimeSettings,
+    model_name: &str,
+    prompt: &str,
+    input_image: Option<&ContentBlock>,
+) -> anyhow::Result<GeneratedImage> {
+    let threshold = settings.error_threshold();
+    let (idx, base_record, api_key, timeout_secs) = {
+        let g = router.lock().await;
+        let (idx, m) = g
+            .models
+            .iter()
+            .enumerate()
+            .find(|(_, m)| m.name == model_name)
+            .ok_or_else(|| anyhow::anyhow!("model '{}' was not found", model_name))?;
+        if !m.is_available() {
+            anyhow::bail!(
+                "model '{}' is currently unavailable (disabled, rate-limited, or erroring); \
+                 check the Models page",
+                model_name
+            );
+        }
+        let resolved_key = settings.resolve(&m.api_key);
+        (
+            idx,
+            m.clone(),
+            resolved_key,
+            m.timeout_secs.unwrap_or(0).max(120),
+        )
+    };
+
+    if api_key.trim().is_empty() {
+        anyhow::bail!(
+            "Model '{}' has no API key after resolution; check AXON_MASTER_KEY and provider \
+             environment variables on the server",
+            base_record.name
+        );
+    }
+    if api_key.starts_with("${") && api_key.ends_with('}') {
+        anyhow::bail!(
+            "Model '{}' has unresolved API key placeholder {}; check .env loading or server \
+             environment configuration",
+            base_record.name,
+            api_key
+        );
+    }
+
+    let model_ids: Vec<String> = base_record
+        .model_id
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if model_ids.is_empty() {
+        anyhow::bail!("Model '{}' has no model IDs configured", base_record.name);
+    }
+
+    let mut last_error: Option<(anyhow::Error, bool)> = None; // (error, is_rate_limit)
+    for current_model_id in &model_ids {
+        let mut tmp = base_record.clone();
+        tmp.model_id = current_model_id.clone();
+        tmp.api_key = api_key.clone();
+        tracing::info!("→ {} (image generation)", current_model_id);
+
+        let call_result = tokio::time::timeout(
+            Duration::from_secs(timeout_secs),
+            crate::providers::generate_image_with_provider(&mut tmp, prompt, input_image),
+        )
+        .await;
+
+        match call_result {
+            Ok(Ok(img)) => {
+                let mut g = router.lock().await;
+                g.models[idx].mark_success(img.usage.input_tokens, img.usage.output_tokens);
+                g.models[idx].rl_snapshot = tmp.rl_snapshot;
+                tracing::info!(
+                    "✓ {} generated {} bytes ({})",
+                    current_model_id,
+                    img.bytes.len(),
+                    img.mime_type
+                );
+                return Ok(img);
+            }
+            Ok(Err(e)) => {
+                tracing::warn!("✗ {} image generation failed: {}", current_model_id, e);
+                let s = e.to_string().to_lowercase();
+                let is_rl = s.contains("rate limit") || s.contains("429") || s.contains("quota");
+                last_error = Some((e, is_rl));
+            }
+            Err(_elapsed) => {
+                last_error = Some((
+                    anyhow::anyhow!("image generation timed out after {}s", timeout_secs),
+                    false,
+                ));
+            }
+        }
+    }
+
+    let (e, is_rl) = last_error.expect("model_ids is non-empty, so at least one attempt ran");
+    {
+        let mut g = router.lock().await;
+        if is_rl {
+            let hint = parse_rate_limit_hint(&e.to_string());
+            g.models[idx].mark_rate_limited(&hint);
+        } else {
+            g.models[idx].mark_error(threshold);
+        }
+    }
+    Err(e)
+}
+
 pub async fn get_status(router: &SharedRouter) -> Vec<serde_json::Value> {
     let mut g = router.lock().await;
 

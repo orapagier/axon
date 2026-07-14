@@ -6698,7 +6698,7 @@
       "value": "watcher"
      },
      {
-      "name": "Image Model (vision)",
+      "name": "Image Model (vision / generation)",
       "value": "image_model"
      },
      {
@@ -6835,7 +6835,33 @@
       "value": "image"
      }
     ],
-    "hint": "Text: normal conversational/tool-using turn. Image: send one image to a vision-capable model — no auto-select, the Model field below must be tagged role=\"image_model\"."
+    "hint": "Text: normal conversational/tool-using turn. Image: analyze an image with a vision model, or generate a new one — no auto-select, the Model field below must be tagged role=\"image_model\"."
+   },
+   {
+    "displayName": "Image Operation",
+    "name": "image_operation",
+    "type": "options",
+    "default": "analyze",
+    "options": [
+     {
+      "name": "Analyze (vision)",
+      "value": "analyze",
+      "description": "Send the Media image with the User Prompt to a vision model and get text back."
+     },
+     {
+      "name": "Generate",
+      "value": "generate",
+      "description": "Create a new image from the User Prompt. Works with Gemini image models (e.g. gemini-2.5-flash-image) and OpenAI-compatible hosts that expose /images/generations."
+     }
+    ],
+    "displayOptions": {
+     "show": {
+      "mode": [
+       "image"
+      ]
+     }
+    },
+    "hint": "Generate saves the image to data/files and outputs a binary descriptor, so a downstream node can send it (e.g. {{ $node[\"Cortex\"].data.binary }})."
    },
    {
     "displayName": "Model (Optional)",
@@ -6849,12 +6875,32 @@
     "name": "media",
     "type": "string",
     "default": "",
-    "hint": "A literal image URL, or a workflow reference to an upstream node's output (base64 body or local_path). Required when Mode = Image.",
+    "hint": "A literal image URL, or a workflow reference to an upstream node's output (base64 body or local_path). Required when analyzing.",
     "required": true,
     "displayOptions": {
      "show": {
       "mode": [
        "image"
+      ],
+      "image_operation": [
+       "analyze"
+      ]
+     }
+    }
+   },
+   {
+    "displayName": "Reference Image (Optional)",
+    "name": "media",
+    "type": "string",
+    "default": "",
+    "hint": "Optional image to edit or restyle instead of generating from scratch — Gemini image models only. Leave empty to create a new image from the User Prompt.",
+    "displayOptions": {
+     "show": {
+      "mode": [
+       "image"
+      ],
+      "image_operation": [
+       "generate"
       ]
      }
     }

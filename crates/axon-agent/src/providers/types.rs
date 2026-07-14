@@ -168,6 +168,17 @@ pub struct ToolCall {
     pub input: serde_json::Value,
 }
 
+/// One image produced by an image-generation call, plus any text the model
+/// returned alongside it (Gemini image models often narrate what they drew;
+/// OpenAI-compatible hosts may return a revised prompt).
+#[derive(Debug, Clone)]
+pub struct GeneratedImage {
+    pub bytes: Vec<u8>,
+    pub mime_type: String,
+    pub text: String,
+    pub usage: UsageInfo,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub role: String,

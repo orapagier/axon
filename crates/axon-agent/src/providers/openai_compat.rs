@@ -812,6 +812,155 @@ pub async fn call(
     ))
 }
 
+#[derive(Debug, Deserialize)]
+struct OaiImageResp {
+    #[serde(default)]
+    data: Vec<OaiImageDatum>,
+    usage: Option<OaiImageUsage>,
+}
+#[derive(Debug, Deserialize)]
+struct OaiImageDatum {
+    b64_json: Option<String>,
+    url: Option<String>,
+    revised_prompt: Option<String>,
+}
+/// gpt-image-1 reports image-token usage; DALL·E and most compatible hosts
+/// omit the field entirely.
+#[derive(Debug, Deserialize)]
+struct OaiImageUsage {
+    input_tokens: Option<u32>,
+    output_tokens: Option<u32>,
+}
+
+/// Best-effort MIME type for raw image bytes; generation endpoints default to
+/// PNG when they don't say.
+fn sniff_image_mime(bytes: &[u8]) -> String {
+    image::guess_format(bytes)
+        .ok()
+        .map(|f| f.to_mime_type().to_string())
+        .unwrap_or_else(|| "image/png".to_string())
+}
+
+/// Generate an image via the OpenAI-compatible `/images/generations`
+/// endpoint. `response_format` is deliberately omitted: gpt-image-1 rejects
+/// the parameter (it always returns base64) while DALL·E-era models default
+/// to a short-lived URL — so both response shapes are handled and a URL is
+/// fetched immediately.
+pub async fn generate_image(
+    model: &mut ModelRecord,
+    prompt: &str,
+) -> anyhow::Result<GeneratedImage> {
+    let provider = normalize_provider_name(&model.provider);
+    let base = model
+        .base_url
+        .as_deref()
+        .or_else(|| provider_base_url(&provider))
+        .unwrap_or("https://api.openai.com/v1");
+    let url = format!("{}/images/generations", normalize_base_url_str(base));
+
+    let payload = json!({
+        "model": model.model_id,
+        "prompt": prompt,
+        "n": 1,
+    });
+    let resp = HTTP_CLIENT
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", model.api_key))
+        .header("Content-Type", "application/json")
+        .json(&payload)
+        .send()
+        .await
+        .with_context(|| format!("HTTP to {}", url))?;
+    model.rl_snapshot = parse_rl_headers(&provider, resp.headers());
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let retry_after = retry_after_header(resp.headers());
+        let body = resp.text().await.unwrap_or_default();
+        if status.as_u16() == 429 {
+            let suffix = retry_after
+                .map(|ra| format!(" [retry-after:{}]", ra))
+                .unwrap_or_default();
+            anyhow::bail!("rate limit{}: {}", suffix, body);
+        }
+        if status.as_u16() == 404 {
+            anyhow::bail!(
+                "provider error 404 at {}: this host does not expose /images/generations \
+                 (not all OpenAI-compatible providers support image generation): {}",
+                url,
+                body
+            );
+        }
+        anyhow::bail!("provider error {} at {}: {}", status, url, body);
+    }
+
+    let body: OaiImageResp = resp.json().await.context("parse image response")?;
+    let usage = UsageInfo {
+        input_tokens: body
+            .usage
+            .as_ref()
+            .and_then(|u| u.input_tokens)
+            .unwrap_or(0),
+        output_tokens: body
+            .usage
+            .as_ref()
+            .and_then(|u| u.output_tokens)
+            .unwrap_or(0),
+    };
+    let datum = body
+        .data
+        .into_iter()
+        .next()
+        .context("image response contained no data entries")?;
+    let text = datum.revised_prompt.unwrap_or_default();
+
+    if let Some(b64) = datum.b64_json.filter(|s| !s.is_empty()) {
+        use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+        let bytes = BASE64
+            .decode(b64.trim())
+            .map_err(|e| anyhow::anyhow!("image base64 decode failed: {}", e))?;
+        let mime_type = sniff_image_mime(&bytes);
+        return Ok(GeneratedImage {
+            bytes,
+            mime_type,
+            text,
+            usage,
+        });
+    }
+    if let Some(img_url) = datum.url.filter(|s| !s.is_empty()) {
+        let img_resp = HTTP_CLIENT
+            .get(&img_url)
+            .send()
+            .await
+            .with_context(|| format!("fetch generated image from {}", img_url))?;
+        if !img_resp.status().is_success() {
+            anyhow::bail!(
+                "fetching generated image from {} failed with {}",
+                img_url,
+                img_resp.status()
+            );
+        }
+        let content_type = img_resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.split(';').next().unwrap_or(s).trim().to_string())
+            .filter(|s| s.starts_with("image/"));
+        let bytes = img_resp
+            .bytes()
+            .await
+            .context("read generated image body")?
+            .to_vec();
+        let mime_type = content_type.unwrap_or_else(|| sniff_image_mime(&bytes));
+        return Ok(GeneratedImage {
+            bytes,
+            mime_type,
+            text,
+            usage,
+        });
+    }
+    anyhow::bail!("image response entry had neither b64_json nor url");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -827,5 +976,35 @@ mod tests {
         );
         // The unterminated trailing event stays in the buffer for the next chunk.
         assert_eq!(buffer, "data: partial-no-terminator-yet");
+    }
+
+    // Both wire shapes /images/generations can answer with: gpt-image-1 style
+    // (b64_json + usage) and DALL·E style (url, no usage).
+    #[test]
+    fn image_response_parses_b64_and_url_shapes() {
+        let b64: OaiImageResp = serde_json::from_str(
+            r#"{"created":1,"data":[{"b64_json":"QUJD","revised_prompt":"a nicer fox"}],"usage":{"input_tokens":10,"output_tokens":4000}}"#,
+        )
+        .unwrap();
+        assert_eq!(b64.data[0].b64_json.as_deref(), Some("QUJD"));
+        assert_eq!(b64.data[0].revised_prompt.as_deref(), Some("a nicer fox"));
+        assert_eq!(b64.usage.as_ref().unwrap().output_tokens, Some(4000));
+
+        let url: OaiImageResp =
+            serde_json::from_str(r#"{"created":1,"data":[{"url":"https://cdn.example/img.png"}]}"#)
+                .unwrap();
+        assert_eq!(
+            url.data[0].url.as_deref(),
+            Some("https://cdn.example/img.png")
+        );
+        assert!(url.data[0].b64_json.is_none());
+        assert!(url.usage.is_none());
+    }
+
+    #[test]
+    fn sniffs_png_magic_bytes_and_defaults_to_png() {
+        let png_header = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
+        assert_eq!(sniff_image_mime(png_header), "image/png");
+        assert_eq!(sniff_image_mime(b"not an image"), "image/png");
     }
 }

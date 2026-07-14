@@ -37,6 +37,34 @@ pub async fn call_provider(
     .await
 }
 
+/// Dispatch an image-generation request to the model's provider. Google goes
+/// through `generateContent` with image response modality (and accepts an
+/// optional reference image to edit); everything else is treated as
+/// OpenAI-compatible and uses `/images/generations` (text prompt only).
+pub async fn generate_image_with_provider(
+    model: &mut ModelRecord,
+    prompt: &str,
+    input_image: Option<&ContentBlock>,
+) -> anyhow::Result<GeneratedImage> {
+    match normalize_provider_name(&model.provider).as_str() {
+        "google" => google::generate_image(model, prompt, input_image).await,
+        "anthropic" | "ollama" => anyhow::bail!(
+            "provider '{}' cannot generate images; use a Google (Gemini) image model or an \
+             OpenAI-compatible host with /images/generations",
+            model.provider
+        ),
+        _ => {
+            if input_image.is_some() {
+                anyhow::bail!(
+                    "a reference image (Media) is only supported with Google (Gemini) image \
+                     models; leave Media empty for OpenAI-compatible providers"
+                );
+            }
+            openai_compat::generate_image(model, prompt).await
+        }
+    }
+}
+
 pub async fn call_provider_with_options(
     model: &mut ModelRecord,
     messages: &[Message],
