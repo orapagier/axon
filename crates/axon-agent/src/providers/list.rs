@@ -228,9 +228,13 @@ async fn list_openai_compat(
         .or_else(|| provider_base_url(provider).map(str::to_string))
         .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
     let url = format!("{}/models", base);
-    let resp = HTTP_CLIENT
-        .get(&url)
-        .header("Authorization", format!("Bearer {}", api_key))
+    let mut req = HTTP_CLIENT.get(&url);
+    // Some hosts (OpenRouter) expose /models publicly; sending an empty
+    // `Bearer ` can 401 there, so only attach auth when we actually have a key.
+    if !api_key.trim().is_empty() {
+        req = req.header("Authorization", format!("Bearer {}", api_key));
+    }
+    let resp = req
         .send()
         .await
         .with_context(|| format!("HTTP to {}", url))?;
@@ -311,6 +315,22 @@ mod tests {
             }
         );
         assert_eq!(choices[1].label.as_deref(), Some("Y Free"));
+    }
+
+    // Network-gated: verifies the real OpenRouter path (public /models, no key)
+    // populates the dropdown. Run with `cargo test -p axon -- --ignored openrouter`.
+    #[tokio::test]
+    #[ignore = "hits the live OpenRouter endpoint"]
+    async fn openrouter_lists_models_without_a_key() {
+        let choices = list_available_models("openrouter", None, "")
+            .await
+            .expect("openrouter list should succeed unauthenticated");
+        assert!(
+            choices.len() > 50,
+            "expected a large catalogue, got {}",
+            choices.len()
+        );
+        assert!(choices.iter().all(|c| !c.id.is_empty()));
     }
 
     #[test]

@@ -11,10 +11,14 @@ pub async fn reset_model(State(state): State<AppState>, Path(name): Path<String>
 }
 
 /// Prefetched list of a provider's currently-available model ids, for the
-/// ModelsPage "Model ID" dropdown. Reads the `provider_model_cache` populated by
-/// the daily background sweep (`model_cache::refresh_all`) — never calls the
-/// provider live, so opening the modal is instant. Body: `{provider, base_url?}`.
-/// An empty list just means "nothing cached yet"; the UI falls back to free text.
+/// ModelsPage "Model ID" dropdown. Body: `{provider, base_url?}`.
+///
+/// Fast path: the `provider_model_cache` populated by the daily background sweep
+/// (`model_cache::refresh_all`), so opening the modal for an already-configured
+/// provider is instant. Cache miss (e.g. adding a provider you don't have a model
+/// for yet, like OpenRouter) falls back to a single live catalogue fetch and
+/// warms the cache with it. An empty list means "nothing available"; the UI falls
+/// back to free text.
 pub async fn get_available_models(
     State(state): State<AppState>,
     Json(payload): Json<Value>,
@@ -23,7 +27,8 @@ pub async fn get_available_models(
         .get("provider")
         .and_then(|v| v.as_str())
         .unwrap_or("")
-        .trim();
+        .trim()
+        .to_string();
     if provider.is_empty() {
         return Json(json!({"ok": false, "error": "provider is required"}));
     }
@@ -31,14 +36,60 @@ pub async fn get_available_models(
         .get("base_url")
         .and_then(|v| v.as_str())
         .map(str::trim)
-        .filter(|s| !s.is_empty());
-    match state.db.get() {
-        Ok(conn) => {
-            let models = crate::model_cache::read_cached(&conn, provider, base_url);
-            Json(json!({"ok": true, "models": models}))
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
+    // Fast path: the daily-swept cache.
+    if let Ok(conn) = state.db.get() {
+        let cached = crate::model_cache::read_cached(&conn, &provider, base_url.as_deref());
+        if !cached.is_empty() {
+            return Json(json!({"ok": true, "models": cached}));
         }
-        Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
     }
+
+    // Cache miss → one live fetch so a not-yet-configured provider still lists.
+    // Resolve a key from an existing model of this provider when there is one;
+    // providers whose /models is public (e.g. OpenRouter) list fine without one.
+    let api_key = resolve_provider_key(&state, &provider);
+    match crate::providers::list_available_models(&provider, base_url.as_deref(), &api_key).await {
+        Ok(choices) if !choices.is_empty() => {
+            if let Ok(conn) = state.db.get() {
+                let _ = crate::model_cache::store(&conn, &provider, base_url.as_deref(), &choices);
+            }
+            Json(json!({"ok": true, "models": choices}))
+        }
+        Ok(_) => Json(json!({"ok": true, "models": []})),
+        Err(e) => {
+            tracing::warn!(
+                "models/available live fallback for '{}' failed: {:#}",
+                provider,
+                e
+            );
+            Json(json!({"ok": true, "models": []}))
+        }
+    }
+}
+
+/// Resolve a usable API key for a provider from the first configured model that
+/// has one, applying `${VAR}` resolution. Returns `""` when none is configured —
+/// which is fine for providers whose model list is a public endpoint.
+fn resolve_provider_key(state: &AppState, provider: &str) -> String {
+    let provider = crate::providers::normalize_provider_name(provider);
+    let Ok(conn) = state.db.get() else {
+        return String::new();
+    };
+    let models = crate::config::load_models_from_db(&conn).unwrap_or_default();
+    for m in models {
+        if crate::providers::normalize_provider_name(&m.provider) != provider {
+            continue;
+        }
+        let resolved = state.settings.resolve(&m.api_key);
+        let k = resolved.trim();
+        if !k.is_empty() && !(k.starts_with("${") && k.ends_with('}')) {
+            return resolved;
+        }
+    }
+    String::new()
 }
 
 /// Path to the boot-time models config; the same relative path `main.rs` loads.

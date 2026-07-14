@@ -29,6 +29,8 @@ describe('ModelsPage — API key secrecy', () => {
     wrapper?.unmount()
     wrapper = undefined
     api.get.mockReset()
+    api.post.mockReset()
+    api.post.mockResolvedValue({ ok: true })
   })
 
   it('masks the API key input in the Add/Edit modal', async () => {
@@ -44,6 +46,39 @@ describe('ModelsPage — API key secrecy', () => {
     const apiKeyInput = document.querySelector('input[placeholder="••••••••••••••••"]')
     expect(apiKeyInput).not.toBeNull()
     expect(apiKeyInput.getAttribute('type')).toBe('password')
+  })
+
+  it('offers the full model list when the Model ID field is empty, and filters as you type', async () => {
+    api.get.mockResolvedValue({ models: [] })
+    api.post.mockImplementation((url) =>
+      url === '/models/available'
+        ? Promise.resolve({
+            ok: true,
+            models: [{ id: 'gpt-4o' }, { id: 'gpt-4o-mini' }, { id: 'o3' }],
+          })
+        : Promise.resolve({ ok: true })
+    )
+    wrapper = mount(ModelsPage)
+    await flushPromises()
+
+    await wrapper.find('.btn-save').trigger('click') // "Add model"
+    await flushPromises() // let /models/available resolve
+
+    const ssInput = document.querySelector('input.ss-input')
+    expect(ssInput).not.toBeNull()
+
+    // Empty field, focused → the whole catalogue is offered (no filtering).
+    ssInput.dispatchEvent(new Event('focus'))
+    await flushPromises()
+    expect(document.querySelectorAll('.ss-option').length).toBe(3)
+
+    // Typing narrows the same in-place list.
+    ssInput.value = 'mini'
+    ssInput.dispatchEvent(new Event('input'))
+    await flushPromises()
+    const filtered = document.querySelectorAll('.ss-option')
+    expect(filtered.length).toBe(1)
+    expect(filtered[0].textContent).toContain('gpt-4o-mini')
   })
 
   it('does not prefill an existing model\'s stored API key when editing', async () => {
