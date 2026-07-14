@@ -167,50 +167,6 @@ impl GenUsage {
     }
 }
 
-/// Request payload for the Imagen `:predict` endpoint. Imagen models (unlike the
-/// Gemini image models) are served only on `:predict` with this Vertex-style
-/// `instances`/`parameters` envelope — never `generateContent`.
-#[derive(Debug, Serialize)]
-struct ImagenReq {
-    instances: Vec<ImagenInstance>,
-    parameters: ImagenParams,
-}
-
-#[derive(Debug, Serialize)]
-struct ImagenInstance {
-    prompt: String,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ImagenParams {
-    sample_count: u32,
-}
-
-/// Response from `:predict`: one entry per requested sample, each carrying the
-/// generated image as base64. No token/usage metadata is returned.
-#[derive(Debug, Deserialize)]
-struct ImagenResp {
-    #[serde(default)]
-    predictions: Vec<ImagenPrediction>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ImagenPrediction {
-    #[serde(default)]
-    bytes_base64_encoded: Option<String>,
-    #[serde(default)]
-    mime_type: Option<String>,
-}
-
-/// Imagen models (`imagen-3.0-*`, `imagen-4.0-*`) are served only on the
-/// `:predict` endpoint; the Gemini image models (`gemini-*-image`) use
-/// `:generateContent`. Hitting the wrong endpoint returns 404 NOT_FOUND.
-fn is_imagen_model(model_id: &str) -> bool {
-    model_id.to_ascii_lowercase().contains("imagen")
-}
-
 static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
     reqwest::Client::builder()
         .user_agent("axon-agent/1.0")
@@ -853,12 +809,12 @@ fn extract_generated_image(
     })
 }
 
-/// Generate an image with a Google image model, dispatching on model family:
-/// Imagen models (`imagen-*`) use the `:predict` endpoint, while the Gemini
-/// image models (`gemini-*-image`) use `:generateContent` with an IMAGE
-/// response modality. `input_image` optionally supplies a reference image so
-/// the prompt can edit or restyle it (nano-banana-style editing) — supported
-/// only by the Gemini image models.
+/// Generate an image via `generateContent` with an IMAGE response modality.
+/// This targets Google's Gemini image models (e.g. gemini-2.5-flash-image),
+/// which is Google's standard image path — the older Imagen `:predict` models
+/// are deprecated and unavailable to new users, so they are intentionally not
+/// supported here. `input_image` optionally supplies a reference image so the
+/// prompt can edit or restyle it (nano-banana-style editing).
 pub async fn generate_image(
     model: &mut ModelRecord,
     prompt: &str,
@@ -872,90 +828,6 @@ pub async fn generate_image(
     let base = normalize_base_url_str(base);
     // Same legacy-shim guard as `call`: strip an OpenAI-compat "/openai" base.
     let base = base.strip_suffix("/openai").unwrap_or(&base).to_string();
-
-    if is_imagen_model(&model.model_id) {
-        return generate_image_imagen(model, &base, prompt, input_image).await;
-    }
-    generate_image_gemini(model, &base, prompt, input_image).await
-}
-
-/// Text-to-image via an Imagen model's `:predict` endpoint. Imagen has no
-/// reference-image editing on this API, so a supplied `input_image` is a hard
-/// error pointing at the Gemini image models instead.
-async fn generate_image_imagen(
-    model: &mut ModelRecord,
-    base: &str,
-    prompt: &str,
-    input_image: Option<&ContentBlock>,
-) -> anyhow::Result<GeneratedImage> {
-    use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-    if input_image.is_some() {
-        anyhow::bail!(
-            "model '{}' is an Imagen model, which is text-to-image only and cannot edit a \
-             reference image — leave Media empty, or use a Gemini image model \
-             (e.g. gemini-2.5-flash-image) for editing",
-            model.model_id
-        );
-    }
-    let url = format!("{}/models/{}:predict", base, model.model_id);
-    let payload = ImagenReq {
-        instances: vec![ImagenInstance {
-            prompt: prompt.to_string(),
-        }],
-        parameters: ImagenParams { sample_count: 1 },
-    };
-    let resp = HTTP_CLIENT
-        .post(&url)
-        .header("x-goog-api-key", &model.api_key)
-        .header("Content-Type", "application/json")
-        .json(&payload)
-        .send()
-        .await
-        .with_context(|| format!("HTTP to {}", url))?;
-
-    model.rl_snapshot = super::openai_compat::parse_rl_headers("google", resp.headers());
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let retry_after = super::openai_compat::retry_after_header(resp.headers());
-        let body = resp.text().await.unwrap_or_default();
-        if status.as_u16() == 429 {
-            let suffix = retry_after
-                .map(|ra| format!(" [retry-after:{}]", ra))
-                .unwrap_or_default();
-            anyhow::bail!("rate limit{}: {}", suffix, body);
-        }
-        anyhow::bail!("provider error {} at {}: {}", status, url, body);
-    }
-
-    let body: ImagenResp = resp.json().await.context("parse response")?;
-    let pred =
-        body.predictions.into_iter().next().context(
-            "Imagen returned no predictions (prompt possibly blocked by safety filters)",
-        )?;
-    let data = pred
-        .bytes_base64_encoded
-        .context("Imagen prediction contained no image bytes")?;
-    let bytes = BASE64
-        .decode(data.trim())
-        .map_err(|e| anyhow::anyhow!("image base64 decode failed: {}", e))?;
-    let mime_type = pred.mime_type.unwrap_or_else(|| "image/png".to_string());
-    Ok(GeneratedImage {
-        bytes,
-        mime_type,
-        text: String::new(),
-        usage: UsageInfo::default(),
-    })
-}
-
-/// Image generation via a Gemini image model's `generateContent` with an IMAGE
-/// response modality. `input_image` optionally supplies a reference image to
-/// edit or restyle.
-async fn generate_image_gemini(
-    model: &mut ModelRecord,
-    base: &str,
-    prompt: &str,
-    input_image: Option<&ContentBlock>,
-) -> anyhow::Result<GeneratedImage> {
     let url = format!("{}/models/{}:generateContent", base, model.model_id);
 
     let payload = build_image_gen_request(prompt, input_image);
@@ -1265,32 +1137,6 @@ mod tests {
         assert_eq!(img.bytes, b"fake-png-bytes");
         assert_eq!(img.mime_type, "image/png");
         assert_eq!(img.text, "Here is your fox.");
-    }
-
-    #[test]
-    fn is_imagen_model_routes_only_imagen_ids_to_predict() {
-        assert!(is_imagen_model("imagen-4.0-generate-001"));
-        assert!(is_imagen_model("imagen-4.0-ultra-generate-001"));
-        assert!(is_imagen_model("imagen-3.0-generate-002"));
-        assert!(is_imagen_model("IMAGEN-4.0-FAST-GENERATE-001"));
-        // Gemini image models stay on generateContent.
-        assert!(!is_imagen_model("gemini-2.5-flash-image"));
-        assert!(!is_imagen_model("gemini-3.1-flash-image"));
-        assert!(!is_imagen_model("gemini-2.5-flash"));
-    }
-
-    #[test]
-    fn imagen_response_decodes_base64_prediction() {
-        let body: ImagenResp = serde_json::from_str(
-            r#"{"predictions":[{"mimeType":"image/png","bytesBase64Encoded":"AAAA"}]}"#,
-        )
-        .unwrap();
-        assert_eq!(body.predictions.len(), 1);
-        assert_eq!(body.predictions[0].mime_type.as_deref(), Some("image/png"));
-        assert_eq!(
-            body.predictions[0].bytes_base64_encoded.as_deref(),
-            Some("AAAA")
-        );
     }
 
     #[test]
