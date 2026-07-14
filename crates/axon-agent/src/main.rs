@@ -333,10 +333,10 @@ async fn main() -> anyhow::Result<()> {
     let models = {
         let conn = db.get().context("get DB connection for model sync")?;
 
-        // TOML is the Source of Truth for the rows it names: they are upserted
-        // with origin='toml' and pruned when removed from the file. Rows with
-        // origin='runtime' (dashboard / Homeostasis node additions) are never
-        // touched by this sync, so they survive restarts.
+        // Insert-only seed: models.toml is the Source of Truth only on a first
+        // deploy (empty table). On redeploys the DB wins — existing rows are
+        // never overwritten and nothing is pruned; only names new to the file
+        // are added. So dashboard (ModelsPage) edits always survive a redeploy.
         match load_models("config/models.toml") {
             Ok(toml_models) => axon::config::sync_toml_models(&conn, toml_models),
             Err(e) => {

@@ -371,8 +371,9 @@ mod tests {
         assert!(col_exists(&conn, "workflow_runs", "parent_run_id"));
         // Embedding provenance: memory vectors are tagged with their model.
         assert!(col_exists(&conn, "long_term", "embedding_model"));
-        // Model provenance: 'toml' rows belong to models.toml, 'runtime' rows
-        // (dashboard / Homeostasis node) survive the boot sync's prune.
+        // Model provenance: 'toml' rows were seeded from models.toml, 'runtime'
+        // rows were added via the dashboard / Homeostasis node. The boot sync is
+        // insert-only, so existing rows of either origin survive a redeploy.
         assert!(col_exists(&conn, "models", "origin"));
         // Configurable embeddings provider settings are seeded.
         assert!(setting(&conn, "embedder.base_url").is_some());

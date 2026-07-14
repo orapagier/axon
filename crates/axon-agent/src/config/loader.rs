@@ -89,33 +89,27 @@ pub fn load_models(path: &str) -> anyhow::Result<Vec<ModelRecord>> {
     Ok(models)
 }
 
-/// Boot-time sync of `config/models.toml` into the `models` table. The TOML is
-/// the Source of Truth for the rows it names: each is upserted with
-/// origin='toml' (re-claiming the name even if it was first added at runtime),
-/// and toml-owned rows that vanished from the file are pruned. Rows with
-/// origin='runtime' (added via the dashboard or the Homeostasis workflow node)
-/// are never overwritten or pruned, so they survive restarts. Per-row failures
-/// are ignored, matching the historical boot behavior of never letting one bad
-/// row keep the agent from starting.
+/// Boot-time seed of `config/models.toml` into the `models` table. This is
+/// insert-only: models.toml is the Source of Truth only on a first deploy (the
+/// table is empty), and on later deploys it can add models new to the file. The
+/// DB is otherwise authoritative — a row that already exists (matched by name)
+/// is never overwritten, whatever its origin, so dashboard (ModelsPage) edits
+/// always survive a redeploy; and nothing is pruned, so a model dropped from the
+/// file stays in the DB. Remove or edit a shipped model in the dashboard, not
+/// the TOML. Per-row failures are ignored, matching the historical boot behavior
+/// of never letting one bad row keep the agent from starting.
 pub fn sync_toml_models(conn: &rusqlite::Connection, toml_models: Vec<ModelRecord>) {
-    let mut current_names = Vec::new();
     for m in toml_models {
-        current_names.push(m.name.clone());
+        // Insert-only seed. models.toml is the source of truth ONLY on a first
+        // deploy (empty `models` table); on redeploys the DB is authoritative.
+        // `INSERT OR IGNORE` means a name that already exists in the DB is left
+        // completely untouched — dashboard (ModelsPage) edits always win — while
+        // a name new to models.toml is added alongside the saved DB models. There
+        // is no prune: a model dropped from the file is NOT deleted from the DB.
+        // Edit or remove a shipped model in the dashboard, never via the TOML.
         let _ = conn.execute(
-            "INSERT INTO models (name, provider, model_id, api_key, base_url, timeout_secs, priority, max_tokens, enabled, role, thinking_mode, origin)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'toml')
-             ON CONFLICT(name) DO UPDATE SET
-                provider=excluded.provider,
-                model_id=excluded.model_id,
-                api_key=excluded.api_key,
-                base_url=excluded.base_url,
-                timeout_secs=excluded.timeout_secs,
-                priority=excluded.priority,
-                max_tokens=excluded.max_tokens,
-                enabled=excluded.enabled,
-                role=excluded.role,
-                thinking_mode=excluded.thinking_mode,
-                origin='toml'",
+            "INSERT OR IGNORE INTO models (name, provider, model_id, api_key, base_url, timeout_secs, priority, max_tokens, enabled, role, thinking_mode, origin)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'toml')",
             rusqlite::params![
                 m.name,
                 m.provider,
@@ -130,19 +124,6 @@ pub fn sync_toml_models(conn: &rusqlite::Connection, toml_models: Vec<ModelRecor
                 m.thinking_mode
             ],
         );
-    }
-
-    if !current_names.is_empty() {
-        let placeholders = current_names
-            .iter()
-            .map(|_| "?")
-            .collect::<Vec<_>>()
-            .join(",");
-        let query = format!(
-            "DELETE FROM models WHERE origin='toml' AND name NOT IN ({})",
-            placeholders
-        );
-        let _ = conn.execute(&query, rusqlite::params_from_iter(current_names));
     }
 }
 
@@ -375,20 +356,58 @@ mod tests {
     }
 
     #[test]
-    fn toml_rows_are_pruned_when_removed_from_file() {
+    fn toml_rows_survive_removal_from_file() {
         let conn = test_db();
         sync_toml_models(&conn, vec![toml_model("a"), toml_model("b")]);
         assert_eq!(origin_of(&conn, "b").as_deref(), Some("toml"));
 
-        // "b" was deleted from models.toml → next boot prunes it, keeps "a".
+        // "b" was deleted from models.toml → the DB is the source of truth now,
+        // so a redeploy must NOT prune it. Both "a" and "b" remain.
         sync_toml_models(&conn, vec![toml_model("a")]);
         assert_eq!(origin_of(&conn, "a").as_deref(), Some("toml"));
-        assert_eq!(origin_of(&conn, "b"), None);
+        assert_eq!(origin_of(&conn, "b").as_deref(), Some("toml"));
     }
 
     #[test]
-    fn thinking_mode_round_trips_through_boot_sync() {
-        // Regression: the sync upsert used to omit thinking_mode entirely, so
+    fn toml_never_overwrites_an_existing_db_row() {
+        let conn = test_db();
+        // First deploy seeds "m" from models.toml.
+        sync_toml_models(&conn, vec![toml_model("m")]);
+
+        // The operator edits it in the dashboard (priority 1 -> 5).
+        crate::dashboard::api::apply_update_model(&conn, "m", &json!({ "priority": 5 }))
+            .unwrap();
+
+        // A redeploy re-runs the sync with the original TOML (priority 1). The
+        // dashboard edit must win — the DB row is left completely untouched.
+        sync_toml_models(&conn, vec![toml_model("m")]);
+        let m = load_models_from_db(&conn)
+            .unwrap()
+            .into_iter()
+            .find(|m| m.name == "m")
+            .unwrap();
+        assert_eq!(m.priority, 5);
+    }
+
+    #[test]
+    fn toml_adds_new_models_on_redeploy() {
+        let conn = test_db();
+        sync_toml_models(&conn, vec![toml_model("a")]);
+
+        // A later deploy adds "b" to models.toml → it joins the saved DB models.
+        sync_toml_models(&conn, vec![toml_model("a"), toml_model("b")]);
+        let names: Vec<String> = load_models_from_db(&conn)
+            .unwrap()
+            .into_iter()
+            .map(|m| m.name)
+            .collect();
+        assert!(names.contains(&"a".to_string()));
+        assert!(names.contains(&"b".to_string()));
+    }
+
+    #[test]
+    fn thinking_mode_seeds_through_boot_sync() {
+        // Regression: the sync insert used to omit thinking_mode entirely, so
         // a `thinking_mode = "level"` set in models.toml never reached the DB
         // and (since the boot path loads models from the DB) never activated.
         let conn = test_db();
@@ -399,11 +418,12 @@ mod tests {
         let thinker = loaded.iter().find(|m| m.name == "thinker").unwrap();
         assert_eq!(thinker.thinking_mode.as_deref(), Some("level"));
 
-        // Clearing it in the TOML clears it in the DB on the next boot.
+        // A redeploy whose TOML omits thinking_mode does NOT clear the seeded
+        // value: the row already exists, so the insert-only sync leaves it be.
         sync_toml_models(&conn, vec![toml_model("thinker")]);
         let loaded = load_models_from_db(&conn).unwrap();
         let thinker = loaded.iter().find(|m| m.name == "thinker").unwrap();
-        assert_eq!(thinker.thinking_mode, None);
+        assert_eq!(thinker.thinking_mode.as_deref(), Some("level"));
     }
 
     #[test]
@@ -460,7 +480,7 @@ mod tests {
     }
 
     #[test]
-    fn toml_reclaims_a_name_first_added_at_runtime() {
+    fn toml_never_reclaims_a_name_first_added_at_runtime() {
         let conn = test_db();
         crate::dashboard::api::apply_add_model(
             &conn,
@@ -468,11 +488,12 @@ mod tests {
         )
         .unwrap();
 
-        // The operator later adds the same name to models.toml: the file wins
-        // ownership, so removing it from the file afterwards prunes the row.
+        // The operator later adds the same name to models.toml. The DB row is the
+        // source of truth, so the insert-only sync leaves it alone: origin stays
+        // 'runtime' and it survives even after the name is dropped from the file.
         sync_toml_models(&conn, vec![toml_model("shared")]);
-        assert_eq!(origin_of(&conn, "shared").as_deref(), Some("toml"));
+        assert_eq!(origin_of(&conn, "shared").as_deref(), Some("runtime"));
         sync_toml_models(&conn, vec![toml_model("other")]);
-        assert_eq!(origin_of(&conn, "shared"), None);
+        assert_eq!(origin_of(&conn, "shared").as_deref(), Some("runtime"));
     }
 }

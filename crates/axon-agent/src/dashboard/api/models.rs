@@ -142,8 +142,9 @@ pub(crate) fn apply_add_model(conn: &rusqlite::Connection, m: &Value) -> Result<
         return Err("Name and provider are required".into());
     }
 
-    // origin='runtime' marks the row as dashboard/node-owned so the boot-time
-    // models.toml sync never prunes or overwrites it.
+    // origin='runtime' marks the row as dashboard/node-owned (vs 'toml' seeds).
+    // The boot-time models.toml sync is insert-only and never overwrites an
+    // existing row, so either way this survives redeploys.
     conn.execute(
         "INSERT INTO models (name, provider, model_id, api_key, base_url, timeout_secs, priority, max_tokens, role, enabled, origin) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, 'runtime')",
         rusqlite::params![name, provider, model_id, crate::crypto::encrypt_key(raw_api_key), base_url, timeout_secs, priority, max_tokens, role],
