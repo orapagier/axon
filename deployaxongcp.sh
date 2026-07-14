@@ -179,7 +179,11 @@ if ! $SKIP_BUILD; then
     # own environment — it just ships or doesn't ship a ready-to-use Caddyfile.
     if [ -n "${AXON_DOMAIN:-}" ]; then
         echo "  🔒 Rendering Caddyfile for $AXON_DOMAIN..."
-        sed -e "s/{\$AXON_DOMAIN}/$AXON_DOMAIN/g" -e "s/{\$AXON_PORT}/${AXON_PORT:-3000}/g" \
+        # Caddy site addresses are bare hosts; strip any scheme (e.g. https://) a
+        # user left in .deploy.env so its slashes don't collide with the sed
+        # delimiter. Delimit with | (never valid in a host/port) for good measure.
+        DOMAIN="${AXON_DOMAIN#*://}"
+        sed -e "s|{\$AXON_DOMAIN}|$DOMAIN|g" -e "s|{\$AXON_PORT}|${AXON_PORT:-3000}|g" \
             "$ROOT_DIR/deploy/Caddyfile.example" > "$DIST_DIR/Caddyfile"
         echo "  ✅ Caddyfile rendered"
     else
