@@ -225,6 +225,58 @@ pub fn fix_all_day_end(start: &str, end: &str) -> Option<String> {
     Some(s.succ_opt()?.to_string())
 }
 
+/// English weekday name ("Monday" … "Sunday") for any datetime shape
+/// [`parse_flexible`] understands. Date-only and naive values use their own
+/// calendar day; zoned values use the day at their own offset — i.e. the
+/// wall-clock day the event falls on in its calendar's timezone. Returns
+/// `None` for input with no recognizable date.
+///
+/// Exists because LLMs get day-of-week arithmetic wrong: calendar responses
+/// carry only the date, so the agent used to derive (and mis-derive) the
+/// weekday itself. Compute it here and hand the model a value to echo.
+pub fn weekday_name(value: &str) -> Option<&'static str> {
+    use chrono::{Datelike, Weekday};
+    let wd = match parse_flexible(value)? {
+        FlexiDateTime::DateOnly(d) => d.weekday(),
+        FlexiDateTime::Naive(dt) => dt.weekday(),
+        FlexiDateTime::Zoned(dt) => dt.weekday(),
+    };
+    Some(match wd {
+        Weekday::Mon => "Monday",
+        Weekday::Tue => "Tuesday",
+        Weekday::Wed => "Wednesday",
+        Weekday::Thu => "Thursday",
+        Weekday::Fri => "Friday",
+        Weekday::Sat => "Saturday",
+        Weekday::Sun => "Sunday",
+    })
+}
+
+/// Annotate one calendar event time slot in place with a code-computed
+/// `weekday` field. Handles the Google shape (all-day `{"date": …}` or timed
+/// `{"dateTime": …}`) and the Microsoft Graph shape (`{"dateTime": …,
+/// "timeZone": …}`) alike. No-op for a slot that isn't an object, already has a
+/// `weekday`, or carries no recognizable date.
+pub fn annotate_slot_weekday(slot: &mut Value) {
+    let obj = match slot.as_object_mut() {
+        Some(o) => o,
+        None => return,
+    };
+    if obj.contains_key("weekday") {
+        return;
+    }
+    let src = obj
+        .get("dateTime")
+        .or_else(|| obj.get("date"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    if let Some(s) = src {
+        if let Some(w) = weekday_name(&s) {
+            obj.insert("weekday".to_string(), Value::String(w.to_string()));
+        }
+    }
+}
+
 /// Like [`parse_flexible`] but for raw JSON values: expressions that are a
 /// single bare reference preserve the source's JSON type, so a Unix timestamp
 /// arrives as a number, not a string.
@@ -445,6 +497,39 @@ mod tests {
         assert_eq!(parse_flexible("42"), None);
         assert_eq!(parse_flexible_value(&serde_json::json!(null)), None);
         assert_eq!(parse_flexible_value(&serde_json::json!([1, 2])), None);
+    }
+
+    #[test]
+    fn weekday_names_across_shapes() {
+        // The exact case from the bug report: dates were right, weekdays weren't.
+        assert_eq!(weekday_name("2026-07-17"), Some("Friday"));
+        assert_eq!(weekday_name("2026-07-18"), Some("Saturday"));
+        assert_eq!(weekday_name("2026-07-12"), Some("Sunday"));
+        // Google timed (offset-aware) and Microsoft Graph (naive + fraction).
+        assert_eq!(weekday_name("2026-07-17T17:30:00+08:00"), Some("Friday"));
+        assert_eq!(weekday_name("2026-07-17T17:30:00.0000000"), Some("Friday"));
+        assert_eq!(weekday_name("July 12, 2026"), Some("Sunday"));
+        assert_eq!(weekday_name("not a date"), None);
+    }
+
+    #[test]
+    fn annotate_slot_adds_weekday_for_both_provider_shapes() {
+        // Google all-day
+        let mut g = serde_json::json!({ "date": "2026-07-18" });
+        annotate_slot_weekday(&mut g);
+        assert_eq!(g["weekday"], serde_json::json!("Saturday"));
+        // Google timed
+        let mut gt = serde_json::json!({ "dateTime": "2026-07-17T17:30:00+08:00", "timeZone": "Asia/Manila" });
+        annotate_slot_weekday(&mut gt);
+        assert_eq!(gt["weekday"], serde_json::json!("Friday"));
+        // Microsoft Graph (naive wall clock + separate tz)
+        let mut m = serde_json::json!({ "dateTime": "2026-07-17T17:30:00.0000000", "timeZone": "Asia/Manila" });
+        annotate_slot_weekday(&mut m);
+        assert_eq!(m["weekday"], serde_json::json!("Friday"));
+        // Non-object and undated slots are left untouched
+        let mut n = serde_json::json!("banana");
+        annotate_slot_weekday(&mut n);
+        assert_eq!(n, serde_json::json!("banana"));
     }
 
     #[test]

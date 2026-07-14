@@ -1,7 +1,8 @@
 use crate::auth::access_token;
 use anyhow::Result;
 use axon_core::flexidate::{
-    default_tz, fix_all_day_end, normalize_rfc3339, parse_flexible, FlexiDateTime,
+    annotate_slot_weekday, default_tz, fix_all_day_end, normalize_rfc3339, parse_flexible,
+    FlexiDateTime,
 };
 use axon_core::{AppState, EnsureOk};
 use chrono::{SecondsFormat, Utc};
@@ -104,7 +105,7 @@ pub async fn list_events(
         params.push(("pageToken", pt.to_owned()));
     }
 
-    let resp: Value = state
+    let mut resp: Value = state
         .client
         .get(format!("{BASE}/calendars/{cal}/events"))
         .bearer_auth(&tok)
@@ -115,6 +116,11 @@ pub async fn list_events(
         .await?
         .json()
         .await?;
+    if let Some(items) = resp.get_mut("items").and_then(Value::as_array_mut) {
+        for ev in items {
+            annotate_event_weekdays(ev);
+        }
+    }
     Ok(resp)
 }
 
@@ -123,7 +129,7 @@ pub async fn get_event(state: &AppState, event_id: &str, calendar_id: &str) -> R
     let tok = access_token(state).await?;
     let cal = urlenc(calendar_id);
     let enc_event = urlenc(event_id);
-    let resp: Value = state
+    let mut resp: Value = state
         .client
         .get(format!("{BASE}/calendars/{cal}/events/{enc_event}"))
         .bearer_auth(&tok)
@@ -133,7 +139,19 @@ pub async fn get_event(state: &AppState, event_id: &str, calendar_id: &str) -> R
         .await?
         .json()
         .await?;
+    annotate_event_weekdays(&mut resp);
     Ok(resp)
+}
+
+/// Tag an event's `start` and `end` with a code-computed weekday name so the
+/// agent reports the day-of-week instead of deriving it (wrongly) from the date.
+fn annotate_event_weekdays(ev: &mut Value) {
+    if let Some(start) = ev.get_mut("start") {
+        annotate_slot_weekday(start);
+    }
+    if let Some(end) = ev.get_mut("end") {
+        annotate_slot_weekday(end);
+    }
 }
 
 /// Create a new event. `send_updates` controls attendee notification emails.

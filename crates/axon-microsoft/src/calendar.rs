@@ -2,7 +2,8 @@
 use crate::auth::access_token;
 use anyhow::{bail, Result};
 use axon_core::flexidate::{
-    date_only, default_tz, fix_all_day_end, normalize_rfc3339, parse_flexible, FlexiDateTime,
+    annotate_slot_weekday, date_only, default_tz, fix_all_day_end, normalize_rfc3339,
+    parse_flexible, FlexiDateTime,
 };
 use axon_core::{AppState, EnsureOk};
 use chrono::Utc;
@@ -126,7 +127,7 @@ pub async fn list_events(
         )
     };
 
-    let resp: Value = state
+    let mut resp: Value = state
         .client
         .get(&base)
         .bearer_auth(&tok)
@@ -137,13 +138,18 @@ pub async fn list_events(
         .await?
         .json()
         .await?;
+    if let Some(items) = resp.get_mut("value").and_then(Value::as_array_mut) {
+        for ev in items {
+            annotate_event_weekdays(ev);
+        }
+    }
     Ok(resp)
 }
 
 /// Fetch a single event by ID, including the full body and online meeting details.
 pub async fn get_event(state: &AppState, event_id: &str) -> Result<Value> {
     let tok = access_token(state).await?;
-    let resp: Value = state
+    let mut resp: Value = state
         .client
         .get(format!("{BASE}/me/events/{}", urlenc(event_id)))
         .bearer_auth(&tok)
@@ -158,7 +164,19 @@ pub async fn get_event(state: &AppState, event_id: &str) -> Result<Value> {
         .await?
         .json()
         .await?;
+    annotate_event_weekdays(&mut resp);
     Ok(resp)
+}
+
+/// Tag an event's `start` and `end` with a code-computed weekday name so the
+/// agent reports the day-of-week instead of deriving it (wrongly) from the date.
+fn annotate_event_weekdays(ev: &mut Value) {
+    if let Some(start) = ev.get_mut("start") {
+        annotate_slot_weekday(start);
+    }
+    if let Some(end) = ev.get_mut("end") {
+        annotate_slot_weekday(end);
+    }
 }
 
 /// Create a new event.
