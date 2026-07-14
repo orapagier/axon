@@ -84,6 +84,7 @@ const pendingReplace = ref(null) // node being replaced via right-click → Repl
 const nodePickerRef = ref(null)
 const nodeSearchInputRef = ref(null)
 const historyRef = ref(null)
+const versionsRef = ref(null)
 const wfSettingsRef = ref(null)
 const workflowMenuRef = ref(null)
 const workflowMenuSearchRef = ref(null)
@@ -2234,6 +2235,15 @@ function handleClickOutside(e) {
     showHistory.value = false
   }
 
+  // Handle Version History closure (mirror of the run-history panel above)
+  if (showVersions.value && versionsRef.value && !versionsRef.value.contains(e.target)) {
+    // The "View versions" button lives inside the settings popover; clicking there
+    // must not race the panel closed (it would reopen and flicker).
+    if (wfSettingsRef.value && wfSettingsRef.value.contains(e.target)) return
+
+    showVersions.value = false
+  }
+
   // If clicking inside the context menu itself, don't close it (let the item click handler win)
   if (contextMenuVisible.value && contextMenuRef.value && contextMenuRef.value.contains(e.target)) {
     return
@@ -2833,6 +2843,7 @@ onUnmounted(() => {
           <Transition name="slide-rtl">
             <div
               v-if="showVersions"
+              ref="versionsRef"
               class="side-panel history-panel"
             >
               <div class="panel-header">
