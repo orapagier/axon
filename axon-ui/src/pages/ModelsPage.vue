@@ -5,6 +5,7 @@ import { toast } from '../lib/toast.js'
 import { confirmDialog } from '../lib/confirm.js'
 import { fmtTokens, timeAgo } from '../lib/utils.js'
 import Modal from '../components/Modal.vue'
+import SearchableSelect from '../components/SearchableSelect.vue'
 import { useHeaderSearch } from '../lib/headerSearch.js'
 
 const models = ref([])
@@ -51,6 +52,16 @@ const PROVIDERS = [
 // endpoint. Free text always overrides — this only offers suggestions.
 const availableModels = ref([])
 const modelsLoading = ref(false)
+
+// Shape the prefetched models for SearchableSelect: a compact, searchable,
+// in-place dropdown that closes on pick and lets any ID be typed as an override.
+const modelIdOptions = computed(() =>
+  availableModels.value.map((o) => ({
+    value: o.id,
+    name: o.id,
+    description: o.label && o.label !== o.id ? o.label : '',
+  }))
+)
 let modelsFetchSeq = 0
 let modelsFetchTimer = null
 
@@ -431,21 +442,12 @@ onMounted(load)
             class="field-note"
           >{{ availableModels.length }} available</span>
         </label>
-        <input
+        <SearchableSelect
           v-model="form.model_id"
-          type="text"
-          list="model-id-options"
-          autocomplete="off"
+          :options="modelIdOptions"
+          :allow-custom-value="true"
           placeholder="e.g. gpt-4o"
-        >
-        <datalist id="model-id-options">
-          <option
-            v-for="opt in availableModels"
-            :key="opt.id"
-            :value="opt.id"
-            :label="opt.label && opt.label !== opt.id ? opt.label : undefined"
-          />
-        </datalist>
+        />
         <p class="field-hint">
           Pick from the provider's available models, or type any ID to override.
         </p>
