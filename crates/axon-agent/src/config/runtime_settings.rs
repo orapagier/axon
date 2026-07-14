@@ -177,6 +177,25 @@ RESPONSE RULES:
     pub fn backup_retention_days(&self) -> i64 {
         self.get_int("backup.retention_days", 14)
     }
+    // Off-instance backup of workflow definitions to Google Drive
+    // (see `crate::maintenance::run_workflow_drive_backup`). Opt-in — needs
+    // Google connected on the Services page.
+    pub fn workflow_backup_enabled(&self) -> bool {
+        self.get_bool("workflow_backup.enabled", false)
+    }
+    pub fn workflow_backup_interval_hours(&self) -> i64 {
+        self.get_int("workflow_backup.interval_hours", 24).max(1)
+    }
+    /// Destination Drive folder id. Empty = Drive root. A dedicated folder is
+    /// recommended: Drive-side pruning of old backups only runs when this is set
+    /// (never in the root).
+    pub fn workflow_backup_drive_folder_id(&self) -> String {
+        self.get_str("workflow_backup.drive_folder_id", "")
+    }
+    /// How many backup files to keep, locally and (when a folder is set) in Drive.
+    pub fn workflow_backup_retention(&self) -> i64 {
+        self.get_int("workflow_backup.retention", 7).max(1)
+    }
     /// Max version snapshots kept per workflow (B1). Labeled snapshots are kept
     /// beyond this cap; only unlabeled ones are pruned oldest-first.
     pub fn retention_workflow_versions_per_workflow(&self) -> i64 {

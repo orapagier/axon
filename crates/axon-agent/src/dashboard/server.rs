@@ -204,6 +204,10 @@ pub fn build_router(state: AppState) -> Router {
             "/api/workflows/import",
             axum::routing::post(api::import_workflow),
         )
+        .route(
+            "/api/workflows/backup",
+            axum::routing::post(api::backup_workflows_to_drive),
+        )
         .route("/api/workflows/:id/export", get(api::export_workflow))
         .route(
             "/api/workflows/:id",
@@ -400,6 +404,7 @@ mod route_conflict_tests {
         let _r: Router<()> = Router::new()
             .route("/api/workflows", get(|| async {}).post(|| async {}))
             .route("/api/workflows/import", post(|| async {}))
+            .route("/api/workflows/backup", post(|| async {}))
             .route("/api/workflows/:id/export", get(|| async {}))
             .route("/api/workflows/:id", delete(|| async {}))
             .route("/api/workflows/:id/run", post(|| async {}))

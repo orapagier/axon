@@ -577,6 +577,30 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    // Off-instance workflow backups to Google Drive: exports every workflow
+    // definition as a portable JSON bundle and pushes it off the box. Opt-in
+    // (workflow_backup.enabled) since it needs Google connected. First tick is
+    // immediate (a quick confirmation when enabled), then on the configured
+    // interval. Same interval-tick pattern as the local backup loop above.
+    let wf_backup_state = state.clone();
+    tokio::spawn(async move {
+        let period = std::time::Duration::from_secs(
+            wf_backup_state.settings.workflow_backup_interval_hours() as u64 * 3600,
+        );
+        let mut interval = tokio::time::interval(period);
+        loop {
+            interval.tick().await;
+            if !wf_backup_state.settings.workflow_backup_enabled() {
+                tracing::debug!("Workflow Drive backup disabled (workflow_backup.enabled=false)");
+                continue;
+            }
+            match axon::maintenance::run_workflow_drive_backup(&wf_backup_state).await {
+                Ok(stats) => tracing::info!("Workflow Drive backup: {}", stats),
+                Err(e) => tracing::warn!("Workflow Drive backup failed: {:#}", e),
+            }
+        }
+    });
+
     // Provider model-list prefetch: populate the ModelsPage "Model ID" dropdown
     // from each provider's live catalogue. Runs once ~shortly after boot (so the
     // dropdown works immediately), then daily, aligned to the next UTC midnight.

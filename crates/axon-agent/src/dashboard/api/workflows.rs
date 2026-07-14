@@ -536,6 +536,55 @@ pub async fn export_workflow(State(state): State<AppState>, Path(id): Path<Strin
     }
 }
 
+/// Every workflow, each as a full `import_workflow`-compatible bundle, wrapped in
+/// one restorable envelope. Used by the scheduled Google-Drive backup
+/// (`crate::maintenance::run_workflow_drive_backup`) and the manual endpoint.
+/// Each element of `workflows` can be POSTed back to `/api/workflows/import`
+/// as-is. Secrets never leave the box — bundles carry credential *references*,
+/// not values (see `build_workflow_bundle`).
+pub(crate) fn build_all_workflows_backup(conn: &rusqlite::Connection) -> Value {
+    let ids: Vec<String> = conn
+        .prepare(
+            "SELECT id FROM workflows ORDER BY COALESCE(updated_at, created_at) DESC, created_at DESC",
+        )
+        .and_then(|mut stmt| {
+            stmt.query_map([], |r| r.get::<_, String>(0))
+                .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        })
+        .unwrap_or_default();
+
+    let bundles: Vec<Value> = ids
+        .iter()
+        .filter_map(|id| build_workflow_bundle(conn, id))
+        .collect();
+
+    json!({
+        "axon_backup_format": 1,
+        "backed_up_at": chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+        "count": bundles.len(),
+        "workflows": bundles,
+    })
+}
+
+/// Manually trigger an off-instance backup of all workflow definitions to Google
+/// Drive (POST /api/workflows/backup). Runs regardless of the `workflow_backup.
+/// enabled` schedule flag — a manual click is always an explicit request. Needs
+/// Google connected; returns the same stats the scheduled sweep logs.
+pub async fn backup_workflows_to_drive(State(state): State<AppState>) -> Json<Value> {
+    match crate::maintenance::run_workflow_drive_backup(&state).await {
+        Ok(stats) => Json(json!({
+            "ok": true,
+            "workflows": stats.workflows,
+            "file_name": stats.file_name,
+            "drive_file_id": stats.drive_file_id,
+            "web_view_link": stats.web_view_link,
+            "pruned_local": stats.pruned_local,
+            "pruned_drive": stats.pruned_drive,
+        })),
+        Err(e) => Json(json!({ "ok": false, "error": format!("{e:#}") })),
+    }
+}
+
 /// B1: snapshot the CURRENT persisted state of a workflow as a new version row.
 /// Called at the top of `upsert_workflow` BEFORE the incoming edit overwrites the
 /// live rows, so versions hold the chain of prior states (single-operator undo).

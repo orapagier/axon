@@ -367,6 +367,214 @@ pub async fn run_backup(
     Ok(stats)
 }
 
+// ── Off-instance workflow backups to Google Drive ────────────────────────────
+//
+// Unlike `run_backup` (raw axon.db/crm.db snapshots that live on the same disk
+// as the data), this exports every workflow *definition* as a portable JSON
+// bundle and pushes it off the box to Google Drive — real disaster recovery for
+// the thing operators build by hand. Bundles carry credential *references*, not
+// secret values, so the file is safe to store in Drive. Each element restores
+// via POST /api/workflows/import.
+//
+// Opt-in (`workflow_backup.enabled`, default false) since it needs Google
+// connected. Scheduled from `main.rs`; also callable on demand via
+// POST /api/workflows/backup.
+
+#[derive(Default, Debug, serde::Serialize)]
+pub struct WorkflowBackupStats {
+    pub workflows: usize,
+    pub file_name: String,
+    pub drive_file_id: Option<String>,
+    pub web_view_link: Option<String>,
+    pub pruned_local: usize,
+    pub pruned_drive: usize,
+}
+
+impl fmt::Display for WorkflowBackupStats {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} workflow(s) → Drive as {} (file_id={}, pruned_local={}, pruned_drive={})",
+            self.workflows,
+            self.file_name,
+            self.drive_file_id.as_deref().unwrap_or("?"),
+            self.pruned_local,
+            self.pruned_drive,
+        )
+    }
+}
+
+/// Export every workflow to one restorable JSON envelope, write it under
+/// `data_files_dir()`, upload it to Google Drive via the existing
+/// `gdrive_upload_binary` tool (which handles OAuth/token refresh), then prune
+/// old copies. Runs unconditionally when called — the `enabled` gate lives in
+/// the scheduler loop, so the manual endpoint always works.
+pub async fn run_workflow_drive_backup(
+    state: &crate::state::AppState,
+) -> anyhow::Result<WorkflowBackupStats> {
+    use anyhow::Context;
+    let mut stats = WorkflowBackupStats::default();
+
+    // ── 1. Build the combined bundle (blocking SQLite → off the async runtime) ─
+    let db = Arc::clone(&state.db);
+    let (bundle, count) =
+        tokio::task::spawn_blocking(move || -> anyhow::Result<(serde_json::Value, usize)> {
+            let conn = db.get()?;
+            let bundle = crate::dashboard::api::build_all_workflows_backup(&conn);
+            let count = bundle.get("count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            Ok((bundle, count))
+        })
+        .await??;
+
+    if count == 0 {
+        anyhow::bail!("No workflows to back up");
+    }
+    stats.workflows = count;
+
+    // ── 2. Write to a local file (also a secondary on-instance copy) ──────────
+    let dir = axon_core::data_files_dir();
+    std::fs::create_dir_all(&dir)?;
+    let file_name = format!(
+        "axon-workflows-backup-{}.json",
+        chrono::Utc::now().format("%Y%m%d-%H%M%S")
+    );
+    let path = dir.join(&file_name);
+    std::fs::write(&path, serde_json::to_vec_pretty(&bundle)?)?;
+    chmod_owner_only(&path); // bundles hold no secrets, but keep parity with DB backups
+    stats.file_name = file_name.clone();
+
+    // ── 3. Upload to Google Drive (reuses the agent's OAuth via the tool) ─────
+    let folder_id = state.settings.workflow_backup_drive_folder_id();
+    let mut upload_args = serde_json::json!({
+        "local_path": path.to_string_lossy(),
+        "name": file_name,
+        "mime_type": "application/json",
+    });
+    if !folder_id.is_empty() {
+        upload_args["folder_id"] = serde_json::json!(folder_id);
+    }
+    let uploaded = state
+        .tools
+        .run("gdrive_upload_binary", upload_args)
+        .await
+        .context("gdrive_upload_binary failed — is Google connected on the Services page?")?;
+    stats.drive_file_id = uploaded
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    stats.web_view_link = uploaded
+        .get("webViewLink")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+
+    // ── 4. Prune local copies to the retention count (newest kept) ────────────
+    let retention = state.settings.workflow_backup_retention();
+    let prune_dir = dir.clone();
+    stats.pruned_local =
+        tokio::task::spawn_blocking(move || prune_local_workflow_backups(&prune_dir, retention))
+            .await
+            .unwrap_or(0);
+
+    // ── 5. Best-effort prune of old Drive copies — ONLY inside a configured
+    //    folder so we never enumerate/delete in the user's Drive root. The
+    //    gdrive_list tool is capped at 10 results, so this keeps a small rolling
+    //    window; deeper history is left untouched. ─────────────────────────────
+    if !folder_id.is_empty() {
+        stats.pruned_drive = prune_drive_workflow_backups(state, &folder_id, retention)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!("Workflow Drive backup: prune skipped: {:#}", e);
+                0
+            });
+    }
+
+    Ok(stats)
+}
+
+/// Delete local `axon-workflows-backup-*.json` files beyond the newest
+/// `retention`. Timestamped names sort chronologically, so a lexical sort is a
+/// chronological sort. Returns the number removed.
+fn prune_local_workflow_backups(dir: &Path, retention: i64) -> usize {
+    let keep = retention.max(1) as usize;
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut names: Vec<String> = entries
+        .flatten()
+        .filter_map(|e| {
+            let n = e.file_name().to_string_lossy().to_string();
+            (n.starts_with("axon-workflows-backup-") && n.ends_with(".json")).then_some(n)
+        })
+        .collect();
+    if names.len() <= keep {
+        return 0;
+    }
+    names.sort(); // oldest → newest
+    let mut pruned = 0;
+    for name in &names[..names.len() - keep] {
+        if std::fs::remove_file(dir.join(name)).is_ok() {
+            pruned += 1;
+        }
+    }
+    pruned
+}
+
+/// Best-effort removal of old backup files inside `folder_id`. Lists the folder
+/// (capped at 10, newest-first), keeps `retention`, deletes the rest — scoped by
+/// the `axon-workflows-backup-*.json` name so nothing else in the folder is
+/// touched. Uses the same Drive tools the agent uses.
+async fn prune_drive_workflow_backups(
+    state: &crate::state::AppState,
+    folder_id: &str,
+    retention: i64,
+) -> anyhow::Result<usize> {
+    let keep = retention.max(1) as usize;
+    let listed = state
+        .tools
+        .run(
+            "gdrive_list",
+            serde_json::json!({
+                "max_results": 10,
+                "folder_id": folder_id,
+                "mime_type": "application/json",
+            }),
+        )
+        .await?;
+
+    let mut kept = 0usize;
+    let mut to_delete: Vec<String> = Vec::new();
+    for f in listed
+        .get("files")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+    {
+        let name = f.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        if !(name.starts_with("axon-workflows-backup-") && name.ends_with(".json")) {
+            continue;
+        }
+        kept += 1;
+        if kept > keep {
+            if let Some(id) = f.get("id").and_then(|v| v.as_str()) {
+                to_delete.push(id.to_string());
+            }
+        }
+    }
+
+    let mut pruned = 0;
+    for id in to_delete {
+        if state
+            .tools
+            .run("gdrive_delete", serde_json::json!({ "file_id": id }))
+            .await
+            .is_ok()
+        {
+            pruned += 1;
+        }
+    }
+    Ok(pruned)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
