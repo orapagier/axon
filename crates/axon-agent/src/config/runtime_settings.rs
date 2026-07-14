@@ -293,6 +293,11 @@ RESPONSE RULES:
         }
         let key = &input[2..input.len() - 1];
         if let Some(val) = self.get_raw(key) {
+            // Provider keys are seeded into settings ENCRYPTED (v2:) so the DB is
+            // their at-rest owner, like model keys — decrypt on read. decrypt_key
+            // is a safe no-op on genuine plaintext, so any non-secret placeholder
+            // setting passes through unchanged.
+            let val = crate::crypto::decrypt_key(&val);
             if !val.is_empty() {
                 return val;
             }
@@ -311,5 +316,78 @@ RESPONSE RULES:
                 input.to_string()
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use r2d2_sqlite::SqliteConnectionManager;
+
+    fn test_settings() -> RuntimeSettings {
+        // max_size(1) keeps a single connection so the in-memory DB persists
+        // across get() calls within one test.
+        let pool = Pool::builder()
+            .max_size(1)
+            .build(SqliteConnectionManager::memory())
+            .unwrap();
+        pool.get()
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT, value_type TEXT, category TEXT, description TEXT);",
+            )
+            .unwrap();
+        RuntimeSettings { db: Arc::new(pool) }
+    }
+
+    fn set_raw(s: &RuntimeSettings, key: &str, value: &str) {
+        s.db.get()
+            .unwrap()
+            .execute(
+                "INSERT OR REPLACE INTO settings (key, value, value_type, category) VALUES (?1, ?2, 'string', 'providers')",
+                rusqlite::params![key, value],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn resolve_decrypts_an_encrypted_db_value() {
+        let s = test_settings();
+        set_raw(&s, "KEY_DEC", &crate::crypto::encrypt_key("sk-secret"));
+        assert_eq!(s.resolve("${KEY_DEC}"), "sk-secret");
+    }
+
+    #[test]
+    fn resolve_prefers_db_over_env() {
+        // The DB owns the key, so a divergent .env value is ignored — this is
+        // what makes a stale/changed .env harmless on redeploy.
+        let s = test_settings();
+        set_raw(&s, "KEY_PREF", &crate::crypto::encrypt_key("db-key"));
+        std::env::set_var("KEY_PREF", "env-key");
+        assert_eq!(s.resolve("${KEY_PREF}"), "db-key");
+        std::env::remove_var("KEY_PREF");
+    }
+
+    #[test]
+    fn resolve_falls_back_to_env_when_db_empty() {
+        let s = test_settings();
+        set_raw(&s, "KEY_FALL", "");
+        std::env::set_var("KEY_FALL", "env-val");
+        assert_eq!(s.resolve("${KEY_FALL}"), "env-val");
+        std::env::remove_var("KEY_FALL");
+    }
+
+    #[test]
+    fn resolve_passes_through_a_plaintext_db_value() {
+        // A legacy/plaintext settings value must survive the decrypt_key call.
+        let s = test_settings();
+        set_raw(&s, "KEY_PLAIN", "just-plain");
+        assert_eq!(s.resolve("${KEY_PLAIN}"), "just-plain");
+    }
+
+    #[test]
+    fn resolve_returns_a_literal_unchanged() {
+        let s = test_settings();
+        assert_eq!(s.resolve("literal-key"), "literal-key");
     }
 }

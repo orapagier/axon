@@ -348,16 +348,35 @@ async fn main() -> anyhow::Result<()> {
     };
     tracing::info!("Loaded {} models", models.len());
 
-    // Sync placeholders to DB settings so they appear in the dashboard
+    // Persist provider API keys into the DB so it becomes their source of truth,
+    // exactly like the insert-only models.toml sync. On the first boot that sees
+    // a `${VAR}` model, copy the key from the environment (.env) into settings —
+    // ENCRYPTED at rest, like model keys. Once a value is stored, resolve()
+    // prefers it over the environment, so a later redeploy that ships a changed
+    // or stale .env can never clobber a working key. Only a VAR the DB doesn't
+    // own yet (missing/empty row) is seeded from .env, and a VAR dropped from
+    // .env keeps its stored value. Rotate keys in the dashboard, not .env.
     {
         let conn = db.get().context("sync settings")?;
         for m in &models {
             if m.api_key.starts_with("${") && m.api_key.ends_with("}") {
                 let key = &m.api_key[2..m.api_key.len() - 1];
+                // Track the key so it's a known setting (value may still be empty).
                 let _ = conn.execute(
                     "INSERT OR IGNORE INTO settings (key, value, value_type, category, description) VALUES (?1, '', 'string', 'providers', ?2)",
                     rusqlite::params![key, format!("API Key for {}", m.name)],
                 );
+                // Seed from .env only while the DB has no value yet — never
+                // overwrite one already stored (that's the DB winning on redeploy).
+                if let Ok(env_val) = std::env::var(key) {
+                    let env_val = env_val.trim();
+                    if !env_val.is_empty() {
+                        let _ = conn.execute(
+                            "UPDATE settings SET value=?2 WHERE key=?1 AND (value IS NULL OR value='')",
+                            rusqlite::params![key, axon::crypto::encrypt_key(env_val)],
+                        );
+                    }
+                }
             }
         }
     }
