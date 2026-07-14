@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { get, post, put, del } from '../lib/api.js'
 import { toast } from '../lib/toast.js'
 import { confirmDialog } from '../lib/confirm.js'
@@ -46,6 +46,51 @@ const PROVIDERS = [
   { value: 'ollama', label: 'Ollama' },
 ]
 
+// Live Model-ID dropdown: options are the provider's models, prefetched daily
+// server-side into a cache and read (never a live provider call) via this
+// endpoint. Free text always overrides — this only offers suggestions.
+const availableModels = ref([])
+const modelsLoading = ref(false)
+let modelsFetchSeq = 0
+let modelsFetchTimer = null
+
+async function fetchAvailableModels() {
+  const provider = form.value.provider
+  if (!provider) {
+    availableModels.value = []
+    return
+  }
+  const seq = ++modelsFetchSeq
+  modelsLoading.value = true
+  try {
+    const r = await post('/models/available', {
+      provider,
+      base_url: form.value.base_url || '',
+      // On edit, let the backend reuse the model's own base_url grouping.
+      name: editing.value ? form.value.name : undefined,
+    })
+    if (seq !== modelsFetchSeq) return // superseded by a newer request
+    availableModels.value = r && r.ok && Array.isArray(r.models) ? r.models : []
+  } catch {
+    if (seq === modelsFetchSeq) availableModels.value = []
+  } finally {
+    if (seq === modelsFetchSeq) modelsLoading.value = false
+  }
+}
+
+function scheduleFetchModels() {
+  clearTimeout(modelsFetchTimer)
+  modelsFetchTimer = setTimeout(fetchAvailableModels, 400)
+}
+
+// Refetch when the provider or base URL changes while the modal is open.
+watch(
+  () => [form.value.provider, form.value.base_url],
+  () => {
+    if (modalOpen.value) scheduleFetchModels()
+  }
+)
+
 async function load() {
   const d = await get('/models')
   models.value = d.models || []
@@ -63,7 +108,9 @@ function showAdd() {
     role: '',
     max_tokens: 4096,
   }
+  availableModels.value = []
   modalOpen.value = true
+  fetchAvailableModels()
 }
 
 function showEdit(m) {
@@ -78,7 +125,9 @@ function showEdit(m) {
     role: m.role || '',
     max_tokens: m.max_tokens || 4096,
   }
+  availableModels.value = []
   modalOpen.value = true
+  fetchAvailableModels()
 }
 
 async function save() {
@@ -371,12 +420,35 @@ onMounted(load)
       </div>
 
       <div class="form-field">
-        <label>Model ID</label>
+        <label>
+          Model ID
+          <span
+            v-if="modelsLoading"
+            class="field-note"
+          >loading…</span>
+          <span
+            v-else-if="availableModels.length"
+            class="field-note"
+          >{{ availableModels.length }} available</span>
+        </label>
         <input
           v-model="form.model_id"
           type="text"
+          list="model-id-options"
+          autocomplete="off"
           placeholder="e.g. gpt-4o"
         >
+        <datalist id="model-id-options">
+          <option
+            v-for="opt in availableModels"
+            :key="opt.id"
+            :value="opt.id"
+            :label="opt.label && opt.label !== opt.id ? opt.label : undefined"
+          />
+        </datalist>
+        <p class="field-hint">
+          Pick from the provider's available models, or type any ID to override.
+        </p>
       </div>
 
       <div class="form-field">
@@ -621,6 +693,23 @@ onMounted(load)
 .form-field input,
 .form-field select {
   margin-bottom: 0;
+}
+
+/* Model-ID dropdown affordances: a count/loading note by the label and a quiet
+   hint that manual entry always wins. */
+.field-note {
+  margin-left: 8px;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.field-hint {
+  margin: 5px 0 0;
+  font-size: 0.68rem;
+  color: var(--muted);
 }
 
 .modal-actions {

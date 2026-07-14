@@ -184,6 +184,108 @@ pub fn load_models_from_db(conn: &rusqlite::Connection) -> anyhow::Result<Vec<Mo
     Ok(res)
 }
 
+/// Write-through the dashboard's chosen `model_id` into `config/models.toml`
+/// so the file (the boot Source of Truth) stays in step with the DB. This is a
+/// surgical, line-level edit of just the `model_id = "…"` line inside the
+/// matching `[[models]]` block — every comment, other key, and the rest of the
+/// file are preserved (no full re-serialization). Secrets are never touched.
+///
+/// Returns `Ok(true)` if a block named `name` was found and updated, `Ok(false)`
+/// if no such block exists in the file (e.g. a runtime/dashboard-only model that
+/// was never written to models.toml — it lives in the DB alone and needs no file
+/// edit). Any I/O error is returned so the caller can log it without failing the
+/// request.
+pub fn set_model_id_in_toml(path: &str, name: &str, new_model_id: &str) -> anyhow::Result<bool> {
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("read {} for model_id write-through", path))?;
+    let (new_content, changed) = rewrite_model_id(&content, name, new_model_id);
+    if changed {
+        std::fs::write(path, new_content)
+            .with_context(|| format!("write {} after model_id update", path))?;
+    }
+    Ok(changed)
+}
+
+/// Pure string transform behind [`set_model_id_in_toml`] (kept separate so it's
+/// unit-testable without touching the filesystem). Preserves the file's original
+/// newline style and the alignment left of `=`.
+fn rewrite_model_id(content: &str, name: &str, new_model_id: &str) -> (String, bool) {
+    let newline = if content.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let mut lines: Vec<String> = content
+        .split('\n')
+        .map(|l| l.strip_suffix('\r').unwrap_or(l).to_string())
+        .collect();
+
+    let is_header = |l: &str| l.trim_start().starts_with('[');
+    let escaped = new_model_id.replace('\\', "\\\\").replace('"', "\\\"");
+
+    let n = lines.len();
+    let mut i = 0;
+    while i < n {
+        if lines[i].trim() != "[[models]]" {
+            i += 1;
+            continue;
+        }
+        // Block body spans from just after the header to the next header/EOF.
+        let start = i + 1;
+        let mut end = start;
+        while end < n && !is_header(&lines[end]) {
+            end += 1;
+        }
+        let block_name = (start..end).find_map(|j| toml_string_value(&lines[j], "name"));
+        if block_name.as_deref() == Some(name) {
+            let model_id_line =
+                (start..end).find(|&j| toml_key(&lines[j]).as_deref() == Some("model_id"));
+            match model_id_line {
+                // Swap only the value, keeping the original left-of-`=` text
+                // (indentation + alignment spaces) intact.
+                Some(j) => {
+                    if let Some(eq) = lines[j].find('=') {
+                        lines[j] = format!("{} \"{}\"", &lines[j][..=eq], escaped);
+                    }
+                }
+                // Block has no model_id line (it defaulted to `name`): insert one
+                // right after the header, matching the file's usual key style.
+                None => lines.insert(start, format!("model_id   = \"{}\"", escaped)),
+            }
+            return (lines.join(newline), true);
+        }
+        i = end;
+    }
+    (content.to_string(), false)
+}
+
+/// The bare key on a TOML `key = value` line, or `None` for blank/comment lines
+/// or anything that isn't a simple `key = …` assignment.
+fn toml_key(line: &str) -> Option<String> {
+    let t = line.trim();
+    if t.is_empty() || t.starts_with('#') || t.starts_with('[') {
+        return None;
+    }
+    let (key, _) = t.split_once('=')?;
+    let key = key.trim();
+    if key.is_empty() || key.contains(char::is_whitespace) {
+        return None;
+    }
+    Some(key.to_string())
+}
+
+/// The string value of `line` when it's `key = "value"`, else `None`.
+fn toml_string_value(line: &str, key: &str) -> Option<String> {
+    if toml_key(line).as_deref() != Some(key) {
+        return None;
+    }
+    let (_, rhs) = line.split_once('=')?;
+    let rhs = rhs.trim();
+    let inner = rhs.strip_prefix('"')?;
+    let end = inner.find('"')?;
+    Some(inner[..end].to_string())
+}
+
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub port: u16,
@@ -302,6 +404,59 @@ mod tests {
         let loaded = load_models_from_db(&conn).unwrap();
         let thinker = loaded.iter().find(|m| m.name == "thinker").unwrap();
         assert_eq!(thinker.thinking_mode, None);
+    }
+
+    #[test]
+    fn rewrite_model_id_replaces_only_target_block_and_keeps_comments() {
+        let toml = "# top comment\n\
+                    [settings]\n\n\
+                    [[models]]\n\
+                    name       = \"gemini-a\"\n\
+                    provider   = \"google\"\n\
+                    model_id   = \"gemini-3.1-flash-lite\"  # inline\n\
+                    priority   = 1\n\n\
+                    [[models]]\n\
+                    name       = \"gemini-b\"\n\
+                    provider   = \"google\"\n\
+                    model_id   = \"gemini-3.1-flash-lite\"\n";
+        let (out, changed) = super::rewrite_model_id(toml, "gemini-b", "gemini-3.1-pro");
+        assert!(changed);
+        // Target block updated…
+        assert!(out.contains(
+            "name       = \"gemini-b\"\nprovider   = \"google\"\nmodel_id   = \"gemini-3.1-pro\""
+        ));
+        // …the other block's model_id is untouched…
+        assert!(out.contains("name       = \"gemini-a\""));
+        assert_eq!(out.matches("gemini-3.1-flash-lite").count(), 1);
+        // …and comments survive.
+        assert!(out.contains("# top comment"));
+    }
+
+    #[test]
+    fn rewrite_model_id_preserves_alignment_before_equals() {
+        let toml = "[[models]]\nname = \"m\"\nmodel_id   = \"old\"\n";
+        let (out, changed) = super::rewrite_model_id(toml, "m", "new");
+        assert!(changed);
+        // The alignment spaces left of `=` are kept.
+        assert!(out.contains("model_id   = \"new\""));
+    }
+
+    #[test]
+    fn rewrite_model_id_inserts_when_block_has_no_model_id_line() {
+        // A block that relied on the model_id-defaults-to-name behavior.
+        let toml = "[[models]]\nname = \"bare\"\nprovider = \"groq\"\n";
+        let (out, changed) = super::rewrite_model_id(toml, "bare", "openai/gpt-oss-120b");
+        assert!(changed);
+        assert!(out.contains("model_id   = \"openai/gpt-oss-120b\""));
+        assert!(out.contains("name = \"bare\""));
+    }
+
+    #[test]
+    fn rewrite_model_id_is_noop_for_unknown_name() {
+        let toml = "[[models]]\nname = \"m\"\nmodel_id = \"x\"\n";
+        let (out, changed) = super::rewrite_model_id(toml, "not-there", "y");
+        assert!(!changed);
+        assert_eq!(out, toml);
     }
 
     #[test]

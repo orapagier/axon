@@ -577,6 +577,26 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    // Provider model-list prefetch: populate the ModelsPage "Model ID" dropdown
+    // from each provider's live catalogue. Runs once ~shortly after boot (so the
+    // dropdown works immediately), then daily, aligned to the next UTC midnight.
+    // Read-only against providers; per-provider failures are logged, not fatal.
+    {
+        let cache_db = state.db.clone();
+        let cache_settings = state.settings.clone();
+        tokio::spawn(async move {
+            // Let the models table + settings settle before the first sweep.
+            tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+            loop {
+                let summary =
+                    axon::model_cache::refresh_all(cache_db.clone(), cache_settings.clone()).await;
+                tracing::info!("Model list prefetch: {}", summary);
+                let secs = axon::providers::secs_until_next_utc_midnight().max(1) as u64;
+                tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
+            }
+        });
+    }
+
     // ── Workflow Agent Processor ──────────────────────────────────────────────
     // This consumer breaks the circular dependency between WorkflowEngine and Agent
     // by handling agent tasks asynchronously when a workflow completes.

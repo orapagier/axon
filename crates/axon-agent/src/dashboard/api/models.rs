@@ -10,6 +10,60 @@ pub async fn reset_model(State(state): State<AppState>, Path(name): Path<String>
     Json(json!({"ok": true}))
 }
 
+/// Prefetched list of a provider's currently-available model ids, for the
+/// ModelsPage "Model ID" dropdown. Reads the `provider_model_cache` populated by
+/// the daily background sweep (`model_cache::refresh_all`) — never calls the
+/// provider live, so opening the modal is instant. Body: `{provider, base_url?}`.
+/// An empty list just means "nothing cached yet"; the UI falls back to free text.
+pub async fn get_available_models(
+    State(state): State<AppState>,
+    Json(payload): Json<Value>,
+) -> Json<Value> {
+    let provider = payload
+        .get("provider")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    if provider.is_empty() {
+        return Json(json!({"ok": false, "error": "provider is required"}));
+    }
+    let base_url = payload
+        .get("base_url")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    match state.db.get() {
+        Ok(conn) => {
+            let models = crate::model_cache::read_cached(&conn, provider, base_url);
+            Json(json!({"ok": true, "models": models}))
+        }
+        Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
+    }
+}
+
+/// Path to the boot-time models config; the same relative path `main.rs` loads.
+/// Used to write dashboard model_id changes back to the file (see below).
+const MODELS_TOML_PATH: &str = "config/models.toml";
+
+/// Best-effort write-through of a chosen `model_id` into `config/models.toml`,
+/// so the file (boot Source of Truth) tracks the DB. No-op when the model has no
+/// block in the file (runtime/dashboard-only rows live in the DB alone). Only
+/// called from the HTTP handlers — never from the shared `apply_*` helpers, so
+/// the Homeostasis workflow node never writes to disk.
+fn write_through_model_id(payload: &Value, name: &str) {
+    let Some(model_id) = payload.get("model_id").and_then(|v| v.as_str()) else {
+        return;
+    };
+    if model_id.trim().is_empty() {
+        return;
+    }
+    match crate::config::set_model_id_in_toml(MODELS_TOML_PATH, name, model_id) {
+        Ok(true) => tracing::info!("models.toml: model_id for '{}' set to '{}'", name, model_id),
+        Ok(false) => {} // no block by this name in the file — DB-only model.
+        Err(e) => tracing::warn!("models.toml write-through for '{}' failed: {:#}", name, e),
+    }
+}
+
 /// Insert a new model row from a JSON payload. Shared by the `add_model` HTTP
 /// handler and the Homeostasis workflow node so both encrypt/normalize
 /// identically. Requires `name` + `provider`; `api_key` is encrypted at rest.
@@ -156,6 +210,11 @@ pub async fn add_model(State(state): State<AppState>, Json(m): Json<Value>) -> J
         if let Err(e) = apply_add_model(&conn, &m) {
             return Json(json!({"ok": false, "error": e}));
         }
+        // Harmless for brand-new models (no matching block in models.toml → no-op);
+        // updates the file when re-adding a name the file already defines.
+        if let Some(name) = m.get("name").and_then(|v| v.as_str()) {
+            write_through_model_id(&m, name);
+        }
         let new_models = crate::config::load_models_from_db(&conn).unwrap_or_default();
         crate::router::update_models(&state.router, new_models).await;
         return Json(json!({"ok": true}));
@@ -172,6 +231,9 @@ pub async fn update_model(
         if let Err(e) = apply_update_model(&conn, &name, &m) {
             return Json(json!({"ok": false, "error": e}));
         }
+        // A dashboard model_id change is written through to models.toml so it
+        // survives the next boot's toml→DB sync instead of being reverted.
+        write_through_model_id(&m, &name);
         let new_models = crate::config::load_models_from_db(&conn).unwrap_or_default();
         crate::router::update_models(&state.router, new_models).await;
         return Json(json!({"ok": true}));

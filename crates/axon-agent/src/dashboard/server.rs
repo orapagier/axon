@@ -55,6 +55,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/runs/:id", get(api::get_run_detail))
         .route("/api/models", get(api::get_models).post(api::add_model))
         .route(
+            "/api/models/available",
+            axum::routing::post(api::get_available_models),
+        )
+        .route(
             "/api/models/:name",
             axum::routing::put(api::update_model).delete(api::delete_model),
         )
