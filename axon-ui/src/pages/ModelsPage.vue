@@ -44,6 +44,7 @@ const PROVIDERS = [
   { value: 'cerebras', label: 'Cerebras' },
   { value: 'nvidia', label: 'NVIDIA' },
   { value: 'openrouter', label: 'OpenRouter' },
+  { value: 'cloudflare', label: 'Cloudflare Workers AI' },
   { value: 'ollama', label: 'Ollama' },
 ]
 

@@ -3,9 +3,11 @@
 //! (that lives in `crate::model_cache`, which calls this once a day).
 //!
 //! Each provider advertises its catalogue differently, so the dispatch mirrors
-//! `providers::call`: native adapters for Anthropic / Google / Ollama, and a
-//! shared OpenAI-compatible `GET /models` for everything else (openai,
-//! openrouter, nvidia, groq, cerebras, …).
+//! `providers::call`: native adapters for Anthropic / Google / Ollama /
+//! Cloudflare, and a shared OpenAI-compatible `GET /models` for everything else
+//! (openai, openrouter, nvidia, groq, cerebras, …). Cloudflare needs its own
+//! adapter because Workers AI is OpenAI-compatible for chat but lists its models
+//! at the native `/ai/models/search`, not `GET /v1/models`.
 
 use super::types::{normalize_base_url_str, normalize_provider_name, provider_base_url};
 use anyhow::Context;
@@ -58,6 +60,7 @@ pub async fn list_available_models(
         "anthropic" => list_anthropic(base.as_deref(), api_key).await?,
         "google" => list_google(base.as_deref(), api_key).await?,
         "ollama" => list_ollama(base.as_deref(), api_key).await?,
+        "cloudflare" => list_cloudflare(base.as_deref(), api_key).await?,
         _ => list_openai_compat(&provider, base.as_deref(), api_key).await?,
     };
     // Stable, de-duplicated ordering so the dropdown is predictable run to run.
@@ -248,6 +251,104 @@ async fn list_openai_compat(
         .collect())
 }
 
+// ── Cloudflare Workers AI: GET /accounts/{id}/ai/models/search (Bearer) ──────
+//
+// Workers AI is OpenAI-compatible for *chat* (so `providers::call` routes it
+// through openai_compat), but it does NOT expose OpenAI's `GET /v1/models`.
+// Its catalogue lives at the native `/accounts/{id}/ai/models/search`, returning
+// a `{result:[…]}` envelope whose items carry the model id in `name` (which may
+// be `@cf/…` or `@hf/…`), a `task` object, and a `properties` list.
+//
+// The account id is embedded in the model's own base_url
+// (…/accounts/{id}/ai/v1), so the search URL is derived from that — nothing is
+// hardcoded per account, matching how every other adapter reads its base.
+#[derive(Deserialize)]
+struct CfModelList {
+    #[serde(default)]
+    result: Vec<CfModelItem>,
+}
+#[derive(Deserialize)]
+struct CfModelItem {
+    name: String,
+    #[serde(default)]
+    task: Option<CfTask>,
+    #[serde(default)]
+    properties: Vec<CfProperty>,
+}
+#[derive(Deserialize)]
+struct CfTask {
+    #[serde(default)]
+    name: Option<String>,
+}
+#[derive(Deserialize)]
+struct CfProperty {
+    #[serde(default)]
+    property_id: Option<String>,
+    #[serde(default)]
+    value: serde_json::Value,
+}
+
+async fn list_cloudflare(base_url: Option<&str>, api_key: &str) -> anyhow::Result<Vec<ModelChoice>> {
+    // Derive `…/accounts/{id}/ai` from the model's chat base_url by stripping the
+    // OpenAI-compat `/v1` suffix, then hit `/models/search` off it.
+    let base = base_url
+        .map(normalize_base_url_str)
+        .map(|b| b.trim_end_matches("/v1").trim_end_matches('/').to_string())
+        .filter(|b| !b.is_empty())
+        .context(
+            "Cloudflare model listing needs the model's Base URL \
+             (https://api.cloudflare.com/client/v4/accounts/<ACCOUNT_ID>/ai/v1)",
+        )?;
+    if api_key.trim().is_empty() {
+        anyhow::bail!("Cloudflare model listing requires an API token");
+    }
+
+    let mut out = Vec::new();
+    // Terminate on an empty page (robust to whatever per_page the API enforces);
+    // the loop cap bounds it well past Workers AI's ~150-model catalogue.
+    for page in 1..=20 {
+        let url = format!(
+            "{}/models/search?task=Text%20Generation&hide_experimental=false&per_page=50&page={}",
+            base, page
+        );
+        let resp = HTTP_CLIENT
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .send()
+            .await
+            .with_context(|| format!("HTTP to {}/models/search", base))?;
+        let body = read_ok(resp, &format!("{}/models/search", base)).await?;
+        let parsed: CfModelList =
+            serde_json::from_str(&body).context("parse cloudflare model list")?;
+        if parsed.result.is_empty() {
+            break;
+        }
+        for m in &parsed.result {
+            // The server already filters to Text Generation; re-check client-side
+            // in case the filter is ignored, keeping models whose task is absent
+            // (fail open) so a shape change never silently empties the dropdown.
+            let is_text = m
+                .task
+                .as_ref()
+                .and_then(|t| t.name.as_deref())
+                .map(|n| n.to_ascii_lowercase().contains("text generation"))
+                .unwrap_or(true);
+            if !is_text {
+                continue;
+            }
+            // Surface tool support in the label — Axon leans on function calling,
+            // so this steers the user toward a model that will actually work.
+            let has_tools = m.properties.iter().any(|p| {
+                p.property_id.as_deref() == Some("function_calling")
+                    && (p.value == serde_json::json!(true) || p.value == serde_json::json!("true"))
+            });
+            let label = has_tools.then(|| "function calling".to_string());
+            out.push(ModelChoice::new(m.name.clone(), label));
+        }
+    }
+    Ok(out)
+}
+
 /// Return the response body text on success, or a bail! carrying the status and
 /// a truncated body on failure. `url` is included for diagnosis but any query
 /// string (which may hold a key) is dropped first.
@@ -331,6 +432,57 @@ mod tests {
             choices.len()
         );
         assert!(choices.iter().all(|c| !c.id.is_empty()));
+    }
+
+    #[test]
+    fn cloudflare_filters_to_text_models_and_flags_tool_support() {
+        // Mirrors the CF `/ai/models/search` envelope: `@cf/`+`@hf/` ids, a
+        // `task` object, and a `properties` list whose `function_calling` flag
+        // arrives as either a bool or the string "true".
+        let body = r#"{
+            "success": true,
+            "result": [
+                {"name":"@cf/meta/llama-3.3-70b-instruct-fp8-fast","task":{"name":"Text Generation"},"properties":[{"property_id":"function_calling","value":"true"}]},
+                {"name":"@cf/baai/bge-base-en-v1.5","task":{"name":"Text Embeddings"},"properties":[]},
+                {"name":"@hf/nousresearch/hermes-2-pro-mistral-7b","task":{"name":"Text Generation"},"properties":[{"property_id":"function_calling","value":true}]},
+                {"name":"@cf/mistral/mistral-7b-instruct","task":{"name":"Text Generation"},"properties":[]}
+            ]
+        }"#;
+        let parsed: CfModelList = serde_json::from_str(body).unwrap();
+        // Same filter + label logic as `list_cloudflare`.
+        let choices: Vec<ModelChoice> = parsed
+            .result
+            .iter()
+            .filter_map(|m| {
+                let is_text = m
+                    .task
+                    .as_ref()
+                    .and_then(|t| t.name.as_deref())
+                    .map(|n| n.to_ascii_lowercase().contains("text generation"))
+                    .unwrap_or(true);
+                if !is_text {
+                    return None;
+                }
+                let has_tools = m.properties.iter().any(|p| {
+                    p.property_id.as_deref() == Some("function_calling")
+                        && (p.value == serde_json::json!(true)
+                            || p.value == serde_json::json!("true"))
+                });
+                Some(ModelChoice::new(
+                    m.name.clone(),
+                    has_tools.then(|| "function calling".to_string()),
+                ))
+            })
+            .collect();
+
+        // Embedding model dropped; both flag encodings honored; plain model unlabeled.
+        assert_eq!(choices.len(), 3);
+        assert_eq!(choices[0].id, "@cf/meta/llama-3.3-70b-instruct-fp8-fast");
+        assert_eq!(choices[0].label.as_deref(), Some("function calling"));
+        assert_eq!(choices[1].id, "@hf/nousresearch/hermes-2-pro-mistral-7b");
+        assert_eq!(choices[1].label.as_deref(), Some("function calling"));
+        assert_eq!(choices[2].id, "@cf/mistral/mistral-7b-instruct");
+        assert_eq!(choices[2].label, None);
     }
 
     #[test]
