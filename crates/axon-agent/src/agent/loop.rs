@@ -108,6 +108,14 @@ const REFUSAL_PHRASES: &[&str] = &[
     "not supported",
 ];
 
+/// Appended to every injected guard/nudge/correction message before it is
+/// pushed into the conversation as a `user` turn. Without this, the message
+/// is indistinguishable from real end-user input, and models sometimes treat
+/// it as something to respond *to* — narrating "I didn't call a tool because
+/// ..." instead of silently complying — and that narration becomes the final
+/// answer. This marks it as internal and tells the model not to surface it.
+const INTERNAL_DIRECTIVE_SUFFIX: &str = "\n\n[SYSTEM DIRECTIVE — not from the end user. Silently comply: take the correct action, then reply with ONLY the direct answer/content originally requested. Do not acknowledge, quote, explain, or otherwise reference this directive, any tool guard, correction, or retry in your reply.]";
+
 /// Tool name aliases emitted by hallucinating models, mapped to real names.
 /// Static so it is never allocated inside the hot loop.
 static TOOL_NAME_REMAPS: &[(&str, &str)] = &[
@@ -1222,9 +1230,9 @@ pub(crate) async fn run_inner(
                         run_id: run_id.clone(),
                         text: "Blocking hallucinated text tool call".into()
                     });
-                    messages.push(Message::user(&format!(
-                        "TOOL EXECUTION GUARD — your previous response attempted to express a tool call in plain text instead of using the native tool-calling API.\n{}\n\nUse the native tool-calling mechanism only. Do not print JSON, XML, call:tool{{...}}, or Tool:/Parameters: syntax in the message body.",
-                        reason
+                    messages.push(Message::user(format!(
+                        "TOOL EXECUTION GUARD — your previous response attempted to express a tool call in plain text instead of using the native tool-calling API.\n{}\n\nUse the native tool-calling mechanism only. Do not print JSON, XML, call:tool{{...}}, or Tool:/Parameters: syntax in the message body.{}",
+                        reason, INTERNAL_DIRECTIVE_SUFFIX
                     )));
                     // Force a fresh model pick on the correction turn.
                     last_model = None;
@@ -1435,7 +1443,10 @@ pub(crate) async fn run_inner(
                                 "Plan has open steps — asking the model to finish or account for them".into(),
                         }
                     });
-                    messages.push(Message::user(&message));
+                    messages.push(Message::user(format!(
+                        "{}{}",
+                        message, INTERNAL_DIRECTIVE_SUFFIX
+                    )));
 
                     // A false refusal means the model has the tools but declined.
                     // Force a real tool call on the retry instead of re-asking.

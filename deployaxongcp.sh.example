@@ -1,4 +1,16 @@
 #!/bin/bash
+#
+# -- TEMPLATE (tracked) -----------------------------------------------
+# Deploy the MAIN Axon instance to a GCP VM (gcloud compute ssh/scp).
+#
+# Sample for the gitignored "deployaxongcp.sh". To deploy:
+#   cp deployaxongcp.sh.example deployaxongcp.sh      # create the real (gitignored) script
+#   edit .deploy.env             # see .deploy.env.example for the keys
+#   bash deployaxongcp.sh                     # build, bundle & deploy
+#
+# The real deployaxongcp.sh is gitignored (.gitignore) so any private or
+# infra-specific edits stay local. Keep this template in sync.
+# ---------------------------------------------------------------------
 set -e
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"

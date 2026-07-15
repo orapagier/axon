@@ -74,3 +74,13 @@ finetune/train.pid
 
 # auto-backup hook debug log (regenerated each run, not meant for history)
 .claude/hooks/auto-backup.log
+
+# ── Plan / design notes (local working docs, not for history) ──
+/*_PLAN.md
+/plan.md
+
+# ── Deployment scripts (local only — copy from the *.example twins) ──
+# The real deploy*.sh are gitignored so private/infra-specific tweaks stay
+# local; the tracked *.example templates document their shape. Secrets live
+# in .deploy.env (already ignored above) — see .deploy.env.example for keys.
+/deploy*.sh
