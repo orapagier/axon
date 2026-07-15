@@ -1127,14 +1127,14 @@ mod tests {
         assert!(props.pointer("/blob/$ref").is_none());
         assert!(props.pointer("/blob/additionalKey").is_none());
         assert!(props.pointer("/cfg/displayOptions").is_none());
-        assert!(props
-            .pointer("/cfg/properties/inner/typeOptions")
-            .is_none());
+        assert!(props.pointer("/cfg/properties/inner/typeOptions").is_none());
         assert!(props.pointer("/items_param/items/displayOptions").is_none());
 
         // ...while real schema keywords and values are untouched.
         assert_eq!(
-            props.pointer("/job_id/description").and_then(|v| v.as_str()),
+            props
+                .pointer("/job_id/description")
+                .and_then(|v| v.as_str()),
             Some("keep me")
         );
         // Non-standard "any" type is coerced to "string".

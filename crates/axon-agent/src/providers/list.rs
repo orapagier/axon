@@ -288,7 +288,10 @@ struct CfProperty {
     value: serde_json::Value,
 }
 
-async fn list_cloudflare(base_url: Option<&str>, api_key: &str) -> anyhow::Result<Vec<ModelChoice>> {
+async fn list_cloudflare(
+    base_url: Option<&str>,
+    api_key: &str,
+) -> anyhow::Result<Vec<ModelChoice>> {
     // Derive `…/accounts/{id}/ai` from the model's chat base_url by stripping the
     // OpenAI-compat `/v1` suffix, then hit `/models/search` off it.
     let base = base_url

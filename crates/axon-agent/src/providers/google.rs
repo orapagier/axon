@@ -1023,7 +1023,9 @@ mod tests {
             .clone()
             .expect("tool has one property");
         assert!(
-            params.pointer("/properties/job_id/displayOptions").is_none(),
+            params
+                .pointer("/properties/job_id/displayOptions")
+                .is_none(),
             "displayOptions must be stripped before reaching Gemini"
         );
         assert_eq!(

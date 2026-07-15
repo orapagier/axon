@@ -375,8 +375,7 @@ mod tests {
         sync_toml_models(&conn, vec![toml_model("m")]);
 
         // The operator edits it in the dashboard (priority 1 -> 5).
-        crate::dashboard::api::apply_update_model(&conn, "m", &json!({ "priority": 5 }))
-            .unwrap();
+        crate::dashboard::api::apply_update_model(&conn, "m", &json!({ "priority": 5 })).unwrap();
 
         // A redeploy re-runs the sync with the original TOML (priority 1). The
         // dashboard edit must win — the DB row is left completely untouched.
