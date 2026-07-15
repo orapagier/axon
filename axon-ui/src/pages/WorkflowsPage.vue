@@ -45,6 +45,11 @@ const wfDesc = ref('')
 // Error workflow (A3): id of the handler to run when THIS workflow fails. Null
 // = use the global default. Edited via the toolbar settings popover.
 const wfErrorWorkflowId = ref(null)
+// Active/deactivated (n8n-style publish toggle): when false, trigger-driven
+// runs (webhook, telegram, cron, gmail, …) are skipped server-side, but
+// manual runs (Run button, Execute Step, chat) always work. Edited via the
+// toolbar settings popover.
+const wfEnabled = ref(true)
 const showWfSettings = ref(false)
 // Hidden file input used by the Import button (A5).
 const importFileRef = ref(null)
@@ -624,6 +629,7 @@ async function selectWorkflow(wf) {
   wfName.value = wf.name
   wfDesc.value = wf.description || ''
   wfErrorWorkflowId.value = wf.error_workflow_id || null
+  wfEnabled.value = wf.enabled !== false
   trigger.value = {
     type: wf.trigger_type || 'manual',
     config: { ...(wf.trigger_config || {}) },
@@ -681,6 +687,7 @@ function createNew() {
   wfName.value = 'New Workflow'
   wfDesc.value = ''
   wfErrorWorkflowId.value = null
+  wfEnabled.value = true
   trigger.value = { type: 'manual', config: {} }
   nodes.value = []
   edges.value = []
@@ -1323,7 +1330,7 @@ function getWorkflowPayload() {
       source_handle: e.sourceHandle,
       target_handle: e.targetHandle,
     })),
-    enabled: true,
+    enabled: wfEnabled.value,
   }
 }
 
@@ -1628,6 +1635,15 @@ async function save(opts = {}) {
   } catch (e) {
     toast('Failed to save workflow', false)
   }
+}
+
+async function toggleWfEnabled() {
+  wfEnabled.value = !wfEnabled.value
+  // Unsaved workflow: nothing to persist yet — the flag rides along on the
+  // next explicit Save via getWorkflowPayload().
+  if (!wfId.value || wfId.value === 'new') return
+  await save({ silent: true })
+  toast(wfEnabled.value ? 'Workflow activated' : 'Workflow deactivated', true)
 }
 
 async function removeWorkflow() {
@@ -2502,8 +2518,26 @@ onUnmounted(() => {
                   class="wf-settings-pop"
                   @click.stop
                 >
-                  <div class="wf-settings-title">
-                    Workflow Settings
+                  <div class="wf-settings-title-row">
+                    <span class="wf-settings-title">Workflow Settings</span>
+                    <div class="wf-settings-active-toggle">
+                      <span class="wf-settings-active-label">{{ wfEnabled ? 'Active' : 'Inactive' }}</span>
+                      <button
+                        class="switch"
+                        type="button"
+                        role="switch"
+                        :aria-checked="wfEnabled ? 'true' : 'false'"
+                        :aria-label="wfEnabled ? 'Deactivate workflow' : 'Activate workflow'"
+                        :title="wfEnabled ? 'Active — triggers can run this workflow. Click to deactivate.' : 'Inactive — only manual runs work. Click to activate.'"
+                        @click="toggleWfEnabled"
+                      />
+                    </div>
+                  </div>
+                  <div
+                    v-if="!wfEnabled"
+                    class="wf-settings-hint wf-settings-inactive-hint"
+                  >
+                    Deactivated: triggers (webhook, cron, gmail, telegram, …) won't fire. You can still run it manually.
                   </div>
                   <label class="wf-settings-label">On failure, run workflow</label>
                   <select
@@ -4294,11 +4328,34 @@ onUnmounted(() => {
   border-radius: 10px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
 }
+.wf-settings-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
 .wf-settings-title {
   font-size: 12px;
   font-weight: 600;
   color: #e6f1ee;
-  margin-bottom: 10px;
+}
+.wf-settings-active-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.wf-settings-active-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #97a59f;
+}
+.wf-settings-inactive-hint {
+  margin-top: -4px;
+  color: #d9a441;
 }
 .wf-settings-label {
   display: block;

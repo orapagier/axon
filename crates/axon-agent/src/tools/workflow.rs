@@ -3199,6 +3199,35 @@ impl WorkflowEngine {
             tokio::sync::oneshot::Sender<nodes::respond_to_webhook::WebhookHttpResponse>,
         >,
     ) -> anyhow::Result<String> {
+        // A deactivated workflow only runs when a human asks for it directly
+        // (trigger_source "manual" — the editor's Run/Execute Step buttons, the
+        // chat run_workflow tool). Every automated trigger source (webhook,
+        // telegram, whatsapp, github, gmail, crm, rss, cron, watcher, error, …)
+        // is gated here so disabling a workflow reliably stops it from firing
+        // regardless of which entry point delivered the event.
+        if trigger_source != "manual" {
+            let enabled = state
+                .db
+                .get()
+                .ok()
+                .and_then(|conn| {
+                    conn.query_row(
+                        "SELECT enabled FROM workflows WHERE id = ?1",
+                        [workflow_id],
+                        |r| r.get::<_, i64>(0),
+                    )
+                    .ok()
+                })
+                .map(|e| e != 0)
+                .unwrap_or(false);
+            if !enabled {
+                anyhow::bail!(
+                    "Workflow '{}' is deactivated or does not exist",
+                    workflow_id
+                );
+            }
+        }
+
         let run_id = uuid::Uuid::new_v4().to_string();
 
         // Pre-create the run record as 'running' so the very first frontend poll
