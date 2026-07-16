@@ -24,7 +24,7 @@ const props = defineProps({
   mcpDynamicProps: { type: Function, default: null },
 })
 
-const emit = defineEmits(['close', 'save', 'execute', 'delete', 'switch', 'clear-execution', 'rename', 'output-added', 'output-removed'])
+const emit = defineEmits(['close', 'save', 'execute', 'delete', 'switch', 'clear-execution', 'rename', 'output-added', 'output-removed', 'output-moved'])
 
 const activeTab = ref('parameters')
 const inputMode = ref('schema')
@@ -955,9 +955,10 @@ function onDropStringList(event, propName, index) {
 
 // Drag-to-reorder for fixedCollection items (e.g. Circadian's Schedules list).
 // `draggable` is only turned on while the mouse is held on the item's own grip
-// handle, so dragging text inside its inputs still works normally. Disabled for
-// collections whose items map to dynamic output handles (Switch's rules) since
-// reordering those would desync connected edges without also re-indexing them.
+// handle, so dragging text inside its inputs still works normally. For
+// collections whose items map to dynamic output handles (Switch's rules),
+// onFcDrop also emits 'output-moved' so the parent can re-index connected
+// edges along with the reordered rule.
 const dragArmed = reactive({ propName: null, index: null })
 const dragState = reactive({ propName: null, index: null })
 
@@ -1002,6 +1003,11 @@ function onFcDrop(propName, targetIndex) {
   const items = coll.parameters
   const [moved] = items.splice(fromIndex, 1)
   items.splice(targetIndex, 0, moved)
+  if (isDynamicOutputCollection(propName)) {
+    // Rule items map 1:1 to output handles by index; reordering the rule must
+    // reorder its wire along with it, so the parent remaps edges to match.
+    emit('output-moved', { nodeId: props.node.id, fromIndex, toIndex: targetIndex })
+  }
 }
 
 // Filter an options-field's choices by another field's current value.
@@ -2626,7 +2632,6 @@ onUnmounted(() => {
                                 <!-- Inline grouped fields -->
                                 <div style="display: flex; gap: 8px; width: 100%; align-items: flex-start;">
                                   <div
-                                    v-if="!isDynamicOutputCollection(prop.name)"
                                     class="fc-drag-handle"
                                   >
                                     <label

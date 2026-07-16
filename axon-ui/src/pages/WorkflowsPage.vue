@@ -621,6 +621,15 @@ function handleDynamicOutputAdded({ nodeId, index }) {
   })
 }
 
+function handleDynamicOutputMoved({ nodeId, fromIndex, toIndex }) {
+  remapDynamicOutputEdges(nodeId, (outIdx) => {
+    if (outIdx === fromIndex) return toIndex
+    if (fromIndex < toIndex && outIdx > fromIndex && outIdx <= toIndex) return outIdx - 1
+    if (fromIndex > toIndex && outIdx >= toIndex && outIdx < fromIndex) return outIdx + 1
+    return undefined
+  })
+}
+
 async function selectWorkflow(wf) {
   selectedWorkflow.value = wf
   isWorkflowMenuOpen.value = false
@@ -2800,6 +2809,7 @@ onUnmounted(() => {
               @clear-execution="clearNodeExecution"
               @output-added="handleDynamicOutputAdded"
               @output-removed="handleDynamicOutputRemoved"
+              @output-moved="handleDynamicOutputMoved"
             />
           </Transition>
 
