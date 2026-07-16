@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { get, post, put } from '../lib/api.js'
 import { toast } from '../lib/toast.js'
 import { useHeaderSearch } from '../lib/headerSearch.js'
+import SearchableSelect from '../components/SearchableSelect.vue'
 
 const byCategory = ref({})
 const settingsSearch = ref('')
@@ -26,7 +27,7 @@ const CATEGORY_META = {
   retention: { title: 'Database Retention', description: 'How long agent run history, tool observations, workflow runs, and webhook events are kept before the daily housekeeping sweep prunes them. Lower values keep the database smaller.' },
   router: { title: 'Router', description: 'Model failover behavior and the pattern → embedding → LLM tool-routing tiers.' },
   scheduler: { title: 'Scheduler', description: 'Background jobs, polling cadence, and automation timing.' },
-  stt: { title: 'Voice Input', description: 'OpenAI-compatible speech-to-text powering the Chat page microphone (Groq: https://api.groq.com/openai/v1 + whisper-large-v3-turbo; OpenAI: https://api.openai.com/v1 + gpt-4o-mini-transcribe). Applies immediately, no restart needed.' },
+  stt: { title: 'Voice Input', description: 'OpenAI-compatible speech-to-text powering the Chat page microphone and voice messages on the messaging gateways (Telegram voice notes, Slack audio clips). Set a base URL (Groq: https://api.groq.com/openai/v1; OpenAI: https://api.openai.com/v1) and pick a model — the dropdown lists the transcription models that platform exposes. Applies immediately, no restart needed.' },
   watcher: { title: 'Smart Notifications', description: 'Auto-polling watchers (Gmail, Outlook, Calendar, Facebook), quiet hours, and where notifications are delivered.' },
   websearch: { title: 'Web Search', description: 'Search provider behavior and retrieval policy.' },
   workflow: { title: 'Workflows', description: 'Run concurrency and queueing, version snapshots, resume/approval links, and webhook deduplication.' },
@@ -213,6 +214,61 @@ function selectSection(id) {
   settingsSearch.value = ''
 }
 
+// ── stt.model dropdown ──────────────────────────────────────────────────────
+// Transcription models available at the CURRENT stt.base_url draft (saved or
+// not), fetched from /audio/models: server-side daily prefetch cache first,
+// live catalogue fetch on a miss. Free text always works — this only suggests.
+const sttModels = ref([])
+const sttModelsLoading = ref(false)
+let sttFetchSeq = 0
+let sttFetchTimer = null
+
+const sttModelOptions = computed(() =>
+  sttModels.value.map((o) => ({
+    value: o.id,
+    name: o.id,
+    description: o.label && o.label !== o.id ? o.label : '',
+  }))
+)
+
+function sttDraft(key) {
+  const row = (byCategory.value.stt || []).find((s) => s.key === key)
+  return row ? String(row.draft || '') : ''
+}
+
+async function fetchSttModels() {
+  const base = sttDraft('stt.base_url').trim()
+  if (!base) {
+    sttModels.value = []
+    return
+  }
+  const seq = ++sttFetchSeq
+  sttModelsLoading.value = true
+  try {
+    const r = await post('/audio/models', {
+      base_url: base,
+      api_key: sttDraft('stt.api_key').trim(),
+    })
+    if (seq !== sttFetchSeq) return // superseded by a newer request
+    sttModels.value = r && r.ok && Array.isArray(r.models) ? r.models : []
+  } catch {
+    if (seq === sttFetchSeq) sttModels.value = []
+  } finally {
+    if (seq === sttFetchSeq) sttModelsLoading.value = false
+  }
+}
+
+// Covers both the initial settings load ('' → stored value) and the user
+// typing a new platform URL into the field: refetch, debounced.
+watch(
+  () => sttDraft('stt.base_url'),
+  (next, prev) => {
+    if (next === prev) return
+    clearTimeout(sttFetchTimer)
+    sttFetchTimer = setTimeout(fetchSttModels, 400)
+  }
+)
+
 function isSecret(s) {
   // Only string values can be secrets — int knobs like max_total_tokens or
   // resume_token_default_ttl_secs must not be masked just for containing "token".
@@ -331,8 +387,32 @@ onMounted(load)
                 </div>
 
                 <div class="set-control">
+                  <div
+                    v-if="s.key === 'stt.model'"
+                    class="set-stt-model"
+                  >
+                    <SearchableSelect
+                      v-model="s.draft"
+                      :options="sttModelOptions"
+                      :allow-custom-value="true"
+                      placeholder="e.g. whisper-large-v3-turbo"
+                    />
+                    <span
+                      v-if="sttModelsLoading"
+                      class="set-stt-note"
+                    >loading models…</span>
+                    <span
+                      v-else-if="sttModels.length"
+                      class="set-stt-note"
+                    >{{ sttModels.length }} available from base URL</span>
+                    <span
+                      v-else
+                      class="set-stt-note"
+                    >set stt.base_url to list models, or type any ID</span>
+                  </div>
+
                   <textarea
-                    v-if="isPrompt(s.key)"
+                    v-else-if="isPrompt(s.key)"
                     v-model="s.draft"
                     class="set-input set-input-lg"
                     spellcheck="false"
@@ -643,6 +723,22 @@ onMounted(load)
   min-height: 150px;
   resize: vertical;
   line-height: 1.6;
+}
+
+/* ── stt.model dropdown ───────────────────────────────────────────────────── */
+.set-stt-model {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+}
+
+.set-stt-note {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  color: var(--muted);
+  text-align: right;
 }
 
 /* ── Patterns editor: the panel IS the editor, no inner frame ─────────────── */

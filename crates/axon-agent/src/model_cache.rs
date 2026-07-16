@@ -144,6 +144,46 @@ pub async fn refresh_all(db: Db, settings: Arc<RuntimeSettings>) -> String {
     let mut ok = 0usize;
     let mut failed = 0usize;
     let mut cached = 0usize;
+
+    // STT catalogue: when voice input has a base URL configured, prefetch the
+    // transcription models it exposes so the Settings `stt.model` dropdown is
+    // instant. Stored under the synthetic provider "stt" — see `crate::stt`.
+    {
+        let base_url = settings.resolve(&settings.get_str("stt.base_url", ""));
+        let base_url = base_url.trim().trim_end_matches('/').to_string();
+        if !base_url.is_empty() {
+            // Unlike chat providers, fetch even with no key: local/self-hosted
+            // Whisper servers list /models unauthenticated, and a 401 from a
+            // hosted one is just a logged warn.
+            let api_key = settings.resolve(&settings.get_str("stt.api_key", ""));
+            let api_key = if is_usable_key(&api_key) {
+                api_key
+            } else {
+                String::new()
+            };
+            match crate::stt::list_stt_models(&base_url, &api_key).await {
+                Ok(choices) => {
+                    cached += choices.len();
+                    ok += 1;
+                    if let Ok(conn) = db.get() {
+                        if let Err(e) = store(
+                            &conn,
+                            crate::stt::STT_CACHE_PROVIDER,
+                            Some(&base_url),
+                            &choices,
+                        ) {
+                            tracing::warn!("model_cache: store for 'stt' failed: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    failed += 1;
+                    tracing::warn!("model_cache: stt list refresh failed: {:#}", e);
+                }
+            }
+        }
+    }
+
     for (provider, base_url, api_key) in groups {
         if !is_usable_key(&api_key) {
             // No resolvable key for this provider — leave any prior cache in

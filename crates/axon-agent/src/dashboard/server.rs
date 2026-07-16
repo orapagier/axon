@@ -154,6 +154,10 @@ pub fn build_router(state: AppState) -> Router {
             "/api/audio/transcribe",
             axum::routing::post(api::transcribe_audio),
         )
+        .route(
+            "/api/audio/models",
+            axum::routing::post(api::get_stt_models),
+        )
         .route("/api/slack/events", axum::routing::post(api::slack_events))
         .route(
             "/api/watchers",

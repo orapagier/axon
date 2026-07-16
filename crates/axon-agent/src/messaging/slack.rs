@@ -32,10 +32,23 @@ impl SlackGateway {
                 && event.get("bot_id").is_none()
             {
                 let channel = event.get("channel").and_then(|v| v.as_str()).unwrap_or("");
-                let text = event.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                let mut text = event
+                    .get("text")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                // Voice input: a Slack voice clip arrives as a `files` entry
+                // with an audio mimetype and no text. When STT is configured
+                // (same stt.* settings as the dashboard mic), the transcript
+                // becomes the message text.
+                if text.is_empty() {
+                    if let Some(t) = self.transcribe_voice_clip(event, &state).await {
+                        text = t;
+                    }
+                }
                 if !text.is_empty() {
                     let ctx = crate::agent::RunContext::new(
-                        text,
+                        &text,
                         "slack",
                         Some(channel), // Use channel as session ID to isolate contexts
                         Some(channel),
@@ -47,7 +60,7 @@ impl SlackGateway {
                     let s2 = state.clone();
                     let g2 = Arc::new(crate::messaging::SlackGateway::new(self.bot_token.clone()));
                     let c2 = channel.to_string();
-                    let t2 = text.to_string();
+                    let t2 = text.clone();
 
                     tokio::spawn(async move {
                         let _ = crate::agent::run_task_streaming(&t2, &*s2, ctx, tx).await;
@@ -58,6 +71,75 @@ impl SlackGateway {
             }
         }
         Ok(serde_json::json!({"ok":true}))
+    }
+
+    /// If a message event carries an audio file (Slack voice clips land in
+    /// `files` with an `audio/*` mimetype), download it with the bot token
+    /// (`files:read` scope) and run it through the configured STT. `None` when
+    /// STT is unconfigured, no audio file is attached, or transcription fails
+    /// (failures are logged, and the message falls back to text-only handling).
+    async fn transcribe_voice_clip(
+        &self,
+        event: &serde_json::Value,
+        state: &crate::state::AppState,
+    ) -> Option<String> {
+        let cfg = crate::stt::config_from_settings(&state.settings)?;
+        let files = event.get("files")?.as_array()?;
+        let audio = files.iter().find(|f| {
+            f.get("mimetype")
+                .and_then(|v| v.as_str())
+                .map(|m| m.starts_with("audio/"))
+                .unwrap_or(false)
+        })?;
+        let url = audio
+            .get("url_private_download")
+            .or_else(|| audio.get("url_private"))
+            .and_then(|v| v.as_str())?;
+        let name = audio
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("voice_message.m4a");
+        let mime = audio
+            .get("mimetype")
+            .and_then(|v| v.as_str())
+            .unwrap_or("audio/mp4");
+
+        let resp = match self
+            .client
+            .get(url)
+            .header("Authorization", format!("Bearer {}", self.bot_token))
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("[SLACK] voice file download failed: {}", e);
+                return None;
+            }
+        };
+        if !resp.status().is_success() {
+            tracing::warn!("[SLACK] voice file download failed: {}", resp.status());
+            return None;
+        }
+        let bytes = resp.bytes().await.ok()?.to_vec();
+
+        match crate::stt::transcribe(&cfg, bytes, name, mime).await {
+            Ok(t) if !t.is_empty() => {
+                tracing::info!(
+                    "[SLACK] voice message transcribed ({} chars)",
+                    t.chars().count()
+                );
+                Some(t)
+            }
+            Ok(_) => {
+                tracing::warn!("[SLACK] voice transcription returned empty text");
+                None
+            }
+            Err(e) => {
+                tracing::warn!("[SLACK] voice transcription failed: {:#}", e);
+                None
+            }
+        }
     }
 }
 

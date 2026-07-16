@@ -17,6 +17,7 @@ pub mod providers;
 pub mod router;
 pub mod scheduler;
 pub mod state;
+pub mod stt;
 pub mod tools;
 pub mod watcher;
 pub mod webhook;

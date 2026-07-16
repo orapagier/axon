@@ -1405,7 +1405,7 @@ impl TelegramGateway {
             .and_then(|v| v.as_i64())
             .map(|id| id.to_string())
             .unwrap_or_default();
-        let text = msg
+        let mut text = msg
             .get("text")
             .and_then(|v| v.as_str())
             .unwrap_or("")
@@ -1636,6 +1636,54 @@ impl TelegramGateway {
             match self.download_to_staging(fid, &original_filename).await {
                 Ok(af) => attached.push(af),
                 Err(e) => tracing::warn!("Failed to download Telegram file: {}", e),
+            }
+        }
+
+        // ── Voice input: transcribe voice notes / audio clips ───────────────
+        // When STT is configured (same stt.* settings as the dashboard mic), a
+        // voice message becomes ordinary text — it flows through workflow-name
+        // matching and the agent exactly like typed input. A transcribed voice
+        // note drops its audio attachment (the agent has nothing more to do
+        // with the .ogg); an uploaded audio file keeps its attachment so tools
+        // can still work on the file itself. Transcription failure falls back
+        // to the old behavior (attachment + "User sent a file.").
+        let is_voice_note = msg.get("voice").is_some();
+        if (is_voice_note || msg.get("audio").is_some()) && !attached.is_empty() && text.is_empty()
+        {
+            if let Some(cfg) = crate::stt::config_from_settings(&state.settings) {
+                let (path, name, mime) = {
+                    let af = &attached[0];
+                    (
+                        af.local_path.clone(),
+                        af.original_name.clone(),
+                        af.mime_type.clone(),
+                    )
+                };
+                let transcript = match tokio::fs::read(&path).await {
+                    Ok(bytes) => crate::stt::transcribe(&cfg, bytes, &name, &mime).await,
+                    Err(e) => Err(anyhow::anyhow!("could not read staged voice file: {}", e)),
+                };
+                match transcript {
+                    Ok(t) if !t.is_empty() => {
+                        tracing::info!(
+                            "[TELEGRAM] voice message transcribed ({} chars) for chat {}",
+                            t.chars().count(),
+                            chat_id
+                        );
+                        text = if caption.is_empty() {
+                            t
+                        } else {
+                            format!("{}\n\n[Transcript of attached audio]\n{}", caption, t)
+                        };
+                        if is_voice_note {
+                            attached.clear();
+                        }
+                    }
+                    Ok(_) => {
+                        tracing::warn!("[TELEGRAM] voice transcription returned empty text")
+                    }
+                    Err(e) => tracing::warn!("[TELEGRAM] voice transcription failed: {:#}", e),
+                }
             }
         }
 
