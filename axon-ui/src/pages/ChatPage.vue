@@ -425,10 +425,10 @@ function onKeydown(e) {
   }
 }
 
-// ── Voice input (mic → /api/audio/transcribe → composer) ────────────────────
-// One button cycles idle → recording → transcribing → idle. The transcript is
-// inserted into the composer for review rather than auto-sent, so a bad
-// transcription never fires a run.
+// ── Voice input (mic → /api/audio/transcribe → send) ────────────────────────
+// One button cycles idle → recording → transcribing → idle. The transcript
+// auto-sends (speak-and-go, like the messaging gateways); it only stays in the
+// composer when a run is already streaming and sending is blocked.
 const recState = ref('idle') // 'idle' | 'recording' | 'transcribing'
 const recSeconds = ref(0)
 let mediaRecorder = null
@@ -524,10 +524,15 @@ async function transcribe(blob) {
     } else {
       // Append rather than replace: dictation can extend typed text.
       input.value = input.value.trim() ? `${input.value.replace(/\s+$/, '')} ${text}` : text
-      nextTick(() => {
-        adjustInputHeight()
-        inputEl.value?.focus()
-      })
+      if (!disabled.value) {
+        send()
+      } else {
+        // A run is streaming — sending is blocked, so keep it for review.
+        nextTick(() => {
+          adjustInputHeight()
+          inputEl.value?.focus()
+        })
+      }
     }
   } catch {
     toast('Transcription failed — check the Voice Input settings.', false)
