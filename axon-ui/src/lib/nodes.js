@@ -4024,6 +4024,13 @@ export const NODE_TYPES = {
                 displayOptions: { show: { memory_enabled: [true] } },
             },
             {
+                displayName: 'Long-term Memory',
+                name: 'long_term_enabled',
+                type: 'boolean',
+                default: false,
+                description: 'Give this node its own private long-term memory: useful results are saved after each run and the most relevant ones are recalled in future runs — beyond the short-term window. Kept until the workflow is deleted; removing just the node keeps its memories.',
+            },
+            {
                 displayName: 'User Prompt',
                 name: 'stimulus',
                 type: 'string',
