@@ -1,6 +1,6 @@
 <script setup>
 /**
- * CanvasNodeDefault — n8n-accurate node renderer
+ * CanvasNodeDefault — default node renderer; UX inspired by n8n, independent implementation
  * 100x100px box with conic-gradient running animation, state borders, icon centered
  */
 import { computed, ref } from 'vue'
@@ -109,11 +109,11 @@ function onActivate(event) {
 <style scoped>
 .node-default {
   position: relative;
-  width: var(--canvas-node--width, 100px);
-  height: var(--canvas-node--height, 100px);
-  background: var(--node--color--background, #1e1f28);
-  border: var(--canvas-node--border-width, 2px) solid rgba(255, 255, 255, 0.08);
-  border-radius: var(--radius--lg, 16px);
+  width: var(--canvas-node-width, 100px);
+  height: var(--canvas-node-height, 100px);
+  background: var(--node-bg, #1e1f28);
+  border: var(--canvas-node-border-width, 2px) solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-lg, 16px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -123,34 +123,34 @@ function onActivate(event) {
 
 /* Trigger node: rounded left side */
 .node-default.trigger {
-  border-radius: var(--trigger-node--radius, 36px) var(--radius--lg, 16px)
-    var(--radius--lg, 16px) var(--trigger-node--radius, 36px);
+  border-radius: var(--trigger-node-radius, 36px) var(--radius-lg, 16px)
+    var(--radius-lg, 16px) var(--trigger-node-radius, 36px);
 }
 
 .node-default:hover {
   border-color: rgba(255, 255, 255, 0.2);
 }
 
-/* ── State classes (priority order, matching n8n) ── */
+/* ── State classes (priority order) ── */
 
 .node-default.selected {
-  box-shadow: 0 0 0 6px var(--canvas--color--selected-transparent, rgba(129, 230, 217, 0.15));
+  box-shadow: 0 0 0 6px var(--canvas-selected-transparent, rgba(129, 230, 217, 0.15));
 }
 
 .node-default.success {
-  border-color: var(--color--success, #22c55e);
+  border-color: var(--color-success, #22c55e);
 }
 
 .node-default.error {
-  border-color: var(--color--danger, #ef4444);
+  border-color: var(--color-danger, #ef4444);
 }
 
 .node-default.disabled {
-  border-color: var(--color--foreground, #6b7280);
+  border-color: var(--color-foreground, #6b7280);
   opacity: 0.6;
 }
 
-/* ── Running / Waiting conic-gradient animation (n8n-exact) ── */
+/* ── Running / Waiting conic-gradient animation ── */
 
 .node-default.receiving {
   border-color: #81e6d9;
@@ -173,10 +173,10 @@ function onActivate(event) {
   content: '';
   position: absolute;
   inset: -3px;
-  border-radius: calc(var(--radius--lg, 16px) + 1px);
+  border-radius: calc(var(--radius-lg, 16px) + 1px);
   z-index: -1;
   background: conic-gradient(
-    from var(--node--gradient-angle, 0deg),
+    from var(--node-gradient-angle, 0deg),
     rgba(129, 230, 217, 1),
     rgba(129, 230, 217, 1) 20%,
     rgba(129, 230, 217, 0.2) 35%,
@@ -188,10 +188,10 @@ function onActivate(event) {
 
 .node-default.trigger.running::after,
 .node-default.trigger.waiting::after {
-  border-radius: calc(var(--trigger-node--radius, 36px) + 1px)
-    calc(var(--radius--lg, 16px) + 1px)
-    calc(var(--radius--lg, 16px) + 1px)
-    calc(var(--trigger-node--radius, 36px) + 1px);
+  border-radius: calc(var(--trigger-node-radius, 36px) + 1px)
+    calc(var(--radius-lg, 16px) + 1px)
+    calc(var(--radius-lg, 16px) + 1px)
+    calc(var(--trigger-node-radius, 36px) + 1px);
 }
 
 .node-default.running::after {
@@ -208,15 +208,15 @@ function onActivate(event) {
   animation: border-rotate 4.5s linear infinite;
 }
 
-@property --node--gradient-angle {
+@property --node-gradient-angle {
   syntax: '<angle>';
   initial-value: 0deg;
   inherits: false;
 }
 
 @keyframes border-rotate {
-  from { --node--gradient-angle: 0deg; }
-  to { --node--gradient-angle: 360deg; }
+  from { --node-gradient-angle: 0deg; }
+  to { --node-gradient-angle: 360deg; }
 }
 
 /* ── Icon ── */
@@ -257,7 +257,7 @@ function onActivate(event) {
   left: -5%;
   width: 110%;
   height: 2px;
-  background: var(--color--foreground, #6b7280);
+  background: var(--color-foreground, #6b7280);
   transform: rotate(-45deg);
   transform-origin: center;
   pointer-events: none;

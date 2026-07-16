@@ -118,7 +118,7 @@ function onOpenContextMenu(event) {
   display: flex;
   align-items: center;
   justify-content: center;
-  background-color: var(--canvas--color--background, #f5f6fa);
+  background-color: var(--canvas-bg, #f5f6fa);
   border-radius: var(--radius, 8px);
   pointer-events: auto;
 }
@@ -132,7 +132,7 @@ function onOpenContextMenu(event) {
   background: transparent;
   border: none;
   border-radius: 6px;
-  color: var(--color--foreground, #6b7280);
+  color: var(--color-foreground, #6b7280);
   cursor: pointer;
   transition: all 0.15s ease;
 }

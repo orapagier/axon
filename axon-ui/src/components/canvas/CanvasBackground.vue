@@ -153,7 +153,7 @@ const scaledGap = computed(() => {
   inset: 0;
   pointer-events: none;
   z-index: 0;
-  color: var(--canvas--color--dots, #6b7280);
+  color: var(--canvas-dots, #6b7280);
 }
 
 .dots-pattern,

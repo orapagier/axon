@@ -120,9 +120,9 @@ const nodeHeight = computed(() => {
   return count * OUTPUT_SLOT_HEIGHT
 })
 // Override the node-height CSS var for this node only; both the wrapper and the
-// inner box read `--canvas-node--height`, so the icon stays centered as it grows.
+// inner box read `--canvas-node-height`, so the icon stays centered as it grows.
 const rootStyle = computed(() => ({
-  '--canvas-node--height': `${nodeHeight.value}px`,
+  '--canvas-node-height': `${nodeHeight.value}px`,
 }))
 
 // Vue Flow caches each handle's position relative to its node. When the number of
@@ -455,8 +455,8 @@ function cancelRename() {
 
 .node-wrapper {
   position: relative;
-  width: var(--canvas-node--width, 100px);
-  height: var(--canvas-node--height, 100px);
+  width: var(--canvas-node-width, 100px);
+  height: var(--canvas-node-height, 100px);
 }
 
 .canvas-node :deep(.vue-flow__handle) {
@@ -499,8 +499,8 @@ function cancelRename() {
 .canvas-node :deep(.vue-flow__handle:hover) {
   transform: scale(1.3);
   background: #fff;
-  border-color: var(--color--primary, #81e6d9);
-  box-shadow: 0 0 12px var(--color--primary, #81e6d9);
+  border-color: var(--color-primary, #81e6d9);
+  box-shadow: 0 0 12px var(--color-primary, #81e6d9);
 }
 
 .canvas-node :deep(.vue-flow__handle.connecting) {
@@ -531,8 +531,8 @@ function cancelRename() {
 }
 
 .node-label-main {
-  font-size: var(--font-size--md, 14px);
-  font-weight: var(--font-weight--medium, 500);
+  font-size: var(--font-size-md, 14px);
+  font-weight: var(--font-weight-medium, 500);
   color: #e5e7eb;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -544,7 +544,7 @@ function cancelRename() {
 }
 
 .node-type-label {
-  font-size: var(--font-size--xs, 12px);
+  font-size: var(--font-size-xs, 12px);
   color: rgba(255, 255, 255, 0.35);
   margin-top: 2px;
 }
@@ -557,7 +557,7 @@ function cancelRename() {
 
 .node-rename-input {
   background: #1a1b26;
-  border: 1px solid var(--color--primary, #81e6d9);
+  border: 1px solid var(--color-primary, #81e6d9);
   border-radius: 6px;
   color: #fff;
   font-size: 14px;
@@ -577,7 +577,7 @@ function cancelRename() {
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  background: var(--color--success, #50fa7b);
+  background: var(--color-success, #50fa7b);
   color: #0f1117;
   display: flex;
   align-items: center;

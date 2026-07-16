@@ -1,6 +1,6 @@
 <script setup>
 /**
- * CanvasEdge - Custom edge component matching n8n's CanvasEdge
+ * CanvasEdge - Custom edge component; UX inspired by n8n, independent implementation
  * Features smooth bezier curves and edge toolbar
  */
 import { computed, ref } from 'vue'
@@ -54,14 +54,14 @@ const edgeCenter = computed(() => {
   return { x: centerX, y: centerY }
 })
 
-// Edge styles based on state (matching n8n colors)
+// Edge styles based on state
 const edgeStyles = computed(() => ({
   ...props.style,
   stroke: props.selected
-    ? 'var(--canvas--edge--color--hover, rgba(220, 220, 220, 0.7))'
+    ? 'var(--canvas-edge-color-hover, rgba(220, 220, 220, 0.7))'
     : props.hovered
-      ? 'var(--canvas--edge--color--hover, rgba(220, 220, 220, 0.7))'
-      : 'var(--canvas--edge--color, rgba(180, 180, 180, 0.5))',
+      ? 'var(--canvas-edge-color-hover, rgba(220, 220, 220, 0.7))'
+      : 'var(--canvas-edge-color, rgba(180, 180, 180, 0.5))',
   strokeWidth: props.selected ? 3 : 2,
   transition: 'stroke 0.15s ease, stroke-width 0.15s ease',
 }))

@@ -3157,7 +3157,7 @@ onUnmounted(() => {
 
 .node-picker-trigger.is-active {
   background: #1a1b26;
-  border-color: var(--color--primary, #81e6d9);
+  border-color: var(--color-primary, #81e6d9);
   box-shadow: 0 0 20px rgba(129, 230, 217, 0.4);
 }
 
@@ -3551,7 +3551,7 @@ onUnmounted(() => {
   display: flex;
   justify-content: center;
   font-size: 14px;
-  color: var(--color--primary, #81e6d9);
+  color: var(--color-primary, #81e6d9);
   opacity: 0.7;
 }
 

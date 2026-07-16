@@ -867,17 +867,17 @@ defineExpose({
 }
 
 :deep(.vue-flow__edge-path) {
-  stroke: var(--canvas--edge--color, rgba(180, 180, 180, 0.5)) !important;
+  stroke: var(--canvas-edge-color, rgba(180, 180, 180, 0.5)) !important;
   stroke-width: 2;
 }
 
 :deep(.vue-flow__edge.selected .vue-flow__edge-path) {
-  stroke: var(--canvas--edge--color--hover, rgba(220, 220, 220, 0.7)) !important;
+  stroke: var(--canvas-edge-color-hover, rgba(220, 220, 220, 0.7)) !important;
   stroke-width: 3;
 }
 
 :deep(.vue-flow__connection-path) {
-  stroke: var(--canvas--edge--color--hover, rgba(220, 220, 220, 0.7)) !important;
+  stroke: var(--canvas-edge-color-hover, rgba(220, 220, 220, 0.7)) !important;
   stroke-width: 2;
 }
 
