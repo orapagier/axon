@@ -46,12 +46,14 @@ impl LongTermMemory {
         }
     }
 
-    pub async fn store(
+    /// Embed (when an embedder is configured) and insert one row; returns the
+    /// new row id plus the raw embedding bytes for an optional Qdrant mirror.
+    async fn insert_row(
         &self,
         content: &str,
         source: Option<&str>,
         tags: &[&str],
-    ) -> anyhow::Result<i64> {
+    ) -> anyhow::Result<(i64, Option<Vec<u8>>)> {
         let emb: Option<Vec<u8>> = if let Some(e) = &self.embedder {
             e.embed_one(content)
                 .await
@@ -73,10 +75,34 @@ impl LongTermMemory {
             "INSERT INTO long_term (content,embedding,source,tags,embedding_model) VALUES (?1,?2,?3,?4,?5)",
             rusqlite::params![content, emb, source, tags_json, emb_model],
         )?;
-        let id = conn.last_insert_rowid();
+        Ok((conn.last_insert_rowid(), emb))
+    }
+
+    /// Store a memory in a node-private partition (`source` = the node's scope,
+    /// e.g. "wf:{workflow_id}:node:{node_id}"). Deliberately NOT mirrored to
+    /// Qdrant: the Qdrant collection backs GLOBAL recall only and has no cheap
+    /// prefix filter to keep partitions out, so scoped recall runs entirely on
+    /// the SQLite path (`search_scoped`).
+    pub async fn store_scoped(
+        &self,
+        content: &str,
+        scope: &str,
+        tags: &[&str],
+    ) -> anyhow::Result<i64> {
+        Ok(self.insert_row(content, Some(scope), tags).await?.0)
+    }
+
+    pub async fn store(
+        &self,
+        content: &str,
+        source: Option<&str>,
+        tags: &[&str],
+    ) -> anyhow::Result<i64> {
+        let (id, emb) = self.insert_row(content, source, tags).await?;
 
         if let Some(q_client) = &self.qdrant {
             if let Some(e_bytes) = &emb {
+                let tags_json = serde_json::to_string(tags).unwrap_or_else(|_| "[]".into());
                 let vec = bytes_to_vec(e_bytes);
                 use qdrant_client::qdrant::Value;
                 let mut payload: std::collections::HashMap<String, Value> =
@@ -286,10 +312,12 @@ impl LongTermMemory {
                 .collect::<Vec<_>>()
                 .join(" OR ");
 
+            // Node-private partitions (source "wf:…", see `store_scoped`) never
+            // surface in global recall — only `search_scoped` can read them.
             let sql = if source_exclude.is_some() {
-                "SELECT lt.id,lt.content,lt.source,lt.tags,lt.created_at FROM long_term lt JOIN long_term_fts fts ON lt.id=fts.rowid WHERE long_term_fts MATCH ?1 AND (lt.source IS NULL OR lt.source != ?2) ORDER BY rank LIMIT ?3"
+                "SELECT lt.id,lt.content,lt.source,lt.tags,lt.created_at FROM long_term lt JOIN long_term_fts fts ON lt.id=fts.rowid WHERE long_term_fts MATCH ?1 AND (lt.source IS NULL OR (lt.source != ?2 AND lt.source NOT LIKE 'wf:%')) ORDER BY rank LIMIT ?3"
             } else {
-                "SELECT lt.id,lt.content,lt.source,lt.tags,lt.created_at FROM long_term lt JOIN long_term_fts fts ON lt.id=fts.rowid WHERE long_term_fts MATCH ?1 ORDER BY rank LIMIT ?2"
+                "SELECT lt.id,lt.content,lt.source,lt.tags,lt.created_at FROM long_term lt JOIN long_term_fts fts ON lt.id=fts.rowid WHERE long_term_fts MATCH ?1 AND (lt.source IS NULL OR lt.source NOT LIKE 'wf:%') ORDER BY rank LIMIT ?2"
             };
             let mut s = conn.prepare(sql)?;
             let mapped: Vec<(i64, String, Option<String>, Option<String>, String)> =
@@ -312,9 +340,9 @@ impl LongTermMemory {
         if hits.is_empty() {
             let conn = self.db.get().context("DB pool")?;
             let sql = if source_exclude.is_some() {
-                "SELECT id,content,source,tags,created_at FROM long_term WHERE source IS NULL OR source != ?1 ORDER BY id DESC LIMIT ?2"
+                "SELECT id,content,source,tags,created_at FROM long_term WHERE source IS NULL OR (source != ?1 AND source NOT LIKE 'wf:%') ORDER BY id DESC LIMIT ?2"
             } else {
-                "SELECT id,content,source,tags,created_at FROM long_term ORDER BY id DESC LIMIT ?1"
+                "SELECT id,content,source,tags,created_at FROM long_term WHERE source IS NULL OR source NOT LIKE 'wf:%' ORDER BY id DESC LIMIT ?1"
             };
             let mut s = conn.prepare(sql)?;
             let mapped: Vec<(i64, String, Option<String>, Option<String>, String)> =
@@ -336,7 +364,64 @@ impl LongTermMemory {
         if hits.is_empty() {
             return Ok(vec![]);
         }
+        self.rerank_hits(query, hits, top_k).await
+    }
 
+    /// Search ONLY memories stored under the given node-private scope (an Axon
+    /// Cortex node's long-term partition). SQLite-only by design — scoped rows
+    /// are never mirrored to Qdrant (see `store_scoped`).
+    pub async fn search_scoped(
+        &self,
+        query: &str,
+        top_k: usize,
+        scope: &str,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        let mut hits: Vec<(i64, String, Option<String>, Option<String>, String)> = {
+            let conn = self.db.get().context("DB pool")?;
+            let fts_q = query
+                .split_whitespace()
+                .map(|w| format!("\"{}\"", w.replace('"', "")))
+                .collect::<Vec<_>>()
+                .join(" OR ");
+            let mut s = conn.prepare(
+                "SELECT lt.id,lt.content,lt.source,lt.tags,lt.created_at FROM long_term lt JOIN long_term_fts fts ON lt.id=fts.rowid WHERE long_term_fts MATCH ?1 AND lt.source = ?2 ORDER BY rank LIMIT ?3",
+            )?;
+            let mapped: Vec<(i64, String, Option<String>, Option<String>, String)> = s
+                .query_map(rusqlite::params![fts_q, scope, (top_k * 3) as i64], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+                })?
+                .filter_map(|r| r.ok())
+                .collect();
+            mapped
+        };
+        if hits.is_empty() {
+            let conn = self.db.get().context("DB pool")?;
+            let mut s = conn.prepare(
+                "SELECT id,content,source,tags,created_at FROM long_term WHERE source = ?1 ORDER BY id DESC LIMIT ?2",
+            )?;
+            let mapped: Vec<(i64, String, Option<String>, Option<String>, String)> = s
+                .query_map(rusqlite::params![scope, (top_k * 2) as i64], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+                })?
+                .filter_map(|r| r.ok())
+                .collect();
+            hits = mapped;
+        }
+        if hits.is_empty() {
+            return Ok(vec![]);
+        }
+        self.rerank_hits(query, hits, top_k).await
+    }
+
+    /// Order FTS/recency hits by cosine similarity against the query embedding
+    /// (rows embedded under a different model score the neutral 0.5), falling
+    /// back to the incoming order when no embedder is configured.
+    async fn rerank_hits(
+        &self,
+        query: &str,
+        hits: Vec<(i64, String, Option<String>, Option<String>, String)>,
+        top_k: usize,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
         if let Some(embedder) = &self.embedder {
             if let Ok(qv) = embedder.embed_one(query).await {
                 if !qv.is_empty() {

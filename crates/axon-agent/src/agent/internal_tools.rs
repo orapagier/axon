@@ -227,7 +227,7 @@ pub(crate) async fn handle_internal(
         }
         "cron_job_tool" => handle_job(args, state, ctx, run_id).await,
         "watcher_tool" => handle_watcher(args, state, ctx).await,
-        "agent_memory_tool" => handle_memory(args, state).await,
+        "agent_memory_tool" => handle_memory(args, state, &ctx).await,
         "ssh_tool" => handle_ssh(args, state).await,
         "shell_tool" => handle_shell(args).await,
         "parallel_worker" => handle_parallel_worker(args, state, ctx).await,
@@ -996,8 +996,14 @@ async fn handle_watcher(
 async fn handle_memory(
     args: serde_json::Value,
     state: AppState,
+    ctx: &RunContext,
 ) -> anyhow::Result<serde_json::Value> {
     let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
+    // A run with a node-private long-term partition (Cortex node with
+    // Long-term Memory on) stores and searches ONLY that partition — the tool
+    // must not leak the global store into an isolated node, or the node's
+    // memories into everyone else's recall.
+    let scope = ctx.memory_scope.as_deref();
     match args.get("action").and_then(|v| v.as_str()).unwrap_or("") {
         "store" => {
             let tags: Vec<String> = args
@@ -1005,13 +1011,19 @@ async fn handle_memory(
                 .and_then(|v| serde_json::from_value(v.clone()).ok())
                 .unwrap_or_default();
             let refs: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
-            Ok(
-                serde_json::json!({"stored":true,"id":state.memory.remember(content,"agent_note",&refs).await?}),
-            )
+            let id = match scope {
+                Some(sc) => state.memory.remember_scoped(content, sc, &refs).await?,
+                None => state.memory.remember(content, "agent_note", &refs).await?,
+            };
+            Ok(serde_json::json!({"stored":true,"id":id}))
         }
         "search" => {
             let k = args.get("top_k").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
-            Ok(serde_json::json!({"results":state.memory.search(content, k, None).await?}))
+            let results = match scope {
+                Some(sc) => state.memory.search_scoped(content, k, sc).await?,
+                None => state.memory.search(content, k, None).await?,
+            };
+            Ok(serde_json::json!({"results":results}))
         }
         "delete" => {
             let id = args

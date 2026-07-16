@@ -51,6 +51,16 @@ impl MemoryStore {
     pub async fn remember(&self, c: &str, src: &str, tags: &[&str]) -> anyhow::Result<i64> {
         self.long.store(c, Some(src), tags).await
     }
+    /// Store into a node-private long-term partition (Cortex node with
+    /// Long-term Memory enabled). Never surfaces in global recall.
+    pub async fn remember_scoped(
+        &self,
+        c: &str,
+        scope: &str,
+        tags: &[&str],
+    ) -> anyhow::Result<i64> {
+        self.long.store_scoped(c, scope, tags).await
+    }
     pub async fn search(
         &self,
         q: &str,
@@ -58,6 +68,15 @@ impl MemoryStore {
         source_exclude: Option<&str>,
     ) -> anyhow::Result<Vec<MemoryEntry>> {
         self.long.search(q, k, source_exclude).await
+    }
+    /// Search ONLY the given node-private long-term partition.
+    pub async fn search_scoped(
+        &self,
+        q: &str,
+        k: usize,
+        scope: &str,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        self.long.search_scoped(q, k, scope).await
     }
     pub fn forget(&self, id: i64) -> anyhow::Result<()> {
         self.long.delete(id)

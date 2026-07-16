@@ -35,6 +35,13 @@ pub struct RunContext {
     /// knows its own last N interactions — never the rest of the system.
     #[serde(default)]
     pub isolated_memory: bool,
+    /// A node-PRIVATE long-term memory partition (Cortex node with Long-term
+    /// Memory enabled): recall searches only memories stored under this scope,
+    /// and useful results are written back to it. Complements
+    /// `isolated_memory` — the run still never touches the shared global
+    /// long-term store or the observation log.
+    #[serde(default)]
+    pub memory_scope: Option<String>,
     /// When true, the run is EXPECTED to answer with machine-readable output
     /// (a bare JSON object, etc.), so the response validators must not treat
     /// that as a "raw dump" and inject a rewrite-in-prose correction — doing so
@@ -85,6 +92,7 @@ impl RunContext {
             memory_enabled: true,
             memory_window: None,
             isolated_memory: false,
+            memory_scope: None,
             expects_structured_output: false,
             preferred_role: None,
             image_content: None,

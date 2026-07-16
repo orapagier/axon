@@ -327,6 +327,21 @@ pub async fn delete_workflow(State(state): State<AppState>, Path(id): Path<Strin
             "DELETE FROM workflow_versions WHERE workflow_id = ?1",
             rusqlite::params![id],
         );
+        // Node-scoped memory cascades ONLY here: per-node short-term sessions
+        // and node-private long-term partitions are keyed
+        // "wf:{workflow_id}:node:{node_id}". Removing a node from the canvas
+        // never deletes its memory — saves rewrite every node row, so there is
+        // no reliable node-delete event; deleting the whole workflow is the
+        // one explicit, intentional point of no return.
+        let scope_prefix = format!("wf:{}:%", id);
+        let _ = conn.execute(
+            "DELETE FROM short_term WHERE session_id LIKE ?1",
+            rusqlite::params![scope_prefix],
+        );
+        let _ = conn.execute(
+            "DELETE FROM long_term WHERE source LIKE ?1",
+            rusqlite::params![scope_prefix],
+        );
         let _ = conn.execute("DELETE FROM workflows WHERE id = ?1", rusqlite::params![id]);
         Json(json!({"ok": true}))
     } else {

@@ -1506,22 +1506,40 @@ pub(crate) async fn run_inner(
                             && !text_lower.starts_with("i'm sorry")
                             && !text_lower.contains("all models exhausted")
                             && !text_lower.contains("max iterations")
-                            && !text_lower.contains("router alert")
-                            && !tools_used.is_empty();
+                            && !text_lower.contains("router alert");
                         // Isolated runs (Axon nodes) never write to the shared
-                        // long-term store — their memory stays node-local.
-                        if is_useful && !ctx.isolated_memory {
-                            let _ = state
-                                .memory
-                                .remember(
-                                    &format!(
-                                        "Task: {task}\nResult: {}",
-                                        text.chars().take(500).collect::<String>()
-                                    ),
-                                    "task_result",
-                                    &[],
-                                )
-                                .await;
+                        // long-term store — their memory stays node-local. A
+                        // node with its own long-term partition (Cortex
+                        // "Long-term Memory" on) writes there instead, and
+                        // keeps tool-free exchanges too: pure chat turns are
+                        // that node's main channel to remember beyond its
+                        // short-term window.
+                        if is_useful {
+                            if let Some(scope) = ctx.memory_scope.as_deref() {
+                                let _ = state
+                                    .memory
+                                    .remember_scoped(
+                                        &format!(
+                                            "Task: {task}\nResult: {}",
+                                            text.chars().take(500).collect::<String>()
+                                        ),
+                                        scope,
+                                        &[],
+                                    )
+                                    .await;
+                            } else if !ctx.isolated_memory && !tools_used.is_empty() {
+                                let _ = state
+                                    .memory
+                                    .remember(
+                                        &format!(
+                                            "Task: {task}\nResult: {}",
+                                            text.chars().take(500).collect::<String>()
+                                        ),
+                                        "task_result",
+                                        &[],
+                                    )
+                                    .await;
+                            }
                         }
                     }
 

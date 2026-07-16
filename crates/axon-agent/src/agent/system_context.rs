@@ -30,10 +30,15 @@ pub(crate) async fn build_run_context(
     let top_k = state.settings.long_term_top_k();
     let memory_enabled = ctx.memory_enabled;
     // Isolated runs (Axon workflow nodes) keep ONLY their own short-term window;
-    // they never reach into the global long-term store or observation log.
+    // they never reach into the global long-term store or observation log. A
+    // node-private long-term scope (Cortex "Long-term Memory" on) re-enables
+    // recall for an isolated run — but only within its own partition.
     let isolated = ctx.isolated_memory;
+    let memory_scope = ctx.memory_scope.as_deref();
     let is_conversational = crate::router::tool_router::CONVERSATIONAL.is_match(task);
-    let should_search_memory = memory_enabled && !isolated && !is_conversational && task.len() > 10;
+    let should_search_memory = (memory_scope.is_some() || (memory_enabled && !isolated))
+        && !is_conversational
+        && task.len() > 10;
 
     // Load short-term history. A per-run memory_window (set by the Axon node)
     // bounds how many recent messages feed the model; otherwise use the full
@@ -124,12 +129,16 @@ pub(crate) async fn build_run_context(
     let (memories_res, routing_res) = tokio::join!(
         async {
             if should_search_memory {
-                let exclude = if ctx.session_id == "owner" {
-                    Some("scheduler")
+                if let Some(scope) = memory_scope {
+                    state.memory.search_scoped(task, top_k, scope).await
                 } else {
-                    None
-                };
-                state.memory.search(task, top_k, exclude).await
+                    let exclude = if ctx.session_id == "owner" {
+                        Some("scheduler")
+                    } else {
+                        None
+                    };
+                    state.memory.search(task, top_k, exclude).await
+                }
             } else {
                 Ok(vec![])
             }

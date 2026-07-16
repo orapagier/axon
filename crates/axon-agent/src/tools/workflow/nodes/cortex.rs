@@ -230,6 +230,15 @@ pub(crate) fn execute_cortex_node<'a>(
             .map(|n| n.max(1) as usize)
             .unwrap_or(10);
 
+        // Per-node long-term memory (default OFF). When on, the node gets a
+        // PRIVATE long-term partition keyed by its session scope: relevant
+        // memories are recalled into context each run and useful results are
+        // written back — remembering beyond the short-term sliding window.
+        let long_term_enabled = config
+            .get("long_term_enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
         // Extract optional tools selection
         let selected_tools: Vec<String> = config
             .get("tools")
@@ -347,8 +356,14 @@ pub(crate) fn execute_cortex_node<'a>(
         // Each Cortex node's memory is fully isolated: it starts blank and only
         // ever sees its own sliding window of recent turns. Never the global
         // long-term memory or the system-wide tool-observation log, and it does
-        // not write its outputs back into that shared long-term store.
+        // not write its outputs back into that shared long-term store. The
+        // Long-term Memory toggle doesn't change that — it carves out a
+        // node-PRIVATE partition (memory_scope) inside the long_term table,
+        // still invisible to the main agent and every other node.
         ctx.isolated_memory = true;
+        if long_term_enabled {
+            ctx.memory_scope = Some(session.clone());
+        }
 
         if mode == "image" {
             ctx.preferred_role = Some("image_model".to_string());
