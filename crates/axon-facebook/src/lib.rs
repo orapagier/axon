@@ -29,6 +29,8 @@ impl FacebookService {
             Tool::new("facebook_auth_status", "Check Facebook and Instagram authentication status.", schema!({}, [])),
             Tool::new("facebook_revoke", "Delete stored Facebook and Instagram tokens.", schema!({}, [])),
             Tool::new("facebook_debug_token", "Inspect the current token (expiry, scopes, app_id).", schema!({}, [])),
+            Tool::new("facebook_get_app_credentials", "Get the configured Facebook App credentials (app_id, page_id, verify_token; app_secret is only reported as set/unset, never returned).", schema!({}, [])),
+            Tool::new("facebook_set_app_credentials", "Update the Facebook App credentials (app_id, app_secret, verify_token, page_id) used for OAuth and webhook verification.", schema!({"app_id":{"type":"string"},"app_secret":{"type":"string","description":"Leave blank to keep the existing secret"},"verify_token":{"type":"string"},"page_id":{"type":"string"}}, ["app_id","verify_token","page_id"])),
 
             // Page
             Tool::new("fb_get_page", "Get Facebook Page info: name, about, fans, website, contact, hours.", schema!({}, [])),
@@ -90,6 +92,17 @@ impl FacebookService {
             "facebook_auth_status" => auth::auth_status(&self.0).await,
             "facebook_revoke" => auth::revoke(&self.0).await,
             "facebook_debug_token" => auth::debug_token(&self.0).await,
+            "facebook_get_app_credentials" => auth::get_app_credentials(&self.0).await,
+            "facebook_set_app_credentials" => {
+                auth::set_app_credentials(
+                    &self.0,
+                    s("app_id")?,
+                    a.get("app_secret").and_then(|v| v.as_str()),
+                    s("verify_token")?,
+                    s("page_id")?,
+                )
+                .await
+            }
 
             "fb_get_page" => page::get_page(&self.0).await,
             "fb_update_page" => page::update_page(&self.0, a).await,

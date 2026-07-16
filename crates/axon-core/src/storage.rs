@@ -254,6 +254,8 @@ fn default_tenant() -> String {
 pub struct FacebookCreds {
     pub app_id: String,
     pub app_secret: String,
+    #[serde(default)]
+    pub verify_token: String,
     pub page_id: String,
     #[serde(default)]
     pub page_access_token: String,
@@ -409,6 +411,30 @@ impl Storage {
             self.save_credentials()?;
         }
         Ok(())
+    }
+
+    /// Update the Facebook *App*-level fields (app_id, app_secret, verify_token,
+    /// page_id) from the dashboard. `app_secret` is `None` when the operator left
+    /// the field blank in the edit form, so an existing secret is never
+    /// overwritten with an empty string. The Page token obtained via OAuth and
+    /// any linked Instagram id are left untouched.
+    pub fn set_facebook_app_credentials(
+        &mut self,
+        app_id: String,
+        app_secret: Option<String>,
+        verify_token: String,
+        page_id: String,
+    ) -> Result<()> {
+        let existing = self.credentials.facebook.clone().unwrap_or_default();
+        self.credentials.facebook = Some(FacebookCreds {
+            app_id,
+            app_secret: app_secret.unwrap_or(existing.app_secret),
+            verify_token,
+            page_id,
+            page_access_token: existing.page_access_token,
+            instagram_id: existing.instagram_id,
+        });
+        self.save_credentials()
     }
 
     fn save_credentials(&self) -> Result<()> {

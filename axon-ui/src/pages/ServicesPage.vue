@@ -78,6 +78,8 @@ const sshModal = ref(false)
 const wsModal = ref(false)
 const msgModal = ref(false)
 const msgPlatform = ref(null)
+const fbAppModal = ref(false)
+const fbAppForm = ref({ app_id: '', app_secret: '', app_secret_set: false, verify_token: '', page_id: '' })
 
 const mcpForm = ref({ name: '', url: '', api_key: '' })
 const sshForm = ref({
@@ -251,6 +253,32 @@ async function connectAuth(p) {
   if (r.url || r.login_url) window.open(r.url || r.login_url, '_blank')
   else toast(`Failed to get auth URL: ${r.error || JSON.stringify(r)}`, false)
 }
+async function openFbAppModal() {
+  const d = await get('/facebook/app-credentials')
+  fbAppForm.value = {
+    app_id: d.app_id || '',
+    app_secret: '',
+    app_secret_set: !!d.app_secret_set,
+    verify_token: d.verify_token || '',
+    page_id: d.page_id || '',
+  }
+  fbAppModal.value = true
+}
+
+async function saveFbAppCredentials() {
+  if (!fbAppForm.value.app_id || !fbAppForm.value.verify_token || !fbAppForm.value.page_id) {
+    return toast('App ID, Verify Token, and Page ID are required', false)
+  }
+  const r = await put('/facebook/app-credentials', {
+    app_id: fbAppForm.value.app_id,
+    app_secret: fbAppForm.value.app_secret,
+    verify_token: fbAppForm.value.verify_token,
+    page_id: fbAppForm.value.page_id,
+  })
+  toast(r.ok ? 'Facebook App credentials saved' : r.error, r.ok)
+  if (r.ok) fbAppModal.value = false
+}
+
 async function disconnectAuth(p) {
   const ok = await confirmDialog(`You can reconnect ${p} again later.`, {
     title: `Disconnect ${p}`,
@@ -458,6 +486,13 @@ onUnmounted(() => {
               : `OAuth sign-in for ${meta.name}` }}
           </p>
           <div class="svc-actions">
+            <button
+              v-if="id === 'facebook'"
+              class="btn btn-ghost"
+              @click="openFbAppModal"
+            >
+              Edit App
+            </button>
             <button
               v-if="!authStatus[id]?.authenticated"
               class="btn btn-ghost"
@@ -712,6 +747,64 @@ onUnmounted(() => {
           @click="saveMessagingToken(msgPlatform)"
         >
           Save Token
+        </button>
+      </div>
+    </div>
+  </Modal>
+
+  <!-- Facebook App credentials -->
+  <Modal
+    v-model="fbAppModal"
+    title="Facebook App Credentials"
+  >
+    <div class="mform">
+      <div class="mform-field">
+        <label>App ID</label>
+        <input
+          v-model="fbAppForm.app_id"
+          type="text"
+          placeholder="e.g. 920903276972742"
+        >
+      </div>
+      <div class="mform-field">
+        <label>App Secret</label>
+        <input
+          v-model="fbAppForm.app_secret"
+          type="password"
+          :placeholder="fbAppForm.app_secret_set ? '•••••••••••••••• (unchanged)' : 'Paste app secret…'"
+        >
+        <p class="mform-hint">
+          Leave blank to keep the currently stored secret.
+        </p>
+      </div>
+      <div class="mform-field">
+        <label>Verify Token</label>
+        <input
+          v-model="fbAppForm.verify_token"
+          type="text"
+          placeholder="Any string you also set in the Meta webhook config"
+        >
+      </div>
+      <div class="mform-field">
+        <label>Page ID</label>
+        <input
+          v-model="fbAppForm.page_id"
+          type="text"
+          placeholder="e.g. 846232565231219"
+        >
+      </div>
+      <div class="mform-actions">
+        <button
+          class="btn btn-ghost"
+          @click="fbAppModal = false"
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-save"
+          @click="saveFbAppCredentials"
+        >
+          Save
         </button>
       </div>
     </div>

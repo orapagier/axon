@@ -431,6 +431,41 @@ pub async fn revoke(state: &AppState) -> Result<Value> {
     )
 }
 
+/// Read-only view of the Facebook App credentials for the Settings dashboard.
+/// `app_secret` is never returned — only whether one is set — same posture as
+/// the generic credential `test_credential` endpoint.
+pub async fn get_app_credentials(state: &AppState) -> Result<Value> {
+    let s = state.storage.read().await;
+    let fb = s.credentials.facebook.clone().unwrap_or_default();
+    Ok(json!({
+        "app_id": fb.app_id,
+        "page_id": fb.page_id,
+        "verify_token": fb.verify_token,
+        "app_secret_set": !fb.app_secret.is_empty(),
+    }))
+}
+
+/// Update the Facebook App credentials from the Settings dashboard. An empty
+/// `app_secret` is treated as "leave unchanged" so the edit form doesn't need
+/// to round-trip the real secret to prefill the field.
+pub async fn set_app_credentials(
+    state: &AppState,
+    app_id: &str,
+    app_secret: Option<&str>,
+    verify_token: &str,
+    page_id: &str,
+) -> Result<Value> {
+    state.storage.write().await.set_facebook_app_credentials(
+        app_id.to_string(),
+        app_secret
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty()),
+        verify_token.to_string(),
+        page_id.to_string(),
+    )?;
+    Ok(json!({ "ok": true }))
+}
+
 fn urlenc(s: &str) -> String {
     url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
 }

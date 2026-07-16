@@ -67,6 +67,30 @@ pub async fn get_facebook_connect_url(State(state): State<AppState>) -> Json<Val
     }
 }
 
+/// Settings dashboard: read the current Facebook App credentials
+/// (app_id/page_id/verify_token, plus whether app_secret is set — the secret
+/// itself is never sent to the browser).
+pub async fn get_facebook_app_credentials(State(state): State<AppState>) -> Json<Value> {
+    match state.tools.run("facebook_get_app_credentials", json!({})).await {
+        Ok(res) => Json(res),
+        Err(e) => Json(json!({ "error": format!("Failed to load Facebook app credentials: {e}") })),
+    }
+}
+
+/// Settings dashboard: update app_id/app_secret/verify_token/page_id. An
+/// empty/omitted `app_secret` leaves the stored secret untouched.
+pub async fn update_facebook_app_credentials(
+    State(state): State<AppState>,
+    Json(payload): Json<Value>,
+) -> Json<Value> {
+    match state.tools.run("facebook_set_app_credentials", payload).await {
+        Ok(res) => Json(res),
+        Err(e) => {
+            Json(json!({ "ok": false, "error": format!("Failed to update Facebook app credentials: {e}") }))
+        }
+    }
+}
+
 pub async fn disconnect_auth(
     State(state): State<AppState>,
     Path(platform): Path<String>,

@@ -5,7 +5,6 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
-use once_cell::sync::OnceCell;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -29,8 +28,12 @@ fn dbg_log(msg: &str) {
 // handshake) are still read from credentials.json — they belong to the Facebook
 // *App*, which is shared across every connected Page. Per-Page tokens live in
 // the `credentials` table and are selected per workflow node.
-
-static FB_CREDS: OnceCell<FbCreds> = OnceCell::new();
+//
+// Re-read on every call (the file is tiny) rather than cached in a OnceCell:
+// the Settings dashboard edits app_id/app_secret/verify_token/page_id through
+// `Storage::set_facebook_app_credentials`, which writes the same file, and a
+// cached-forever copy here would silently keep verifying against the old
+// secret until the process restarted.
 
 #[derive(Debug, Clone, Default)]
 pub struct FbCreds {
@@ -39,40 +42,36 @@ pub struct FbCreds {
     pub page_id: String,
 }
 
-pub fn load_fb_creds() -> &'static FbCreds {
-    FB_CREDS.get_or_init(|| {
-        // credentials.json lives in the agent's working dir (CWD): crates/axon-agent
-        // in dev, or the deploy `core/` dir in prod. ../mcp/ kept as a legacy fallback.
-        let paths = ["credentials.json", "../mcp/credentials.json"];
-        for path in &paths {
-            if let Ok(data) = std::fs::read_to_string(path) {
-                if let Ok(json) = serde_json::from_str::<Value>(&data) {
-                    let fb = json.get("facebook").cloned().unwrap_or_default();
-                    let creds = FbCreds {
-                        app_secret: fb
-                            .get("app_secret")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string(),
-                        verify_token: fb
-                            .get("verify_token")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string(),
-                        page_id: fb
-                            .get("page_id")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string(),
-                    };
-                    tracing::info!("FB webhook: loaded credentials from {}", path);
-                    return creds;
-                }
+pub fn load_fb_creds() -> FbCreds {
+    // credentials.json lives in the agent's working dir (CWD): crates/axon-agent
+    // in dev, or the deploy `core/` dir in prod. ../mcp/ kept as a legacy fallback.
+    let paths = ["credentials.json", "../mcp/credentials.json"];
+    for path in &paths {
+        if let Ok(data) = std::fs::read_to_string(path) {
+            if let Ok(json) = serde_json::from_str::<Value>(&data) {
+                let fb = json.get("facebook").cloned().unwrap_or_default();
+                return FbCreds {
+                    app_secret: fb
+                        .get("app_secret")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    verify_token: fb
+                        .get("verify_token")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    page_id: fb
+                        .get("page_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                };
             }
         }
-        tracing::warn!("FB webhook: credentials.json not found, webhook verification disabled");
-        FbCreds::default()
-    })
+    }
+    tracing::warn!("FB webhook: credentials.json not found, webhook verification disabled");
+    FbCreds::default()
 }
 
 // ── Facebook Webhook Verification (GET) ──────────────────────────────────────
