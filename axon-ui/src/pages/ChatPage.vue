@@ -28,7 +28,6 @@ let traceIdx = -1 // index of the trace block preceding it
 // the agent only sees that thread's history; long-term memory stays shared.
 const conversations = ref([])
 const currentSessionId = ref(null)
-const LS_KEY = 'axon.chat.session'
 
 // Chat-history search (over message content, not just titles). Debounced
 // against the /conversations/search endpoint; an empty query restores the
@@ -121,7 +120,6 @@ async function loadConversations() {
 
 function newChat() {
   currentSessionId.value = uuid()
-  localStorage.setItem(LS_KEY, currentSessionId.value)
   messages.value = []
   resetRunTrackers()
   disabled.value = false
@@ -131,7 +129,6 @@ function newChat() {
 async function openConversation(id) {
   if (id === currentSessionId.value || disabled.value) return
   currentSessionId.value = id
-  localStorage.setItem(LS_KEY, id)
   resetRunTrackers()
   try {
     const res = await get(`/conversations/${id}/messages`)
@@ -458,20 +455,9 @@ onMounted(async () => {
   window.addEventListener('keydown', onWindowKeydown)
   await loadConversations()
 
-  // Reopen the last thread if it still exists so a refresh doesn't lose the
-  // user's place; otherwise start a fresh conversation.
-  const last = localStorage.getItem(LS_KEY)
-  if (last && conversations.value.some((c) => c.id === last)) {
-    currentSessionId.value = last
-    try {
-      const res = await get(`/conversations/${last}/messages`)
-      messages.value = (res.messages || []).map(rowToMessage)
-    } catch {
-      messages.value = []
-    }
-  } else {
-    newChat()
-  }
+  // Every visit starts in a fresh conversation; past threads stay reachable
+  // from the sidebar.
+  newChat()
 
   nextTick(() => {
     inputEl.value?.focus()
