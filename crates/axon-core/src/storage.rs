@@ -141,7 +141,10 @@ pub fn data_files_dir() -> PathBuf {
     PathBuf::from("data/files")
 }
 
-fn creds_path() -> PathBuf {
+/// Resolve where `credentials.json` lives — public so out-of-crate readers
+/// (the Meta webhook handlers re-read it per request) resolve the exact file
+/// [`Storage::save_credentials`] writes, wherever that is.
+pub fn creds_path() -> PathBuf {
     // Working-directory file always takes priority so admins can update
     // credentials.json in the deployment folder and have it picked up.
     let local = PathBuf::from("credentials.json");

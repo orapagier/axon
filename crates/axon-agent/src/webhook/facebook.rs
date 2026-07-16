@@ -43,9 +43,17 @@ pub struct FbCreds {
 }
 
 pub fn load_fb_creds() -> FbCreds {
-    // credentials.json lives in the agent's working dir (CWD): crates/axon-agent
-    // in dev, or the deploy `core/` dir in prod. ../mcp/ kept as a legacy fallback.
-    let paths = ["credentials.json", "../mcp/credentials.json"];
+    // Resolve through the same logic Storage uses for its writes: the CWD
+    // credentials.json when present (crates/axon-agent in dev, the deploy
+    // `core/` dir in prod), otherwise the app-data dir. The data-dir fallback
+    // matters: on a deployment configured entirely through the Settings
+    // dashboard there is no CWD file — `save_credentials` writes only to the
+    // data dir, and reading a hardcoded CWD path here would leave webhook
+    // verification silently disabled. ../mcp/ kept as a legacy fallback.
+    let paths = [
+        axon_core::storage::creds_path(),
+        std::path::PathBuf::from("../mcp/credentials.json"),
+    ];
     for path in &paths {
         if let Ok(data) = std::fs::read_to_string(path) {
             if let Ok(json) = serde_json::from_str::<Value>(&data) {

@@ -70,6 +70,13 @@ const MESSAGING_WRITE_TOOLS: &[&str] = &[
 /// platforms follow suit.
 const SOCIAL_WRITE_TOOLS: &[&str] = &[
     // ── Facebook ──
+    // App credentials (Settings dashboard's Edit App panel). set_ rewrites
+    // app_secret/verify_token — hijacking or bricking webhook HMAC/handshake
+    // verification — and get_ discloses the verify_token; the chat agent has
+    // no conversational need for either, so both are gated despite get_ being
+    // a read. The dashboard reaches them via `run`, which ignores this gate.
+    "facebook_get_app_credentials",
+    "facebook_set_app_credentials",
     // Page
     "fb_update_page",
     // Posts

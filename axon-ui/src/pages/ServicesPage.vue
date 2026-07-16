@@ -275,7 +275,7 @@ async function saveFbAppCredentials() {
     verify_token: fbAppForm.value.verify_token,
     page_id: fbAppForm.value.page_id,
   })
-  toast(r.ok ? 'Facebook App credentials saved' : r.error, r.ok)
+  toast(r.ok ? 'Facebook App credentials saved' : (r.error || 'Failed to save Facebook App credentials'), !!r.ok)
   if (r.ok) fbAppModal.value = false
 }
 

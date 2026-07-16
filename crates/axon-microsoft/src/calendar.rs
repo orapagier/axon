@@ -131,6 +131,10 @@ pub async fn list_events(
         .client
         .get(&base)
         .bearer_auth(&tok)
+        // Without this Graph renders start/end in UTC, so the weekday
+        // annotation below would name the UTC day — off by one for any event
+        // before local 8am in a UTC+8 default_tz. Graph accepts IANA names.
+        .header("Prefer", format!("outlook.timezone=\"{}\"", default_tz()))
         .query(&params)
         .send()
         .await?
@@ -153,6 +157,9 @@ pub async fn get_event(state: &AppState, event_id: &str) -> Result<Value> {
         .client
         .get(format!("{BASE}/me/events/{}", urlenc(event_id)))
         .bearer_auth(&tok)
+        // Same as list_events: render times in the operator's tz so the
+        // weekday annotation names the local day, not the UTC day.
+        .header("Prefer", format!("outlook.timezone=\"{}\"", default_tz()))
         .query(&[(
             "$select",
             "id,subject,start,end,location,organizer,isAllDay,isCancelled,\

@@ -1618,6 +1618,8 @@ async function pasteWorkflow(pastedData = null) {
   }
 }
 
+// Returns true when the workflow was actually persisted, so callers that
+// flipped local state ahead of the save (toggleWfEnabled) can roll back.
 async function save(opts = {}) {
   // Silent saves (autosave from NodeDetails / field blur) skip the success toast
   // so editing doesn't spam notifications; errors always surface.
@@ -1625,7 +1627,7 @@ async function save(opts = {}) {
 
   if (!wfName.value.trim()) {
     if (!silent) toast('Workflow name is required', false)
-    return
+    return false
   }
 
   const payload = getWorkflowPayload()
@@ -1638,11 +1640,14 @@ async function save(opts = {}) {
         wfId.value = r.id
       }
       load()
+      return true
     } else {
       toast(r.error, false)
+      return false
     }
   } catch (e) {
     toast('Failed to save workflow', false)
+    return false
   }
 }
 
@@ -1651,7 +1656,12 @@ async function toggleWfEnabled() {
   // Unsaved workflow: nothing to persist yet — the flag rides along on the
   // next explicit Save via getWorkflowPayload().
   if (!wfId.value || wfId.value === 'new') return
-  await save({ silent: true })
+  if (!(await save({ silent: true }))) {
+    // save() already toasted the failure; put the switch back so the UI
+    // doesn't show a state the server never accepted.
+    wfEnabled.value = !wfEnabled.value
+    return
+  }
   toast(wfEnabled.value ? 'Workflow activated' : 'Workflow deactivated', true)
 }
 
@@ -2260,12 +2270,15 @@ function handleClickOutside(e) {
     showHistory.value = false
   }
 
-  // Handle Version History closure (mirror of the run-history panel above)
-  if (showVersions.value && versionsRef.value && !versionsRef.value.contains(e.target)) {
-    // The "View versions" button lives inside the settings popover; clicking there
-    // must not race the panel closed (it would reopen and flicker).
-    if (wfSettingsRef.value && wfSettingsRef.value.contains(e.target)) return
-
+  // Handle Version History closure (mirror of the run-history panel above).
+  // The "View versions" button lives inside the settings popover; clicking
+  // there must not race the panel closed (it would reopen and flicker) — but
+  // it must only skip THIS closure, not return out of the whole handler and
+  // strand the close checks below.
+  if (
+    showVersions.value && versionsRef.value && !versionsRef.value.contains(e.target)
+    && !(wfSettingsRef.value && wfSettingsRef.value.contains(e.target))
+  ) {
     showVersions.value = false
   }
 

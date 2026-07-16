@@ -342,6 +342,14 @@ fn sanitize_schema_node(v: &mut Value) {
     if let Some(not) = obj.get_mut("not") {
         sanitize_schema_node(not);
     }
+
+    // A node stripped down to nothing (e.g. it was only an unresolvable
+    // `{"$ref": …}` from an MCP server) would reach strict providers as `{}` —
+    // no `type` — which Gemini rejects just like the unknown keys did. Fall
+    // back to the most permissive scalar type.
+    if obj.is_empty() {
+        obj.insert("type".to_string(), json!("string"));
+    }
 }
 
 fn to_oai_tools(tools: &[ToolDefinition]) -> Vec<Value> {
@@ -1151,6 +1159,29 @@ mod tests {
         assert_eq!(
             props
                 .pointer("/items_param/items/type")
+                .and_then(|v| v.as_str()),
+            Some("string")
+        );
+    }
+
+    #[test]
+    fn sanitize_schema_types_a_subschema_stripped_to_nothing() {
+        // An MCP tool param that is only a `$ref` loses its every key to the
+        // whitelist; the bare `{}` left behind must gain a type or strict
+        // providers (Gemini) still 400 on it.
+        let mut props = json!({
+            "linked": {"$ref": "#/$defs/thing"},
+            "nested": {"type": "object", "properties": {"inner": {"$ref": "#/x"}}}
+        });
+        sanitize_schema(&mut props);
+        assert_eq!(
+            props.pointer("/linked/type").and_then(|v| v.as_str()),
+            Some("string")
+        );
+        assert!(props.pointer("/linked/$ref").is_none());
+        assert_eq!(
+            props
+                .pointer("/nested/properties/inner/type")
                 .and_then(|v| v.as_str()),
             Some("string")
         );

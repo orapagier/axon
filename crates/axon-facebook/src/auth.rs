@@ -457,9 +457,7 @@ pub async fn set_app_credentials(
 ) -> Result<Value> {
     state.storage.write().await.set_facebook_app_credentials(
         app_id.to_string(),
-        app_secret
-            .map(|s| s.to_string())
-            .filter(|s| !s.is_empty()),
+        app_secret.map(|s| s.to_string()).filter(|s| !s.is_empty()),
         verify_token.to_string(),
         page_id.to_string(),
     )?;
