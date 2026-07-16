@@ -26,6 +26,7 @@ const CATEGORY_META = {
   retention: { title: 'Database Retention', description: 'How long agent run history, tool observations, workflow runs, and webhook events are kept before the daily housekeeping sweep prunes them. Lower values keep the database smaller.' },
   router: { title: 'Router', description: 'Model failover behavior and the pattern → embedding → LLM tool-routing tiers.' },
   scheduler: { title: 'Scheduler', description: 'Background jobs, polling cadence, and automation timing.' },
+  stt: { title: 'Voice Input', description: 'OpenAI-compatible speech-to-text powering the Chat page microphone (Groq: https://api.groq.com/openai/v1 + whisper-large-v3-turbo; OpenAI: https://api.openai.com/v1 + gpt-4o-mini-transcribe). Applies immediately, no restart needed.' },
   watcher: { title: 'Smart Notifications', description: 'Auto-polling watchers (Gmail, Outlook, Calendar, Facebook), quiet hours, and where notifications are delivered.' },
   websearch: { title: 'Web Search', description: 'Search provider behavior and retrieval policy.' },
   workflow: { title: 'Workflows', description: 'Run concurrency and queueing, version snapshots, resume/approval links, and webhook deduplication.' },

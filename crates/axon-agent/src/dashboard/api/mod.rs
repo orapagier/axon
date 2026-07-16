@@ -21,6 +21,7 @@ macro_rules! try_json {
     };
 }
 
+mod audio;
 mod channels;
 mod chat_memory;
 mod credentials;
@@ -37,6 +38,7 @@ mod tools_router;
 mod watchers;
 mod workflows;
 
+pub use audio::*;
 pub use channels::*;
 pub use chat_memory::*;
 pub use credentials::*;

@@ -150,6 +150,10 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/api/download", get(api::download_file))
         .route("/api/upload", axum::routing::post(api::upload_file))
+        .route(
+            "/api/audio/transcribe",
+            axum::routing::post(api::transcribe_audio),
+        )
         .route("/api/slack/events", axum::routing::post(api::slack_events))
         .route(
             "/api/watchers",

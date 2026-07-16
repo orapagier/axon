@@ -1,10 +1,13 @@
 async function api(method, path, body) {
   const masterKey = localStorage.getItem('AXON_MASTER_KEY')
-  const headers = { 'Content-Type': 'application/json' }
+  // FormData bodies must let fetch set the multipart boundary itself — a
+  // manual Content-Type would produce an unparseable request.
+  const isForm = typeof FormData !== 'undefined' && body instanceof FormData
+  const headers = isForm ? {} : { 'Content-Type': 'application/json' }
   if (masterKey) headers['Authorization'] = `Bearer ${masterKey}`
 
   const opts = { method, headers }
-  if (body !== undefined) opts.body = JSON.stringify(body)
+  if (body !== undefined) opts.body = isForm ? body : JSON.stringify(body)
 
   const r = await fetch('/api' + path, opts)
 
@@ -35,5 +38,6 @@ async function api(method, path, body) {
 
 export const get = (path) => api('GET', path)
 export const post = (path, body) => api('POST', path, body)
+export const postForm = (path, formData) => api('POST', path, formData)
 export const put = (path, body) => api('PUT', path, body)
 export const del = (path) => api('DELETE', path)

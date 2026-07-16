@@ -113,6 +113,18 @@ INSERT OR IGNORE INTO settings VALUES
     ('embedder.model',    '', 'string', 'Embedding model name (e.g. gemini-embedding-001, all-minilm, voyage-4). Changing it re-embeds stored memories in the background on next start; re-check router.embed_floor after switching.', 'embedder', datetime('now')),
     ('embedder.api_key',  '', 'string', 'API key for the embeddings endpoint; a ${VAR} placeholder resolves from settings then environment (e.g. ${GEMINI_API_KEY}). Leave blank for local Ollama.', 'embedder', datetime('now'));
 
+-- Dashboard voice input (Chat page microphone). One OpenAI-compatible
+-- /audio/transcriptions code path; switching providers is a settings change:
+--   Groq:   https://api.groq.com/openai/v1 + whisper-large-v3-turbo
+--   OpenAI: https://api.openai.com/v1 + gpt-4o-mini-transcribe (or whisper-1)
+-- The mic button always renders; until base_url and model are both set the
+-- endpoint answers with a configuration hint instead of transcribing.
+INSERT OR IGNORE INTO settings VALUES
+    ('stt.base_url', '', 'string', 'OpenAI-compatible audio base URL (Groq: https://api.groq.com/openai/v1, OpenAI: https://api.openai.com/v1). Blank disables dashboard voice input.', 'stt', datetime('now')),
+    ('stt.model',    '', 'string', 'Transcription model (e.g. whisper-large-v3-turbo on Groq, gpt-4o-mini-transcribe or whisper-1 on OpenAI).', 'stt', datetime('now')),
+    ('stt.api_key',  '', 'string', 'API key for the transcription endpoint; a ${VAR} placeholder resolves from settings then environment (e.g. ${GROQ_API_KEY}).', 'stt', datetime('now')),
+    ('stt.language', '', 'string', 'Optional ISO-639-1 language hint (e.g. en, tl); blank lets the model auto-detect.', 'stt', datetime('now'));
+
 -- CRM agent access. Read tools are always agent-callable; the write tools
 -- (create/update/delete/convert/archive/restore) are gated per-tool via the
 -- ToolsPage Enable toggle (see tools/overrides.rs), same as social/messaging

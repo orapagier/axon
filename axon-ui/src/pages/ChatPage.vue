@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { connectWs, wsSend, wsStatus } from '../lib/ws.js'
-import { get, put, del } from '../lib/api.js'
+import { get, put, del, postForm } from '../lib/api.js'
 import { toast, notifyBell } from '../lib/toast.js'
 import { confirmDialog } from '../lib/confirm.js'
 import { renderMarkdown } from '../lib/markdown.js'
@@ -122,6 +122,7 @@ function newChat() {
   currentSessionId.value = uuid()
   messages.value = []
   resetRunTrackers()
+  stopSpeaking()
   disabled.value = false
   nextTick(() => inputEl.value?.focus())
 }
@@ -130,6 +131,7 @@ async function openConversation(id) {
   if (id === currentSessionId.value || disabled.value) return
   currentSessionId.value = id
   resetRunTrackers()
+  stopSpeaking()
   try {
     const res = await get(`/conversations/${id}/messages`)
     messages.value = (res.messages || []).map(rowToMessage)
@@ -423,7 +425,169 @@ function onKeydown(e) {
   }
 }
 
+// ── Voice input (mic → /api/audio/transcribe → composer) ────────────────────
+// One button cycles idle → recording → transcribing → idle. The transcript is
+// inserted into the composer for review rather than auto-sent, so a bad
+// transcription never fires a run.
+const recState = ref('idle') // 'idle' | 'recording' | 'transcribing'
+const recSeconds = ref(0)
+let mediaRecorder = null
+let recChunks = []
+let recTimer = null
+let recCancelled = false
+
+// getUserMedia needs a secure context (https/localhost); hide the mic instead
+// of showing a button that can only fail.
+const micSupported =
+  typeof navigator !== 'undefined' &&
+  !!navigator.mediaDevices?.getUserMedia &&
+  typeof MediaRecorder !== 'undefined'
+
+const recClock = computed(() => {
+  const m = Math.floor(recSeconds.value / 60)
+  const s = String(recSeconds.value % 60).padStart(2, '0')
+  return `${m}:${s}`
+})
+
+function recorderMime() {
+  // Chrome/Firefox/Edge produce webm/opus; Safari only mp4. Whisper-style
+  // endpoints accept both — the container is signaled via the upload filename.
+  return (
+    ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'].find((m) =>
+      MediaRecorder.isTypeSupported(m)
+    ) || ''
+  )
+}
+
+async function startRecording() {
+  if (recState.value !== 'idle' || disabled.value) return
+  let stream
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+  } catch {
+    toast('Microphone access was denied — allow it for this site and try again.', false)
+    return
+  }
+  const mime = recorderMime()
+  try {
+    mediaRecorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream)
+  } catch {
+    stream.getTracks().forEach((t) => t.stop())
+    toast('Audio recording is not supported in this browser.', false)
+    return
+  }
+  recChunks = []
+  recCancelled = false
+  mediaRecorder.ondataavailable = (e) => {
+    if (e.data && e.data.size > 0) recChunks.push(e.data)
+  }
+  mediaRecorder.onstop = () => {
+    stream.getTracks().forEach((t) => t.stop())
+    clearInterval(recTimer)
+    const blob = new Blob(recChunks, { type: mediaRecorder.mimeType || 'audio/webm' })
+    recChunks = []
+    mediaRecorder = null
+    // A sub-kilobyte blob is a stray click, not speech — drop it silently.
+    if (recCancelled || blob.size < 1024) {
+      recState.value = 'idle'
+      recSeconds.value = 0
+      return
+    }
+    transcribe(blob)
+  }
+  recSeconds.value = 0
+  recTimer = setInterval(() => {
+    recSeconds.value += 1
+  }, 1000)
+  mediaRecorder.start()
+  recState.value = 'recording'
+}
+
+function stopRecording(cancel = false) {
+  if (recState.value !== 'recording' || !mediaRecorder) return
+  recCancelled = cancel
+  mediaRecorder.stop() // onstop handles cleanup + the next state
+}
+
+async function transcribe(blob) {
+  recState.value = 'transcribing'
+  const ext = blob.type.includes('mp4') ? 'mp4' : blob.type.includes('ogg') ? 'ogg' : 'webm'
+  const fd = new FormData()
+  fd.append('file', blob, `recording.${ext}`)
+  try {
+    const res = await postForm('/audio/transcribe', fd)
+    const text = (res.text || '').trim()
+    if (res.error) {
+      toast(res.error, false)
+    } else if (!text) {
+      toast('No speech detected in the recording.', false)
+    } else {
+      // Append rather than replace: dictation can extend typed text.
+      input.value = input.value.trim() ? `${input.value.replace(/\s+$/, '')} ${text}` : text
+      nextTick(() => {
+        adjustInputHeight()
+        inputEl.value?.focus()
+      })
+    }
+  } catch {
+    toast('Transcription failed — check the Voice Input settings.', false)
+  } finally {
+    recState.value = 'idle'
+    recSeconds.value = 0
+  }
+}
+
+// ── Read aloud (browser speech synthesis; no backend, no config) ────────────
+const ttsSupported = typeof window !== 'undefined' && 'speechSynthesis' in window
+const speakingIdx = ref(-1)
+
+// The agent bubble renders markdown; the utterance needs the prose only.
+function plainTextForSpeech(md) {
+  return String(md || '')
+    .replace(/```[\s\S]*?```/g, ' Code block omitted. ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/[*_~>#]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function stopSpeaking() {
+  if (!ttsSupported) return
+  window.speechSynthesis.cancel()
+  speakingIdx.value = -1
+}
+
+function toggleSpeak(idx) {
+  if (!ttsSupported) return
+  if (speakingIdx.value === idx) {
+    stopSpeaking()
+    return
+  }
+  window.speechSynthesis.cancel()
+  const text = plainTextForSpeech(messages.value[idx]?.text)
+  if (!text) return
+  const u = new SpeechSynthesisUtterance(text)
+  u.onend = () => {
+    if (speakingIdx.value === idx) speakingIdx.value = -1
+  }
+  u.onerror = () => {
+    if (speakingIdx.value === idx) speakingIdx.value = -1
+  }
+  speakingIdx.value = idx
+  window.speechSynthesis.speak(u)
+}
+
 function onWindowKeydown(e) {
+  // Escape discards an in-progress recording before it ever reaches the
+  // transcriber; checked before the run-stop branch so recording wins.
+  if (e.key === 'Escape' && recState.value === 'recording') {
+    e.preventDefault()
+    stopRecording(true)
+    return
+  }
   // Escape stops the current run while the chat page is visible.
   if (e.key === 'Escape' && disabled.value && inputEl.value && inputEl.value.offsetParent !== null) {
     e.preventDefault()
@@ -468,6 +632,9 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onWindowKeydown)
+  stopRecording(true)
+  clearInterval(recTimer)
+  stopSpeaking()
 })
 
 watch(messages, () => scrollBottom(), { deep: true })
@@ -695,10 +862,65 @@ watch(disabled, (newVal) => {
               />
             </div>
             <div
-              v-if="msg.meta"
+              v-if="msg.meta || (ttsSupported && msg.text && !msg.thinking)"
               class="chat-meta"
             >
-              {{ msg.meta }}
+              <button
+                v-if="ttsSupported && msg.text && !msg.thinking"
+                class="msg-speak"
+                :class="{ speaking: speakingIdx === idx }"
+                type="button"
+                :title="speakingIdx === idx ? 'Stop reading' : 'Read aloud'"
+                @click="toggleSpeak(idx)"
+              >
+                <svg
+                  v-if="speakingIdx !== idx"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M11 5 6 9H3v6h3l5 4V5Z"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    stroke-linejoin="round"
+                  />
+                  <path
+                    d="M15.5 8.5a5 5 0 0 1 0 7"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    stroke-linecap="round"
+                  />
+                  <path
+                    d="M18.5 6a9 9 0 0 1 0 12"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    stroke-linecap="round"
+                  />
+                </svg>
+                <svg
+                  v-else
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                  aria-hidden="true"
+                >
+                  <rect
+                    x="6"
+                    y="6"
+                    width="12"
+                    height="12"
+                    rx="2"
+                    fill="currentColor"
+                  />
+                </svg>
+              </button>
+              <span v-if="msg.meta">{{ msg.meta }}</span>
             </div>
           </div>
         </template>
@@ -715,6 +937,52 @@ watch(disabled, (newVal) => {
             rows="1"
             @keydown="onKeydown"
           />
+          <button
+            v-if="micSupported"
+            class="btn-mic"
+            :class="{ 'is-recording': recState === 'recording' }"
+            type="button"
+            :disabled="disabled || recState === 'transcribing'"
+            :title="recState === 'recording' ? 'Stop and transcribe (Esc to cancel)' : 'Dictate a message'"
+            @click="recState === 'recording' ? stopRecording() : startRecording()"
+          >
+            <span
+              v-if="recState === 'transcribing'"
+              class="mic-spinner"
+              aria-hidden="true"
+            />
+            <svg
+              v-else
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+              aria-hidden="true"
+            >
+              <rect
+                x="9"
+                y="3"
+                width="6"
+                height="11"
+                rx="3"
+                stroke="currentColor"
+                stroke-width="2"
+              />
+              <path
+                d="M5 11a7 7 0 0 0 14 0"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+              <path
+                d="M12 18v3"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+            </svg>
+          </button>
           <button
             class="btn-chat-send"
             :class="{ 'is-stop': disabled }"
@@ -771,8 +1039,19 @@ watch(disabled, (newVal) => {
           </button>
         </div>
         <div class="chat-hints">
-          <span class="hint">Enter to send</span>
-          <span class="hint">Shift+Enter for a new line</span>
+          <template v-if="recState === 'recording'">
+            <span class="hint rec-hint"><span
+              class="rec-dot"
+              aria-hidden="true"
+            />Recording {{ recClock }} — click the mic to transcribe, Esc to cancel</span>
+          </template>
+          <template v-else-if="recState === 'transcribing'">
+            <span class="hint">Transcribing…</span>
+          </template>
+          <template v-else>
+            <span class="hint">Enter to send</span>
+            <span class="hint">Shift+Enter for a new line</span>
+          </template>
         </div>
       </div>
     </div>
@@ -960,6 +1239,114 @@ watch(disabled, (newVal) => {
   opacity: 1 !important;
   background: rgba(239, 68, 68, 0.15);
   color: #f87171;
+}
+
+/* ── Voice input ────────────────────────────────────────────────────────── */
+.btn-mic {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  margin-left: 8px;
+  padding: 0;
+  flex-shrink: 0;
+  border: 1px solid color-mix(in srgb, var(--text) 18%, transparent);
+  border-radius: var(--r-md);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.btn-mic:not(:disabled):hover {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.btn-mic:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-mic.is-recording {
+  color: var(--red);
+  background: var(--redDim);
+  border-color: color-mix(in srgb, var(--red) 55%, transparent);
+  animation: mic-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes mic-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--red) 35%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+}
+
+.mic-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid color-mix(in srgb, var(--text) 25%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: mic-spin 0.8s linear infinite;
+}
+
+@keyframes mic-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.rec-hint {
+  display: inline-flex;
+  align-items: center;
+  color: var(--red);
+}
+
+.rec-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--red);
+  animation: rec-blink 1s ease-in-out infinite;
+}
+
+@keyframes rec-blink {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+/* ── Read aloud ─────────────────────────────────────────────────────────── */
+.msg-speak {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  margin-right: 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  opacity: 0;
+  cursor: pointer;
+  vertical-align: middle;
+  transition: opacity 0.12s ease, color 0.12s ease;
+}
+
+.chat-msg.agent:hover .msg-speak,
+.msg-speak.speaking {
+  opacity: 0.65;
+}
+
+.msg-speak:hover {
+  opacity: 1;
+  color: var(--accent);
 }
 
 @media (max-width: 720px) {
