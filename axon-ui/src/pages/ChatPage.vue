@@ -314,6 +314,10 @@ function handleWsEvent(ev) {
         const dur = ev.total_duration_ms ? ` | ${ev.total_duration_ms}ms` : ''
         messages.value[agentIdx].meta = `${ev.iterations} iter | ${ev.total_tokens} tokens${dur}`
       }
+      if (speakReplyOnDone) {
+        speakReplyOnDone = false
+        if (agentIdx >= 0 && ttsSupported) toggleSpeak(agentIdx)
+      }
       collapseTrace()
       resetRunTrackers()
       disabled.value = false
@@ -331,6 +335,7 @@ function handleWsEvent(ev) {
       // Run failures (model router exhaustion, agent errors) need review —
       // keep them in the bell as well as flashing a toast.
       notifyBell(ev.message || 'Agent error', false)
+      speakReplyOnDone = false
       collapseTrace()
       resetRunTrackers()
       disabled.value = false
@@ -362,6 +367,8 @@ function useStarterPrompt(prompt) {
 async function send() {
   const msg = input.value.trim()
   if (!msg || disabled.value) return
+  speakReplyOnDone = voiceSendPending
+  voiceSendPending = false
   if (!currentSessionId.value) newChat()
 
   messages.value.push({ role: 'user', text: msg })
@@ -413,6 +420,7 @@ function stop() {
     if (!m.text) m.text = 'Stopped.'
     m.meta = m.meta ? `${m.meta} · stopped` : 'stopped'
   }
+  speakReplyOnDone = false
   collapseTrace()
   resetRunTrackers()
   disabled.value = false
@@ -435,6 +443,11 @@ let mediaRecorder = null
 let recChunks = []
 let recTimer = null
 let recCancelled = false
+// Voice round trip: a mic-initiated send marks the run so its reply is read
+// aloud on 'done'; typed sends never are. One run at a time (disabled gate),
+// so a single pair of flags is enough.
+let voiceSendPending = false
+let speakReplyOnDone = false
 
 // getUserMedia needs a secure context (https/localhost); hide the mic instead
 // of showing a button that can only fail.
@@ -525,6 +538,7 @@ async function transcribe(blob) {
       // Append rather than replace: dictation can extend typed text.
       input.value = input.value.trim() ? `${input.value.replace(/\s+$/, '')} ${text}` : text
       if (!disabled.value) {
+        voiceSendPending = true
         send()
       } else {
         // A run is streaming — sending is blocked, so keep it for review.
