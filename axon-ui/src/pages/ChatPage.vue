@@ -701,11 +701,22 @@ let wakeRec = null
 let wakeRestartTimer = null
 let wakeCaptureTimer = null
 let wakeChimeCtx = null
+let wakeSessionStart = 0 // when the current recognition session began
+let wakeSessionGotResult = false // did this session recognize any speech at all
+let wakeEmptyDeaths = 0 // consecutive sessions that ended without hearing anything
 
 // "Axon" is short and the recognizer often renders it as a near-homophone, so
 // a greeting prefix is required (bare "axon" mid-sentence must not trigger)
-// and common mishearings of the name are accepted.
-const wakeRe = /\b(?:hey|hi|ok|okay)[\s,.!]+(?:axon|axion|axen|axone|exon|action)\b[\s,.!?]*/i
+// and common mishearings of the name are accepted — including two-word splits
+// like "ax on" that Google produces when it doesn't know the name.
+const wakeRe =
+  /\b(?:hey|hi|hello|ok|okay)[\s,.!]+(?:axons?|axion|axen|axone|axun|axin|axson|axel|exon|exxon|oxen|action|ax\s?on|axe\s?on|acts\s?on)\b[\s,.!?]*/i
+
+// Everything before and including the wake phrase is greeting, not command.
+function stripWake(text) {
+  const m = wakeRe.exec(text)
+  return m ? text.slice(m.index + m[0].length) : text
+}
 
 // A live run, the push-to-talk recorder, or read-aloud playback all disqualify
 // a trigger — without the speaking guard the assistant can wake itself off its
@@ -764,47 +775,86 @@ function cancelWakeCapture() {
   wakeHeard.value = ''
 }
 
+function enterWakeCapture() {
+  wakeState.value = 'capturing'
+  wakeHeard.value = ''
+  clearTimeout(wakeCaptureTimer)
+  wakeCaptureTimer = setTimeout(cancelWakeCapture, 8000)
+}
+
 function onWakeResult(e) {
+  wakeSessionGotResult = true
+  wakeEmptyDeaths = 0
   let finalText = ''
   let interim = ''
   for (let i = e.resultIndex; i < e.results.length; i++) {
-    const t = e.results[i][0]?.transcript || ''
-    if (e.results[i].isFinal) finalText += ` ${t}`
-    else interim += ` ${t}`
+    const res = e.results[i]
+    let t = res[0]?.transcript || ''
+    if (res.isFinal) {
+      // The top guess sometimes garbles the name while a runner-up hears it —
+      // prefer any alternative that contains the wake phrase.
+      for (let j = 1; j < res.length; j++) {
+        const alt = res[j]?.transcript
+        if (alt && wakeRe.test(alt)) {
+          t = alt
+          break
+        }
+      }
+      finalText += ` ${t}`
+    } else {
+      interim += ` ${t}`
+    }
   }
   finalText = finalText.trim()
   interim = interim.trim()
 
   if (wakeState.value === 'capturing') {
-    if (interim) wakeHeard.value = interim
+    if (interim) wakeHeard.value = stripWake(interim).trim() || interim
     if (finalText) {
-      cancelWakeCapture()
-      sendWakeCommand(finalText)
+      // The utterance that woke us can finalize while we're already capturing
+      // (interim triggers below) — drop its wake prefix from the command.
+      const command = stripWake(finalText).trim()
+      if (command.length >= 2) {
+        cancelWakeCapture()
+        sendWakeCommand(command)
+      } else {
+        // Wake word alone finalized — keep waiting for the actual command.
+        wakeHeard.value = ''
+        clearTimeout(wakeCaptureTimer)
+        wakeCaptureTimer = setTimeout(cancelWakeCapture, 8000)
+      }
     }
     return
   }
 
-  // Passive listening scans final results only — interim text flickers through
-  // too many wrong guesses to trigger on.
-  if (!finalText || wakeBusy()) return
-  const m = wakeRe.exec(finalText)
-  if (!m) return
-  const command = finalText.slice(m.index + m[0].length).trim()
-  wakeChime()
-  if (command.length >= 2) {
-    sendWakeCommand(command)
-  } else {
-    // Wake word alone — capture the next utterance as the command, or give up
-    // after a quiet spell and drop back to passive listening.
-    wakeState.value = 'capturing'
-    wakeHeard.value = ''
-    clearTimeout(wakeCaptureTimer)
-    wakeCaptureTimer = setTimeout(cancelWakeCapture, 8000)
+  if (wakeBusy()) return
+
+  // A final result can carry the whole "hey axon <command>" in one utterance.
+  if (finalText) {
+    const m = wakeRe.exec(finalText)
+    if (m) {
+      const command = finalText.slice(m.index + m[0].length).trim()
+      wakeChime()
+      if (command.length >= 2) sendWakeCommand(command)
+      else enterWakeCapture()
+      return
+    }
+  }
+
+  // Interim hits matter most on phones: Chrome for Android often never marks
+  // a result final until the session dies, so a finals-only scan hears
+  // nothing. Chime as soon as the phrase shows up and capture what follows.
+  if (interim && wakeRe.test(interim)) {
+    wakeChime()
+    enterWakeCapture()
+    wakeHeard.value = stripWake(interim).trim()
   }
 }
 
 function wakeRecStart() {
   if (!wakeRec) return
+  wakeSessionStart = Date.now()
+  wakeSessionGotResult = false
   try {
     wakeRec.start()
   } catch {
@@ -818,6 +868,7 @@ function startWake() {
   const rec = new SpeechRecognitionImpl()
   rec.continuous = true
   rec.interimResults = true
+  rec.maxAlternatives = 3
   rec.lang = 'en-US'
   rec.onresult = onWakeResult
   rec.onerror = (ev) => {
@@ -831,14 +882,42 @@ function startWake() {
   }
   rec.onend = () => {
     if (!wakeRec) return // stopped deliberately via stopWake()
+    const duration = Date.now() - wakeSessionStart
+
+    // Android frequently kills the session before ever finalizing — the last
+    // interim transcript is all we'll get for the command, so send it rather
+    // than silently dropping what the user said.
+    if (wakeState.value === 'capturing' && wakeHeard.value) {
+      const command = wakeHeard.value.trim()
+      cancelWakeCapture()
+      if (command.length >= 2 && !wakeBusy()) sendWakeCommand(command)
+    } else {
+      cancelWakeCapture()
+    }
+
     // Continuous sessions die on their own after silence or transient errors;
-    // keep the loop alive for as long as the toggle is on.
-    cancelWakeCapture()
+    // keep the loop alive for as long as the toggle is on — but pace it.
+    // Chrome for Android plays its own OS chime on every recognition start,
+    // so a hot 400ms loop on a session that dies instantly (mic held by
+    // another app, recognition service unreachable) bleeps forever.
+    if (!wakeSessionGotResult) wakeEmptyDeaths++
     clearTimeout(wakeRestartTimer)
-    wakeRestartTimer = setTimeout(wakeRecStart, 400)
+    if (!wakeSessionGotResult && duration < 2000) {
+      if (wakeEmptyDeaths >= 6) {
+        setWakeEnabled(false)
+        toast('Listening keeps failing on this device — wake word turned off.', false)
+        return
+      }
+      wakeRestartTimer = setTimeout(wakeRecStart, Math.min(15000, 1000 * 2 ** wakeEmptyDeaths))
+    } else {
+      // Healthy silence timeout. Desktop restarts hot; phones get spaced out
+      // so the OS listening chime doesn't nag every few seconds.
+      wakeRestartTimer = setTimeout(wakeRecStart, AUTOFOCUS_OK ? 400 : 4000)
+    }
   }
   wakeRec = rec
   wakeState.value = 'listening'
+  wakeEmptyDeaths = 0
   wakeRecStart()
 }
 

@@ -61,6 +61,13 @@ const emit = defineEmits([
 const canvasContext = createCanvasContext()
 provideCanvas(canvasContext)
 
+// Touch devices have no middle mouse button and no modifier keys: one-finger
+// drag must pan the pane (desktop keeps left-drag = box select, middle = pan),
+// and box selection moves behind a key it can never press. Pinch zoom is
+// handled by Vue Flow natively either way.
+const COARSE_POINTER =
+  typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches
+
 // Vue Flow instance with proper configuration
 const canvasId = props.id
 const {
@@ -732,11 +739,12 @@ defineExpose({
       :snap-grid="[GRID_SIZE, GRID_SIZE]"
       :min-zoom="0.1"
       :max-zoom="4"
-      :selection-key-code="true"
+      :selection-key-code="COARSE_POINTER ? 'Shift' : true"
       :connect-on-click="false"
       :zoom-activation-key-code="['Control', 'Meta']"
       :pan-activation-key-code="[' ', 'Control', 'Meta']"
-      :pan-on-drag="[1]"
+      :pan-on-drag="COARSE_POINTER ? true : [1]"
+      :zoom-on-double-click="false"
       pan-on-scroll
       :elevate-edges-on-select="true"
       :elevate-nodes-on-select="true"

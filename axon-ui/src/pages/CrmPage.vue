@@ -2028,4 +2028,16 @@ onMounted(loadDashboard)
     grid-template-columns: 1fr;
   }
 }
+
+@media (max-width: 767px) {
+  /* Tables scroll sideways inside .table-scroll instead of crushing seven
+     columns into a 390px viewport. */
+  .crm-table {
+    min-width: 560px;
+  }
+
+  .stat-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
 </style>

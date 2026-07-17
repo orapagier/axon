@@ -5378,4 +5378,84 @@ select option {
 .field-hint {
   display: none;
 }
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   MOBILE (<768px) — full-screen editor, stacked columns
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+@media (max-width: 767px) {
+  .nd-overlay {
+    --nd-nav-space: 0px;
+    padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+    align-items: stretch;
+  }
+
+  .nd-window {
+    width: 100%;
+    height: 100%;
+    max-height: none;
+  }
+
+  .nd-window-inner {
+    border: 0;
+    border-radius: 0;
+  }
+
+  /* The floating node-switcher orbits outside the window — off-screen on a
+     phone. Upstream/downstream hopping still works from the input column. */
+  .nd-floating-nav {
+    display: none;
+  }
+
+  .nd-resizer {
+    display: none;
+  }
+
+  /* Stack PARAMETERS → INPUT → OUTPUT with one page scroller instead of
+     three side-by-side column scrollers. Parameters first: that's what you
+     open the editor to touch. */
+  .nd-body {
+    flex-direction: column;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .nd-col {
+    width: 100% !important; /* beats the inline resizer width */
+    flex: 0 0 auto;
+    overflow: visible;
+  }
+
+  .nd-col-mid {
+    order: -1;
+    min-height: 50vh;
+  }
+
+  .nd-col .col-content {
+    flex: none;
+    overflow: visible;
+  }
+
+  .nd-col-mid > .col-content {
+    /* Params keep their own growable area so short forms don't collapse. */
+    flex: 1 1 auto;
+  }
+
+  .nd-header {
+    padding: 0 12px;
+  }
+
+  /* The expanded field editor overlays only the params column on desktop;
+     stacked columns make that a sliver, so take the whole screen. */
+  .nd-expand-panel {
+    position: fixed;
+    inset: 0;
+    z-index: 12600;
+    padding-top: env(safe-area-inset-top);
+    border-left: 0;
+  }
+
+  .curl-modal {
+    width: min(600px, calc(100vw - 20px));
+  }
+}
 </style>

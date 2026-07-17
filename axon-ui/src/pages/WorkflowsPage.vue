@@ -4417,4 +4417,95 @@ onUnmounted(() => {
 .wf-settings-actions .btn {
   flex: 1;
 }
+
+/* ── Mobile (<768px): phone-usable builder ─────────────────────────────────
+   The canvas itself is touch-enabled in WorkflowCanvas (one-finger pan,
+   pinch zoom); this block keeps the chrome around it from eating the
+   screen or overflowing it. */
+@media (max-width: 767px) {
+  .workflow-toolbar {
+    padding: 8px 10px;
+    gap: 8px;
+  }
+
+  /* Row 1: picker + New. Row 2: workflow name. */
+  .toolbar-left {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .workflow-menu {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .workflow-menu-trigger {
+    width: 100%;
+    max-width: none;
+    min-height: 40px;
+  }
+
+  .wf-title-input {
+    flex: 1 1 100%;
+    max-width: none;
+    min-width: 0;
+  }
+
+  /* Row 3: every action stays reachable on one horizontal swipe instead of
+     stacking three rows of half-width buttons. */
+  .toolbar-right {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+  }
+
+  .toolbar-right::-webkit-scrollbar {
+    display: none;
+  }
+
+  .toolbar-right .btn {
+    flex: 0 0 auto;
+    min-height: 38px;
+  }
+
+  /* The settings popover hangs off a button inside the horizontal scroller —
+     as a bottom sheet it can't be clipped or pushed off-screen. */
+  .wf-settings-pop {
+    position: fixed;
+    top: auto;
+    left: 10px;
+    right: 10px;
+    bottom: calc(var(--tabbar-h, 56px) + env(safe-area-inset-bottom) + 12px);
+    width: auto;
+    max-height: 65vh;
+    overflow-y: auto;
+    z-index: 950;
+  }
+
+  .node-picker-container {
+    top: 10px;
+    left: 10px;
+  }
+
+  .floating-palette {
+    width: min(260px, calc(100vw - 20px));
+    max-height: 55vh;
+    overflow-y: auto;
+  }
+
+  .side-panel {
+    top: 8px;
+    right: 8px;
+    bottom: 8px;
+    width: calc(100% - 16px);
+    max-width: none;
+  }
+
+  /* Touch targets on the palette rows. */
+  .palette-btn {
+    min-height: 42px;
+  }
+}
 </style>
