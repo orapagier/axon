@@ -41,3 +41,19 @@ export const post = (path, body) => api('POST', path, body)
 export const postForm = (path, formData) => api('POST', path, formData)
 export const put = (path, body) => api('PUT', path, body)
 export const del = (path) => api('DELETE', path)
+
+// For endpoints whose success body is not JSON (e.g. /audio/speech streams
+// audio bytes): same auth handling, but the caller gets the raw Response and
+// decides what to do with the body.
+export async function postRaw(path, body, signal) {
+  const masterKey = localStorage.getItem('AXON_MASTER_KEY')
+  const headers = { 'Content-Type': 'application/json' }
+  if (masterKey) headers['Authorization'] = `Bearer ${masterKey}`
+  const r = await fetch('/api' + path, { method: 'POST', headers, body: JSON.stringify(body), signal })
+  if (r.status === 401) {
+    localStorage.removeItem('AXON_MASTER_KEY')
+    window.location.reload()
+    throw new Error('Unauthorized')
+  }
+  return r
+}

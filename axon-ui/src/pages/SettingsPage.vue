@@ -28,6 +28,7 @@ const CATEGORY_META = {
   router: { title: 'Router', description: 'Model failover behavior and the pattern → embedding → LLM tool-routing tiers.' },
   scheduler: { title: 'Scheduler', description: 'Background jobs, polling cadence, and automation timing.' },
   stt: { title: 'Voice Input', description: 'OpenAI-compatible speech-to-text powering the Chat page microphone and voice messages on the messaging gateways (Telegram voice notes, Slack audio clips). Set a base URL (Groq: https://api.groq.com/openai/v1; OpenAI: https://api.openai.com/v1) and pick a model — the dropdown lists the transcription models that platform exposes. Applies immediately, no restart needed.' },
+  tts: { title: 'Voice Replies', description: 'OpenAI-compatible text-to-speech that speaks agent replies on the Chat page — after a voice message, the answer is read back in this voice. Set a base URL (Groq: https://api.groq.com/openai/v1; OpenAI: https://api.openai.com/v1), a model, and a voice name. Leave blank — or if the endpoint errors or is rate-limited — and the dashboard falls back to the browser’s built-in speech synthesis. Applies immediately, no restart needed.' },
   watcher: { title: 'Smart Notifications', description: 'Auto-polling watchers (Gmail, Outlook, Calendar, Facebook), quiet hours, and where notifications are delivered.' },
   websearch: { title: 'Web Search', description: 'Search provider behavior and retrieval policy.' },
   workflow: { title: 'Workflows', description: 'Run concurrency and queueing, version snapshots, resume/approval links, and webhook deduplication.' },
@@ -214,60 +215,72 @@ function selectSection(id) {
   settingsSearch.value = ''
 }
 
-// ── stt.model dropdown ──────────────────────────────────────────────────────
-// Transcription models available at the CURRENT stt.base_url draft (saved or
+// ── stt.model / tts.model dropdowns ─────────────────────────────────────────
+// Audio models available at the CURRENT base_url draft of that group (saved or
 // not), fetched from /audio/models: server-side daily prefetch cache first,
 // live catalogue fetch on a miss. Free text always works — this only suggests.
-const sttModels = ref([])
-const sttModelsLoading = ref(false)
-let sttFetchSeq = 0
-let sttFetchTimer = null
+// One factory, two instances: `kind` is both the settings category and the
+// catalogue the endpoint filters to.
+function useAudioModels(kind) {
+  const models = ref([])
+  const loading = ref(false)
+  let fetchSeq = 0
+  let fetchTimer = null
 
-const sttModelOptions = computed(() =>
-  sttModels.value.map((o) => ({
-    value: o.id,
-    name: o.id,
-    description: o.label && o.label !== o.id ? o.label : '',
-  }))
-)
+  const options = computed(() =>
+    models.value.map((o) => ({
+      value: o.id,
+      name: o.id,
+      description: o.label && o.label !== o.id ? o.label : '',
+    }))
+  )
 
-function sttDraft(key) {
-  const row = (byCategory.value.stt || []).find((s) => s.key === key)
-  return row ? String(row.draft || '') : ''
+  function draft(key) {
+    const row = (byCategory.value[kind] || []).find((s) => s.key === key)
+    return row ? String(row.draft || '') : ''
+  }
+
+  async function fetchModels() {
+    const base = draft(`${kind}.base_url`).trim()
+    if (!base) {
+      models.value = []
+      return
+    }
+    const seq = ++fetchSeq
+    loading.value = true
+    try {
+      const r = await post('/audio/models', {
+        kind,
+        base_url: base,
+        api_key: draft(`${kind}.api_key`).trim(),
+      })
+      if (seq !== fetchSeq) return // superseded by a newer request
+      models.value = r && r.ok && Array.isArray(r.models) ? r.models : []
+    } catch {
+      if (seq === fetchSeq) models.value = []
+    } finally {
+      if (seq === fetchSeq) loading.value = false
+    }
+  }
+
+  // Covers both the initial settings load ('' → stored value) and the user
+  // typing a new platform URL into the field: refetch, debounced.
+  watch(
+    () => draft(`${kind}.base_url`),
+    (next, prev) => {
+      if (next === prev) return
+      clearTimeout(fetchTimer)
+      fetchTimer = setTimeout(fetchModels, 400)
+    }
+  )
+
+  return { models, loading, options }
 }
 
-async function fetchSttModels() {
-  const base = sttDraft('stt.base_url').trim()
-  if (!base) {
-    sttModels.value = []
-    return
-  }
-  const seq = ++sttFetchSeq
-  sttModelsLoading.value = true
-  try {
-    const r = await post('/audio/models', {
-      base_url: base,
-      api_key: sttDraft('stt.api_key').trim(),
-    })
-    if (seq !== sttFetchSeq) return // superseded by a newer request
-    sttModels.value = r && r.ok && Array.isArray(r.models) ? r.models : []
-  } catch {
-    if (seq === sttFetchSeq) sttModels.value = []
-  } finally {
-    if (seq === sttFetchSeq) sttModelsLoading.value = false
-  }
-}
-
-// Covers both the initial settings load ('' → stored value) and the user
-// typing a new platform URL into the field: refetch, debounced.
-watch(
-  () => sttDraft('stt.base_url'),
-  (next, prev) => {
-    if (next === prev) return
-    clearTimeout(sttFetchTimer)
-    sttFetchTimer = setTimeout(fetchSttModels, 400)
-  }
-)
+const { models: sttModels, loading: sttModelsLoading, options: sttModelOptions } =
+  useAudioModels('stt')
+const { models: ttsModels, loading: ttsModelsLoading, options: ttsModelOptions } =
+  useAudioModels('tts')
 
 function isSecret(s) {
   // Only string values can be secrets — int knobs like max_total_tokens or
@@ -409,6 +422,30 @@ onMounted(load)
                       v-else
                       class="set-stt-note"
                     >set stt.base_url to list models, or type any ID</span>
+                  </div>
+
+                  <div
+                    v-else-if="s.key === 'tts.model'"
+                    class="set-stt-model"
+                  >
+                    <SearchableSelect
+                      v-model="s.draft"
+                      :options="ttsModelOptions"
+                      :allow-custom-value="true"
+                      placeholder="e.g. playai-tts"
+                    />
+                    <span
+                      v-if="ttsModelsLoading"
+                      class="set-stt-note"
+                    >loading models…</span>
+                    <span
+                      v-else-if="ttsModels.length"
+                      class="set-stt-note"
+                    >{{ ttsModels.length }} available from base URL</span>
+                    <span
+                      v-else
+                      class="set-stt-note"
+                    >set tts.base_url to list models, or type any ID</span>
                   </div>
 
                   <textarea

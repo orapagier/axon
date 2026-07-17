@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { connectWs, wsSend, wsStatus } from '../lib/ws.js'
-import { get, put, del, postForm } from '../lib/api.js'
+import { get, put, del, postForm, postRaw } from '../lib/api.js'
 import { toast, notifyBell } from '../lib/toast.js'
 import { confirmDialog } from '../lib/confirm.js'
 import { renderMarkdown } from '../lib/markdown.js'
@@ -324,7 +324,7 @@ function handleWsEvent(ev) {
       }
       if (speakReplyOnDone) {
         speakReplyOnDone = false
-        if (agentIdx >= 0 && ttsSupported) toggleSpeak(agentIdx)
+        if (agentIdx >= 0 && canSpeak) toggleSpeak(agentIdx)
       }
       collapseTrace()
       resetRunTrackers()
@@ -564,9 +564,19 @@ async function transcribe(blob) {
   }
 }
 
-// ── Read aloud (browser speech synthesis; no backend, no config) ────────────
+// ── Read aloud (server TTS first, browser speech synthesis fallback) ────────
+// toggleSpeak tries the configured tts.* endpoint (POST /audio/speech → audio
+// blob → playback); when TTS is unconfigured (503), the provider errors or
+// rate-limits (502), the network fails, or autoplay is blocked, it falls back
+// to the browser's built-in speechSynthesis — the original zero-config path.
 const ttsSupported = typeof window !== 'undefined' && 'speechSynthesis' in window
+const audioSupported = typeof Audio !== 'undefined'
+const canSpeak = ttsSupported || audioSupported
 const speakingIdx = ref(-1)
+let speakSeq = 0 // bumping this invalidates any in-flight synthesis
+let speakAbort = null // aborts the in-flight /audio/speech fetch on stop
+let audioEl = null
+let audioUrl = null
 
 // The agent bubble renders markdown; the utterance needs the prose only.
 function plainTextForSpeech(md) {
@@ -581,21 +591,37 @@ function plainTextForSpeech(md) {
     .trim()
 }
 
+function releaseAudio() {
+  if (audioEl) {
+    audioEl.onended = null
+    audioEl.onerror = null
+    audioEl.pause()
+    audioEl = null
+  }
+  if (audioUrl) {
+    URL.revokeObjectURL(audioUrl)
+    audioUrl = null
+  }
+}
+
 function stopSpeaking() {
-  if (!ttsSupported) return
-  window.speechSynthesis.cancel()
+  speakSeq += 1
+  if (speakAbort) {
+    speakAbort.abort()
+    speakAbort = null
+  }
+  releaseAudio()
+  if (ttsSupported) window.speechSynthesis.cancel()
   speakingIdx.value = -1
 }
 
-function toggleSpeak(idx) {
-  if (!ttsSupported) return
-  if (speakingIdx.value === idx) {
-    stopSpeaking()
+// Today's zero-config path, now the fallback: the browser's built-in voice.
+function speakWithSynthesis(idx, text) {
+  if (!ttsSupported) {
+    if (speakingIdx.value === idx) speakingIdx.value = -1
     return
   }
   window.speechSynthesis.cancel()
-  const text = plainTextForSpeech(messages.value[idx]?.text)
-  if (!text) return
   const u = new SpeechSynthesisUtterance(text)
   u.onend = () => {
     if (speakingIdx.value === idx) speakingIdx.value = -1
@@ -603,8 +629,45 @@ function toggleSpeak(idx) {
   u.onerror = () => {
     if (speakingIdx.value === idx) speakingIdx.value = -1
   }
-  speakingIdx.value = idx
   window.speechSynthesis.speak(u)
+}
+
+async function toggleSpeak(idx) {
+  if (!canSpeak) return
+  if (speakingIdx.value === idx) {
+    stopSpeaking()
+    return
+  }
+  stopSpeaking()
+  const text = plainTextForSpeech(messages.value[idx]?.text)
+  if (!text) return
+  const seq = speakSeq
+  speakingIdx.value = idx
+
+  if (audioSupported) {
+    try {
+      speakAbort = new AbortController()
+      const res = await postRaw('/audio/speech', { text }, speakAbort.signal)
+      const type = res.headers.get('content-type') || ''
+      if (res.ok && type.startsWith('audio/')) {
+        const blob = await res.blob()
+        if (seq !== speakSeq) return // stopped while synthesizing
+        audioUrl = URL.createObjectURL(blob)
+        audioEl = new Audio(audioUrl)
+        audioEl.onended = audioEl.onerror = () => {
+          if (speakingIdx.value === idx) stopSpeaking()
+        }
+        await audioEl.play()
+        return
+      }
+    } catch {
+      // Aborted, network failure, or blocked autoplay — clean up whatever the
+      // attempt allocated; the seq guard below decides whether to fall back.
+      if (seq === speakSeq) releaseAudio()
+    }
+    if (seq !== speakSeq) return // user hit stop during the attempt
+  }
+  speakWithSynthesis(idx, text)
 }
 
 function onWindowKeydown(e) {
@@ -889,11 +952,11 @@ watch(disabled, (newVal) => {
               />
             </div>
             <div
-              v-if="msg.meta || (ttsSupported && msg.text && !msg.thinking)"
+              v-if="msg.meta || (canSpeak && msg.text && !msg.thinking)"
               class="chat-meta"
             >
               <button
-                v-if="ttsSupported && msg.text && !msg.thinking"
+                v-if="canSpeak && msg.text && !msg.thinking"
                 class="msg-speak"
                 :class="{ speaking: speakingIdx === idx }"
                 type="button"

@@ -19,5 +19,6 @@ pub mod scheduler;
 pub mod state;
 pub mod stt;
 pub mod tools;
+pub mod tts;
 pub mod watcher;
 pub mod webhook;

@@ -143,6 +143,19 @@ INSERT OR IGNORE INTO settings VALUES
     ('stt.api_key',  '', 'string', 'API key for the transcription endpoint; a ${VAR} placeholder resolves from settings then environment (e.g. ${GROQ_API_KEY}).', 'stt', datetime('now')),
     ('stt.language', '', 'string', 'Optional ISO-639-1 language hint (e.g. en, tl); blank lets the model auto-detect.', 'stt', datetime('now'));
 
+-- Voice replies (spoken agent answers on the Chat page). One OpenAI-compatible
+-- /audio/speech code path, mirroring the stt.* group above:
+--   Groq:   https://api.groq.com/openai/v1 + playai-tts + voice Fritz-PlayAI
+--   OpenAI: https://api.openai.com/v1 + gpt-4o-mini-tts + voice alloy
+-- Strictly best-effort: until base_url and model are both set — or whenever the
+-- endpoint errors or is rate-limited — the dashboard falls back to the
+-- browser's built-in speech synthesis, exactly the pre-TTS behavior.
+INSERT OR IGNORE INTO settings VALUES
+    ('tts.base_url', '', 'string', 'OpenAI-compatible audio base URL (Groq: https://api.groq.com/openai/v1, OpenAI: https://api.openai.com/v1). Blank disables spoken replies — the dashboard falls back to the browser''s built-in voice.', 'tts', datetime('now')),
+    ('tts.model',    '', 'string', 'Speech-synthesis model. Pick from the dropdown (prefetched from tts.base_url''s /models catalogue) or type any ID (e.g. playai-tts on Groq, gpt-4o-mini-tts on OpenAI).', 'tts', datetime('now')),
+    ('tts.voice',    '', 'string', 'Voice name, required by most providers (Groq playai-tts: Fritz-PlayAI, Arista-PlayAI, …; OpenAI: alloy, echo, nova, …).', 'tts', datetime('now')),
+    ('tts.api_key',  '', 'string', 'API key for the speech endpoint; a ${VAR} placeholder resolves from settings then environment (e.g. ${GROQ_API_KEY}).', 'tts', datetime('now'));
+
 -- CRM agent access. Read tools are always agent-callable; the write tools
 -- (create/update/delete/convert/archive/restore) are gated per-tool via the
 -- ToolsPage Enable toggle (see tools/overrides.rs), same as social/messaging
