@@ -181,6 +181,8 @@ pub async fn list_events(
         }
     }
     // Stamp code-computed metadata so the model can't misreport the day.
+    // (Only 2xx payloads reach here — ensure_ok bails on errors — so a
+    // missing value array just means an empty day, and kept = 0 is right.)
     if let Some(dw) = &day_window {
         stamp_day_window(&mut resp, dw, kept);
     }
