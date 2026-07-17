@@ -590,6 +590,8 @@ let speakSeq = 0 // bumping this invalidates any in-flight synthesis
 let speakAbort = null // aborts the in-flight /audio/speech fetch on stop
 let audioEl = null
 let audioUrl = null
+let synthUtterance = null // pinned: Chrome goes silent if the utterance is GC'd
+let ttsFailureToasted = false // explain a dead tts.* config once, not per click
 
 // The agent bubble renders markdown; the utterance needs the prose only.
 function plainTextForSpeech(md) {
@@ -625,24 +627,34 @@ function stopSpeaking() {
   }
   releaseAudio()
   if (ttsSupported) window.speechSynthesis.cancel()
+  synthUtterance = null
   speakingIdx.value = -1
 }
 
 // Today's zero-config path, now the fallback: the browser's built-in voice.
+// Chrome needs three workarounds to actually make sound: speak() issued in the
+// same tick as cancel() is silently dropped (hence the delay), an utterance
+// with no live reference can be GC'd mid-sentence, and the queue sometimes
+// comes back from cancel() stuck in the paused state.
 function speakWithSynthesis(idx, text) {
   if (!ttsSupported) {
     if (speakingIdx.value === idx) speakingIdx.value = -1
     return
   }
-  window.speechSynthesis.cancel()
+  const synth = window.speechSynthesis
+  synth.cancel()
   const u = new SpeechSynthesisUtterance(text)
-  u.onend = () => {
+  synthUtterance = u
+  u.onend = u.onerror = () => {
+    if (synthUtterance === u) synthUtterance = null
     if (speakingIdx.value === idx) speakingIdx.value = -1
   }
-  u.onerror = () => {
-    if (speakingIdx.value === idx) speakingIdx.value = -1
-  }
-  window.speechSynthesis.speak(u)
+  const seq = speakSeq
+  setTimeout(() => {
+    if (seq !== speakSeq) return
+    synth.speak(u)
+    synth.resume()
+  }, 150)
 }
 
 async function toggleSpeak(idx) {
@@ -672,6 +684,19 @@ async function toggleSpeak(idx) {
         }
         await audioEl.play()
         return
+      }
+      // Non-audio answer — say why once, or a dead tts.* config is
+      // indistinguishable from the fallback voice.
+      let detail = ''
+      try {
+        detail = (await res.json())?.error || ''
+      } catch {
+        // proxy HTML error page or empty body — status alone will have to do
+      }
+      console.warn(`Server TTS unavailable (${res.status}): ${detail || 'no detail'}`)
+      if (!ttsFailureToasted) {
+        ttsFailureToasted = true
+        toast(detail || `Server TTS unavailable (HTTP ${res.status}) — using the browser voice instead.`, false)
       }
     } catch {
       // Aborted, network failure, or blocked autoplay — clean up whatever the
@@ -809,7 +834,11 @@ function onWakeResult(e) {
   interim = interim.trim()
 
   if (wakeState.value === 'capturing') {
-    if (interim) wakeHeard.value = stripWake(interim).trim() || interim
+    // Android re-emits the whole accumulating transcript on every event, so an
+    // interim here can still be just the wake phrase. Store only what follows
+    // it — onend sends wakeHeard verbatim when the session dies, and a raw
+    // fallback would post a literal "hey axon" as the message.
+    if (interim) wakeHeard.value = stripWake(interim).trim()
     if (finalText) {
       // The utterance that woke us can finalize while we're already capturing
       // (interim triggers below) — drop its wake prefix from the command.
@@ -883,14 +912,29 @@ function startWake() {
   rec.onend = () => {
     if (!wakeRec) return // stopped deliberately via stopWake()
     const duration = Date.now() - wakeSessionStart
+    if (!wakeSessionGotResult) wakeEmptyDeaths++
+    clearTimeout(wakeRestartTimer)
 
     // Android frequently kills the session before ever finalizing — the last
     // interim transcript is all we'll get for the command, so send it rather
     // than silently dropping what the user said.
-    if (wakeState.value === 'capturing' && wakeHeard.value) {
-      const command = wakeHeard.value.trim()
-      cancelWakeCapture()
-      if (command.length >= 2 && !wakeBusy()) sendWakeCommand(command)
+    if (wakeState.value === 'capturing') {
+      const command = stripWake(wakeHeard.value).trim()
+      if (command.length >= 2) {
+        cancelWakeCapture()
+        if (!wakeBusy()) sendWakeCommand(command)
+      } else if (wakeEmptyDeaths < 3) {
+        // Woke up but the command hasn't been heard yet — Android tends to
+        // kill the session the moment the chime plays. Keep the capture
+        // window open (its 8s timeout still bounds it) and restart hot so the
+        // follow-up utterance lands in a live session instead of the paced
+        // multi-second gap, which was eating the words after "hey axon".
+        wakeHeard.value = ''
+        wakeRestartTimer = setTimeout(wakeRecStart, 250)
+        return
+      } else {
+        cancelWakeCapture()
+      }
     } else {
       cancelWakeCapture()
     }
@@ -900,8 +944,6 @@ function startWake() {
     // Chrome for Android plays its own OS chime on every recognition start,
     // so a hot 400ms loop on a session that dies instantly (mic held by
     // another app, recognition service unreachable) bleeps forever.
-    if (!wakeSessionGotResult) wakeEmptyDeaths++
-    clearTimeout(wakeRestartTimer)
     if (!wakeSessionGotResult && duration < 2000) {
       if (wakeEmptyDeaths >= 6) {
         setWakeEnabled(false)
@@ -961,8 +1003,19 @@ function toggleWake() {
 // or transcribes and resumes once the composer is idle again.
 watch(recState, (s) => {
   if (!wakeEnabled.value) return
-  if (s === 'idle') startWake()
-  else stopWake()
+  if (s === 'idle' && speakingIdx.value < 0) startWake()
+  else if (s !== 'idle') stopWake()
+})
+
+// Speech output and recognition can't overlap either: on Android an active
+// recognition session holds audio focus, so speechSynthesis (and often <audio>
+// playback) comes out silent — "reading" with no voice. Park the wake loop
+// while a reply is being read; this also hard-guarantees the assistant can't
+// hear its own voice (wakeBusy() stays as the second line of defense).
+watch(speakingIdx, (idx) => {
+  if (!wakeEnabled.value) return
+  if (idx >= 0) stopWake()
+  else if (recState.value === 'idle' && !document.hidden) startWake()
 })
 
 function onVisibilityChange() {
@@ -970,7 +1023,7 @@ function onVisibilityChange() {
   // Browsers kill background recognition anyway; stopping saves battery and
   // restarting on return makes the comeback deterministic.
   if (document.hidden) stopWake()
-  else if (recState.value === 'idle') startWake()
+  else if (recState.value === 'idle' && speakingIdx.value < 0) startWake()
 }
 
 function onWindowKeydown(e) {
