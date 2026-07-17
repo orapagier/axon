@@ -104,6 +104,19 @@ impl SlackGateway {
             .and_then(|v| v.as_str())
             .unwrap_or("audio/mp4");
 
+        // Slack allows files up to 1 GB; anything past the STT cap would be
+        // rejected by transcribe() anyway, so don't buffer it into memory in
+        // the first place. The event's `size` field catches it pre-download,
+        // Content-Length pre-body as a fallback.
+        if audio
+            .get("size")
+            .and_then(|v| v.as_u64())
+            .is_some_and(|s| s as usize > crate::stt::MAX_AUDIO_BYTES)
+        {
+            tracing::warn!("[SLACK] voice file exceeds the 25 MB transcription cap — skipping");
+            return None;
+        }
+
         let resp = match self
             .client
             .get(url)
@@ -119,6 +132,13 @@ impl SlackGateway {
         };
         if !resp.status().is_success() {
             tracing::warn!("[SLACK] voice file download failed: {}", resp.status());
+            return None;
+        }
+        if resp
+            .content_length()
+            .is_some_and(|len| len as usize > crate::stt::MAX_AUDIO_BYTES)
+        {
+            tracing::warn!("[SLACK] voice file exceeds the 25 MB transcription cap — skipping");
             return None;
         }
         let bytes = resp.bytes().await.ok()?.to_vec();
