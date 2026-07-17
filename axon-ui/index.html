@@ -2,7 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!--
+    viewport-fit=cover lets the app draw edge-to-edge on notched phones (the
+    CSS safe-area env() insets then keep content out of the cutouts);
+    interactive-widget=resizes-content makes Chrome/Android shrink the layout
+    when the keyboard opens so the chat composer stays visible above it.
+  -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
   <!--
     Narrows the blast radius of an XSS: the dashboard stores its master key in
     localStorage (lib/api.js), so without a CSP a successful injection could
@@ -28,6 +34,14 @@
   <link rel="manifest" href="/manifest.json" />
   <meta name="theme-color" content="#16181d" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <!--
+    iOS "Add to Home Screen" standalone mode (Safari predates manifest display
+    support; these apple metas are the working equivalent). black-translucent
+    draws the app under the status bar; the topbar's safe-area-inset-top
+    padding keeps the heading clear of it.
+  -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 </head>
 <body>
   <div id="app"></div>

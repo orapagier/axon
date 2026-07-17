@@ -118,13 +118,21 @@ async function loadConversations() {
   }
 }
 
+// Convenience autofocus (on mount, new chat, run finish) is desktop-only:
+// on touch devices a programmatic focus pops the on-screen keyboard
+// uninvited — native chat apps never open the keyboard on their own.
+const AUTOFOCUS_OK = !window.matchMedia('(pointer: coarse)').matches
+function focusComposer() {
+  if (AUTOFOCUS_OK) inputEl.value?.focus()
+}
+
 function newChat() {
   currentSessionId.value = uuid()
   messages.value = []
   resetRunTrackers()
   stopSpeaking()
   disabled.value = false
-  nextTick(() => inputEl.value?.focus())
+  nextTick(() => focusComposer())
 }
 
 async function openConversation(id) {
@@ -643,7 +651,7 @@ onMounted(async () => {
   newChat()
 
   nextTick(() => {
-    inputEl.value?.focus()
+    focusComposer()
     adjustInputHeight()
     scrollBottom()
   })
@@ -677,7 +685,7 @@ watch(input, () => nextTick(adjustInputHeight))
 watch(disabled, (newVal) => {
   if (!newVal) {
     setTimeout(() => {
-      inputEl.value?.focus()
+      focusComposer()
       adjustInputHeight()
     }, 10)
   }

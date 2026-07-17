@@ -4983,3 +4983,191 @@ select:focus,
     background: color-mix(in srgb, var(--text) 3%, transparent);
     border-color: var(--border);
 }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   MOBILE NATIVE LAYER · phone shell behavior (<768px and PWA standalone)
+   ----------------------------------------------------------------------------
+   Makes the installed PWA feel like a native app on a phone: dynamic-viewport
+   height (no dead strip behind the browser URL bar), safe-area insets for
+   notches and the home indicator, a bottom tab bar for the primary
+   destinations (App.vue .mobile-tabbar), and touch feel — no tap flash, no
+   double-tap-zoom delay, press feedback, no iOS focus zoom. Everything is
+   scoped to the phone breakpoint or touch media queries; desktop and tablet
+   rendering is untouched.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+}
+
+/* Mobile 100vh includes the collapsed URL bar, so the composer can sit
+   off-screen; dvh tracks the actually-visible viewport. Browsers without
+   dvh keep the vh fallback declared in the layers above. */
+body,
+.layout {
+    height: 100dvh;
+}
+
+/* The shell never scrolls as a document, so kill the rubber-band /
+   accidental pull-to-refresh on it. */
+html,
+body {
+    overscroll-behavior-y: none;
+}
+
+button,
+.nav-item,
+.list-row,
+.tabbar-item {
+    -webkit-tap-highlight-color: transparent;
+}
+
+/* Opts taps out of the double-tap-to-zoom gesture: removes the ~300ms
+   tap delay without disabling pinch zoom on content. */
+button,
+select,
+input,
+textarea {
+    touch-action: manipulation;
+}
+
+.mobile-tabbar {
+    display: none;
+}
+
+@media (max-width: 767px) {
+    :root {
+        --tabbar-h: 56px;
+    }
+
+    /* The tab bar's More button replaces the topbar hamburger. */
+    .shell-topbar .shell-nav-toggle.mobile-only {
+        display: none;
+    }
+
+    .mobile-tabbar {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        /* Under the drawer (1000) and its overlay (900): opening More dims
+           the bar along with the rest of the shell. */
+        z-index: 890;
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        min-height: var(--tabbar-h);
+        padding: 4px max(6px, env(safe-area-inset-right)) max(4px, env(safe-area-inset-bottom)) max(6px, env(safe-area-inset-left));
+        background: color-mix(in srgb, var(--surface) 88%, transparent);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border-top: 1px solid var(--border);
+        user-select: none;
+        -webkit-user-select: none;
+    }
+
+    .tabbar-item {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 3px;
+        padding: 6px 2px 5px;
+        border: 0;
+        border-radius: var(--r-md);
+        background: none;
+        color: var(--muted);
+        cursor: pointer;
+        transition: color 0.15s ease, transform 0.1s ease;
+    }
+
+    .tabbar-icon {
+        display: inline-flex;
+    }
+
+    .tabbar-icon svg {
+        width: 22px;
+        height: 22px;
+    }
+
+    .tabbar-label {
+        font-size: 0.6rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+    }
+
+    .tabbar-item.active {
+        color: var(--tab-tint, var(--accent));
+    }
+
+    .tabbar-item:active {
+        transform: scale(0.92);
+    }
+
+    /* Content (including the workflows canvas and the chat composer) ends
+       above the fixed tab bar instead of sliding under it. */
+    .main {
+        padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom));
+    }
+
+    /* Keyboard open (any focused field): hide the bar and hand the space
+       back, the way native apps do. */
+    .app-shell:has(input:focus, textarea:focus, select:focus) .mobile-tabbar {
+        display: none;
+    }
+
+    .app-shell:has(input:focus, textarea:focus, select:focus) .main {
+        padding-bottom: 0;
+    }
+
+    /* Notched phones / translucent status bar: env() is 0 in a plain browser
+       tab, so these only bite in standalone or edge-to-edge display. */
+    .shell-topbar {
+        padding-top: calc(10px + env(safe-area-inset-top));
+        padding-left: max(12px, env(safe-area-inset-left));
+        padding-right: max(12px, env(safe-area-inset-right));
+    }
+
+    .sidebar-panel {
+        padding-top: calc(14px + env(safe-area-inset-top));
+        padding-bottom: calc(12px + env(safe-area-inset-bottom));
+        padding-left: max(12px, env(safe-area-inset-left));
+    }
+
+    /* iOS Safari zooms the whole page when a focused control's font is under
+       16px — the single biggest "this is a website" tell. */
+    input[type="text"],
+    input[type="number"],
+    input[type="password"],
+    input[type="search"],
+    input[type="email"],
+    input[type="url"],
+    textarea,
+    select {
+        font-size: 16px !important;
+    }
+
+    /* Thumb-sized rows in the More drawer. */
+    .nav-item {
+        min-height: 44px;
+    }
+
+    /* "Enter to send · Shift+Enter for a new line" is desktop-speak — the
+       phone keyboard has no such semantics, and the row costs a text line
+       of vertical space. */
+    .chat-hints {
+        display: none;
+    }
+}
+
+/* Touch devices get press feedback in place of hover states. */
+@media (hover: none) {
+    .list-row:active,
+    .nav-item:active {
+        background: color-mix(in srgb, var(--text) 5%, transparent);
+    }
+
+    .btn:active:not(:disabled) {
+        transform: scale(0.97);
+    }
+}

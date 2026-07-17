@@ -117,6 +117,13 @@ const isAuthenticated = ref(!!localStorage.getItem('AXON_MASTER_KEY'))
 
 const activeNav = computed(() => NAV.find((item) => item.id === activePage.value) || NAV[0])
 
+// Mobile bottom tab bar (style.css shows it under 768px): the four primary
+// destinations get a thumb-reach tab; every other page lives behind More,
+// which opens the nav drawer. Change this list to re-pick the tabs.
+const MOBILE_TABS = ['chat', 'workflows', 'tasks', 'crm']
+const tabItems = computed(() => MOBILE_TABS.map((id) => NAV.find((n) => n.id === id)).filter(Boolean))
+const moreActive = computed(() => !MOBILE_TABS.includes(activePage.value))
+
 function navigate(id) {
   activePage.value = id
   visitedPages.value.add(id)
@@ -135,6 +142,14 @@ function navigate(id) {
 
 function toggleSidebar() {
   isSidebarCollapsed.value = !isSidebarCollapsed.value
+}
+
+// Mobile drawer (via the tab bar's More button): always open expanded —
+// navigate() leaves the sidebar collapsed on phones, and a full-width
+// drawer of bare icons reads as broken.
+function openDrawer() {
+  isSidebarCollapsed.value = false
+  sidebarOpen.value = true
 }
 
 const wsDotClass = computed(() => {
@@ -307,7 +322,7 @@ async function logout() {
             class="shell-icon-btn shell-nav-toggle mobile-only"
             type="button"
             title="Open navigation"
-            @click="sidebarOpen = !sidebarOpen"
+            @click="openDrawer"
           >
             <svg
               viewBox="0 0 24 24"
@@ -384,6 +399,56 @@ async function logout() {
         </section>
       </div>
     </main>
+
+    <nav
+      class="mobile-tabbar"
+      aria-label="Primary"
+    >
+      <button
+        v-for="item in tabItems"
+        :key="item.id"
+        class="tabbar-item"
+        :class="{ active: activePage === item.id }"
+        :style="{ '--tab-tint': item.tint }"
+        :aria-current="activePage === item.id ? 'page' : undefined"
+        type="button"
+        @click="navigate(item.id)"
+      >
+        <span
+          class="tabbar-icon"
+          v-html="item.icon"
+        />
+        <span class="tabbar-label">{{ item.label }}</span>
+      </button>
+      <button
+        class="tabbar-item"
+        :class="{ active: moreActive }"
+        :style="{ '--tab-tint': moreActive ? activeNav.tint : undefined }"
+        type="button"
+        @click="openDrawer"
+      >
+        <span class="tabbar-icon"><svg
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+        ><circle
+          cx="5"
+          cy="12"
+          r="1.9"
+          fill="currentColor"
+        /><circle
+          cx="12"
+          cy="12"
+          r="1.9"
+          fill="currentColor"
+        /><circle
+          cx="19"
+          cy="12"
+          r="1.9"
+          fill="currentColor"
+        /></svg></span>
+        <span class="tabbar-label">More</span>
+      </button>
+    </nav>
   </div>
 
   <ConfirmDialog />
