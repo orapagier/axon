@@ -6,6 +6,7 @@ import { toast, notifyBell } from '../lib/toast.js'
 import { addNotification } from '../lib/notifications.js'
 import { confirmDialog } from '../lib/confirm.js'
 import { renderMarkdown } from '../lib/markdown.js'
+import { createWakeWord, wakeWordSupported } from '../lib/wakeword.js'
 import SearchInput from '../components/SearchInput.vue'
 
 // Each message: { role:'user'|'agent'|'trace', text, meta?, trace:[], thinking?:boolean }
@@ -491,20 +492,25 @@ function recorderMime() {
   )
 }
 
-async function startRecording() {
+async function startRecording(sharedStream = null) {
   if (recState.value !== 'idle' || disabled.value) return
-  let stream
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-  } catch {
-    toast('Microphone access was denied — allow it for this site and try again.', false)
-    return
+  // While the wake word listener holds the mic, reuse its stream — a second
+  // getUserMedia on the same device can steal the mic on Android.
+  const shared = sharedStream || (wake?.running ? wake.stream : null)
+  let stream = shared
+  if (!stream) {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    } catch {
+      toast('Microphone access was denied — allow it for this site and try again.', false)
+      return
+    }
   }
   const mime = recorderMime()
   try {
     mediaRecorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream)
   } catch {
-    stream.getTracks().forEach((t) => t.stop())
+    if (!shared) stream.getTracks().forEach((t) => t.stop())
     toast('Audio recording is not supported in this browser.', false)
     return
   }
@@ -514,7 +520,8 @@ async function startRecording() {
     if (e.data && e.data.size > 0) recChunks.push(e.data)
   }
   mediaRecorder.onstop = () => {
-    stream.getTracks().forEach((t) => t.stop())
+    if (!shared) stream.getTracks().forEach((t) => t.stop()) // wake owns its stream
+    wake?.cancelSilenceWatch()
     clearInterval(recTimer)
     const blob = new Blob(recChunks, { type: mediaRecorder.mimeType || 'audio/webm' })
     recChunks = []
@@ -575,6 +582,86 @@ async function transcribe(blob) {
   } finally {
     recState.value = 'idle'
     recSeconds.value = 0
+  }
+}
+
+// ── Wake word ("Hey Axon", rustpotter WASM) ─────────────────────────────────
+// On-device keyword spotting (see lib/wakeword.js) — no Web Speech API. While
+// enabled, one mic stream stays open (steady OS indicator, audio never leaves
+// the device). On detection: chime, record the command through the normal
+// push-to-talk pipeline (auto-stopped by the silence watcher), transcribe
+// server-side, auto-send, and the reply is read aloud like any voice send.
+const wakeSupported = micSupported && wakeWordSupported
+const wakeEnabled = ref(wakeSupported && localStorage.getItem('axon-wake-word') === '1')
+const wakeState = ref('off') // 'off' | 'starting' | 'listening'
+let wake = null
+
+function onWakeDetected() {
+  // A streaming run, an active recording/transcription, or read-aloud playback
+  // disqualifies a trigger — the speaking guard keeps the assistant from
+  // waking itself off its own voice coming out of the speakers.
+  if (disabled.value || recState.value !== 'idle' || speakingIdx.value >= 0) return
+  wake.chime()
+  startRecording(wake.stream)
+  wake.watchSilence(() => stopRecording())
+}
+
+async function startWake() {
+  if (!wakeSupported || wakeState.value !== 'off') return
+  if (!wake) {
+    wake = createWakeWord({
+      onDetection: onWakeDetected,
+      onState: (s) => {
+        wakeState.value = s
+      },
+    })
+  }
+  wakeState.value = 'starting'
+  try {
+    await wake.start()
+  } catch (err) {
+    wakeState.value = 'off'
+    wakeEnabled.value = false
+    try {
+      localStorage.setItem('axon-wake-word', '0')
+    } catch {
+      // storage unavailable — session-only state is fine
+    }
+    const denied = err?.name === 'NotAllowedError'
+    toast(
+      denied
+        ? 'Microphone access was denied — wake word turned off.'
+        : 'The wake word engine failed to load — see the browser console.',
+      false
+    )
+    if (!denied) console.error('wake word start failed:', err)
+  }
+}
+
+function setWakeEnabled(on) {
+  wakeEnabled.value = on
+  try {
+    localStorage.setItem('axon-wake-word', on ? '1' : '0')
+  } catch {
+    // storage unavailable — the toggle still works for this session
+  }
+  if (on) startWake()
+  else wake?.stop()
+}
+
+function toggleWake() {
+  setWakeEnabled(!wakeEnabled.value)
+}
+
+function onVisibilityChange() {
+  if (!wakeEnabled.value) return
+  if (document.hidden) {
+    // Release the mic in the background: the OS indicator turns off and the
+    // battery is spared; listening resumes when the tab returns.
+    if (recState.value === 'recording' && wake?.running) stopRecording(true)
+    wake?.stop()
+  } else if (wakeState.value === 'off') {
+    startWake()
   }
 }
 
@@ -763,6 +850,11 @@ function onWindowKeydown(e) {
 onMounted(async () => {
   connectWs(handleWsEvent)
   window.addEventListener('keydown', onWindowKeydown)
+  document.addEventListener('visibilitychange', onVisibilityChange)
+  // Wake word survives reloads: getUserMedia without a gesture is allowed once
+  // mic permission is granted; if it was revoked, startWake's catch turns the
+  // toggle back off.
+  if (wakeEnabled.value) startWake()
   await loadConversations()
 
   // Every visit starts in a fresh conversation; past threads stay reachable
@@ -778,7 +870,9 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onWindowKeydown)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
   stopRecording(true)
+  wake?.stop()
   clearInterval(recTimer)
   stopSpeaking()
 })
@@ -1230,6 +1324,54 @@ watch(disabled, (newVal) => {
             @keydown="onKeydown"
           />
           <button
+            v-if="wakeSupported"
+            class="btn-mic btn-wake"
+            :class="{ 'is-listening': wakeState === 'listening' }"
+            type="button"
+            :title="wakeEnabled ? 'Wake word is on — say “Hey Axon” (click to turn off)' : 'Turn on the “Hey Axon” wake word'"
+            @click="toggleWake"
+          >
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+              aria-hidden="true"
+            >
+              <path
+                d="M4 10v4"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+              <path
+                d="M8 7v10"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+              <path
+                d="M12 4v16"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+              <path
+                d="M16 7v10"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+              <path
+                d="M20 10v4"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+            </svg>
+          </button>
+          <button
             v-if="micSupported"
             class="btn-mic"
             :class="{ 'is-recording': recState === 'recording' }"
@@ -1336,6 +1478,10 @@ watch(disabled, (newVal) => {
         >
           <span class="hint">Enter to send</span>
           <span class="hint">Shift+Enter for a new line</span>
+          <span
+            v-if="wakeState === 'listening'"
+            class="hint"
+          >Say “Hey Axon” to talk</span>
         </div>
       </div>
     </div>
@@ -1674,6 +1820,14 @@ watch(disabled, (newVal) => {
   50% {
     opacity: 0.3;
   }
+}
+
+/* ── Wake word ──────────────────────────────────────────────────────────── */
+/* Passive listening tints the toggle; while a wake-triggered capture runs,
+   the shared mic-button recording styles carry the "mic is hot" look. */
+.btn-wake.is-listening {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
 /* ── Read aloud ─────────────────────────────────────────────────────────── */
