@@ -670,7 +670,225 @@ async function toggleSpeak(idx) {
   speakWithSynthesis(idx, text)
 }
 
+// ── Wake word ("Hey Axon") ──────────────────────────────────────────────────
+// Siri-style hands-free trigger: while the toggle is on, a continuous
+// SpeechRecognition session watches for "hey/hi/ok Axon". The command can ride
+// in the same utterance ("hey axon what's on my calendar") or follow the
+// chime; either way it goes through the voice-send path so the reply is read
+// aloud. Browsers cannot capture audio from a backgrounded tab or a locked
+// phone, so this is foreground-only by design — the recognizer stops when the
+// tab hides and restarts when it returns.
+const SpeechRecognitionImpl =
+  typeof window !== 'undefined' ? window.SpeechRecognition || window.webkitSpeechRecognition : null
+const wakeSupported = !!SpeechRecognitionImpl
+const wakeEnabled = ref(wakeSupported && localStorage.getItem('axon-wake-word') === '1')
+const wakeState = ref('off') // 'off' | 'listening' | 'capturing'
+const wakeHeard = ref('') // live interim transcript shown while capturing
+let wakeRec = null
+let wakeRestartTimer = null
+let wakeCaptureTimer = null
+let wakeChimeCtx = null
+
+// "Axon" is short and the recognizer often renders it as a near-homophone, so
+// a greeting prefix is required (bare "axon" mid-sentence must not trigger)
+// and common mishearings of the name are accepted.
+const wakeRe = /\b(?:hey|hi|ok|okay)[\s,.!]+(?:axon|axion|axen|axone|exon|action)\b[\s,.!?]*/i
+
+// A live run, the push-to-talk recorder, or read-aloud playback all disqualify
+// a trigger — without the speaking guard the assistant can wake itself off its
+// own voice coming out of the speakers.
+function wakeBusy() {
+  return disabled.value || recState.value !== 'idle' || speakingIdx.value >= 0
+}
+
+function ensureChimeCtx() {
+  if (!wakeChimeCtx) {
+    const Ctx = window.AudioContext || window.webkitAudioContext
+    if (Ctx) wakeChimeCtx = new Ctx()
+  }
+  if (wakeChimeCtx?.state === 'suspended') wakeChimeCtx.resume()
+  return wakeChimeCtx
+}
+
+// Two rising sine notes, ~0.3s — says "I'm listening" without shipping assets.
+function wakeChime() {
+  try {
+    const ctx = ensureChimeCtx()
+    if (!ctx) return
+    const t = ctx.currentTime
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.type = 'sine'
+    osc.frequency.setValueAtTime(660, t)
+    osc.frequency.setValueAtTime(880, t + 0.1)
+    gain.gain.setValueAtTime(0.0001, t)
+    gain.gain.exponentialRampToValueAtTime(0.15, t + 0.02)
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.3)
+    osc.connect(gain)
+    gain.connect(ctx.destination)
+    osc.start(t)
+    osc.stop(t + 0.32)
+  } catch {
+    // No audio — the wake button's state change is still visible.
+  }
+}
+
+function sendWakeCommand(text) {
+  // Same post-transcript behavior as push-to-talk: append to any draft, send
+  // through the voice path so the reply is spoken, hold it if a run streams.
+  input.value = input.value.trim() ? `${input.value.replace(/\s+$/, '')} ${text}` : text
+  if (!disabled.value) {
+    voiceSendPending = true
+    send()
+  } else {
+    nextTick(() => adjustInputHeight())
+  }
+}
+
+function cancelWakeCapture() {
+  clearTimeout(wakeCaptureTimer)
+  if (wakeState.value === 'capturing') wakeState.value = 'listening'
+  wakeHeard.value = ''
+}
+
+function onWakeResult(e) {
+  let finalText = ''
+  let interim = ''
+  for (let i = e.resultIndex; i < e.results.length; i++) {
+    const t = e.results[i][0]?.transcript || ''
+    if (e.results[i].isFinal) finalText += ` ${t}`
+    else interim += ` ${t}`
+  }
+  finalText = finalText.trim()
+  interim = interim.trim()
+
+  if (wakeState.value === 'capturing') {
+    if (interim) wakeHeard.value = interim
+    if (finalText) {
+      cancelWakeCapture()
+      sendWakeCommand(finalText)
+    }
+    return
+  }
+
+  // Passive listening scans final results only — interim text flickers through
+  // too many wrong guesses to trigger on.
+  if (!finalText || wakeBusy()) return
+  const m = wakeRe.exec(finalText)
+  if (!m) return
+  const command = finalText.slice(m.index + m[0].length).trim()
+  wakeChime()
+  if (command.length >= 2) {
+    sendWakeCommand(command)
+  } else {
+    // Wake word alone — capture the next utterance as the command, or give up
+    // after a quiet spell and drop back to passive listening.
+    wakeState.value = 'capturing'
+    wakeHeard.value = ''
+    clearTimeout(wakeCaptureTimer)
+    wakeCaptureTimer = setTimeout(cancelWakeCapture, 8000)
+  }
+}
+
+function wakeRecStart() {
+  if (!wakeRec) return
+  try {
+    wakeRec.start()
+  } catch {
+    // start() throws if this session is somehow still active — already running
+    // is exactly the state the restart loop wants.
+  }
+}
+
+function startWake() {
+  if (!wakeSupported || wakeRec) return
+  const rec = new SpeechRecognitionImpl()
+  rec.continuous = true
+  rec.interimResults = true
+  rec.lang = 'en-US'
+  rec.onresult = onWakeResult
+  rec.onerror = (ev) => {
+    if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
+      // Permission is gone for good — flipping the toggle back on re-prompts.
+      setWakeEnabled(false)
+      toast('Microphone access was denied — wake word turned off.', false)
+    }
+    // Everything else ('no-speech', 'network', 'aborted') ends the session and
+    // the onend restart loop brings it back.
+  }
+  rec.onend = () => {
+    if (!wakeRec) return // stopped deliberately via stopWake()
+    // Continuous sessions die on their own after silence or transient errors;
+    // keep the loop alive for as long as the toggle is on.
+    cancelWakeCapture()
+    clearTimeout(wakeRestartTimer)
+    wakeRestartTimer = setTimeout(wakeRecStart, 400)
+  }
+  wakeRec = rec
+  wakeState.value = 'listening'
+  wakeRecStart()
+}
+
+function stopWake() {
+  clearTimeout(wakeRestartTimer)
+  clearTimeout(wakeCaptureTimer)
+  const rec = wakeRec
+  wakeRec = null // onend sees null and stays down
+  if (rec) {
+    rec.onresult = rec.onerror = rec.onend = null
+    try {
+      rec.abort()
+    } catch {
+      // already stopped
+    }
+  }
+  wakeState.value = 'off'
+  wakeHeard.value = ''
+}
+
+function setWakeEnabled(on) {
+  wakeEnabled.value = on
+  try {
+    localStorage.setItem('axon-wake-word', on ? '1' : '0')
+  } catch {
+    // storage full/unavailable — the toggle still works for this session
+  }
+  if (on) startWake()
+  else stopWake()
+}
+
+function toggleWake() {
+  // The click is a user gesture — unlock the chime's AudioContext now so the
+  // wake beep is allowed to play later without one.
+  if (!wakeEnabled.value) ensureChimeCtx()
+  setWakeEnabled(!wakeEnabled.value)
+}
+
+// The recognizer and MediaRecorder cannot share the mic reliably (Android
+// hands it to whoever asked last), so wake pauses while push-to-talk records
+// or transcribes and resumes once the composer is idle again.
+watch(recState, (s) => {
+  if (!wakeEnabled.value) return
+  if (s === 'idle') startWake()
+  else stopWake()
+})
+
+function onVisibilityChange() {
+  if (!wakeEnabled.value) return
+  // Browsers kill background recognition anyway; stopping saves battery and
+  // restarting on return makes the comeback deterministic.
+  if (document.hidden) stopWake()
+  else if (recState.value === 'idle') startWake()
+}
+
 function onWindowKeydown(e) {
+  // Escape abandons a wake-word capture before anything is sent; checked
+  // first so it cannot fall through to the run-stop branch.
+  if (e.key === 'Escape' && wakeState.value === 'capturing') {
+    e.preventDefault()
+    cancelWakeCapture()
+    return
+  }
   // Escape discards an in-progress recording before it ever reaches the
   // transcriber; checked before the run-stop branch so recording wins.
   if (e.key === 'Escape' && recState.value === 'recording') {
@@ -707,6 +925,11 @@ function onWindowKeydown(e) {
 onMounted(async () => {
   connectWs(handleWsEvent)
   window.addEventListener('keydown', onWindowKeydown)
+  document.addEventListener('visibilitychange', onVisibilityChange)
+  // Wake word survives reloads: if it was on last visit, resume listening.
+  // Chrome allows start() without a gesture once mic permission is granted;
+  // if permission was revoked meanwhile, onerror turns the toggle back off.
+  if (wakeEnabled.value) startWake()
   await loadConversations()
 
   // Every visit starts in a fresh conversation; past threads stay reachable
@@ -722,6 +945,8 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onWindowKeydown)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+  stopWake()
   stopRecording(true)
   clearInterval(recTimer)
   stopSpeaking()
@@ -1028,6 +1253,54 @@ watch(disabled, (newVal) => {
             @keydown="onKeydown"
           />
           <button
+            v-if="wakeSupported"
+            class="btn-mic btn-wake"
+            :class="{ 'is-listening': wakeState === 'listening', 'is-capturing': wakeState === 'capturing' }"
+            type="button"
+            :title="wakeEnabled ? 'Wake word is on — say “Hey Axon” (click to turn off)' : 'Turn on the “Hey Axon” wake word'"
+            @click="toggleWake"
+          >
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+              aria-hidden="true"
+            >
+              <path
+                d="M4 10v4"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+              <path
+                d="M8 7v10"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+              <path
+                d="M12 4v16"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+              <path
+                d="M16 7v10"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+              <path
+                d="M20 10v4"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+            </svg>
+          </button>
+          <button
             v-if="micSupported"
             class="btn-mic"
             :class="{ 'is-recording': recState === 'recording' }"
@@ -1138,9 +1411,19 @@ watch(disabled, (newVal) => {
           <template v-else-if="recState === 'transcribing'">
             <span class="hint">Transcribing…</span>
           </template>
+          <template v-else-if="wakeState === 'capturing'">
+            <span class="hint rec-hint"><span
+              class="rec-dot"
+              aria-hidden="true"
+            />Listening — say your command{{ wakeHeard ? `: “${wakeHeard}”` : '… (Esc to cancel)' }}</span>
+          </template>
           <template v-else>
             <span class="hint">Enter to send</span>
             <span class="hint">Shift+Enter for a new line</span>
+            <span
+              v-if="wakeState === 'listening'"
+              class="hint"
+            >Say “Hey Axon” to talk</span>
           </template>
         </div>
       </div>
@@ -1411,6 +1694,22 @@ watch(disabled, (newVal) => {
   50% {
     opacity: 0.3;
   }
+}
+
+/* ── Wake word ──────────────────────────────────────────────────────────── */
+/* Passive listening tints the button; capturing borrows the recording look so
+   "the mic is hot" reads the same everywhere. On phones the hints row is
+   hidden by the mobile layer, so these states are the only feedback. */
+.btn-wake.is-listening {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.btn-wake.is-capturing {
+  color: var(--red);
+  background: var(--redDim);
+  border-color: color-mix(in srgb, var(--red) 55%, transparent);
+  animation: mic-pulse 1.6s ease-in-out infinite;
 }
 
 /* ── Read aloud ─────────────────────────────────────────────────────────── */
