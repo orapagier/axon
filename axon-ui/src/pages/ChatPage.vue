@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { connectWs, wsSend, wsStatus } from '../lib/ws.js'
 import { get, put, del, postForm, postRaw } from '../lib/api.js'
 import { toast, notifyBell } from '../lib/toast.js'
+import { addNotification } from '../lib/notifications.js'
 import { confirmDialog } from '../lib/confirm.js'
 import { renderMarkdown } from '../lib/markdown.js'
 import SearchInput from '../components/SearchInput.vue'
@@ -549,7 +550,7 @@ async function transcribe(blob) {
     const res = await postForm('/audio/transcribe', fd)
     const text = (res.text || '').trim()
     if (res.error) {
-      toast(res.error, false)
+      notifyBell(`Voice transcription failed: ${res.error}`, false)
     } else if (!text) {
       toast('No speech detected in the recording.', false)
     } else {
@@ -570,7 +571,7 @@ async function transcribe(blob) {
       }
     }
   } catch {
-    toast('Transcription failed — check the Voice Input settings.', false)
+    notifyBell('Transcription failed — check the Voice Input settings.', false)
   } finally {
     recState.value = 'idle'
     recSeconds.value = 0
@@ -694,14 +695,25 @@ async function toggleSpeak(idx) {
         // proxy HTML error page or empty body — status alone will have to do
       }
       console.warn(`Server TTS unavailable (${res.status}): ${detail || 'no detail'}`)
+      const ttsMsg = detail
+        ? `Server TTS error: ${detail}`
+        : `Server TTS unavailable (HTTP ${res.status}) — using the browser voice instead.`
+      // Every failure lands in the bell log; the toast still fires only once
+      // per session so a dead tts.* config doesn't nag on every click.
+      addNotification(ttsMsg, false)
       if (!ttsFailureToasted) {
         ttsFailureToasted = true
-        toast(detail || `Server TTS unavailable (HTTP ${res.status}) — using the browser voice instead.`, false)
+        toast(ttsMsg, false)
       }
     } catch {
       // Aborted, network failure, or blocked autoplay — clean up whatever the
       // attempt allocated; the seq guard below decides whether to fall back.
-      if (seq === speakSeq) releaseAudio()
+      // A user stop (seq bumped) is not an error; anything else is bell-only —
+      // the browser-voice fallback keeps the moment itself quiet.
+      if (seq === speakSeq) {
+        releaseAudio()
+        addNotification('Server TTS request failed (network or playback) — using the browser voice instead.', false)
+      }
     }
     if (seq !== speakSeq) return // user hit stop during the attempt
   }
