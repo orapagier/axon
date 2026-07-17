@@ -7,8 +7,8 @@
 //! reconciles all of them into one of three shapes so API adapters can format
 //! exactly what their backend expects.
 
-use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, SecondsFormat};
-use serde_json::Value;
+use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, SecondsFormat};
+use serde_json::{json, Value};
 
 /// A parsed datetime, preserving how much the input actually specified.
 /// Keeping the three shapes distinct matters downstream: a date-only value
@@ -223,6 +223,119 @@ pub fn fix_all_day_end(start: &str, end: &str) -> Option<String> {
         return None; // already a valid exclusive end
     }
     Some(s.succ_opt()?.to_string())
+}
+
+// ── Single-day window helpers (shared by Google & Microsoft adapters) ─────
+
+/// A one-day query window derived from a date-only `time_min`, used by both
+/// calendar adapters to scope and filter "what's on Monday?" queries
+/// deterministically — so even a weak model can't report the wrong day's event.
+pub struct SingleDayWindow {
+    /// The requested local calendar date.
+    pub date: NaiveDate,
+    /// RFC 3339 start instant: `date 00:00:00+offset`.
+    pub start_rfc3339: String,
+    /// RFC 3339 end instant: `date+1 00:00:00+offset` (exclusive).
+    pub end_rfc3339: String,
+    /// English weekday name ("Monday" … "Sunday").
+    pub weekday: &'static str,
+}
+
+/// Build a single-day window from a `time_min` value, but **only** when it
+/// parses as a bare date (all-day semantics). Timed values (including
+/// midnight-at-an-offset) and unrecognized input return `None`, leaving the
+/// caller's existing behavior untouched.
+pub fn single_day_window_for(time_min: &str) -> Option<SingleDayWindow> {
+    let d = date_only(time_min)?;
+    let offset = default_tz_offset();
+    let next = d.succ_opt()?;
+    let wd = weekday_name(time_min)?;
+    Some(SingleDayWindow {
+        date: d,
+        start_rfc3339: format!("{}T00:00:00{offset}", d.format("%Y-%m-%d")),
+        end_rfc3339: format!("{}T00:00:00{offset}", next.format("%Y-%m-%d")),
+        weekday: wd,
+    })
+}
+
+/// The local calendar day of one event time slot, plus whether the value sits
+/// exactly on a midnight/date boundary. Handles Google all-day (`{date}`),
+/// Google timed offset-aware (`{dateTime}`), and Microsoft naive-local
+/// (`{dateTime, timeZone}`) shapes; zoned values use their own offset.
+fn slot_local_day(slot: &Value) -> Option<(NaiveDate, bool)> {
+    let raw = slot
+        .get("dateTime")
+        .or_else(|| slot.get("date"))
+        .and_then(Value::as_str)?;
+    match parse_flexible(raw)? {
+        FlexiDateTime::DateOnly(d) => Some((d, true)),
+        FlexiDateTime::Naive(dt) => Some((dt.date(), dt.time() == NaiveTime::MIN)),
+        FlexiDateTime::Zoned(dt) => Some((dt.date_naive(), dt.time() == NaiveTime::MIN)),
+    }
+}
+
+/// Whether an event occurs on the given local calendar day. An event occupies
+/// every day from its start through its end; an end that lands exactly on a
+/// midnight/date boundary is exclusive (a timed event ending 00:00 and an
+/// all-day end date don't spill into the next day). Graph renders foreign-tz
+/// all-day events off local midnight, so an `isAllDay` event's end is treated
+/// as date-exclusive regardless of its rendered time. A missing or
+/// unrecognizable end falls back to the start day alone.
+fn event_occurs_on(ev: &Value, day: NaiveDate) -> bool {
+    let Some((first, _)) = ev.get("start").and_then(slot_local_day) else {
+        return false;
+    };
+    let all_day = ev.get("isAllDay").and_then(Value::as_bool).unwrap_or(false);
+    let last = ev
+        .get("end")
+        .and_then(slot_local_day)
+        .map(|(d, on_boundary)| {
+            if on_boundary || all_day {
+                d.pred_opt().unwrap_or(d)
+            } else {
+                d
+            }
+        })
+        .map_or(first, |d| d.max(first));
+    (first..=last).contains(&day)
+}
+
+/// Retain only events that actually occur on the given local calendar day —
+/// including multi-day and overnight events that started earlier but span
+/// into it. Works with both Google and Microsoft event shapes. Mutates
+/// `items` in place and returns the count kept.
+pub fn retain_events_on_day(items: &mut Vec<Value>, day: NaiveDate) -> usize {
+    let mut write = 0;
+    for read in 0..items.len() {
+        if event_occurs_on(&items[read], day) {
+            if write != read {
+                items.swap(write, read);
+            }
+            write += 1;
+        }
+    }
+    items.truncate(write);
+    write
+}
+
+/// Stamp a list response with code-computed single-day metadata (requested
+/// weekday, matching-event count, exact window) so the model reports the day
+/// from data instead of deriving it.
+pub fn stamp_day_window(resp: &mut Value, dw: &SingleDayWindow, kept: usize) {
+    if let Some(obj) = resp.as_object_mut() {
+        obj.insert(
+            "_axon_requested_day".into(),
+            Value::String(dw.weekday.to_string()),
+        );
+        obj.insert(
+            "_axon_events_on_requested_day".into(),
+            Value::Number(kept.into()),
+        );
+        obj.insert(
+            "_axon_window".into(),
+            json!({ "start": dw.start_rfc3339, "end": dw.end_rfc3339 }),
+        );
+    }
 }
 
 /// English weekday name ("Monday" … "Sunday") for any datetime shape
@@ -544,5 +657,176 @@ mod tests {
         );
         let zoned = parse_flexible("2026-07-05T09:00:00-05:00").unwrap();
         assert_eq!(zoned.to_rfc3339("+08:00"), "2026-07-05T09:00:00-05:00");
+    }
+
+    // ── single_day_window_for ────────────────────────────────────────────
+
+    #[test]
+    fn single_day_window_date_only_returns_some() {
+        let w = single_day_window_for("2026-07-20").unwrap();
+        assert_eq!(
+            w.date,
+            NaiveDate::parse_from_str("2026-07-20", "%Y-%m-%d").unwrap()
+        );
+        assert_eq!(w.weekday, "Monday");
+        assert_eq!(w.start_rfc3339, "2026-07-20T00:00:00+08:00");
+        assert_eq!(w.end_rfc3339, "2026-07-21T00:00:00+08:00");
+    }
+
+    #[test]
+    fn single_day_window_month_name_returns_some() {
+        // "July 20, 2026" parses as DateOnly.
+        let w = single_day_window_for("July 20, 2026").unwrap();
+        assert_eq!(w.weekday, "Monday");
+    }
+
+    #[test]
+    fn single_day_window_timed_returns_none() {
+        // A time attached → Naive, not DateOnly → None.
+        assert!(single_day_window_for("2026-07-20T00:00:00").is_none());
+        assert!(single_day_window_for("2026-07-20 09:00").is_none());
+        assert!(single_day_window_for("2026-07-20T09:00:00+08:00").is_none());
+        assert!(single_day_window_for("2026-07-20 09:00:00Z").is_none());
+    }
+
+    #[test]
+    fn single_day_window_epoch_returns_none() {
+        assert!(single_day_window_for("1783213200").is_none());
+    }
+
+    #[test]
+    fn single_day_window_garbage_returns_none() {
+        assert!(single_day_window_for("").is_none());
+        assert!(single_day_window_for("not a date").is_none());
+    }
+
+    // ── retain_events_on_day ─────────────────────────────────────────────
+
+    fn nd(s: &str) -> NaiveDate {
+        NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+    }
+
+    #[test]
+    fn retain_keeps_same_day_and_drops_other_days() {
+        let mut items = serde_json::json!([
+            { "start": { "dateTime": "2026-07-20T18:00:00+08:00" },
+              "end":   { "dateTime": "2026-07-20T19:00:00+08:00" }, "summary": "Monday event" },
+            { "start": { "dateTime": "2026-07-18T18:00:00+08:00" },
+              "end":   { "dateTime": "2026-07-18T19:00:00+08:00" }, "summary": "Saturday event" },
+            { "start": { "date": "2026-07-20" }, "end": { "date": "2026-07-21" }, "summary": "Monday all-day" },
+        ])
+        .as_array_mut()
+        .unwrap()
+        .clone();
+        let kept = retain_events_on_day(&mut items, nd("2026-07-20"));
+        assert_eq!(kept, 2);
+        assert_eq!(items[0]["summary"], "Monday event");
+        assert_eq!(items[1]["summary"], "Monday all-day");
+    }
+
+    #[test]
+    fn retain_keeps_multi_day_and_overnight_events_spanning_the_day() {
+        let mut items = serde_json::json!([
+            // Wed Jul 15 → Sat Jul 18 all-day (exclusive end Jul 19): covers Friday.
+            { "start": { "date": "2026-07-15" }, "end": { "date": "2026-07-19" }, "summary": "Vacation" },
+            // Thu 23:00 → Fri 01:00: spills into Friday.
+            { "start": { "dateTime": "2026-07-16T23:00:00+08:00" },
+              "end":   { "dateTime": "2026-07-17T01:00:00+08:00" }, "summary": "Overnight" },
+            // Ends exactly at Friday midnight: occupies Thursday only.
+            { "start": { "dateTime": "2026-07-16T22:00:00+08:00" },
+              "end":   { "dateTime": "2026-07-17T00:00:00+08:00" }, "summary": "Ends at midnight" },
+        ])
+        .as_array_mut()
+        .unwrap()
+        .clone();
+        let kept = retain_events_on_day(&mut items, nd("2026-07-17"));
+        assert_eq!(kept, 2);
+        assert_eq!(items[0]["summary"], "Vacation");
+        assert_eq!(items[1]["summary"], "Overnight");
+    }
+
+    #[test]
+    fn retain_treats_all_day_end_as_exclusive() {
+        // One-day all-day event on Jul 18 (exclusive end Jul 19): kept on the
+        // 18th, dropped on the 19th — adjacent-day leaks from a UTC-vs-local
+        // window mismatch stay filtered out.
+        let items = serde_json::json!([
+            { "start": { "date": "2026-07-18" }, "end": { "date": "2026-07-19" }, "summary": "Sat all-day" },
+        ])
+        .as_array()
+        .unwrap()
+        .clone();
+        assert_eq!(
+            retain_events_on_day(&mut items.clone(), nd("2026-07-18")),
+            1
+        );
+        assert_eq!(
+            retain_events_on_day(&mut items.clone(), nd("2026-07-19")),
+            0
+        );
+        assert_eq!(
+            retain_events_on_day(&mut items.clone(), nd("2026-07-17")),
+            0
+        );
+    }
+
+    #[test]
+    fn retain_handles_graph_all_day_rendered_off_midnight() {
+        // Graph renders a foreign-tz all-day event off local midnight; the
+        // isAllDay flag keeps its end date-exclusive so it doesn't leak into
+        // the next day.
+        let items = serde_json::json!([
+            { "isAllDay": true,
+              "start": { "dateTime": "2026-07-18T08:00:00.0000000", "timeZone": "Asia/Manila" },
+              "end":   { "dateTime": "2026-07-19T08:00:00.0000000", "timeZone": "Asia/Manila" },
+              "summary": "Shifted all-day" },
+        ])
+        .as_array()
+        .unwrap()
+        .clone();
+        assert_eq!(
+            retain_events_on_day(&mut items.clone(), nd("2026-07-18")),
+            1
+        );
+        assert_eq!(
+            retain_events_on_day(&mut items.clone(), nd("2026-07-19")),
+            0
+        );
+    }
+
+    #[test]
+    fn retain_handles_empty_missing_start_and_missing_end() {
+        let mut empty: Vec<Value> = vec![];
+        assert_eq!(retain_events_on_day(&mut empty, nd("2026-07-20")), 0);
+
+        let mut no_start = serde_json::json!([
+            { "summary": "No start field" },
+        ])
+        .as_array_mut()
+        .unwrap()
+        .clone();
+        assert_eq!(retain_events_on_day(&mut no_start, nd("2026-07-20")), 0);
+
+        // Missing end falls back to the start day alone.
+        let mut no_end = serde_json::json!([
+            { "start": { "dateTime": "2026-07-20T10:00:00+08:00" }, "summary": "No end" },
+        ])
+        .as_array_mut()
+        .unwrap()
+        .clone();
+        assert_eq!(retain_events_on_day(&mut no_end, nd("2026-07-20")), 1);
+    }
+
+    #[test]
+    fn stamp_day_window_adds_metadata() {
+        let dw = single_day_window_for("2026-07-20").unwrap();
+        let mut resp = serde_json::json!({ "items": [] });
+        stamp_day_window(&mut resp, &dw, 3);
+        assert_eq!(resp["_axon_requested_day"], serde_json::json!("Monday"));
+        assert_eq!(resp["_axon_events_on_requested_day"], serde_json::json!(3));
+        assert_eq!(
+            resp["_axon_window"],
+            serde_json::json!({ "start": "2026-07-20T00:00:00+08:00", "end": "2026-07-21T00:00:00+08:00" })
+        );
     }
 }

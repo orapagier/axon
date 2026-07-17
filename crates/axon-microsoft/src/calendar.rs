@@ -3,10 +3,10 @@ use crate::auth::access_token;
 use anyhow::{bail, Result};
 use axon_core::flexidate::{
     annotate_slot_weekday, date_only, default_tz, fix_all_day_end, normalize_rfc3339,
-    parse_flexible, FlexiDateTime,
+    parse_flexible, retain_events_on_day, single_day_window_for, stamp_day_window, FlexiDateTime,
 };
 use axon_core::{AppState, EnsureOk};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 
 const BASE: &str = "https://graph.microsoft.com/v1.0";
@@ -66,6 +66,14 @@ pub async fn list_calendars(state: &AppState) -> Result<Value> {
 /// List events. Supports free-text search via `query`.
 /// Note: `calendar_id` and `query` cannot be combined — the Graph API does not
 /// support `$search` on a calendarView endpoint.
+///
+/// **Single-day hard guard:** when `start_dt` is a bare date (all-day semantics),
+/// no `end_dt` is given, and there is no free-text `query` (the `$search` path
+/// ignores time bounds entirely), the query is scoped to exactly that one
+/// calendar day and returned events are post-filtered to those that actually
+/// occur on that day (multi-day and overnight spans included). This prevents a
+/// weak model from reporting the wrong day's recurring event when the requested
+/// day is empty.
 pub async fn list_events(
     state: &AppState,
     max_count: u32,
@@ -76,9 +84,13 @@ pub async fn list_events(
 ) -> Result<Value> {
     let tok = access_token(state).await?;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let default_end = (Utc::now() + chrono::Duration::days(30))
-        .format("%Y-%m-%dT%H:%M:%SZ")
-        .to_string();
+
+    // Detect single-day scope: date-only start_dt with no end_dt. The $search
+    // path applies no time bounds, so the guard must not engage there.
+    let day_window = (query.is_none() && end_dt.is_none())
+        .then_some(start_dt)
+        .flatten()
+        .and_then(single_day_window_for);
 
     if query.is_some() && calendar_id.is_some() {
         bail!(
@@ -105,8 +117,24 @@ pub async fn list_events(
     } else {
         // Window bounds accept any flexible format; normalized to RFC 3339
         // with the default offset, matching the Google adapter's timeMin/Max.
-        let start = start_dt.map(normalize_rfc3339).unwrap_or(now);
-        let end = end_dt.map(normalize_rfc3339).unwrap_or(default_end);
+        let (start, end) = if let Some(dw) = &day_window {
+            (dw.start_rfc3339.clone(), dw.end_rfc3339.clone())
+        } else {
+            let start = start_dt.map(normalize_rfc3339).unwrap_or(now);
+            let end = end_dt.map(normalize_rfc3339).unwrap_or_else(|| {
+                // Window end defaults to 30 days past the later of now and
+                // the start — anchoring on now alone would invert the range
+                // (a 400) whenever the start is more than 30 days out.
+                let anchor = match DateTime::parse_from_rfc3339(&start) {
+                    Ok(t) => t.with_timezone(&Utc).max(Utc::now()),
+                    Err(_) => Utc::now(),
+                };
+                (anchor + chrono::Duration::days(30))
+                    .format("%Y-%m-%dT%H:%M:%SZ")
+                    .to_string()
+            });
+            (start, end)
+        };
         let base = match calendar_id {
             Some(c) => format!("{BASE}/me/calendars/{}/calendarView", urlenc(c)),
             None => format!("{BASE}/me/calendarView"),
@@ -142,10 +170,19 @@ pub async fn list_events(
         .await?
         .json()
         .await?;
+    let mut kept = 0;
     if let Some(items) = resp.get_mut("value").and_then(Value::as_array_mut) {
-        for ev in items {
+        for ev in items.iter_mut() {
             annotate_event_weekdays(ev);
         }
+        // Single-day post-filter: keep only events occurring on that day.
+        if let Some(dw) = &day_window {
+            kept = retain_events_on_day(items, dw.date);
+        }
+    }
+    // Stamp code-computed metadata so the model can't misreport the day.
+    if let Some(dw) = &day_window {
+        stamp_day_window(&mut resp, dw, kept);
     }
     Ok(resp)
 }

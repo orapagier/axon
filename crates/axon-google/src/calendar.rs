@@ -2,10 +2,10 @@ use crate::auth::access_token;
 use anyhow::Result;
 use axon_core::flexidate::{
     annotate_slot_weekday, default_tz, fix_all_day_end, normalize_rfc3339, parse_flexible,
-    FlexiDateTime,
+    retain_events_on_day, single_day_window_for, stamp_day_window, FlexiDateTime,
 };
 use axon_core::{AppState, EnsureOk};
-use chrono::{SecondsFormat, Utc};
+use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -67,6 +67,13 @@ pub async fn list_calendars(state: &AppState) -> Result<Value> {
 
 /// List events in a calendar. The response's `nextPageToken` (when present)
 /// can be fed back via `page_token` to fetch the following page.
+///
+/// **Single-day hard guard:** when `time_min` is a bare date (all-day semantics),
+/// no `time_max` is given, and instances are being expanded (`single_events`
+/// unset or true), the query is scoped to exactly that one calendar day and
+/// returned events are post-filtered to those that actually occur on that day
+/// (multi-day and overnight spans included). This prevents a weak model from
+/// reporting the wrong day's recurring event when the requested day is empty.
 #[allow(clippy::too_many_arguments)]
 pub async fn list_events(
     state: &AppState,
@@ -81,25 +88,54 @@ pub async fn list_events(
     let tok = access_token(state).await?;
     let now = Utc::now().to_rfc3339();
     let cal = urlenc(calendar_id);
+    let expand = single_events.unwrap_or(true);
+
+    // Detect single-day scope: date-only time_min with no time_max. Only the
+    // expanded-instances path applies the one-day bounds, so the guard must
+    // not engage for a singleEvents=false (series-master) listing.
+    let day_window = (expand && time_max.is_none())
+        .then_some(time_min)
+        .flatten()
+        .and_then(single_day_window_for);
 
     let mut params = vec![
         ("maxResults", max_results.to_string()),
-        ("singleEvents", single_events.unwrap_or(true).to_string()),
+        ("singleEvents", expand.to_string()),
     ];
 
-    if single_events.unwrap_or(true) {
+    if expand {
         params.push(("orderBy", "startTime".into()));
-        // Default to "upcoming events" when no window is given.
-        let tmin = time_min.map(normalize_rfc3339).unwrap_or(now.clone());
-        params.push(("timeMin", tmin));
-    } else if let Some(tmin) = time_min {
-        params.push(("timeMin", normalize_rfc3339(tmin)));
+        if let Some(dw) = &day_window {
+            // Single-day window: bound to that exact day.
+            params.push(("timeMin", dw.start_rfc3339.clone()));
+            params.push(("timeMax", dw.end_rfc3339.clone()));
+        } else {
+            // Default to "upcoming events" when no window start is given.
+            let tmin = time_min.map(normalize_rfc3339).unwrap_or(now);
+            let tmax = time_max.map(normalize_rfc3339).unwrap_or_else(|| {
+                // Window end defaults to 30 days past the later of now and
+                // timeMin — anchoring on now alone would invert the range
+                // (a 400) whenever timeMin is more than 30 days out.
+                let anchor = match DateTime::parse_from_rfc3339(&tmin) {
+                    Ok(t) => t.with_timezone(&Utc).max(Utc::now()),
+                    Err(_) => Utc::now(),
+                };
+                (anchor + chrono::Duration::days(30)).to_rfc3339()
+            });
+            params.push(("timeMin", tmin));
+            params.push(("timeMax", tmax));
+        }
+    } else {
+        // Series-master listing: pass along whatever bounds the caller gave.
+        if let Some(tmin) = time_min {
+            params.push(("timeMin", normalize_rfc3339(tmin)));
+        }
+        if let Some(tmax) = time_max {
+            params.push(("timeMax", normalize_rfc3339(tmax)));
+        }
     }
     if let Some(q) = query {
         params.push(("q", q.to_owned()));
-    }
-    if let Some(tmax) = time_max {
-        params.push(("timeMax", normalize_rfc3339(tmax)));
     }
     if let Some(pt) = page_token {
         params.push(("pageToken", pt.to_owned()));
@@ -116,10 +152,19 @@ pub async fn list_events(
         .await?
         .json()
         .await?;
+    let mut kept = 0;
     if let Some(items) = resp.get_mut("items").and_then(Value::as_array_mut) {
-        for ev in items {
+        for ev in items.iter_mut() {
             annotate_event_weekdays(ev);
         }
+        // Single-day post-filter: keep only events occurring on that day.
+        if let Some(dw) = &day_window {
+            kept = retain_events_on_day(items, dw.date);
+        }
+    }
+    // Stamp code-computed metadata so the model can't misreport the day.
+    if let Some(dw) = &day_window {
+        stamp_day_window(&mut resp, dw, kept);
     }
     Ok(resp)
 }
