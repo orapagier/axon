@@ -40,6 +40,12 @@ const QUIET_TICKS = 14
 const NO_SPEECH_TICKS = 50
 const MAX_TICKS = 120
 
+// Follow-up capture (reopened mic after a spoken reply, no wake word said)
+// deliberately listens with a raised speech bar: onset must be ~2x the normal
+// RMS and arrive within 3s, so room-level chatter from people nearby cancels
+// the window instead of being transcribed and sent as a command.
+export const FOLLOWUP_CAPTURE = { speechRms: 0.025, noSpeechTicks: 30 }
+
 export const wakeWordSupported =
   typeof navigator !== 'undefined' &&
   !!navigator.mediaDevices?.getUserMedia &&
@@ -124,30 +130,42 @@ export function createWakeWord({ onDetection, onState }) {
 
   // Two rising sine notes, ~0.3s — "I'm listening" without shipping assets.
   // Reuses the worklet's AudioContext, which the enable click already unlocked.
-  function chime() {
+  // soft=true plays a single quieter note: the follow-up window cue, distinct
+  // from the wake chime so the user knows no wake word was (or is) needed.
+  function chime(soft = false) {
     try {
       const c = ensureCtx()
       const t = c.currentTime
       const osc = c.createOscillator()
       const gain = c.createGain()
       osc.type = 'sine'
-      osc.frequency.setValueAtTime(660, t)
-      osc.frequency.setValueAtTime(880, t + 0.1)
+      if (soft) {
+        osc.frequency.setValueAtTime(880, t)
+      } else {
+        osc.frequency.setValueAtTime(660, t)
+        osc.frequency.setValueAtTime(880, t + 0.1)
+      }
+      const peak = soft ? 0.08 : 0.15
+      const dur = soft ? 0.18 : 0.3
       gain.gain.setValueAtTime(0.0001, t)
-      gain.gain.exponentialRampToValueAtTime(0.15, t + 0.02)
-      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.3)
+      gain.gain.exponentialRampToValueAtTime(peak, t + 0.02)
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + dur)
       osc.connect(gain)
       gain.connect(c.destination)
       osc.start(t)
-      osc.stop(t + 0.32)
+      osc.stop(t + dur + 0.02)
     } catch {
       // no audio — the button state change is still visible
     }
   }
 
   // Watches mic level after a detection so the command recording stops itself
-  // when the user finishes talking; onDone fires exactly once.
-  function watchSilence(onDone) {
+  // when the user finishes talking; onDone fires exactly once, with hadSpeech
+  // so the caller can drop captures where nobody actually spoke. The follow-up
+  // window passes FOLLOWUP_CAPTURE to raise the speech bar and shorten the
+  // wait (the same raised bar also keeps background chatter from extending an
+  // already-running capture).
+  function watchSilence(onDone, { speechRms = RMS_SPEECH, noSpeechTicks = NO_SPEECH_TICKS } = {}) {
     cancelSilenceWatch()
     if (!analyser) return
     const data = new Float32Array(analyser.fftSize)
@@ -160,15 +178,15 @@ export function createWakeWord({ onDetection, onState }) {
       for (let i = 0; i < data.length; i++) acc += data[i] * data[i]
       const rms = Math.sqrt(acc / data.length)
       ticks++
-      if (rms > RMS_SPEECH) {
+      if (rms > speechRms) {
         hadSpeech = true
         quiet = 0
       } else if (hadSpeech) {
         quiet++
       }
-      if ((hadSpeech && quiet >= QUIET_TICKS) || (!hadSpeech && ticks >= NO_SPEECH_TICKS) || ticks >= MAX_TICKS) {
+      if ((hadSpeech && quiet >= QUIET_TICKS) || (!hadSpeech && ticks >= noSpeechTicks) || ticks >= MAX_TICKS) {
         cancelSilenceWatch()
-        onDone()
+        onDone(hadSpeech)
       }
     }, 100)
   }

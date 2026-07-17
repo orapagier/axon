@@ -6,7 +6,7 @@ import { toast, notifyBell } from '../lib/toast.js'
 import { addNotification } from '../lib/notifications.js'
 import { confirmDialog } from '../lib/confirm.js'
 import { renderMarkdown } from '../lib/markdown.js'
-import { createWakeWord, wakeWordSupported } from '../lib/wakeword.js'
+import { createWakeWord, wakeWordSupported, FOLLOWUP_CAPTURE } from '../lib/wakeword.js'
 import SearchInput from '../components/SearchInput.vue'
 
 // Each message: { role:'user'|'agent'|'trace', text, meta?, trace:[], thinking?:boolean }
@@ -333,7 +333,13 @@ function handleWsEvent(ev) {
       }
       if (speakReplyOnDone) {
         speakReplyOnDone = false
-        if (agentIdx >= 0 && canSpeak) toggleSpeak(agentIdx)
+        if (agentIdx >= 0 && canSpeak) {
+          // Arm follow-up mode after toggleSpeak: its synchronous prefix runs
+          // stopSpeaking(), which would immediately clear the flag.
+          const wantFollowup = wakeEnabled.value && wake?.running
+          toggleSpeak(agentIdx)
+          followupEligible = wantFollowup
+        }
       }
       collapseTrace()
       resetRunTrackers()
@@ -591,6 +597,8 @@ async function transcribe(blob) {
 // the device). On detection: chime, record the command through the normal
 // push-to-talk pipeline (auto-stopped by the silence watcher), transcribe
 // server-side, auto-send, and the reply is read aloud like any voice send.
+// When that spoken reply finishes naturally, follow-up mode briefly reopens
+// the mic so the next command needs no wake word (see startFollowupCapture).
 const wakeSupported = micSupported && wakeWordSupported
 const wakeEnabled = ref(wakeSupported && localStorage.getItem('axon-wake-word') === '1')
 const wakeState = ref('off') // 'off' | 'starting' | 'listening'
@@ -653,6 +661,28 @@ function toggleWake() {
   setWakeEnabled(!wakeEnabled.value)
 }
 
+// ── Follow-up mode ───────────────────────────────────────────────────────────
+// After a wake-triggered reply finishes reading aloud, reopen the mic briefly
+// so the next command needs no "Hey Axon". Two guards keep bystanders out of
+// the conversation: FOLLOWUP_CAPTURE raises the speech bar to ~2x normal (a
+// voice close to the mic passes, people talking across the room don't) and
+// shortens the wait to ~3s; and a window that heard no qualifying speech is
+// cancelled outright — nothing is transcribed, nothing is sent. The flag is
+// armed only for auto-spoken voice replies (never manual read-aloud clicks)
+// and cleared by stopSpeaking(), so a user stop also declines the follow-up.
+let followupEligible = false
+
+function startFollowupCapture() {
+  // Small gap after playback so the speaker tail can't register as speech.
+  setTimeout(() => {
+    if (!wakeEnabled.value || !wake?.running) return
+    if (disabled.value || recState.value !== 'idle' || speakingIdx.value >= 0 || document.hidden) return
+    wake.chime(true)
+    startRecording(wake.stream)
+    wake.watchSilence((hadSpeech) => stopRecording(!hadSpeech), FOLLOWUP_CAPTURE)
+  }, 250)
+}
+
 function onVisibilityChange() {
   if (!wakeEnabled.value) return
   if (document.hidden) {
@@ -708,6 +738,7 @@ function releaseAudio() {
 }
 
 function stopSpeaking() {
+  followupEligible = false
   speakSeq += 1
   if (speakAbort) {
     speakAbort.abort()
@@ -733,8 +764,20 @@ function speakWithSynthesis(idx, text) {
   synth.cancel()
   const u = new SpeechSynthesisUtterance(text)
   synthUtterance = u
-  u.onend = u.onerror = () => {
+  // Split handlers for the same reason as the audio element: only a natural
+  // end may open the follow-up window, never an error or a user stop.
+  u.onend = () => {
     if (synthUtterance === u) synthUtterance = null
+    if (speakingIdx.value === idx) {
+      speakingIdx.value = -1
+      const followup = followupEligible
+      followupEligible = false
+      if (followup) startFollowupCapture()
+    }
+  }
+  u.onerror = () => {
+    if (synthUtterance === u) synthUtterance = null
+    followupEligible = false
     if (speakingIdx.value === idx) speakingIdx.value = -1
   }
   const seq = speakSeq
@@ -767,7 +810,15 @@ async function toggleSpeak(idx) {
         if (seq !== speakSeq) return // stopped while synthesizing
         audioUrl = URL.createObjectURL(blob)
         audioEl = new Audio(audioUrl)
-        audioEl.onended = audioEl.onerror = () => {
+        // Natural end and failure diverge: only a played-to-the-end reply may
+        // open the follow-up window (read the flag before stopSpeaking clears it).
+        audioEl.onended = () => {
+          if (speakingIdx.value !== idx) return
+          const followup = followupEligible
+          stopSpeaking()
+          if (followup) startFollowupCapture()
+        }
+        audioEl.onerror = () => {
           if (speakingIdx.value === idx) stopSpeaking()
         }
         await audioEl.play()
