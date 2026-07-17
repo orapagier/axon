@@ -28,6 +28,9 @@ let traceIdx = -1 // index of the trace block preceding it
 // the agent only sees that thread's history; long-term memory stays shared.
 const conversations = ref([])
 const currentSessionId = ref(null)
+// On phones (<768px) the history pane becomes an off-canvas drawer; this
+// drives it. Desktop ignores it — the pane is always in flow there.
+const historyOpen = ref(false)
 
 // Chat-history search (over message content, not just titles). Debounced
 // against the /conversations/search endpoint; an empty query restores the
@@ -90,9 +93,11 @@ function rowToMessage(m) {
     // Persisted reasoning trace — rehydrated collapsed to save space.
     return { role: 'trace', trace: Array.isArray(m.items) ? m.items : [], collapsed: true }
   }
+  // noAnim: rehydrated history must not replay the fade-in-up entrance —
+  // reopening a long thread otherwise animates every bubble at once.
   return m.role === 'assistant'
-    ? { role: 'agent', text: m.content, thinking: false, meta: '', status: '' }
-    : { role: 'user', text: m.content }
+    ? { role: 'agent', text: m.content, thinking: false, meta: '', status: '', noAnim: true }
+    : { role: 'user', text: m.content, noAnim: true }
 }
 
 // Collapse the in-flight trace block once its run is over; it stays available
@@ -132,10 +137,12 @@ function newChat() {
   resetRunTrackers()
   stopSpeaking()
   disabled.value = false
+  historyOpen.value = false
   nextTick(() => focusComposer())
 }
 
 async function openConversation(id) {
+  historyOpen.value = false
   if (id === currentSessionId.value || disabled.value) return
   currentSessionId.value = id
   resetRunTrackers()
@@ -146,7 +153,7 @@ async function openConversation(id) {
   } catch {
     messages.value = []
   }
-  scrollBottom()
+  scrollBottom(true)
 }
 
 async function removeConversation(id) {
@@ -351,10 +358,13 @@ function handleWsEvent(ev) {
   }
 }
 
-async function scrollBottom() {
+// instant: jump without the CSS smooth-scroll — opening an old conversation
+// must not animate from the top of the whole transcript.
+async function scrollBottom(instant = false) {
   await nextTick()
   if (messagesEl.value) {
-    messagesEl.value.scrollTop = messagesEl.value.scrollHeight
+    if (instant) messagesEl.value.scrollTo({ top: messagesEl.value.scrollHeight, behavior: 'instant' })
+    else messagesEl.value.scrollTop = messagesEl.value.scrollHeight
   }
 }
 
@@ -550,9 +560,12 @@ async function transcribe(blob) {
         send()
       } else {
         // A run is streaming — sending is blocked, so keep it for review.
+        // focusComposer (not a bare focus): popping the phone keyboard
+        // uninvited right after the user spoke is exactly the autofocus
+        // behavior the touch guard exists to prevent.
         nextTick(() => {
           adjustInputHeight()
-          inputEl.value?.focus()
+          focusComposer()
         })
       }
     }
@@ -882,6 +895,12 @@ function onVisibilityChange() {
 }
 
 function onWindowKeydown(e) {
+  // Escape dismisses the mobile history drawer before anything else.
+  if (e.key === 'Escape' && historyOpen.value) {
+    e.preventDefault()
+    historyOpen.value = false
+    return
+  }
   // Escape abandons a wake-word capture before anything is sent; checked
   // first so it cannot fall through to the run-stop branch.
   if (e.key === 'Escape' && wakeState.value === 'capturing') {
@@ -982,7 +1001,35 @@ watch(disabled, (newVal) => {
 
 <template>
   <div class="chat-workspace">
-    <aside class="conv-pane">
+    <aside
+      class="conv-pane"
+      :class="{ open: historyOpen }"
+    >
+      <div class="conv-drawer-head">
+        <span>Conversations</span>
+        <button
+          class="conv-drawer-close"
+          type="button"
+          title="Close history"
+          @click="historyOpen = false"
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+            aria-hidden="true"
+          >
+            <path
+              d="M18 6 6 18M6 6l12 12"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+            />
+          </svg>
+        </button>
+      </div>
       <button
         class="conv-new"
         type="button"
@@ -1061,6 +1108,29 @@ watch(disabled, (newVal) => {
             </span>
           </div>
           <button
+            class="conv-edit"
+            type="button"
+            title="Rename conversation"
+            @click.stop="startRename(c)"
+          >
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+              aria-hidden="true"
+            >
+              <path
+                d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7.5 18.5 3 20l1.5-4.5Z"
+                stroke="currentColor"
+                stroke-width="1.7"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </button>
+          <button
             class="conv-del"
             type="button"
             title="Delete conversation"
@@ -1087,7 +1157,73 @@ watch(disabled, (newVal) => {
       </div>
     </aside>
 
+    <div
+      v-if="historyOpen"
+      class="conv-overlay"
+      @click="historyOpen = false"
+    />
+
     <div class="chat-layout">
+      <div class="chat-mobile-bar">
+        <button
+          class="chat-mobile-btn"
+          type="button"
+          @click="historyOpen = true"
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+            aria-hidden="true"
+          >
+            <path
+              d="M3 12a9 9 0 1 0 2.6-6.4L3 8"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+            <path
+              d="M3 3v5h5"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+            <path
+              d="M12 7.5V12l3 2"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+            />
+          </svg>
+          <span>History</span>
+        </button>
+        <button
+          class="chat-mobile-btn chat-mobile-new"
+          type="button"
+          @click="newChat"
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+            aria-hidden="true"
+          >
+            <path
+              d="M12 5v14M5 12h14"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+            />
+          </svg>
+          <span>New chat</span>
+        </button>
+      </div>
       <div
         ref="messagesEl"
         class="chat-messages"
@@ -1156,6 +1292,7 @@ watch(disabled, (newVal) => {
           <div
             v-else-if="msg.role === 'user'"
             class="chat-msg user"
+            :class="{ 'no-anim': msg.noAnim }"
           >
             <div class="chat-bubble">
               {{ msg.text }}
@@ -1165,6 +1302,7 @@ watch(disabled, (newVal) => {
           <div
             v-else-if="msg.role === 'agent'"
             class="chat-msg agent"
+            :class="{ 'no-anim': msg.noAnim }"
           >
             <div class="chat-bubble">
               <span
@@ -1242,6 +1380,50 @@ watch(disabled, (newVal) => {
       </div>
 
       <div class="chat-input-area">
+        <div
+          v-if="recState === 'recording'"
+          class="chat-voice-status rec"
+        >
+          <span
+            class="rec-dot"
+            aria-hidden="true"
+          />
+          <span>Recording {{ recClock }}</span>
+          <button
+            class="voice-cancel"
+            type="button"
+            @click="stopRecording(true)"
+          >
+            Cancel
+          </button>
+        </div>
+        <div
+          v-else-if="recState === 'transcribing'"
+          class="chat-voice-status"
+        >
+          <span
+            class="mic-spinner"
+            aria-hidden="true"
+          />
+          <span>Transcribing…</span>
+        </div>
+        <div
+          v-else-if="wakeState === 'capturing'"
+          class="chat-voice-status rec"
+        >
+          <span
+            class="rec-dot"
+            aria-hidden="true"
+          />
+          <span class="voice-heard">{{ wakeHeard ? `“${wakeHeard}”` : 'Listening — say your command' }}</span>
+          <button
+            class="voice-cancel"
+            type="button"
+            @click="cancelWakeCapture"
+          >
+            Cancel
+          </button>
+        </div>
         <div class="chat-input-floating">
           <textarea
             ref="inputEl"
@@ -1401,30 +1583,16 @@ watch(disabled, (newVal) => {
             </svg>
           </button>
         </div>
-        <div class="chat-hints">
-          <template v-if="recState === 'recording'">
-            <span class="hint rec-hint"><span
-              class="rec-dot"
-              aria-hidden="true"
-            />Recording {{ recClock }} — click the mic to transcribe, Esc to cancel</span>
-          </template>
-          <template v-else-if="recState === 'transcribing'">
-            <span class="hint">Transcribing…</span>
-          </template>
-          <template v-else-if="wakeState === 'capturing'">
-            <span class="hint rec-hint"><span
-              class="rec-dot"
-              aria-hidden="true"
-            />Listening — say your command{{ wakeHeard ? `: “${wakeHeard}”` : '… (Esc to cancel)' }}</span>
-          </template>
-          <template v-else>
-            <span class="hint">Enter to send</span>
-            <span class="hint">Shift+Enter for a new line</span>
-            <span
-              v-if="wakeState === 'listening'"
-              class="hint"
-            >Say “Hey Axon” to talk</span>
-          </template>
+        <div
+          v-if="recState === 'idle' && wakeState !== 'capturing'"
+          class="chat-hints"
+        >
+          <span class="hint">Enter to send</span>
+          <span class="hint">Shift+Enter for a new line</span>
+          <span
+            v-if="wakeState === 'listening'"
+            class="hint"
+          >Say “Hey Axon” to talk</span>
         </div>
       </div>
     </div>
@@ -1588,7 +1756,8 @@ watch(disabled, (newVal) => {
   outline: none;
 }
 
-.conv-del {
+.conv-del,
+.conv-edit {
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -1604,7 +1773,9 @@ watch(disabled, (newVal) => {
 }
 
 .conv-item:hover .conv-del,
-.conv-item.active .conv-del {
+.conv-item.active .conv-del,
+.conv-item:hover .conv-edit,
+.conv-item.active .conv-edit {
   opacity: 0.6;
 }
 
@@ -1612,6 +1783,72 @@ watch(disabled, (newVal) => {
   opacity: 1 !important;
   background: rgba(239, 68, 68, 0.15);
   color: #f87171;
+}
+
+.conv-edit:hover {
+  opacity: 1 !important;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+}
+
+/* Rehydrated messages skip the entrance animation (flag set in rowToMessage). */
+.chat-msg.no-anim {
+  animation: none;
+}
+
+/* ── Voice status strip ─────────────────────────────────────────────────── */
+/* Sits above the composer on every screen size. It replaced the hint-row
+   text so recording / transcribing / wake-capture feedback survives on
+   phones (where .chat-hints is hidden), and its Cancel button is the touch
+   equivalent of Esc. */
+.chat-voice-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  min-height: 32px;
+  margin-bottom: 8px;
+  padding: 4px 6px 4px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-card);
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.chat-voice-status.rec {
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 45%, transparent);
+}
+
+.chat-voice-status .rec-dot {
+  margin-right: 0;
+}
+
+.voice-heard {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voice-cancel {
+  flex-shrink: 0;
+  margin-left: 4px;
+  min-height: 26px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.voice-cancel:hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
 }
 
 /* ── Voice input ────────────────────────────────────────────────────────── */
@@ -1698,8 +1935,8 @@ watch(disabled, (newVal) => {
 
 /* ── Wake word ──────────────────────────────────────────────────────────── */
 /* Passive listening tints the button; capturing borrows the recording look so
-   "the mic is hot" reads the same everywhere. On phones the hints row is
-   hidden by the mobile layer, so these states are the only feedback. */
+   "the mic is hot" reads the same everywhere. The voice status strip above
+   the composer mirrors these states on every screen size. */
 .btn-wake.is-listening {
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 45%, transparent);
@@ -1738,18 +1975,133 @@ watch(disabled, (newVal) => {
   color: var(--accent);
 }
 
-@media (max-width: 720px) {
+/* ── Phone layer (shares the shell's 768px breakpoint) ──────────────────── */
+/* Hidden outside the phone breakpoint. */
+.chat-mobile-bar,
+.conv-drawer-head,
+.conv-overlay {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  /* Slim header inside the chat column: History opens the drawer, plus a
+     reachable New chat (the drawer's own button is off-canvas). */
+  .chat-mobile-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .chat-mobile-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-height: 38px;
+    padding: 0 13px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--bg-card);
+    color: var(--text);
+    font: inherit;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .chat-mobile-btn:active {
+    background: color-mix(in srgb, var(--text) 8%, transparent);
+  }
+
+  .chat-mobile-new {
+    margin-left: auto;
+  }
+
+  /* The history pane becomes an off-canvas drawer. Relies on the mobile
+     layer disabling the page-enter animation (<768px): its fill-mode keeps a
+     transform on .page.active that would otherwise become this fixed
+     element's containing block. */
   .conv-pane {
-    width: 60px;
-    padding: 10px 6px;
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(320px, 86vw);
+    z-index: 960; /* above the tab bar (890), below the shell drawer (1000) */
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    padding: calc(12px + env(safe-area-inset-top)) 10px calc(12px + env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+    transform: translateX(-100%);
+    visibility: hidden;
+    transition: transform 0.26s cubic-bezier(0.4, 0, 0.2, 1), visibility 0s linear 0.26s;
   }
-  .conv-new span,
-  .conv-title,
-  .conv-empty {
-    display: none;
+
+  .conv-pane.open {
+    transform: none;
+    visibility: visible;
+    transition: transform 0.26s cubic-bezier(0.4, 0, 0.2, 1);
   }
-  .conv-item {
+
+  .conv-overlay {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 950;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+  }
+
+  .conv-drawer-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 0 0 6px;
+    font-size: 0.9rem;
+    font-weight: 700;
+  }
+
+  .conv-drawer-close {
+    display: flex;
+    align-items: center;
     justify-content: center;
+    width: 40px;
+    height: 40px;
+    border: none;
+    border-radius: var(--r-md);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
+
+  .conv-drawer-close:active {
+    background: color-mix(in srgb, var(--text) 8%, transparent);
+  }
+
+  /* Thumb-sized rows and composer buttons (44px minimum). */
+  .conv-item {
+    min-height: 44px;
+  }
+
+  .btn-mic {
+    width: 44px;
+    height: 44px;
+    margin-left: 6px;
+  }
+}
+
+/* Touch has no hover: the hover-revealed actions must stay visible, or
+   delete / rename / read-aloud simply don't exist on phones. */
+@media (hover: none) {
+  .conv-item .conv-del,
+  .conv-item .conv-edit {
+    opacity: 0.45;
+  }
+
+  .chat-msg.agent .msg-speak {
+    opacity: 0.55;
   }
 }
 </style>

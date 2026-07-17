@@ -5158,6 +5158,68 @@ textarea {
     .chat-hints {
         display: none;
     }
+
+    /* Native tab bars switch instantly — and page-enter's fill-mode keeps a
+       transform on .page.active that would turn it into the containing block
+       for fixed elements inside it (the chat history drawer). */
+    .page.active {
+        animation: none;
+    }
+
+    /* Chat page: exactly one scroller (the message list). The theme layers
+       give .chat-layout a 100vh-based min-height for desktop, which inside
+       the 100dvh shell overflows the outer .main-scroll — double scrolling,
+       and the composer can end up below the fold. */
+    .app-shell:has(#page-chat.active) .main-scroll {
+        overflow: hidden;
+    }
+
+    #page-chat {
+        padding: 0;
+        overflow: hidden;
+    }
+
+    #page-chat.active {
+        flex: 1 1 0;
+        min-height: 0;
+    }
+
+    #page-chat .chat-workspace {
+        flex: 1 1 0;
+        min-height: 0;
+        height: auto;
+    }
+
+    #page-chat .chat-layout {
+        min-height: 0;
+        height: 100%;
+    }
+
+    #page-chat .chat-messages {
+        min-height: 0;
+        padding: 12px 12px 18px;
+    }
+
+    /* Full-width bubbles and a composer that hugs the screen edge. */
+    #page-chat .chat-msg {
+        max-width: 100%;
+    }
+
+    #page-chat .chat-input-area {
+        padding: 0 10px 10px;
+    }
+
+    /* 44px touch target for send; the mic/wake buttons are bumped in
+       ChatPage's scoped styles. */
+    .btn-chat-send {
+        width: 44px;
+        height: 44px;
+    }
+
+    .btn-chat-send svg {
+        width: 18px;
+        height: 18px;
+    }
 }
 
 /* Touch devices get press feedback in place of hover states. */
