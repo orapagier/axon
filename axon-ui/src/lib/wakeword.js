@@ -89,10 +89,10 @@ export function createWakeWord({ onDetection, onState }) {
       analyser = ctx.createAnalyser()
       analyser.fftSize = 1024
       source.connect(analyser)
+      // The processor node is created with numberOfOutputs: 0, so it must not
+      // be connected onward (connect() throws IndexSizeError on a 0-output
+      // node); feeding it input is enough to keep the worklet processing.
       source.connect(node)
-      // The processor writes no output (silence); connecting it keeps the
-      // audio graph alive in browsers that skip unconnected worklets.
-      node.connect(ctx.destination)
       running = true
       onState('listening')
     } catch (err) {
