@@ -5209,7 +5209,7 @@ textarea {
         padding: 0 10px 10px;
     }
 
-    /* 44px touch target for send; the mic/wake buttons are bumped in
+    /* 44px touch target for send; the mic button is bumped in
        ChatPage's scoped styles. */
     .btn-chat-send {
         width: 44px;

@@ -720,336 +720,11 @@ async function toggleSpeak(idx) {
   speakWithSynthesis(idx, text)
 }
 
-// ── Wake word ("Hey Axon") ──────────────────────────────────────────────────
-// Siri-style hands-free trigger: while the toggle is on, a continuous
-// SpeechRecognition session watches for "hey/hi/ok Axon". The command can ride
-// in the same utterance ("hey axon what's on my calendar") or follow the
-// chime; either way it goes through the voice-send path so the reply is read
-// aloud. Browsers cannot capture audio from a backgrounded tab or a locked
-// phone, so this is foreground-only by design — the recognizer stops when the
-// tab hides and restarts when it returns.
-const SpeechRecognitionImpl =
-  typeof window !== 'undefined' ? window.SpeechRecognition || window.webkitSpeechRecognition : null
-const wakeSupported = !!SpeechRecognitionImpl
-const wakeEnabled = ref(wakeSupported && localStorage.getItem('axon-wake-word') === '1')
-const wakeState = ref('off') // 'off' | 'listening' | 'capturing'
-const wakeHeard = ref('') // live interim transcript shown while capturing
-let wakeRec = null
-let wakeRestartTimer = null
-let wakeCaptureTimer = null
-let wakeChimeCtx = null
-let wakeSessionStart = 0 // when the current recognition session began
-let wakeSessionGotResult = false // did this session recognize any speech at all
-let wakeEmptyDeaths = 0 // consecutive sessions that ended without hearing anything
-
-// "Axon" is short and the recognizer often renders it as a near-homophone, so
-// a greeting prefix is required (bare "axon" mid-sentence must not trigger)
-// and common mishearings of the name are accepted — including two-word splits
-// like "ax on" that Google produces when it doesn't know the name.
-const wakeRe =
-  /\b(?:hey|hi|hello|ok|okay)[\s,.!]+(?:axons?|axion|axen|axone|axun|axin|axson|axel|exon|exxon|oxen|action|ax\s?on|axe\s?on|acts\s?on)\b[\s,.!?]*/i
-
-// Everything before and including the wake phrase is greeting, not command.
-function stripWake(text) {
-  const m = wakeRe.exec(text)
-  return m ? text.slice(m.index + m[0].length) : text
-}
-
-// A live run, the push-to-talk recorder, or read-aloud playback all disqualify
-// a trigger — without the speaking guard the assistant can wake itself off its
-// own voice coming out of the speakers.
-function wakeBusy() {
-  return disabled.value || recState.value !== 'idle' || speakingIdx.value >= 0
-}
-
-function ensureChimeCtx() {
-  if (!wakeChimeCtx) {
-    const Ctx = window.AudioContext || window.webkitAudioContext
-    if (Ctx) wakeChimeCtx = new Ctx()
-  }
-  if (wakeChimeCtx?.state === 'suspended') wakeChimeCtx.resume()
-  return wakeChimeCtx
-}
-
-// Two rising sine notes, ~0.3s — says "I'm listening" without shipping assets.
-function wakeChime() {
-  try {
-    const ctx = ensureChimeCtx()
-    if (!ctx) return
-    const t = ctx.currentTime
-    const osc = ctx.createOscillator()
-    const gain = ctx.createGain()
-    osc.type = 'sine'
-    osc.frequency.setValueAtTime(660, t)
-    osc.frequency.setValueAtTime(880, t + 0.1)
-    gain.gain.setValueAtTime(0.0001, t)
-    gain.gain.exponentialRampToValueAtTime(0.15, t + 0.02)
-    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.3)
-    osc.connect(gain)
-    gain.connect(ctx.destination)
-    osc.start(t)
-    osc.stop(t + 0.32)
-  } catch {
-    // No audio — the wake button's state change is still visible.
-  }
-}
-
-function sendWakeCommand(text) {
-  // Same post-transcript behavior as push-to-talk: append to any draft, send
-  // through the voice path so the reply is spoken, hold it if a run streams.
-  input.value = input.value.trim() ? `${input.value.replace(/\s+$/, '')} ${text}` : text
-  if (!disabled.value) {
-    voiceSendPending = true
-    send()
-  } else {
-    nextTick(() => adjustInputHeight())
-  }
-}
-
-function cancelWakeCapture() {
-  clearTimeout(wakeCaptureTimer)
-  if (wakeState.value === 'capturing') wakeState.value = 'listening'
-  wakeHeard.value = ''
-}
-
-function enterWakeCapture() {
-  wakeState.value = 'capturing'
-  wakeHeard.value = ''
-  clearTimeout(wakeCaptureTimer)
-  wakeCaptureTimer = setTimeout(cancelWakeCapture, 8000)
-}
-
-function onWakeResult(e) {
-  wakeSessionGotResult = true
-  wakeEmptyDeaths = 0
-  let finalText = ''
-  let interim = ''
-  for (let i = e.resultIndex; i < e.results.length; i++) {
-    const res = e.results[i]
-    let t = res[0]?.transcript || ''
-    if (res.isFinal) {
-      // The top guess sometimes garbles the name while a runner-up hears it —
-      // prefer any alternative that contains the wake phrase.
-      for (let j = 1; j < res.length; j++) {
-        const alt = res[j]?.transcript
-        if (alt && wakeRe.test(alt)) {
-          t = alt
-          break
-        }
-      }
-      finalText += ` ${t}`
-    } else {
-      interim += ` ${t}`
-    }
-  }
-  finalText = finalText.trim()
-  interim = interim.trim()
-
-  if (wakeState.value === 'capturing') {
-    // Android re-emits the whole accumulating transcript on every event, so an
-    // interim here can still be just the wake phrase. Store only what follows
-    // it — onend sends wakeHeard verbatim when the session dies, and a raw
-    // fallback would post a literal "hey axon" as the message.
-    if (interim) wakeHeard.value = stripWake(interim).trim()
-    if (finalText) {
-      // The utterance that woke us can finalize while we're already capturing
-      // (interim triggers below) — drop its wake prefix from the command.
-      const command = stripWake(finalText).trim()
-      if (command.length >= 2) {
-        cancelWakeCapture()
-        sendWakeCommand(command)
-      } else {
-        // Wake word alone finalized — keep waiting for the actual command.
-        wakeHeard.value = ''
-        clearTimeout(wakeCaptureTimer)
-        wakeCaptureTimer = setTimeout(cancelWakeCapture, 8000)
-      }
-    }
-    return
-  }
-
-  if (wakeBusy()) return
-
-  // A final result can carry the whole "hey axon <command>" in one utterance.
-  if (finalText) {
-    const m = wakeRe.exec(finalText)
-    if (m) {
-      const command = finalText.slice(m.index + m[0].length).trim()
-      wakeChime()
-      if (command.length >= 2) sendWakeCommand(command)
-      else enterWakeCapture()
-      return
-    }
-  }
-
-  // Interim hits matter most on phones: Chrome for Android often never marks
-  // a result final until the session dies, so a finals-only scan hears
-  // nothing. Chime as soon as the phrase shows up and capture what follows.
-  if (interim && wakeRe.test(interim)) {
-    wakeChime()
-    enterWakeCapture()
-    wakeHeard.value = stripWake(interim).trim()
-  }
-}
-
-function wakeRecStart() {
-  if (!wakeRec) return
-  wakeSessionStart = Date.now()
-  wakeSessionGotResult = false
-  try {
-    wakeRec.start()
-  } catch {
-    // start() throws if this session is somehow still active — already running
-    // is exactly the state the restart loop wants.
-  }
-}
-
-function startWake() {
-  if (!wakeSupported || wakeRec) return
-  const rec = new SpeechRecognitionImpl()
-  rec.continuous = true
-  rec.interimResults = true
-  rec.maxAlternatives = 3
-  rec.lang = 'en-US'
-  rec.onresult = onWakeResult
-  rec.onerror = (ev) => {
-    if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
-      // Permission is gone for good — flipping the toggle back on re-prompts.
-      setWakeEnabled(false)
-      toast('Microphone access was denied — wake word turned off.', false)
-    }
-    // Everything else ('no-speech', 'network', 'aborted') ends the session and
-    // the onend restart loop brings it back.
-  }
-  rec.onend = () => {
-    if (!wakeRec) return // stopped deliberately via stopWake()
-    const duration = Date.now() - wakeSessionStart
-    if (!wakeSessionGotResult) wakeEmptyDeaths++
-    clearTimeout(wakeRestartTimer)
-
-    // Android frequently kills the session before ever finalizing — the last
-    // interim transcript is all we'll get for the command, so send it rather
-    // than silently dropping what the user said.
-    if (wakeState.value === 'capturing') {
-      const command = stripWake(wakeHeard.value).trim()
-      if (command.length >= 2) {
-        cancelWakeCapture()
-        if (!wakeBusy()) sendWakeCommand(command)
-      } else if (wakeEmptyDeaths < 3) {
-        // Woke up but the command hasn't been heard yet — Android tends to
-        // kill the session the moment the chime plays. Keep the capture
-        // window open (its 8s timeout still bounds it) and restart hot so the
-        // follow-up utterance lands in a live session instead of the paced
-        // multi-second gap, which was eating the words after "hey axon".
-        wakeHeard.value = ''
-        wakeRestartTimer = setTimeout(wakeRecStart, 250)
-        return
-      } else {
-        cancelWakeCapture()
-      }
-    } else {
-      cancelWakeCapture()
-    }
-
-    // Continuous sessions die on their own after silence or transient errors;
-    // keep the loop alive for as long as the toggle is on — but pace it.
-    // Chrome for Android plays its own OS chime on every recognition start,
-    // so a hot 400ms loop on a session that dies instantly (mic held by
-    // another app, recognition service unreachable) bleeps forever.
-    if (!wakeSessionGotResult && duration < 2000) {
-      if (wakeEmptyDeaths >= 6) {
-        setWakeEnabled(false)
-        toast('Listening keeps failing on this device — wake word turned off.', false)
-        return
-      }
-      wakeRestartTimer = setTimeout(wakeRecStart, Math.min(15000, 1000 * 2 ** wakeEmptyDeaths))
-    } else {
-      // Healthy silence timeout. Desktop restarts hot; phones get spaced out
-      // so the OS listening chime doesn't nag every few seconds.
-      wakeRestartTimer = setTimeout(wakeRecStart, AUTOFOCUS_OK ? 400 : 4000)
-    }
-  }
-  wakeRec = rec
-  wakeState.value = 'listening'
-  wakeEmptyDeaths = 0
-  wakeRecStart()
-}
-
-function stopWake() {
-  clearTimeout(wakeRestartTimer)
-  clearTimeout(wakeCaptureTimer)
-  const rec = wakeRec
-  wakeRec = null // onend sees null and stays down
-  if (rec) {
-    rec.onresult = rec.onerror = rec.onend = null
-    try {
-      rec.abort()
-    } catch {
-      // already stopped
-    }
-  }
-  wakeState.value = 'off'
-  wakeHeard.value = ''
-}
-
-function setWakeEnabled(on) {
-  wakeEnabled.value = on
-  try {
-    localStorage.setItem('axon-wake-word', on ? '1' : '0')
-  } catch {
-    // storage full/unavailable — the toggle still works for this session
-  }
-  if (on) startWake()
-  else stopWake()
-}
-
-function toggleWake() {
-  // The click is a user gesture — unlock the chime's AudioContext now so the
-  // wake beep is allowed to play later without one.
-  if (!wakeEnabled.value) ensureChimeCtx()
-  setWakeEnabled(!wakeEnabled.value)
-}
-
-// The recognizer and MediaRecorder cannot share the mic reliably (Android
-// hands it to whoever asked last), so wake pauses while push-to-talk records
-// or transcribes and resumes once the composer is idle again.
-watch(recState, (s) => {
-  if (!wakeEnabled.value) return
-  if (s === 'idle' && speakingIdx.value < 0) startWake()
-  else if (s !== 'idle') stopWake()
-})
-
-// Speech output and recognition can't overlap either: on Android an active
-// recognition session holds audio focus, so speechSynthesis (and often <audio>
-// playback) comes out silent — "reading" with no voice. Park the wake loop
-// while a reply is being read; this also hard-guarantees the assistant can't
-// hear its own voice (wakeBusy() stays as the second line of defense).
-watch(speakingIdx, (idx) => {
-  if (!wakeEnabled.value) return
-  if (idx >= 0) stopWake()
-  else if (recState.value === 'idle' && !document.hidden) startWake()
-})
-
-function onVisibilityChange() {
-  if (!wakeEnabled.value) return
-  // Browsers kill background recognition anyway; stopping saves battery and
-  // restarting on return makes the comeback deterministic.
-  if (document.hidden) stopWake()
-  else if (recState.value === 'idle' && speakingIdx.value < 0) startWake()
-}
-
 function onWindowKeydown(e) {
   // Escape dismisses the mobile history drawer before anything else.
   if (e.key === 'Escape' && historyOpen.value) {
     e.preventDefault()
     historyOpen.value = false
-    return
-  }
-  // Escape abandons a wake-word capture before anything is sent; checked
-  // first so it cannot fall through to the run-stop branch.
-  if (e.key === 'Escape' && wakeState.value === 'capturing') {
-    e.preventDefault()
-    cancelWakeCapture()
     return
   }
   // Escape discards an in-progress recording before it ever reaches the
@@ -1088,11 +763,6 @@ function onWindowKeydown(e) {
 onMounted(async () => {
   connectWs(handleWsEvent)
   window.addEventListener('keydown', onWindowKeydown)
-  document.addEventListener('visibilitychange', onVisibilityChange)
-  // Wake word survives reloads: if it was on last visit, resume listening.
-  // Chrome allows start() without a gesture once mic permission is granted;
-  // if permission was revoked meanwhile, onerror turns the toggle back off.
-  if (wakeEnabled.value) startWake()
   await loadConversations()
 
   // Every visit starts in a fresh conversation; past threads stay reachable
@@ -1108,8 +778,6 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onWindowKeydown)
-  document.removeEventListener('visibilitychange', onVisibilityChange)
-  stopWake()
   stopRecording(true)
   clearInterval(recTimer)
   stopSpeaking()
@@ -1551,23 +1219,6 @@ watch(disabled, (newVal) => {
           />
           <span>Transcribing…</span>
         </div>
-        <div
-          v-else-if="wakeState === 'capturing'"
-          class="chat-voice-status rec"
-        >
-          <span
-            class="rec-dot"
-            aria-hidden="true"
-          />
-          <span class="voice-heard">{{ wakeHeard ? `“${wakeHeard}”` : 'Listening — say your command' }}</span>
-          <button
-            class="voice-cancel"
-            type="button"
-            @click="cancelWakeCapture"
-          >
-            Cancel
-          </button>
-        </div>
         <div class="chat-input-floating">
           <textarea
             ref="inputEl"
@@ -1578,54 +1229,6 @@ watch(disabled, (newVal) => {
             rows="1"
             @keydown="onKeydown"
           />
-          <button
-            v-if="wakeSupported"
-            class="btn-mic btn-wake"
-            :class="{ 'is-listening': wakeState === 'listening', 'is-capturing': wakeState === 'capturing' }"
-            type="button"
-            :title="wakeEnabled ? 'Wake word is on — say “Hey Axon” (click to turn off)' : 'Turn on the “Hey Axon” wake word'"
-            @click="toggleWake"
-          >
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
-              aria-hidden="true"
-            >
-              <path
-                d="M4 10v4"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-              />
-              <path
-                d="M8 7v10"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-              />
-              <path
-                d="M12 4v16"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-              />
-              <path
-                d="M16 7v10"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-              />
-              <path
-                d="M20 10v4"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-              />
-            </svg>
-          </button>
           <button
             v-if="micSupported"
             class="btn-mic"
@@ -1728,15 +1331,11 @@ watch(disabled, (newVal) => {
           </button>
         </div>
         <div
-          v-if="recState === 'idle' && wakeState !== 'capturing'"
+          v-if="recState === 'idle'"
           class="chat-hints"
         >
           <span class="hint">Enter to send</span>
           <span class="hint">Shift+Enter for a new line</span>
-          <span
-            v-if="wakeState === 'listening'"
-            class="hint"
-          >Say “Hey Axon” to talk</span>
         </div>
       </div>
     </div>
@@ -1942,7 +1541,7 @@ watch(disabled, (newVal) => {
 
 /* ── Voice status strip ─────────────────────────────────────────────────── */
 /* Sits above the composer on every screen size. It replaced the hint-row
-   text so recording / transcribing / wake-capture feedback survives on
+   text so recording / transcribing feedback survives on
    phones (where .chat-hints is hidden), and its Cancel button is the touch
    equivalent of Esc. */
 .chat-voice-status {
@@ -2075,22 +1674,6 @@ watch(disabled, (newVal) => {
   50% {
     opacity: 0.3;
   }
-}
-
-/* ── Wake word ──────────────────────────────────────────────────────────── */
-/* Passive listening tints the button; capturing borrows the recording look so
-   "the mic is hot" reads the same everywhere. The voice status strip above
-   the composer mirrors these states on every screen size. */
-.btn-wake.is-listening {
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
-}
-
-.btn-wake.is-capturing {
-  color: var(--red);
-  background: var(--redDim);
-  border-color: color-mix(in srgb, var(--red) 55%, transparent);
-  animation: mic-pulse 1.6s ease-in-out infinite;
 }
 
 /* ── Read aloud ─────────────────────────────────────────────────────────── */
