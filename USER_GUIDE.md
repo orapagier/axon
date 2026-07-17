@@ -200,7 +200,10 @@ Notable keys and their defaults:
   bounded only by this (no separate per-iteration budget).
 - `agent.quality_check` (true), `agent.allow_tool_writing` (true),
   `agent.temp_tool_max_retries` (2)
-- `agent.system_prompt` — the master system prompt (editable live).
+- `agent.system_prompt` — the master system prompt (editable live). Ends with a
+  `SPIRITUAL & BIBLICAL QUESTIONS` worldview section that shapes answers to spiritual
+  questions; `normalize.sql` re-appends that section on boot if it goes missing, so edit its
+  wording in place rather than deleting it.
 - `router.error_threshold` (2) — consecutive non-rate-limit errors before a model is parked
   until midnight; `router.model_call_timeout_secs` (30) — flat per-attempt timeout, overridable
   per model.
@@ -433,6 +436,16 @@ remote dir, and SSH details are set at the top of each script — **update
 agent under a process supervisor (systemd), and install Qdrant via `qdrant/install.sh`
 (which also sets up backup/health/trim timers). The deploy script ensures all integrations run
 in-process with the agent.
+
+### 13.1 Install the dashboard on a phone (PWA)
+
+The dashboard ships a web-app manifest, so any HTTPS deployment is installable as an app —
+no store, no separate build. On Android Chrome open the dashboard URL, then menu (⋮) →
+**Add to Home screen** → **Install** (Chrome may also offer an install banner on its own).
+On iOS Safari use Share → **Add to Home Screen**. The installed app opens standalone
+(no browser chrome) with the Axon icon and dark theme. Requirements: the site must be
+served over HTTPS (the reverse proxy setup above) — plain `http://server-ip:3000` only
+gets a bookmark-style shortcut, not an install.
 
 ---
 

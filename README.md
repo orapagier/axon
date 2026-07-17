@@ -216,7 +216,7 @@ Most behavior is tunable live via the **Settings** page (stored in the `settings
 - `agent.max_iterations` (`20`), `agent.max_parallel_tools` (`5`), `agent.tool_timeout_secs` (`30`)
 - `agent.run_timeout_secs` (`300`) — total wall-clock budget for one run; the model-failover chain is bounded only by this.
 - `agent.quality_check` (`true`), `agent.allow_tool_writing` (`true`)
-- `agent.system_prompt` — the master system prompt (editable live).
+- `agent.system_prompt` — the master system prompt (editable live). Ends with a `SPIRITUAL & BIBLICAL QUESTIONS` worldview section; `normalize.sql` re-appends it on boot if deleted, so edit its wording in place instead.
 - `router.error_threshold` (`2`, consecutive errors before a model is parked until midnight), `router.model_call_timeout_secs` (`30`, flat per-attempt timeout; overridable per model).
 - `memory.short_term_max_msgs` (`50`), `memory.long_term_top_k` (`5`).
 - `websearch.enabled`, `websearch.max_results`.

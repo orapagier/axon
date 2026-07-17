@@ -393,6 +393,9 @@ mod tests {
         // System prompt was seeded and patched with the native-tool-calling note.
         let sp = setting(&conn, "agent.system_prompt").unwrap();
         assert!(sp.contains("native JSON tool calling"));
+        // The worldview directive is present exactly once — the seed carries it,
+        // so the normalize.sql append must not double it up.
+        assert_eq!(sp.matches("SPIRITUAL & BIBLICAL QUESTIONS").count(), 1);
     }
 
     #[test]
