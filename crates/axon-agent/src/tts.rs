@@ -3,6 +3,12 @@
 //! settings (mirroring the `stt.*` voice-input group):
 //!   * Groq   — https://api.groq.com/openai/v1 + playai-tts + voice Fritz-PlayAI
 //!   * OpenAI — https://api.openai.com/v1 + gpt-4o-mini-tts + voice alloy
+//!   * Gemini — https://generativelanguage.googleapis.com/v1beta/openai +
+//!     gemini-2.5-flash-preview-tts + voice Kore. Google exposes no
+//!     `/audio/speech` route (not even on its OpenAI-compat layer), so Gemini
+//!     base URLs are detected and served through the native
+//!     `models/{model}:generateContent` speech API instead, with the returned
+//!     PCM wrapped in a WAV header for the browser.
 //!
 //! Also owns the TTS model listing that feeds the Settings page `tts.model`
 //! dropdown: `GET {base_url}/models` filtered down to speech-synthesis ids,
@@ -72,15 +78,52 @@ fn clamp_input(text: &str) -> String {
     text.chars().take(MAX_TTS_CHARS).collect()
 }
 
-/// POST `{base_url}/audio/speech` and return the upstream response once its
-/// status is confirmed OK — the caller streams the audio body through to the
-/// browser without buffering it here. `voice` is omitted when blank so hosts
-/// that require one answer with their own explicit 400 (which the caller
-/// treats like any other failure: log and fall back).
-pub async fn speak(cfg: &TtsConfig, text: &str) -> anyhow::Result<reqwest::Response> {
+/// Synthesized speech ready to send to the browser. OpenAI-shaped hosts stream
+/// as they synthesize; the Gemini path buffers, because the audio arrives as
+/// one base64 blob inside a JSON envelope.
+pub enum SpeechAudio {
+    /// Upstream response confirmed 2xx — pipe its byte stream through.
+    Streamed(reqwest::Response),
+    /// Fully assembled audio (Gemini PCM wrapped as WAV).
+    Buffered {
+        content_type: &'static str,
+        bytes: Vec<u8>,
+    },
+}
+
+/// Native-API root for Google's Gemini endpoint, or `None` for every other
+/// host. Accepts whatever the user pasted — the OpenAI-compat URL
+/// (`…/v1beta/openai`), a versioned root (`…/v1beta`), or the bare domain —
+/// and normalizes to the versioned root that `models/{m}:generateContent`
+/// hangs off.
+fn gemini_native_root(base_url: &str) -> Option<String> {
+    if !base_url.contains("generativelanguage.googleapis.com") {
+        return None;
+    }
+    let root = base_url
+        .trim_end_matches('/')
+        .trim_end_matches("/openai")
+        .trim_end_matches('/');
+    if root.ends_with("/v1beta") || root.ends_with("/v1alpha") || root.ends_with("/v1") {
+        Some(root.to_string())
+    } else {
+        Some(format!("{}/v1beta", root))
+    }
+}
+
+/// Synthesize speech, picking the wire format from the base URL: Gemini hosts
+/// go through the native `generateContent` speech API, everything else POSTs
+/// the OpenAI-shaped `{base_url}/audio/speech`. For the OpenAI path `voice` is
+/// omitted when blank so hosts that require one answer with their own explicit
+/// 400 (which the caller treats like any other failure: log and fall back).
+pub async fn speak(cfg: &TtsConfig, text: &str) -> anyhow::Result<SpeechAudio> {
     let input = clamp_input(text.trim());
     if input.is_empty() {
         anyhow::bail!("no text to speak");
+    }
+
+    if let Some(root) = gemini_native_root(&cfg.base_url) {
+        return speak_gemini(cfg, &root, &input).await;
     }
 
     let mut body = serde_json::json!({
@@ -107,7 +150,119 @@ pub async fn speak(cfg: &TtsConfig, text: &str) -> anyhow::Result<reqwest::Respo
         let snippet: String = body.chars().take(300).collect();
         anyhow::bail!("speech synthesis failed ({}): {}", status, snippet);
     }
-    Ok(resp)
+    Ok(SpeechAudio::Streamed(resp))
+}
+
+/// Gemini's speech API: `models/{model}:generateContent` with an AUDIO
+/// response modality. The audio comes back base64-encoded inside the JSON
+/// (16-bit PCM, mono, rate declared in the part's mimeType) — decoded here and
+/// wrapped in a WAV header, since browsers won't play headerless PCM.
+async fn speak_gemini(cfg: &TtsConfig, root: &str, input: &str) -> anyhow::Result<SpeechAudio> {
+    // Google catalogues list ids as "models/gemini-…"; the URL path adds its
+    // own "models/" segment.
+    let model = cfg.model.trim_start_matches("models/");
+    // A voice name is provider-specific, so a blank setting gets a known-good
+    // Gemini prebuilt voice rather than being omitted.
+    let voice = if cfg.voice.is_empty() {
+        "Kore"
+    } else {
+        cfg.voice.as_str()
+    };
+    let body = serde_json::json!({
+        "contents": [{"parts": [{"text": input}]}],
+        "generationConfig": {
+            "responseModalities": ["AUDIO"],
+            "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}}
+        }
+    });
+
+    let url = format!("{}/models/{}:generateContent", root, model);
+    let mut req = HTTP_CLIENT.post(&url).json(&body);
+    if !cfg.api_key.is_empty() {
+        req = req.header("x-goog-api-key", cfg.api_key.clone());
+    }
+    let resp = req
+        .send()
+        .await
+        .with_context(|| format!("speech request to {}", url))?;
+    let status = resp.status();
+    let body_text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        let snippet: String = body_text.chars().take(300).collect();
+        anyhow::bail!("speech synthesis failed ({}): {}", status, snippet);
+    }
+
+    let parsed: serde_json::Value =
+        serde_json::from_str(&body_text).context("parse Gemini speech response")?;
+    let Some((mime, data_b64)) = find_inline_audio(&parsed) else {
+        let snippet: String = body_text.chars().take(300).collect();
+        anyhow::bail!("no audio in Gemini response: {}", snippet);
+    };
+    use base64::Engine as _;
+    let pcm = base64::engine::general_purpose::STANDARD
+        .decode(data_b64)
+        .context("decode Gemini audio payload")?;
+    let rate = pcm_rate_from_mime(&mime).unwrap_or(24_000);
+    Ok(SpeechAudio::Buffered {
+        content_type: "audio/wav",
+        bytes: wav_from_pcm16(&pcm, rate, 1),
+    })
+}
+
+/// First inline audio blob in a `generateContent` response:
+/// `candidates[0].content.parts[*].inlineData.{mimeType,data}`. Both camelCase
+/// (REST) and snake_case spellings are accepted.
+fn find_inline_audio(v: &serde_json::Value) -> Option<(String, String)> {
+    let parts = v
+        .get("candidates")?
+        .get(0)?
+        .get("content")?
+        .get("parts")?
+        .as_array()?;
+    for part in parts {
+        let Some(inline) = part.get("inlineData").or_else(|| part.get("inline_data")) else {
+            continue;
+        };
+        let mime = inline
+            .get("mimeType")
+            .or_else(|| inline.get("mime_type"))
+            .and_then(|m| m.as_str())
+            .unwrap_or("");
+        if let Some(data) = inline.get("data").and_then(|d| d.as_str()) {
+            return Some((mime.to_string(), data.to_string()));
+        }
+    }
+    None
+}
+
+/// Sample rate from a Gemini audio mimeType like
+/// `audio/L16;codec=pcm;rate=24000`.
+fn pcm_rate_from_mime(mime: &str) -> Option<u32> {
+    mime.split(';')
+        .find_map(|p| p.trim().strip_prefix("rate="))
+        .and_then(|r| r.parse().ok())
+}
+
+/// Wrap raw 16-bit little-endian PCM in a canonical 44-byte WAV header.
+fn wav_from_pcm16(pcm: &[u8], sample_rate: u32, channels: u16) -> Vec<u8> {
+    let byte_rate = sample_rate * u32::from(channels) * 2;
+    let block_align = channels * 2;
+    let data_len = pcm.len() as u32;
+    let mut wav = Vec::with_capacity(44 + pcm.len());
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&(36 + data_len).to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes()); // fmt chunk size
+    wav.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    wav.extend_from_slice(&channels.to_le_bytes());
+    wav.extend_from_slice(&sample_rate.to_le_bytes());
+    wav.extend_from_slice(&byte_rate.to_le_bytes());
+    wav.extend_from_slice(&block_align.to_le_bytes());
+    wav.extend_from_slice(&16u16.to_le_bytes()); // bits per sample
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&data_len.to_le_bytes());
+    wav.extend_from_slice(pcm);
+    wav
 }
 
 /// True when a model id looks like a text-to-speech model. Mirror image of
@@ -157,7 +312,14 @@ fn filter_tts_models(all: Vec<ModelChoice>) -> Vec<ModelChoice> {
 /// TTS-looking ids. Used by the Settings dropdown's live fallback and the
 /// daily prefetch sweep.
 pub async fn list_tts_models(base_url: &str, api_key: &str) -> anyhow::Result<Vec<ModelChoice>> {
-    let all = crate::providers::list_available_models("openai", Some(base_url), api_key).await?;
+    // Google's native root serves no OpenAI-shaped catalogue; its compat layer
+    // at {root}/openai does, so Gemini listings go through there whichever
+    // Google URL the user pasted.
+    let list_url = match gemini_native_root(base_url) {
+        Some(root) => format!("{}/openai", root),
+        None => base_url.to_string(),
+    };
+    let all = crate::providers::list_available_models("openai", Some(&list_url), api_key).await?;
     Ok(filter_tts_models(all))
 }
 
@@ -201,6 +363,73 @@ mod tests {
     fn tts_filter_falls_back_to_full_list_when_nothing_matches() {
         let all = vec![choice("acme-audio-1"), choice("acme-audio-2")];
         assert_eq!(filter_tts_models(all).len(), 2);
+    }
+
+    #[test]
+    fn tts_filter_keeps_gemini_speech_models() {
+        let all = vec![
+            choice("models/gemini-2.0-flash"),
+            choice("models/gemini-2.5-flash-preview-tts"),
+            choice("models/gemini-2.5-pro-preview-tts"),
+        ];
+        let ids: Vec<String> = filter_tts_models(all).into_iter().map(|c| c.id).collect();
+        assert_eq!(
+            ids,
+            vec![
+                "models/gemini-2.5-flash-preview-tts",
+                "models/gemini-2.5-pro-preview-tts"
+            ]
+        );
+    }
+
+    #[test]
+    fn gemini_root_detected_from_any_google_url_shape() {
+        for url in [
+            "https://generativelanguage.googleapis.com/v1beta/openai",
+            "https://generativelanguage.googleapis.com/v1beta",
+            "https://generativelanguage.googleapis.com",
+        ] {
+            assert_eq!(
+                gemini_native_root(url).as_deref(),
+                Some("https://generativelanguage.googleapis.com/v1beta"),
+                "for {url}"
+            );
+        }
+        assert_eq!(gemini_native_root("https://api.groq.com/openai/v1"), None);
+        assert_eq!(gemini_native_root("https://api.openai.com/v1"), None);
+    }
+
+    #[test]
+    fn inline_audio_extracted_from_gemini_response() {
+        let resp = serde_json::json!({
+            "candidates": [{"content": {"parts": [
+                {"text": "ignored preamble"},
+                {"inlineData": {"mimeType": "audio/L16;codec=pcm;rate=24000", "data": "AAEC"}}
+            ]}}]
+        });
+        let (mime, data) = find_inline_audio(&resp).expect("audio part");
+        assert_eq!(mime, "audio/L16;codec=pcm;rate=24000");
+        assert_eq!(data, "AAEC");
+        assert_eq!(pcm_rate_from_mime(&mime), Some(24_000));
+        assert_eq!(pcm_rate_from_mime("audio/mpeg"), None);
+        assert_eq!(
+            find_inline_audio(&serde_json::json!({"candidates": []})),
+            None
+        );
+    }
+
+    #[test]
+    fn wav_wrapper_writes_canonical_header() {
+        let pcm = [0u8; 480]; // 10ms of 24kHz mono s16le
+        let wav = wav_from_pcm16(&pcm, 24_000, 1);
+        assert_eq!(wav.len(), 44 + 480);
+        assert_eq!(&wav[0..4], b"RIFF");
+        assert_eq!(&wav[8..16], b"WAVEfmt ");
+        assert_eq!(u32::from_le_bytes(wav[24..28].try_into().unwrap()), 24_000);
+        // byte rate = rate * channels * 2
+        assert_eq!(u32::from_le_bytes(wav[28..32].try_into().unwrap()), 48_000);
+        assert_eq!(&wav[36..40], b"data");
+        assert_eq!(u32::from_le_bytes(wav[40..44].try_into().unwrap()), 480);
     }
 
     #[test]

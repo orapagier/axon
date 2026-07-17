@@ -151,9 +151,9 @@ INSERT OR IGNORE INTO settings VALUES
 -- endpoint errors or is rate-limited — the dashboard falls back to the
 -- browser's built-in speech synthesis, exactly the pre-TTS behavior.
 INSERT OR IGNORE INTO settings VALUES
-    ('tts.base_url', '', 'string', 'OpenAI-compatible audio base URL (Groq: https://api.groq.com/openai/v1, OpenAI: https://api.openai.com/v1). Blank disables spoken replies — the dashboard falls back to the browser''s built-in voice.', 'tts', datetime('now')),
-    ('tts.model',    '', 'string', 'Speech-synthesis model. Pick from the dropdown (prefetched from tts.base_url''s /models catalogue) or type any ID (e.g. playai-tts on Groq, gpt-4o-mini-tts on OpenAI).', 'tts', datetime('now')),
-    ('tts.voice',    '', 'string', 'Voice name, required by most providers (Groq playai-tts: Fritz-PlayAI, Arista-PlayAI, …; OpenAI: alloy, echo, nova, …).', 'tts', datetime('now')),
+    ('tts.base_url', '', 'string', 'Speech base URL (Groq: https://api.groq.com/openai/v1, OpenAI: https://api.openai.com/v1, Gemini: https://generativelanguage.googleapis.com/v1beta/openai — Gemini is auto-served via its native speech API). Blank disables spoken replies — the dashboard falls back to the browser''s built-in voice.', 'tts', datetime('now')),
+    ('tts.model',    '', 'string', 'Speech-synthesis model. Pick from the dropdown (prefetched from tts.base_url''s /models catalogue) or type any ID (e.g. playai-tts on Groq, gpt-4o-mini-tts on OpenAI, gemini-2.5-flash-preview-tts on Gemini).', 'tts', datetime('now')),
+    ('tts.voice',    '', 'string', 'Voice name, required by most providers (Groq playai-tts: Fritz-PlayAI, Arista-PlayAI, …; OpenAI: alloy, echo, nova, …; Gemini: Kore, Puck, Zephyr, Charon, …).', 'tts', datetime('now')),
     ('tts.api_key',  '', 'string', 'API key for the speech endpoint; a ${VAR} placeholder resolves from settings then environment (e.g. ${GROQ_API_KEY}).', 'tts', datetime('now'));
 
 -- CRM agent access. Read tools are always agent-callable; the write tools

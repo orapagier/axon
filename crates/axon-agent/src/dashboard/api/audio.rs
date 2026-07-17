@@ -6,9 +6,10 @@
 //!   endpoint. The actual client lives in `crate::stt`, shared with the
 //!   messaging gateways' voice-message handling.
 //! * `POST /api/audio/speech` — spoken agent replies: `{text}` in, synthesized
-//!   audio streamed straight through from the configured OpenAI-compatible
-//!   `/audio/speech` endpoint (`crate::tts`). Any non-2xx here means "no TTS" —
-//!   the Chat page falls back to browser speech synthesis.
+//!   audio out via `crate::tts` (streamed through from OpenAI-compatible
+//!   `/audio/speech` hosts; buffered WAV from Gemini's native speech API).
+//!   Any non-2xx here means "no TTS" — the Chat page falls back to browser
+//!   speech synthesis.
 //! * `POST /api/audio/models` — the `stt.model`/`tts.model` dropdown feed:
 //!   audio models available at a given base URL (`{kind: "stt"|"tts"}`).
 //!   Served from the `provider_model_cache` (daily prefetch sweep) with a
@@ -89,7 +90,7 @@ pub async fn speak_text(State(state): State<AppState>, Json(payload): Json<Value
     };
 
     match crate::tts::speak(&cfg, &text).await {
-        Ok(upstream) => {
+        Ok(crate::tts::SpeechAudio::Streamed(upstream)) => {
             let content_type = upstream
                 .headers()
                 .get(reqwest::header::CONTENT_TYPE)
@@ -106,6 +107,19 @@ pub async fn speak_text(State(state): State<AppState>, Json(payload): Json<Value
             )
                 .into_response()
         }
+        // Gemini's native API answers with one buffered WAV instead of a
+        // stream; same headers, ready-made body.
+        Ok(crate::tts::SpeechAudio::Buffered {
+            content_type,
+            bytes,
+        }) => (
+            [
+                (header::CONTENT_TYPE, content_type.to_string()),
+                (header::CACHE_CONTROL, "no-store".to_string()),
+            ],
+            bytes,
+        )
+            .into_response(),
         Err(e) => {
             tracing::warn!("TTS synthesis failed ({}): {:#}", cfg.model, e);
             (
