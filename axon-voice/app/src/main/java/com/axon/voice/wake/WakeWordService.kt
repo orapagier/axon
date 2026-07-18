@@ -25,6 +25,7 @@ import com.axon.voice.audio.StreamingTts
 import com.axon.voice.audio.TtsPlayer
 import com.axon.voice.audio.VoicePrompts
 import com.axon.voice.audio.WavRecorder
+import com.axon.voice.ui.ChatFeed
 import com.axon.voice.ui.MainActivity
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
@@ -43,6 +44,11 @@ import kotlin.math.sqrt
  * through transcribe -> /ws task -> TTS, then opens the follow-up window
  * ("Anything else?") with the raised bystander bar — the same flow as the
  * dashboard wake word, minus the browser.
+ *
+ * Hands-free runs on the Chat page's session id, and every exchange is posted
+ * through [ChatFeed]: it lands in the same saved conversation as typed chat,
+ * live in the open Chat page, so spoken requests still leave links and text
+ * you can go back to.
  */
 class WakeWordService : Service(), ChatSocket.Listener {
 
@@ -287,6 +293,9 @@ class WakeWordService : Service(), ChatSocket.Listener {
             // command — with session history the agent would happily re-answer
             // the previous question in new words, looping the reply.
             if (isSelfEcho(text, lastReply, if (first) "yes" else "anything else")) break
+            // The accepted command is part of the chat conversation from here:
+            // it shows in the Chat page (live, if open) like a typed message.
+            ChatFeed.post(this, prefs.chatSessionId, "user", text)
             // Speak a short filler so the user knows they were heard while the
             // agent works. Non-blocking: the streaming reply's first sentence
             // calls TtsPlayer.stop() first (via beginStream), which cleanly
@@ -297,7 +306,12 @@ class WakeWordService : Service(), ChatSocket.Listener {
             // instead of after the whole reply is synthesized. Blocks until
             // playback finishes or a barge-in cuts it off.
             val barged = awaitStreamBlocking(text, rec, detector)
-            val reply = synchronized(replyLock) { replyText ?: "" }
+            val (reply, err) = synchronized(replyLock) { (replyText ?: "") to replyError }
+            if (reply.isNotBlank()) {
+                ChatFeed.post(this, prefs.chatSessionId, "assistant", reply)
+            } else if (!barged && err != null) {
+                ChatFeed.post(this, prefs.chatSessionId, "error", "Sorry — $err")
+            }
             if (reply.isBlank() && !barged) break
             if (barged) {
                 // User said "Hey Axon" mid-reply. Ack and treat the next
@@ -420,7 +434,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
             replyError = null
             replyStream = stream
         }
-        if (!c.sendTask(task, prefs.wakeSessionId)) {
+        if (!c.sendTask(task, prefs.chatSessionId)) {
             stream.abort()
             synchronized(replyLock) { replyStream = null }
             return false
@@ -465,24 +479,6 @@ class WakeWordService : Service(), ChatSocket.Listener {
     }
 
     // ── Chat plumbing ───────────────────────────────────────────────────────
-
-    private fun sendAndAwait(task: String): String? {
-        val c = chat ?: return null
-        var waits = 0
-        while (!c.connected && waits++ < 10 && alive) Thread.sleep(500)
-        val latch = CountDownLatch(1)
-        synchronized(replyLock) {
-            replyLatch = latch
-            replyText = null
-            replyError = null
-        }
-        if (!c.sendTask(task, prefs.wakeSessionId)) return null
-        if (!latch.await(310, TimeUnit.SECONDS)) return null
-        synchronized(replyLock) {
-            replyError?.let { return "Sorry — $it" }
-            return replyText
-        }
-    }
 
     override fun onWsEvent(ev: JSONObject) {
         when (ev.optString("type")) {

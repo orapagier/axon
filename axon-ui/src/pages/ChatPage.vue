@@ -348,6 +348,7 @@ function handleWsEvent(ev) {
       // Reconcile the sidebar: a brand-new thread now has a backend title, and
       // the active thread bubbles to the top by updated_at.
       loadConversations()
+      flushPendingVoice()
       break
 
     case 'error':
@@ -363,6 +364,7 @@ function handleWsEvent(ev) {
       collapseTrace()
       resetRunTrackers()
       disabled.value = false
+      flushPendingVoice()
       break
   }
 }
@@ -394,14 +396,22 @@ function useStarterPrompt(prompt) {
 async function send() {
   const msg = input.value.trim()
   if (!msg || disabled.value) return
-  speakReplyOnDone = voiceSendPending
-  voiceSendPending = false
+  input.value = ''
+  adjustInputHeight()
+  await sendMessage(msg, false)
+}
+
+// The one path into a run: push the user bubble, open the trace + agent
+// placeholders, and ship the task. Voice sends (push-to-talk and the wake
+// word) call this directly with voice=true — spoken text never routes through
+// the composer, and the reply is read aloud when the run completes.
+async function sendMessage(msg, voice) {
+  if (!msg || disabled.value) return
+  speakReplyOnDone = voice
   if (!currentSessionId.value) newChat()
 
   messages.value.push({ role: 'user', text: msg })
-  input.value = ''
   disabled.value = true
-  adjustInputHeight()
 
   // Add trace block (expanded while the run streams) then agent bubble
   messages.value.push({ role: 'trace', trace: [], collapsed: false })
@@ -424,14 +434,25 @@ async function send() {
   const sent = wsSend({ task: msg, session_id: currentSessionId.value })
   if (!sent) {
     // Socket is down — undo the placeholders and give the message back
-    // instead of dropping it silently and locking the input forever.
-    messages.value.splice(traceIdx, 2)
+    // instead of dropping it silently and locking the input forever. A spoken
+    // message has no composer to return to, so it's kept in the bell instead.
+    messages.value.splice(voice ? traceIdx - 1 : traceIdx, voice ? 3 : 2)
     traceIdx = -1
     agentIdx = -1
     disabled.value = false
-    input.value = msg
+    if (voice) notifyBell(`Voice message not sent — not connected: "${msg}"`, false)
+    else input.value = msg
     toast('Not connected to the agent yet — retry once the status shows Connected.', false)
   }
+}
+
+// A transcript that landed while a run was streaming is queued; deliver it the
+// moment the composer unlocks so voice input is never silently dropped.
+function flushPendingVoice() {
+  if (!pendingVoiceText || disabled.value) return
+  const msg = pendingVoiceText
+  pendingVoiceText = null
+  sendMessage(msg, true)
 }
 
 // Abort the in-flight run: tell the backend to cancel it and unlock the input
@@ -451,6 +472,7 @@ function stop() {
   collapseTrace()
   resetRunTrackers()
   disabled.value = false
+  flushPendingVoice()
 }
 
 function onKeydown(e) {
@@ -462,18 +484,19 @@ function onKeydown(e) {
 
 // ── Voice input (mic → /api/audio/transcribe → send) ────────────────────────
 // One button cycles idle → recording → transcribing → idle. The transcript
-// auto-sends (speak-and-go, like the messaging gateways); it only stays in the
-// composer when a run is already streaming and sending is blocked.
+// sends straight into the conversation as its own message (speak-and-go, like
+// the messaging gateways) and never routes through the composer — a typed
+// draft survives a voice message untouched. If a run is already streaming when
+// transcription lands, the text queues and sends the moment the run finishes.
 const recState = ref('idle') // 'idle' | 'recording' | 'transcribing'
 const recSeconds = ref(0)
 let mediaRecorder = null
 let recChunks = []
 let recTimer = null
 let recCancelled = false
-// Voice round trip: a mic-initiated send marks the run so its reply is read
-// aloud on 'done'; typed sends never are. One run at a time (disabled gate),
-// so a single pair of flags is enough.
-let voiceSendPending = false
+let pendingVoiceText = null // transcript waiting out a streaming run
+// A voice-initiated run has its reply read aloud on 'done'; typed sends never
+// do. One run at a time (disabled gate), so a single flag is enough.
 let speakReplyOnDone = false
 
 // getUserMedia needs a secure context (https/localhost); hide the mic instead
@@ -567,22 +590,12 @@ async function transcribe(blob) {
       notifyBell(`Voice transcription failed: ${res.error}`, false)
     } else if (!text) {
       toast('No speech detected in the recording.', false)
+    } else if (disabled.value) {
+      // A run is streaming — sending is blocked right now, so queue the
+      // transcript; the done/error/stop handlers flush it as its own message.
+      pendingVoiceText = pendingVoiceText ? `${pendingVoiceText} ${text}` : text
     } else {
-      // Append rather than replace: dictation can extend typed text.
-      input.value = input.value.trim() ? `${input.value.replace(/\s+$/, '')} ${text}` : text
-      if (!disabled.value) {
-        voiceSendPending = true
-        send()
-      } else {
-        // A run is streaming — sending is blocked, so keep it for review.
-        // focusComposer (not a bare focus): popping the phone keyboard
-        // uninvited right after the user spoke is exactly the autofocus
-        // behavior the touch guard exists to prevent.
-        nextTick(() => {
-          adjustInputHeight()
-          focusComposer()
-        })
-      }
+      sendMessage(text, true)
     }
   } catch {
     notifyBell('Transcription failed — check the Voice Input settings.', false)

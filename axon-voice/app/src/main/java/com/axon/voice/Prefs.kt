@@ -29,14 +29,13 @@ class Prefs(ctx: Context) {
             sp.edit().putBoolean("wake_enabled", v).apply()
         }
 
-    /** Per-surface chat thread ids: typed chat, push-to-talk voice, and
-     *  "Hey Axon" wake conversations each keep their own id, so their history
-     *  and agent context stay separate on the server (context is keyed by
-     *  session_id) and the dashboard shows them as three distinct threads.
-     *  Rotate one via [newSession] to start that surface's next conversation. */
+    /** Per-surface chat thread ids. The Chat page and the "Hey Axon" wake
+     *  service share [chatSessionId] so hands-free exchanges land in the same
+     *  conversation (history, agent context, dashboard thread) as typed and
+     *  push-to-talk chat messages; the voice orb keeps its own thread. Rotate
+     *  one via [newSession] to start that surface's next conversation. */
     val chatSessionId: String get() = sessionFor("chat")
     val voiceSessionId: String get() = sessionFor("voice")
-    val wakeSessionId: String get() = sessionFor("wake")
 
     private fun sessionFor(surface: String): String {
         sp.getString("session_id_$surface", null)?.let { return it }

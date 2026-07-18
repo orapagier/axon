@@ -19,5 +19,7 @@
         android:paddingBottom="8dp"
         android:textColor="@color/text"
         android:textSize="15sp"
+        android:autoLink="web"
+        android:textColorLink="@color/accent"
         android:textIsSelectable="true" />
 </LinearLayout>

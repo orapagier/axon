@@ -192,8 +192,9 @@ class MainActivity : AppCompatActivity(), ChatSocket.Listener {
             State.IDLE -> {}
         }
         toIdle()
+        // Only the orb's own thread rotates — wake conversations belong to the
+        // Chat page's session now, reset from that page's New chat button.
         prefs.newSession("voice")
-        prefs.newSession("wake")
         adapter.clear()
         Toast.makeText(this, getString(R.string.new_conversation_started), Toast.LENGTH_SHORT)
             .show()
