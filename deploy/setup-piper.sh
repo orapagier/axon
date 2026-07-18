@@ -63,9 +63,12 @@ else
 fi
 
 # ── Voice models ──
+# Downloads land in .part files and are renamed only after BOTH succeed, so an
+# interrupted run never leaves a half-voice behind (the agent lists a voice
+# only when the .onnx has its .onnx.json sidecar — see tts::piper_voices_in).
 for voice in "${VOICES[@]}"; do
     onnx="$MODELS_DIR/$voice.onnx"
-    if [ -f "$onnx" ]; then
+    if [ -f "$onnx" ] && [ -f "$onnx.json" ]; then
         echo "Voice already installed: $voice"
         continue
     fi
@@ -76,9 +79,16 @@ for voice in "${VOICES[@]}"; do
     name="${rest%-*}"              # e.g. hfc_female
     base="https://huggingface.co/rhasspy/piper-voices/resolve/main/$lang/$locale/$name/$tier"
     echo "Downloading voice $voice..."
-    curl -sL --fail -o "$onnx" "$base/$voice.onnx"
-    curl -sL --fail -o "$onnx.json" "$base/$voice.onnx.json"
-    echo "Installed voice: $voice"
+    if curl -sL --fail -o "$onnx.part" "$base/$voice.onnx" &&
+       curl -sL --fail -o "$onnx.json.part" "$base/$voice.onnx.json"; then
+        mv "$onnx.part" "$onnx"
+        mv "$onnx.json.part" "$onnx.json"
+        echo "Installed voice: $voice"
+    else
+        rm -f "$onnx.part" "$onnx.json.part"
+        echo "Failed to download voice: $voice (check the id spelling)" >&2
+        exit 1
+    fi
 done
 
 echo ""

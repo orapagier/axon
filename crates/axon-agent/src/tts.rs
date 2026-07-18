@@ -28,6 +28,7 @@ use crate::config::RuntimeSettings;
 use crate::providers::ModelChoice;
 use anyhow::Context;
 use once_cell::sync::Lazy;
+use regex::Regex;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use tokio::io::AsyncWriteExt;
@@ -87,6 +88,36 @@ fn clamp_input(text: &str) -> String {
     text.chars().take(MAX_TTS_CHARS).collect()
 }
 
+/// Agent replies are markdown; an utterance needs the prose only. Server-side
+/// mirror of ChatPage.vue's `plainTextForSpeech`, because not every caller
+/// strips before POSTing — the Android client streams raw reply tokens
+/// sentence-by-sentence straight to `/api/audio/speech`, which had every
+/// engine (Piper especially) reading asterisks, fences, and link URLs aloud.
+/// Idempotent, so the dashboard's already-stripped text passes through
+/// unchanged.
+fn plain_text_for_speech(md: &str) -> String {
+    static FENCED: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?s)```.*?```").unwrap());
+    static INLINE_CODE: Lazy<Regex> = Lazy::new(|| Regex::new(r"`([^`]+)`").unwrap());
+    static IMAGE: Lazy<Regex> = Lazy::new(|| Regex::new(r"!\[[^\]]*\]\([^)]*\)").unwrap());
+    static LINK: Lazy<Regex> = Lazy::new(|| Regex::new(r"\[([^\]]+)\]\([^)]*\)").unwrap());
+    static HEADING: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?m)^#{1,6}\s+").unwrap());
+    static WS: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s+").unwrap());
+
+    let s = FENCED.replace_all(md, " Code block omitted. ");
+    let s = INLINE_CODE.replace_all(&s, "$1");
+    // A streamed chunk can hold an opening fence whose close never arrived;
+    // don't let the backticks reach the voice.
+    let s = s.replace("```", " ");
+    let s = IMAGE.replace_all(&s, "");
+    let s = LINK.replace_all(&s, "$1");
+    let s = HEADING.replace_all(&s, "");
+    let s: String = s
+        .chars()
+        .filter(|c| !matches!(c, '*' | '_' | '~' | '>' | '#'))
+        .collect();
+    WS.replace_all(&s, " ").trim().to_string()
+}
+
 /// Synthesized speech ready to send to the browser. OpenAI-shaped hosts stream
 /// as they synthesize; the Gemini path buffers, because the audio arrives as
 /// one base64 blob inside a JSON envelope.
@@ -127,7 +158,7 @@ fn gemini_native_root(base_url: &str) -> Option<String> {
 /// answer with their own explicit 400 (which the caller treats like any other
 /// failure: log and fall back).
 pub async fn speak(cfg: &TtsConfig, text: &str) -> anyhow::Result<SpeechAudio> {
-    let input = clamp_input(text.trim());
+    let input = clamp_input(&plain_text_for_speech(text));
     if input.is_empty() {
         anyhow::bail!("no text to speak");
     }
@@ -227,9 +258,18 @@ async fn speak_gemini(cfg: &TtsConfig, root: &str, input: &str) -> anyhow::Resul
 /// HTTP host.
 const PIPER_SENTINEL: &str = "piper";
 
-fn is_piper(base_url: &str) -> bool {
+/// Pub so `dashboard::api::audio` can route Piper voice listings around the
+/// `provider_model_cache` (the local directory scan is instant and always
+/// current, unlike the daily-swept cache).
+pub fn is_piper(base_url: &str) -> bool {
     base_url.trim().eq_ignore_ascii_case(PIPER_SENTINEL)
 }
+
+/// At most this many Piper subprocesses at once. Each spawn loads the whole
+/// voice model, so an unbounded pile-up (several clients streaming
+/// per-sentence synthesis) could starve a small server; queueing behind the
+/// gate just delays the audio slightly instead.
+static PIPER_GATE: Lazy<tokio::sync::Semaphore> = Lazy::new(|| tokio::sync::Semaphore::new(2));
 
 /// Where the Piper binary lives — the release archive from
 /// https://github.com/rhasspy/piper/releases extracted as-is (the exe needs
@@ -250,6 +290,7 @@ fn piper_models_dir() -> PathBuf {
 /// written from a separate task so a long reply can't deadlock against Piper
 /// filling its stdout pipe before we finish writing.
 async fn speak_piper(cfg: &TtsConfig, input: &str) -> anyhow::Result<SpeechAudio> {
+    let _slot = PIPER_GATE.acquire().await.expect("piper gate never closed");
     let bin = piper_bin_path();
     if !bin.is_file() {
         anyhow::bail!(
@@ -602,6 +643,42 @@ mod tests {
     fn piper_voices_empty_when_dir_missing() {
         let dir = std::env::temp_dir().join("axon-piper-voices-does-not-exist");
         assert!(piper_voices_in(&dir).is_empty());
+    }
+
+    #[test]
+    fn speech_text_drops_markdown_syntax() {
+        assert_eq!(
+            plain_text_for_speech("**Bold** and _italic_ and `code`."),
+            "Bold and italic and code."
+        );
+        assert_eq!(
+            plain_text_for_speech("See [the docs](https://example.com/very/long/url) here."),
+            "See the docs here."
+        );
+        assert_eq!(
+            plain_text_for_speech("# Heading\n\n- item one\n- item two"),
+            "Heading - item one - item two"
+        );
+        assert_eq!(
+            plain_text_for_speech("Before\n```rust\nlet x = 1;\n```\nAfter"),
+            "Before Code block omitted. After"
+        );
+        // An unclosed fence (streamed chunk cut mid-block) loses the backticks.
+        assert_eq!(
+            plain_text_for_speech("Look:\n```python\nprint('hi')"),
+            "Look: python print('hi')"
+        );
+        assert_eq!(
+            plain_text_for_speech("![alt text](img.png) caption"),
+            "caption"
+        );
+        // Plain prose — including dashboard-prestripped text — is untouched.
+        assert_eq!(
+            plain_text_for_speech("Already plain, 3 plus 4 is 7."),
+            "Already plain, 3 plus 4 is 7."
+        );
+        // Nothing but markup melts to empty -> speak() bails, caller falls back.
+        assert_eq!(plain_text_for_speech("***"), "");
     }
 
     #[test]

@@ -183,11 +183,18 @@ pub async fn get_audio_models(
     }
     let api_key = field("api_key", api_key_key);
 
+    // Piper's "catalogue" is a local directory scan — instant and always
+    // current, so never serve it stale from the daily-swept cache (a voice
+    // installed today wouldn't appear until tomorrow's sweep otherwise).
+    let piper = is_tts && crate::tts::is_piper(&base_url);
+
     // Fast path: the daily-swept cache.
-    if let Ok(conn) = state.db.get() {
-        let cached = crate::model_cache::read_cached(&conn, cache_provider, Some(&base_url));
-        if !cached.is_empty() {
-            return Json(json!({"ok": true, "models": cached}));
+    if !piper {
+        if let Ok(conn) = state.db.get() {
+            let cached = crate::model_cache::read_cached(&conn, cache_provider, Some(&base_url));
+            if !cached.is_empty() {
+                return Json(json!({"ok": true, "models": cached}));
+            }
         }
     }
 
@@ -199,8 +206,11 @@ pub async fn get_audio_models(
     };
     match fetched {
         Ok(choices) if !choices.is_empty() => {
-            if let Ok(conn) = state.db.get() {
-                let _ = crate::model_cache::store(&conn, cache_provider, Some(&base_url), &choices);
+            if !piper {
+                if let Ok(conn) = state.db.get() {
+                    let _ =
+                        crate::model_cache::store(&conn, cache_provider, Some(&base_url), &choices);
+                }
             }
             Json(json!({"ok": true, "models": choices}))
         }
