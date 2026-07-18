@@ -33,6 +33,10 @@
         </activity>
 
         <activity
+            android:name=".ui.ChatActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".ui.SettingsActivity"
             android:exported="false" />
 

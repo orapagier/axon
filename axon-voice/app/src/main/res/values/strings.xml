@@ -14,4 +14,14 @@
     <string name="test_connection">Test connection</string>
     <string name="notif_channel_wake">Axon voice</string>
     <string name="notif_listening">Listening for “Hey Axon”</string>
+    <string name="chat_title">Chat</string>
+    <string name="chat_hint">Message Axon…</string>
+    <string name="chat_hint_listening">Listening… tap mic to stop</string>
+    <string name="transcribing">Transcribing…</string>
+    <string name="back">Back</string>
+    <string name="send">Send</string>
+    <string name="dictate">Dictate</string>
+    <string name="open_chat">Open chat</string>
+    <string name="new_conversation">New conversation</string>
+    <string name="new_conversation_started">Started a new conversation</string>
 </resources>

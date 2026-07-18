@@ -29,15 +29,36 @@ class Prefs(ctx: Context) {
             sp.edit().putBoolean("wake_enabled", v).apply()
         }
 
-    /** Stable chat thread id shared by the app UI and the wake service, so the
-     *  dashboard shows one continuous "voice" conversation. */
-    val sessionId: String
-        get() {
-            sp.getString("session_id", null)?.let { return it }
-            val id = "voice-" + UUID.randomUUID().toString().take(8)
-            sp.edit().putString("session_id", id).apply()
-            return id
+    /** Per-surface chat thread ids: typed chat, push-to-talk voice, and
+     *  "Hey Axon" wake conversations each keep their own id, so their history
+     *  and agent context stay separate on the server (context is keyed by
+     *  session_id) and the dashboard shows them as three distinct threads.
+     *  Rotate one via [newSession] to start that surface's next conversation. */
+    val chatSessionId: String get() = sessionFor("chat")
+    val voiceSessionId: String get() = sessionFor("voice")
+    val wakeSessionId: String get() = sessionFor("wake")
+
+    private fun sessionFor(surface: String): String {
+        sp.getString("session_id_$surface", null)?.let { return it }
+        // Pre-split installs stored one id (shared by UI + wake service) under
+        // "session_id"; keep it as the voice thread so that conversation's
+        // server-side context carries over instead of silently resetting.
+        if (surface == "voice") {
+            sp.getString("session_id", null)?.let {
+                sp.edit().putString("session_id_voice", it).apply()
+                return it
+            }
         }
+        return newSession(surface)
+    }
+
+    /** Mint and persist a fresh id for [surface] ("chat"|"voice"|"wake") —
+     *  the next message opens a brand-new conversation thread. */
+    fun newSession(surface: String): String {
+        val id = "$surface-" + UUID.randomUUID().toString().take(8)
+        sp.edit().putString("session_id_$surface", id).apply()
+        return id
+    }
 
     val configured: Boolean
         get() = baseUrl.isNotEmpty() && masterKey.isNotEmpty()

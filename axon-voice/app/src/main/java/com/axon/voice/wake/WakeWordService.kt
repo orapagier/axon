@@ -165,7 +165,9 @@ class WakeWordService : Service(), ChatSocket.Listener {
             fail(e.message ?: "Wake model rejected")
             return
         }
-        prefetchAcks()
+        // Off the wake thread: each miss burns a network timeout, and "Hey
+        // Axon" must be listening immediately, not after 4 slow fetches.
+        thread(name = "axon-ack-prefetch") { prefetchAcks() }
 
         var record: AudioRecord? = null
         try {
@@ -418,7 +420,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
             replyError = null
             replyStream = stream
         }
-        if (!c.sendTask(task, prefs.sessionId)) {
+        if (!c.sendTask(task, prefs.wakeSessionId)) {
             stream.abort()
             synchronized(replyLock) { replyStream = null }
             return false
@@ -474,7 +476,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
             replyText = null
             replyError = null
         }
-        if (!c.sendTask(task, prefs.sessionId)) return null
+        if (!c.sendTask(task, prefs.wakeSessionId)) return null
         if (!latch.await(310, TimeUnit.SECONDS)) return null
         synchronized(replyLock) {
             replyError?.let { return "Sorry — $it" }
@@ -502,18 +504,26 @@ class WakeWordService : Service(), ChatSocket.Listener {
                 }
                 stream?.finish()
                 if (fallback) {
-                    player?.let { p ->
+                    // Off this thread: it's OkHttp's WS reader, and a slow
+                    // synthesis here would stall pings and drop the socket.
+                    thread(name = "axon-fallback-tts") {
+                        val p = player
                         val f = File(cacheDir, "reply_wake.audio")
-                        if (client.speech(full, f) && f.length() > 0) {
+                        if (p != null && client.speech(full, f) && f.length() > 0) {
                             p.play(f) {
                                 synchronized(replyLock) {
                                     replyLatch?.countDown()
                                     replyLatch = null
                                 }
                             }
-                            return
+                        } else {
+                            synchronized(replyLock) {
+                                replyLatch?.countDown()
+                                replyLatch = null
+                            }
                         }
                     }
+                    return
                 }
                 synchronized(replyLock) {
                     replyLatch?.countDown()

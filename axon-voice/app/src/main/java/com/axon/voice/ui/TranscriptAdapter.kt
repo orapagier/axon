@@ -1,5 +1,6 @@
 package com.axon.voice.ui
 
+import android.annotation.SuppressLint
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
@@ -34,6 +35,23 @@ class TranscriptAdapter : RecyclerView.Adapter<TranscriptAdapter.VH>() {
         if (items.isEmpty()) return
         items.last().text = text
         notifyItemChanged(items.size - 1)
+    }
+
+    fun clear() {
+        val n = items.size
+        if (n == 0) return
+        items.clear()
+        notifyItemRangeRemoved(0, n)
+    }
+
+    /** Copy of the current transcript, for persistence (Chat page history). */
+    fun snapshot(): List<Msg> = items.map { it.copy() }
+
+    @SuppressLint("NotifyDataSetChanged")
+    fun load(msgs: List<Msg>) {
+        items.clear()
+        items.addAll(msgs)
+        notifyDataSetChanged()
     }
 
     class VH(v: View) : RecyclerView.ViewHolder(v) {

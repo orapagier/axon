@@ -12,6 +12,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.widget.ImageButton
 import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -87,6 +88,10 @@ class MainActivity : AppCompatActivity(), ChatSocket.Listener {
         findViewById<ImageButton>(R.id.settingsBtn).setOnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
+        findViewById<ImageButton>(R.id.chatBtn).setOnClickListener {
+            startActivity(Intent(this, ChatActivity::class.java))
+        }
+        findViewById<ImageButton>(R.id.newChatBtn).setOnClickListener { newConversation() }
         orb.setOnClickListener { onOrbTap() }
 
         wakeSwitch.setOnCheckedChangeListener { _, checked ->
@@ -153,8 +158,45 @@ class MainActivity : AppCompatActivity(), ChatSocket.Listener {
         ttsStream?.abort()
         ttsStream = null
         player?.release()
+        // A capture may still be running if we're killed mid-recording; its
+        // thread would otherwise keep the mic open with micHold stuck on.
+        recorder?.let { runCatching { it.stop() } }
+        recorder = null
         WakeWordService.micHold = false
         super.onDestroy()
+    }
+
+    /** Start fresh voice + wake conversation threads: new session ids (new
+     *  context server-side, new dashboard threads) and a clean transcript. */
+    private fun newConversation() {
+        when (state) {
+            State.RECORDING -> {
+                // Discard the in-flight capture; going straight to IDLE would
+                // orphan the recorder thread with micHold stuck on.
+                val r = recorder
+                recorder = null
+                watcher = null
+                thread(name = "axon-ptt-discard") {
+                    runCatching { r?.stop() }
+                    WakeWordService.micHold = false
+                }
+            }
+
+            State.THINKING, State.SPEAKING -> {
+                chat?.cancel(prefs.voiceSessionId)
+                ttsStream?.abort()
+                ttsStream = null
+                player?.stop()
+            }
+
+            State.IDLE -> {}
+        }
+        toIdle()
+        prefs.newSession("voice")
+        prefs.newSession("wake")
+        adapter.clear()
+        Toast.makeText(this, getString(R.string.new_conversation_started), Toast.LENGTH_SHORT)
+            .show()
     }
 
     // ── Push-to-talk state machine ──────────────────────────────────────────
@@ -164,7 +206,7 @@ class MainActivity : AppCompatActivity(), ChatSocket.Listener {
             State.IDLE -> startCapture()
             State.RECORDING -> finishCapture()
             State.THINKING -> {
-                chat?.cancel(prefs.sessionId)
+                chat?.cancel(prefs.voiceSessionId)
                 ttsStream?.abort()
                 ttsStream = null
                 toIdle()
@@ -209,6 +251,9 @@ class MainActivity : AppCompatActivity(), ChatSocket.Listener {
                     if (w.tick(rms)) main.post { finishCapture() }
                 }
             } catch (e: Exception) {
+                // Give the mic back to the wake service — leaving micHold set
+                // here would silence "Hey Axon" until the next successful PTT.
+                WakeWordService.micHold = false
                 main.post {
                     adapter.add("error", e.message ?: "microphone unavailable")
                     scrollEnd()
@@ -253,7 +298,7 @@ class MainActivity : AppCompatActivity(), ChatSocket.Listener {
                 adapter.add("user", text)
                 adapter.add("assistant", "")
                 scrollEnd()
-                if (chat?.sendTask(text, prefs.sessionId) != true) {
+                if (chat?.sendTask(text, prefs.voiceSessionId) != true) {
                     adapter.setLast(getString(R.string.status_offline))
                     toIdle()
                 }
