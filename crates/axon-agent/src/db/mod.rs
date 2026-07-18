@@ -184,6 +184,12 @@ const MIGRATIONS: &[Migration] = &[
         sql: include_str!("migrations/0026_workflow_backups.sql"),
         tolerant_dup_column: false,
     },
+    Migration {
+        version: 27,
+        name: "tts_piper_description",
+        sql: include_str!("migrations/0027_tts_piper_description.sql"),
+        tolerant_dup_column: false,
+    },
 ];
 
 const SEED_SQL: &str = include_str!("seed.sql");

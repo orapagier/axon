@@ -280,7 +280,13 @@ async fn speak_piper(cfg: &TtsConfig, input: &str) -> anyhow::Result<SpeechAudio
         .with_context(|| format!("spawn piper at {}", bin.display()))?;
 
     let mut stdin = child.stdin.take().expect("piped stdin");
-    let text = input.to_string();
+    // Piper treats each stdin line as a separate utterance and writes a
+    // complete WAV file to `-f -` for every one of them, so a multi-paragraph
+    // reply comes back as several RIFF chunks concatenated on stdout. A WAV
+    // parser only trusts the first chunk's declared data size, so the browser
+    // plays just the first line and silently drops the rest. Collapsing
+    // newlines keeps the whole reply as Piper's single utterance/single WAV.
+    let text = input.split_whitespace().collect::<Vec<_>>().join(" ");
     let writer = tokio::spawn(async move {
         let _ = stdin.write_all(text.as_bytes()).await;
         // Dropping closes the pipe, signalling EOF so piper starts synthesis.
