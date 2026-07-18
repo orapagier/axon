@@ -19,10 +19,11 @@ import com.axon.voice.Prefs
 import com.axon.voice.R
 import com.axon.voice.api.AxonClient
 import com.axon.voice.api.ChatSocket
-import com.axon.voice.audio.MicEffects
 import com.axon.voice.audio.Sound
 import com.axon.voice.audio.SilenceWatcher
+import com.axon.voice.audio.StreamingTts
 import com.axon.voice.audio.TtsPlayer
+import com.axon.voice.audio.VoicePrompts
 import com.axon.voice.audio.WavRecorder
 import com.axon.voice.ui.MainActivity
 import org.json.JSONObject
@@ -84,16 +85,21 @@ class WakeWordService : Service(), ChatSocket.Listener {
     @Volatile
     private var alive = false
 
-    private var ackYes: File? = null
-    private var ackMore: File? = null
-    private var effects: MicEffects? = null
+    /** Cached server-TTS audio per phrase (wake acks + follow-up). Phrases
+     *  whose prefetch failed are absent and retried on the next service start
+     *  — the resilience mirror of voiceprompts.js's cache/inflight map. */
+    private val ackFiles = mutableMapOf<String, File>()
 
-    // One reply in flight at a time: sendAndAwait parks on the latch, the WS
-    // listener below fills the slot.
+    // One reply in flight at a time. The reply is *streamed*: each token is
+    // fed to [replyStream] for per-sentence TTS so speech starts with the first
+    // sentence, not after the whole reply arrives. replyLatch counts down once
+    // playback drains (or on error), and replyText holds the full text for the
+    // self-echo check on the next capture.
     private val replyLock = Object()
     private var replyLatch: CountDownLatch? = null
     private var replyText: String? = null
     private var replyError: String? = null
+    private var replyStream: StreamingTts? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -168,8 +174,6 @@ class WakeWordService : Service(), ChatSocket.Listener {
                 if (micHold) {
                     record?.release()
                     record = null
-                    effects?.release()
-                    effects = null
                     Thread.sleep(100)
                     continue
                 }
@@ -185,14 +189,12 @@ class WakeWordService : Service(), ChatSocket.Listener {
                 if (!fillFrame(rec, frame)) continue
                 val score = detector.process(frame)
                 if (score >= 0f) {
-                    interact(rec)
+                    interact(rec, detector)
                     drain(rec)
                 }
             }
         } finally {
             record?.release()
-            effects?.release()
-            effects = null
             detector.close()
         }
     }
@@ -217,8 +219,12 @@ class WakeWordService : Service(), ChatSocket.Listener {
             rec.release()
             return null
         }
-        effects?.release()
-        effects = MicEffects(rec.audioSessionId)
+        // Intentionally NO AcousticEchoCanceler / NoiseSuppressor on this mic.
+        // This AudioRecord feeds the always-on rustpotter detector, and the
+        // VOICE_RECOGNITION source is already the clean signal the wake model
+        // was trained on — NS/AEC strip the quiet, far-field wake word right
+        // out (regression from fe4e1fe). Follow-up self-echo is handled by the
+        // settle + drain + 3-tick gate below, not by mangling the capture.
         rec.startRecording()
         return rec
     }
@@ -245,12 +251,14 @@ class WakeWordService : Service(), ChatSocket.Listener {
 
     // ── One wake interaction (command + follow-ups) ─────────────────────────
 
-    private fun interact(rec: AudioRecord) {
+    private fun interact(rec: AudioRecord, detector: WakeDetector) {
         var first = true
         var lastReply = ""
         while (alive && !micHold) {
             notify(getString(R.string.status_recording))
-            playAckBlocking(if (first) ackYes else ackMore, soft = !first)
+            val ackPhrase = if (first) VoicePrompts.randomWakeAck()
+                else VoicePrompts.FOLLOWUP_PROMPT
+            playAckBlocking(ackPhrase, ackFiles[ackPhrase], soft = !first)
             // Let the ack (and any reply tail still in the output pipeline)
             // finish coming out of the speaker before the drain, so it can't
             // leak into the capture and be transcribed as a command. Only in
@@ -277,15 +285,44 @@ class WakeWordService : Service(), ChatSocket.Listener {
             // command — with session history the agent would happily re-answer
             // the previous question in new words, looping the reply.
             if (isSelfEcho(text, lastReply, if (first) "yes" else "anything else")) break
-            val reply = sendAndAwait(text) ?: break
-            if (reply.isNotBlank()) {
-                notify(getString(R.string.status_speaking))
-                speakBlocking(reply)
-                lastReply = reply
+            // Speak a short filler so the user knows they were heard while the
+            // agent works. Non-blocking: the streaming reply's first sentence
+            // calls TtsPlayer.stop() first (via beginStream), which cleanly
+            // cuts the filler off the instant speech can begin.
+            playFillerNonBlocking()
+            // Stream the reply: tokens flow into StreamingTts as they arrive,
+            // so the first sentence plays ~1s after the agent starts replying
+            // instead of after the whole reply is synthesized. Blocks until
+            // playback finishes or a barge-in cuts it off.
+            val barged = awaitStreamBlocking(text, rec, detector)
+            val reply = synchronized(replyLock) { replyText ?: "" }
+            if (reply.isBlank() && !barged) break
+            if (barged) {
+                // User said "Hey Axon" mid-reply. Ack and treat the next
+                // capture as a fresh wake — lenient watcher, no self-echo
+                // check against the half-spoken reply we just cut off.
+                first = true
+                lastReply = ""
+                continue
             }
+            lastReply = reply
             first = false // reopen as the follow-up window, raised speech bar
         }
         notify(getString(R.string.notif_listening))
+    }
+
+    /** Speak a random thinking filler on a throwaway thread. The reply's
+     *  StreamingTts→TtsPlayer.beginStream() stops any in-flight playback first,
+     *  so the filler is always interrupted before the reply — no overlap, no
+     *  extra locking. */
+    private fun playFillerNonBlocking() {
+        val p = player ?: return
+        val phrase = VoicePrompts.randomFiller()
+        thread(name = "axon-filler") {
+            val done = CountDownLatch(1)
+            p.speakFallback(phrase) { done.countDown() }
+            done.await(8, TimeUnit.SECONDS)
+        }
     }
 
     /** True when [text] is (a fragment of) what the assistant itself just said
@@ -325,41 +362,102 @@ class WakeWordService : Service(), ChatSocket.Listener {
 
     // ── Speech in/out helpers ───────────────────────────────────────────────
 
-    /** "Yes?" / "Anything else?" via prefetched server TTS, chime fallback. */
-    private fun playAckBlocking(f: File?, soft: Boolean) {
+    /** Speak [phrase] using the same 3-tier "never silent" chain as a reply:
+     *  prefetched server TTS -> built-in Android TTS -> synthesized chime.
+     *  Mirrors voiceprompts.js playPrompt, which always resolves to sound. */
+    private fun playAckBlocking(phrase: String, cachedFile: File?, soft: Boolean) {
         val p = player ?: return
-        if (f != null && f.length() > 0) {
+        if (cachedFile != null && cachedFile.exists() && cachedFile.length() > 0) {
             val latch = CountDownLatch(1)
-            p.play(f) { latch.countDown() }
-            latch.await(4, TimeUnit.SECONDS)
-        } else {
-            Sound.chime(soft)
-            Thread.sleep(if (soft) 250 else 400)
+            p.play(cachedFile) { latch.countDown() }
+            if (latch.await(4, TimeUnit.SECONDS)) return
         }
+        // Server TTS unavailable or stalled — try the built-in engine.
+        val spokeLatch = CountDownLatch(1)
+        p.speakFallback(phrase) { spokeLatch.countDown() }
+        if (spokeLatch.await(4, TimeUnit.SECONDS)) return
+        // Last resort: the chime is always available.
+        Sound.chime(soft)
+        Thread.sleep(if (soft) 250 else 400)
     }
 
-    private fun speakBlocking(text: String) {
-        val p = player ?: return
-        val f = File(cacheDir, "reply_wake.audio")
-        val ok = client.speech(text, f)
+    /**
+     * Send [task] and stream the reply: tokens are fed to a [StreamingTts] as
+     * they arrive so per-sentence TTS begins with the first sentence, not after
+     * the whole reply is downloaded. Watches the mic for a "Hey Axon" barge-in
+     * the whole time. Returns true if the user interrupted; false if playback
+     * finished on its own.
+     *
+     * The barge-in detector runs on a throwaway thread that keeps feeding the
+     * same rustpotter [detector] used by runLoop. It's safe because runLoop is
+     * parked inside interact()→awaitStreamBlocking() for the entire playback,
+     * so process(frame) is never called concurrently from two threads.
+     */
+    private fun awaitStreamBlocking(
+        task: String,
+        rec: AudioRecord?,
+        detector: WakeDetector?,
+    ): Boolean {
+        val p = player ?: return false
+        val c = chat ?: return false
+        var waits = 0
+        while (!c.connected && waits++ < 10 && alive) Thread.sleep(500)
+
+        notify(getString(R.string.status_speaking))
         val latch = CountDownLatch(1)
-        if (ok) {
-            p.play(f) { latch.countDown() }
-        } else {
-            p.speakFallback(text) { latch.countDown() }
+        val bargedIn = java.util.concurrent.atomic.AtomicBoolean(false)
+        val stream = StreamingTts(
+            player = p,
+            client = client,
+            cacheDir = cacheDir,
+            filePrefix = "reply_wake",
+        ) { latch.countDown() }
+        synchronized(replyLock) {
+            replyLatch = latch
+            replyText = null
+            replyError = null
+            replyStream = stream
         }
-        latch.await(120, TimeUnit.SECONDS)
+        if (!c.sendTask(task, prefs.sessionId)) {
+            stream.abort()
+            synchronized(replyLock) { replyStream = null }
+            return false
+        }
+        // Monitor for "Hey Axon" while the reply streams. Only when we have
+        // both a live mic and the detector — otherwise we just wait for done.
+        val monitor = if (rec != null && detector != null) {
+            thread(name = "axon-barge") {
+                val frame = ShortArray(detector.samplesPerFrame)
+                while (alive && latch.count > 0L) {
+                    if (!fillFrame(rec, frame)) break
+                    if (detector.process(frame) >= 0f) {
+                        bargedIn.set(true)
+                        stream.abort() // cut the TTS mid-sentence
+                        latch.countDown()
+                        break
+                    }
+                }
+            }
+        } else null
+        latch.await(310, TimeUnit.SECONDS)
+        monitor?.join(500)
+        if (bargedIn.get()) drain(rec!!)
+        return bargedIn.get()
     }
 
     private fun prefetchAcks() {
-        ackYes = File(cacheDir, "ack_yes.audio").also {
-            if (!it.exists() || it.length() == 0L) {
-                if (!client.speech("Yes?", it)) it.delete()
-            }
-        }
-        ackMore = File(cacheDir, "ack_more.audio").also {
-            if (!it.exists() || it.length() == 0L) {
-                if (!client.speech("Anything else?", it)) it.delete()
+        // One stable file per phrase so existing good fetches survive across
+        // prefetch runs (and service restarts); only missing/empty ones fetch.
+        // SHA-1 of the phrase keeps filenames stable and collision-free.
+        for (phrase in VoicePrompts.allPrefetchable) {
+            if (ackFiles[phrase]?.let { it.exists() && it.length() > 0 } == true) continue
+            val file = File(cacheDir, "ack_${phrase.hashCode().toString(16)}.audio")
+            val ok = file.exists() && file.length() > 0 ||
+                runCatching { client.speech(phrase, file) }.getOrDefault(false)
+            if (ok && file.length() > 0) {
+                ackFiles[phrase] = file
+            } else {
+                file.delete() // retry on the next prefetch / service start
             }
         }
     }
@@ -386,15 +484,53 @@ class WakeWordService : Service(), ChatSocket.Listener {
 
     override fun onWsEvent(ev: JSONObject) {
         when (ev.optString("type")) {
-            "done" -> synchronized(replyLock) {
-                replyText = ev.optString("full_text", "")
-                replyLatch?.countDown()
-                replyLatch = null
+            // Streamed reply token — feed it straight to TTS so speech begins
+            // with the first sentence, not after the whole reply arrives.
+            "token" -> synchronized(replyLock) { replyStream?.append(ev.optString("text")) }
+            "done" -> {
+                val full = ev.optString("full_text", "")
+                // done may arrive before the tokens have drained through TTS;
+                // if we somehow got full_text with no tokens streamed (e.g. a
+                // server that doesn't emit token frames), synthesize it now as
+                // one fallback chunk so we're never silent.
+                val fallback = full.isNotBlank() && replyStream == null
+                val stream = synchronized(replyLock) {
+                    replyText = full
+                    val s = replyStream
+                    replyStream = null
+                    s
+                }
+                stream?.finish()
+                if (fallback) {
+                    player?.let { p ->
+                        val f = File(cacheDir, "reply_wake.audio")
+                        if (client.speech(full, f) && f.length() > 0) {
+                            p.play(f) {
+                                synchronized(replyLock) {
+                                    replyLatch?.countDown()
+                                    replyLatch = null
+                                }
+                            }
+                            return
+                        }
+                    }
+                }
+                synchronized(replyLock) {
+                    replyLatch?.countDown()
+                    replyLatch = null
+                }
             }
-            "error" -> synchronized(replyLock) {
-                replyError = ev.optString("message", "something went wrong")
-                replyLatch?.countDown()
-                replyLatch = null
+            "error" -> {
+                synchronized(replyLock) {
+                    replyError = ev.optString("message", "something went wrong")
+                    replyStream?.abort()
+                    replyStream = null
+                }
+                player?.stop()
+                synchronized(replyLock) {
+                    replyLatch?.countDown()
+                    replyLatch = null
+                }
             }
         }
     }

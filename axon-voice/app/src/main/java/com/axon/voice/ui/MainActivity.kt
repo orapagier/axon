@@ -22,6 +22,7 @@ import com.axon.voice.R
 import com.axon.voice.api.AxonClient
 import com.axon.voice.api.ChatSocket
 import com.axon.voice.audio.SilenceWatcher
+import com.axon.voice.audio.StreamingTts
 import com.axon.voice.audio.TtsPlayer
 import com.axon.voice.audio.WavRecorder
 import com.axon.voice.wake.WakeWordService
@@ -56,6 +57,8 @@ class MainActivity : AppCompatActivity(), ChatSocket.Listener {
     private var watcher: SilenceWatcher? = null
     private var pendingAutoListen = false
     private var runErrored = false
+    /** Active streamed reply, or null when not THINKING/SPEAKING a reply. */
+    private var ttsStream: StreamingTts? = null
 
     private val permLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
@@ -147,6 +150,8 @@ class MainActivity : AppCompatActivity(), ChatSocket.Listener {
 
     override fun onDestroy() {
         chat?.close()
+        ttsStream?.abort()
+        ttsStream = null
         player?.release()
         WakeWordService.micHold = false
         super.onDestroy()
@@ -160,10 +165,14 @@ class MainActivity : AppCompatActivity(), ChatSocket.Listener {
             State.RECORDING -> finishCapture()
             State.THINKING -> {
                 chat?.cancel(prefs.sessionId)
+                ttsStream?.abort()
+                ttsStream = null
                 toIdle()
             }
 
             State.SPEAKING -> {
+                ttsStream?.abort()
+                ttsStream = null
                 player?.stop()
                 toIdle()
             }
@@ -252,23 +261,19 @@ class MainActivity : AppCompatActivity(), ChatSocket.Listener {
         }
     }
 
-    private fun speak(text: String) {
-        state = State.SPEAKING
-        orb.orbState = OrbView.OrbState.SPEAKING
-        statusLine.text = getString(R.string.status_speaking)
-        thread(name = "axon-speak") {
-            val f = File(cacheDir, "reply_ui.audio")
-            val ok = client.speech(text, f)
-            main.post {
-                if (state != State.SPEAKING) return@post
-                val p = player ?: return@post
-                if (ok) {
-                    p.play(f) { main.post { if (state == State.SPEAKING) toIdle() } }
-                } else {
-                    p.speakFallback(text) { main.post { if (state == State.SPEAKING) toIdle() } }
-                }
-            }
-        }
+    /** Begin a streamed reply: tokens arriving via onWsEvent are fed to TTS
+     *  sentence-by-sentence, so the first sentence plays as soon as the agent
+     *  has produced it — not after the whole reply is synthesized. */
+    private fun startStream() {
+        if (state != State.THINKING && state != State.SPEAKING) return
+        val p = player ?: return
+        ttsStream?.abort()
+        ttsStream = StreamingTts(
+            player = p,
+            client = client,
+            cacheDir = cacheDir,
+            filePrefix = "reply_ui",
+        ) { main.post { if (state == State.SPEAKING) toIdle() } }
     }
 
     private fun toIdle() {
@@ -291,18 +296,33 @@ class MainActivity : AppCompatActivity(), ChatSocket.Listener {
         main.post {
             when (ev.optString("type")) {
                 "token" -> if (state == State.THINKING && adapter.lastRole == "assistant") {
-                    adapter.appendToLast(ev.optString("text"))
+                    // Lazy: the first token flips us to SPEAKING and starts
+                    // streaming TTS so speech begins immediately, not after done.
+                    if (ttsStream == null) {
+                        state = State.SPEAKING
+                        orb.orbState = OrbView.OrbState.SPEAKING
+                        statusLine.text = getString(R.string.status_speaking)
+                        startStream()
+                    }
+                    val text = ev.optString("text")
+                    adapter.appendToLast(text)
                     scrollEnd()
+                    ttsStream?.append(text)
                 }
 
-                "error" -> if (state == State.THINKING) {
+                "error" -> if (state == State.THINKING || state == State.SPEAKING) {
                     runErrored = true
+                    ttsStream?.abort()
+                    ttsStream = null
                     adapter.add("error", ev.optString("message", "something went wrong"))
                     scrollEnd()
+                    toIdle()
                 }
 
-                "done" -> if (state == State.THINKING) {
+                "done" -> if (state == State.THINKING || state == State.SPEAKING) {
                     if (runErrored) {
+                        ttsStream?.abort()
+                        ttsStream = null
                         toIdle()
                         return@post
                     }
@@ -311,8 +331,41 @@ class MainActivity : AppCompatActivity(), ChatSocket.Listener {
                         adapter.setLast(full)
                     }
                     scrollEnd()
-                    val speakText = if (full.isNotBlank()) full else adapter.lastText
-                    if (speakText.isBlank()) toIdle() else speak(speakText)
+                    val stream = ttsStream
+                    ttsStream = null
+                    if (stream != null) {
+                        // Tokens were streamed — just flush whatever is buffered.
+                        stream.finish()
+                    } else if (full.isNotBlank() || adapter.lastText.isNotBlank()) {
+                        // Server didn't emit token frames; synthesize the whole
+                        // reply in one shot so we're never silent.
+                        val text = if (full.isNotBlank()) full else adapter.lastText
+                        speakOneShot(text)
+                    } else {
+                        toIdle()
+                    }
+                }
+            }
+        }
+    }
+
+    /** Legacy one-shot path for servers that send full_text on done without
+     *  any preceding token frames. Kept so a non-streaming backend still
+     *  speaks the reply. */
+    private fun speakOneShot(text: String) {
+        state = State.SPEAKING
+        orb.orbState = OrbView.OrbState.SPEAKING
+        statusLine.text = getString(R.string.status_speaking)
+        thread(name = "axon-speak") {
+            val f = File(cacheDir, "reply_ui.audio")
+            val ok = client.speech(text, f)
+            main.post {
+                if (state != State.SPEAKING) return@post
+                val p = player ?: return@post
+                if (ok) {
+                    p.play(f) { main.post { if (state == State.SPEAKING) toIdle() } }
+                } else {
+                    p.speakFallback(text) { main.post { if (state == State.SPEAKING) toIdle() } }
                 }
             }
         }

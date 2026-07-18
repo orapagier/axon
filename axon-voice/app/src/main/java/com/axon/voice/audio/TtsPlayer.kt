@@ -6,11 +6,19 @@ import android.media.MediaPlayer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import java.io.File
+import java.util.ArrayDeque
 
 /**
  * Plays a synthesized reply file; when server TTS is unavailable, falls back
  * to Android's built-in TextToSpeech engine — the same "never silent" rule as
  * the dashboard's browser speechSynthesis fallback.
+ *
+ * Two playback modes:
+ *  - play(file)           — one-shot (ack phrases, the legacy single-blob path).
+ *  - beginStream/...      — back-to-back playback of a sequence of per-sentence
+ *                           files so a streamed reply starts speaking as soon as
+ *                           the first sentence is synthesized, not after the
+ *                           whole reply is downloaded.
  */
 class TtsPlayer(ctx: Context) {
     private var mp: MediaPlayer? = null
@@ -55,6 +63,107 @@ class TtsPlayer(ctx: Context) {
         }
     }
 
+    // ── Streaming reply playback ────────────────────────────────────────────
+
+    /** A reply being streamed out as it is synthesized. Files enqueued via
+     *  [enqueueStreamFile] play back-to-back; [finalizeStream] flushes the
+     *  leftover buffered text and fires [onDone] once everything has played. */
+    class Stream(internal val onDone: () -> Unit) {
+        internal val queue = ArrayDeque<File>()
+        internal var closed = false          // finalizeStream called
+        @Volatile
+        internal var idle = true             // no file currently playing
+
+        /** Used by the wake barge-in detector: true until playback truly ends. */
+        val active: Boolean
+            get() = !closed || !idle || queue.isNotEmpty()
+    }
+
+    /** Begin a streamed reply. Cancels any prior playback first. */
+    fun beginStream(onDone: () -> Unit): Stream {
+        stop()
+        val s = Stream(onDone)
+        currentStream = s
+        return s
+    }
+
+    /** Enqueue a synthesized sentence file for back-to-back playback. Safe to
+     *  call from any thread; starts playback immediately if the sink is idle. */
+    fun enqueueStreamFile(s: Stream, file: File) {
+        synchronized(streamLock) {
+            if (s.closed || file.length() == 0L) return
+            s.queue.add(file)
+            if (s.idle) playNextLocked(s)
+        }
+    }
+
+    /** Flush the stream — nothing more will be enqueued. If the queue has
+     *  drained (or nothing was ever enqueued), [onDone] fires now; otherwise
+     *  it fires when the remaining files finish playing. Idempotent. */
+    fun finalizeStream(s: Stream) {
+        synchronized(streamLock) {
+            if (s.closed) return
+            s.closed = true
+            if (s.idle && s.queue.isEmpty()) finishLocked(s)
+        }
+    }
+
+    /** Drop everything queued for [s] right now (barge-in). onDone will NOT
+     *  fire — the caller is taking over the speaker. */
+    fun abortStream(s: Stream) {
+        synchronized(streamLock) {
+            s.closed = true
+            s.queue.clear()
+        }
+        stop()
+    }
+
+    private fun playNextLocked(s: Stream) {
+        val file = s.queue.poll() ?: return
+        s.idle = false
+        val player = MediaPlayer()
+        mp = player
+        try {
+            player.setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ASSISTANT)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+            )
+            player.setDataSource(file.absolutePath)
+            player.setOnCompletionListener {
+                cleanup()
+                onStreamFileDone(s)
+            }
+            player.setOnErrorListener { _, _, _ ->
+                cleanup()
+                onStreamFileDone(s)
+                true
+            }
+            player.prepare()
+            player.start()
+        } catch (_: Exception) {
+            cleanup()
+            onStreamFileDone(s)
+        }
+    }
+
+    private fun onStreamFileDone(s: Stream) {
+        synchronized(streamLock) {
+            s.idle = true
+            if (s.queue.isNotEmpty()) {
+                playNextLocked(s)
+            } else if (s.closed) {
+                finishLocked(s)
+            }
+        }
+    }
+
+    private fun finishLocked(s: Stream) {
+        if (currentStream === s) currentStream = null
+        s.onDone.invoke()
+    }
+
     /** Built-in engine fallback; onDone fires when speech ends (or fails). */
     fun speakFallback(text: String, onDone: () -> Unit) {
         val tts = fallback
@@ -74,6 +183,10 @@ class TtsPlayer(ctx: Context) {
     }
 
     fun stop() {
+        synchronized(streamLock) {
+            currentStream?.let { it.closed = true; it.queue.clear() }
+            currentStream = null
+        }
         mp?.let {
             runCatching { it.stop() }
             it.release()
@@ -92,4 +205,7 @@ class TtsPlayer(ctx: Context) {
         fallback?.shutdown()
         fallback = null
     }
+
+    private val streamLock = Any()
+    private var currentStream: Stream? = null
 }
