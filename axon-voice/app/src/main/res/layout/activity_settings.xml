@@ -68,5 +68,21 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
             android:textColor="@color/text_dim" />
+
+        <!-- Server-side voice settings (tts.* / stt.*), built dynamically from
+             GET /api/settings — same rows as the dashboard's Voice Input /
+             Voice Replies sections. -->
+        <TextView
+            android:id="@+id/voiceStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:textColor="@color/text_dim" />
+
+        <LinearLayout
+            android:id="@+id/voiceContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
     </LinearLayout>
 </ScrollView>

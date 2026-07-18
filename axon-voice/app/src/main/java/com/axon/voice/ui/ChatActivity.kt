@@ -30,20 +30,26 @@ import org.json.JSONObject
 import kotlin.concurrent.thread
 
 /**
- * The chat surface: type a message, or tap the mic to speak one — the
- * recording (same silence watcher as the orb's push-to-talk) is transcribed
- * server-side and sent as its own chat message, never left in the composer.
- * Replies stream in as text and are never auto-spoken — the orb screen is the
- * spoken surface.
+ * The app's home screen: type a message, or tap the mic to speak one — the
+ * recording (silence-watched push-to-talk) is transcribed server-side and sent
+ * as its own chat message, never left in the composer. Replies stream in as
+ * text; the "Hey Axon" wake service is the spoken surface.
  *
- * Runs on [Prefs.chatSessionId], which the "Hey Axon" wake service shares:
- * hands-free exchanges arrive through [ChatFeed] and show here (and persist
- * via [ChatHistory]) exactly like typed messages, so the whole conversation —
+ * Runs on [Prefs.chatSessionId], which the wake service shares: hands-free
+ * exchanges arrive through [ChatFeed] and show here (and persist via
+ * [ChatHistory]) exactly like typed messages, so the whole conversation —
  * typed, push-to-talk, and hands-free — lives in one saved thread. The wake
  * button in the input row toggles the hands-free listener without leaving the
  * page.
+ *
+ * Launching with [EXTRA_AUTO_LISTEN] (or via the system assist gesture) starts
+ * dictation immediately — the power-button assistant flow lands here.
  */
 class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
+
+    companion object {
+        const val EXTRA_AUTO_LISTEN = "auto_listen"
+    }
 
     private enum class State { IDLE, RECORDING, TRANSCRIBING, WAITING }
 
@@ -114,11 +120,33 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
         scrollEnd()
         ChatFeed.listener = feedListener
 
-        findViewById<ImageButton>(R.id.backBtn).setOnClickListener { finish() }
+        findViewById<ImageButton>(R.id.settingsBtn).setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
+        }
         findViewById<ImageButton>(R.id.newChatBtn).setOnClickListener { newConversation() }
         micBtn.setOnClickListener { onMicTap() }
         sendBtn.setOnClickListener { onSendTap() }
         wakeBtn.setOnClickListener { setWakeEnabled(!WakeWordService.running) }
+
+        handleIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleIntent(intent)
+    }
+
+    /** Assist gesture / EXTRA_AUTO_LISTEN → jump straight into dictation. */
+    private fun handleIntent(i: Intent?) {
+        val wantsListen = i != null &&
+            (i.getBooleanExtra(EXTRA_AUTO_LISTEN, false) || i.action == Intent.ACTION_ASSIST)
+        if (!wantsListen) return
+        if (!hasMicPermission()) {
+            pendingDictate = true
+            requestPerms()
+        } else {
+            main.post { if (state == State.IDLE) startDictation() }
+        }
     }
 
     override fun onStart() {

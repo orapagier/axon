@@ -6,16 +6,20 @@ import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.TimeUnit
 
 /**
  * Blocking HTTP client for the Axon backend (call from worker threads).
- * Speaks the same three endpoints the dashboard uses:
+ * Speaks the same endpoints the dashboard uses:
  *   GET  /api/health                — connectivity probe
  *   POST /api/audio/transcribe      — multipart clip -> {ok, text}
  *   POST /api/audio/speech          — {text} -> audio bytes (any format MediaPlayer handles)
+ *   GET  /api/settings              — runtime settings rows (Settings page reads the tts/stt groups)
+ *   PUT  /api/settings/{key}        — write one setting value
+ *   POST /api/audio/models          — model catalogue for the stt/tts model pickers
  */
 class AxonClient(private val prefs: Prefs) {
 
@@ -52,6 +56,52 @@ class AxonClient(private val prefs: Prefs) {
             if (json.optBoolean("ok")) return json.optString("text", "").trim()
             throw RuntimeException(json.optString("error", "transcribe failed (${res.code})"))
         }
+    }
+
+    /** All runtime settings rows: [{key, value, value_type, description, category}, …].
+     *  Throws with a readable message on failure. */
+    fun settings(): JSONArray {
+        http.newCall(request("/api/settings").build()).execute().use { res ->
+            val text = res.body?.string() ?: ""
+            val json = runCatching { JSONObject(text) }.getOrNull()
+                ?: throw RuntimeException("settings fetch failed (${res.code})")
+            return json.optJSONArray("settings")
+                ?: throw RuntimeException(json.optString("error", "settings fetch failed (${res.code})"))
+        }
+    }
+
+    /** Write one setting. True on {ok:true} from the server. */
+    fun updateSetting(key: String, value: String): Boolean = try {
+        val body = JSONObject().put("value", value).toString()
+            .toRequestBody("application/json".toMediaType())
+        http.newCall(request("/api/settings/$key").put(body).build()).execute().use { res ->
+            val text = res.body?.string() ?: ""
+            res.isSuccessful && (runCatching { JSONObject(text) }.getOrNull()
+                ?.optBoolean("ok") == true)
+        }
+    } catch (_: Exception) {
+        false
+    }
+
+    /** Model ids listable at [baseUrl] for [kind] ("stt"|"tts") — the same
+     *  feed as the dashboard's model dropdowns. Empty list = nothing listable
+     *  (the field stays free text). */
+    fun audioModels(kind: String, baseUrl: String, apiKey: String): List<String> = try {
+        val body = JSONObject()
+            .put("kind", kind)
+            .put("base_url", baseUrl)
+            .put("api_key", apiKey)
+            .toString()
+            .toRequestBody("application/json".toMediaType())
+        http.newCall(request("/api/audio/models").post(body).build()).execute().use { res ->
+            val json = runCatching { JSONObject(res.body?.string() ?: "") }.getOrNull()
+            val models = json?.optJSONArray("models") ?: JSONArray()
+            (0 until models.length()).mapNotNull { i ->
+                models.optJSONObject(i)?.optString("id")?.takeIf { it.isNotBlank() }
+            }
+        }
+    } catch (_: Exception) {
+        emptyList()
     }
 
     /** Synthesize speech into [out]. False means "no server TTS" — the caller

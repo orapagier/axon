@@ -17,9 +17,6 @@ class TranscriptAdapter : RecyclerView.Adapter<TranscriptAdapter.VH>() {
 
     private val items = mutableListOf<Msg>()
 
-    val lastRole: String? get() = items.lastOrNull()?.role
-    val lastText: String get() = items.lastOrNull()?.text ?: ""
-
     /** Index of the most recently added message — pin a streaming bubble to
      *  this instead of "the last item", which can shift under it when the
      *  wake service inserts an exchange mid-stream. */
@@ -42,18 +39,6 @@ class TranscriptAdapter : RecyclerView.Adapter<TranscriptAdapter.VH>() {
     fun add(role: String, text: String) {
         items.add(Msg(role, text))
         notifyItemInserted(items.size - 1)
-    }
-
-    fun appendToLast(text: String) {
-        if (items.isEmpty()) return
-        items.last().text += text
-        notifyItemChanged(items.size - 1)
-    }
-
-    fun setLast(text: String) {
-        if (items.isEmpty()) return
-        items.last().text = text
-        notifyItemChanged(items.size - 1)
     }
 
     fun clear() {

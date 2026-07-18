@@ -17,7 +17,7 @@
         android:theme="@style/Theme.AxonVoice">
 
         <activity
-            android:name=".ui.MainActivity"
+            android:name=".ui.ChatActivity"
             android:exported="true"
             android:launchMode="singleTask"
             android:showWhenLocked="true"
@@ -31,10 +31,6 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
-
-        <activity
-            android:name=".ui.ChatActivity"
-            android:exported="false" />
 
         <activity
             android:name=".ui.SettingsActivity"

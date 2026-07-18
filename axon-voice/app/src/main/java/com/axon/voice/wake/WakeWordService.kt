@@ -26,7 +26,7 @@ import com.axon.voice.audio.TtsPlayer
 import com.axon.voice.audio.VoicePrompts
 import com.axon.voice.audio.WavRecorder
 import com.axon.voice.ui.ChatFeed
-import com.axon.voice.ui.MainActivity
+import com.axon.voice.ui.ChatActivity
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -557,7 +557,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
     private fun notif(text: String): Notification {
         val open = PendingIntent.getActivity(
             this, 0,
-            Intent(this, MainActivity::class.java),
+            Intent(this, ChatActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE
         )
         val stop = PendingIntent.getService(

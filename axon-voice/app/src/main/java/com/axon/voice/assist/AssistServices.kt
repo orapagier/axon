@@ -8,12 +8,12 @@ import android.service.voice.VoiceInteractionSession
 import android.service.voice.VoiceInteractionSessionService
 import android.speech.RecognitionService
 import android.speech.SpeechRecognizer
-import com.axon.voice.ui.MainActivity
+import com.axon.voice.ui.ChatActivity
 
 /**
  * The "Siri slot": once the user picks Axon under Settings > Default apps >
  * Digital assistant app, the power-button / assist gesture shows a session,
- * which we immediately trade for the voice screen in auto-listen mode.
+ * which we immediately trade for the chat screen in auto-listen mode.
  */
 class AxonAssistService : VoiceInteractionService()
 
@@ -24,13 +24,13 @@ class AxonAssistSessionService : VoiceInteractionSessionService() {
 class AxonAssistSession(context: Context) : VoiceInteractionSession(context) {
     override fun onShow(args: Bundle?, showFlags: Int) {
         super.onShow(args, showFlags)
-        val i = Intent(context, MainActivity::class.java)
+        val i = Intent(context, ChatActivity::class.java)
             .addFlags(
                 Intent.FLAG_ACTIVITY_NEW_TASK or
                     Intent.FLAG_ACTIVITY_CLEAR_TOP or
                     Intent.FLAG_ACTIVITY_SINGLE_TOP
             )
-            .putExtra(MainActivity.EXTRA_AUTO_LISTEN, true)
+            .putExtra(ChatActivity.EXTRA_AUTO_LISTEN, true)
         context.startActivity(i)
         finish()
     }
