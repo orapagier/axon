@@ -1,0 +1,59 @@
+package com.axon.voice.ui
+
+import android.view.Gravity
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import android.widget.LinearLayout
+import android.widget.TextView
+import androidx.core.content.ContextCompat
+import androidx.recyclerview.widget.RecyclerView
+import com.axon.voice.R
+
+class TranscriptAdapter : RecyclerView.Adapter<TranscriptAdapter.VH>() {
+
+    data class Msg(val role: String, var text: String)
+
+    private val items = mutableListOf<Msg>()
+
+    val lastRole: String? get() = items.lastOrNull()?.role
+    val lastText: String get() = items.lastOrNull()?.text ?: ""
+
+    fun add(role: String, text: String) {
+        items.add(Msg(role, text))
+        notifyItemInserted(items.size - 1)
+    }
+
+    fun appendToLast(text: String) {
+        if (items.isEmpty()) return
+        items.last().text += text
+        notifyItemChanged(items.size - 1)
+    }
+
+    fun setLast(text: String) {
+        if (items.isEmpty()) return
+        items.last().text = text
+        notifyItemChanged(items.size - 1)
+    }
+
+    class VH(v: View) : RecyclerView.ViewHolder(v) {
+        val row: LinearLayout = v.findViewById(R.id.row)
+        val msg: TextView = v.findViewById(R.id.msg)
+    }
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH =
+        VH(LayoutInflater.from(parent.context).inflate(R.layout.item_transcript, parent, false))
+
+    override fun getItemCount(): Int = items.size
+
+    override fun onBindViewHolder(holder: VH, position: Int) {
+        val item = items[position]
+        val ctx = holder.itemView.context
+        holder.msg.text = item.text
+        holder.row.gravity = if (item.role == "user") Gravity.END else Gravity.START
+        val bubbleColor = if (item.role == "user") R.color.user_bubble else R.color.surface
+        holder.msg.background.mutate().setTint(ContextCompat.getColor(ctx, bubbleColor))
+        val textColor = if (item.role == "error") R.color.error else R.color.text
+        holder.msg.setTextColor(ContextCompat.getColor(ctx, textColor))
+    }
+}

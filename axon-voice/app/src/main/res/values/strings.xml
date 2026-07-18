@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Axon</string>
+    <string name="status_idle">Tap the orb and speak</string>
+    <string name="status_recording">Listening…</string>
+    <string name="status_thinking">Thinking…</string>
+    <string name="status_speaking">Speaking…</string>
+    <string name="status_offline">Not connected — check Settings</string>
+    <string name="wake_toggle">“Hey Axon” always listening</string>
+    <string name="settings_title">Settings</string>
+    <string name="server_url_hint">Server URL (https://axon.example.com)</string>
+    <string name="master_key_hint">Master key</string>
+    <string name="save">Save</string>
+    <string name="test_connection">Test connection</string>
+    <string name="notif_channel_wake">Axon voice</string>
+    <string name="notif_listening">Listening for “Hey Axon”</string>
+</resources>

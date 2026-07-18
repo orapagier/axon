@@ -1,0 +1,20 @@
+[package]
+name = "rustpotter-jni"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Standalone crate — keep it out of the repo's root cargo workspace.
+[workspace]
+
+[lib]
+name = "rustpotter_jni"
+crate-type = ["cdylib"]
+
+[dependencies]
+rustpotter = "3.0"
+jni = "0.21"
+
+[profile.release]
+lto = true
+strip = true
