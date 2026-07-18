@@ -42,9 +42,10 @@ const MAX_TICKS = 120
 
 // Follow-up capture (reopened mic after a spoken reply, no wake word said)
 // deliberately listens with a raised speech bar: onset must be ~2x the normal
-// RMS and arrive within 3s, so room-level chatter from people nearby cancels
-// the window instead of being transcribed and sent as a command.
-export const FOLLOWUP_CAPTURE = { speechRms: 0.025, noSpeechTicks: 30 }
+// RMS and arrive within 5s ("Anything else?" gives that long to answer), so
+// room-level chatter from people nearby cancels the window instead of being
+// transcribed and sent as a command.
+export const FOLLOWUP_CAPTURE = { speechRms: 0.025, noSpeechTicks: 50 }
 
 export const wakeWordSupported =
   typeof navigator !== 'undefined' &&

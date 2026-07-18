@@ -7,6 +7,7 @@ import { addNotification } from '../lib/notifications.js'
 import { confirmDialog } from '../lib/confirm.js'
 import { renderMarkdown } from '../lib/markdown.js'
 import { createWakeWord, wakeWordSupported, FOLLOWUP_CAPTURE } from '../lib/wakeword.js'
+import { prefetchPrompts, playPrompt, randomWakeAck, FOLLOWUP_PROMPT } from '../lib/voiceprompts.js'
 import SearchInput from '../components/SearchInput.vue'
 
 // Each message: { role:'user'|'agent'|'trace', text, meta?, trace:[], thinking?:boolean }
@@ -594,7 +595,8 @@ async function transcribe(blob) {
 // ── Wake word ("Hey Axon", rustpotter WASM) ─────────────────────────────────
 // On-device keyword spotting (see lib/wakeword.js) — no Web Speech API. While
 // enabled, one mic stream stays open (steady OS indicator, audio never leaves
-// the device). On detection: chime, record the command through the normal
+// the device). On detection: a spoken ack ("Yes?" — see lib/voiceprompts.js,
+// chime only when nothing can speak), record the command through the normal
 // push-to-talk pipeline (auto-stopped by the silence watcher), transcribe
 // server-side, auto-send, and the reply is read aloud like any voice send.
 // When that spoken reply finishes naturally, follow-up mode briefly reopens
@@ -609,9 +611,15 @@ function onWakeDetected() {
   // disqualifies a trigger — the speaking guard keeps the assistant from
   // waking itself off its own voice coming out of the speakers.
   if (disabled.value || recState.value !== 'idle' || speakingIdx.value >= 0) return
-  wake.chime()
+  // The recorder starts before the ack plays so words spoken over "Yes?" are
+  // captured; the silence watcher waits for the ack to finish so the speaker
+  // output can't register as command speech (echo cancellation catches most of
+  // it, but a spoken phrase is longer and louder than the old chime was).
   startRecording(wake.stream)
-  wake.watchSilence(() => stopRecording())
+  playPrompt(randomWakeAck()).then((spoke) => {
+    if (!spoke) wake.chime()
+    if (recState.value === 'recording') wake.watchSilence(() => stopRecording())
+  })
 }
 
 async function startWake() {
@@ -627,6 +635,9 @@ async function startWake() {
   wakeState.value = 'starting'
   try {
     await wake.start()
+    // Warm the spoken-ack cache so "Yes?" plays the instant a wake is heard
+    // (fire-and-forget; misses fall back to the browser voice, then the chime).
+    prefetchPrompts()
   } catch (err) {
     wakeState.value = 'off'
     wakeEnabled.value = false
@@ -662,22 +673,37 @@ function toggleWake() {
 }
 
 // ── Follow-up mode ───────────────────────────────────────────────────────────
-// After a wake-triggered reply finishes reading aloud, reopen the mic briefly
-// so the next command needs no "Hey Axon". Two guards keep bystanders out of
-// the conversation: FOLLOWUP_CAPTURE raises the speech bar to ~2x normal (a
-// voice close to the mic passes, people talking across the room don't) and
-// shortens the wait to ~3s; and a window that heard no qualifying speech is
-// cancelled outright — nothing is transcribed, nothing is sent. The flag is
-// armed only for auto-spoken voice replies (never manual read-aloud clicks)
-// and cleared by stopSpeaking(), so a user stop also declines the follow-up.
+// After a wake-triggered reply finishes reading aloud, "Anything else?" plays
+// and the mic reopens so the next command needs no "Hey Axon". Two guards keep
+// bystanders out of the conversation: FOLLOWUP_CAPTURE raises the speech bar
+// to ~2x normal (a voice close to the mic passes, people talking across the
+// room don't) and allows ~5s to start answering; and a window that heard no
+// qualifying speech is cancelled outright — nothing is transcribed, nothing is
+// sent. The flag is armed only for auto-spoken voice replies (never manual
+// read-aloud clicks) and cleared by stopSpeaking(), so a user stop also
+// declines the follow-up.
 let followupEligible = false
+
+function followupClear() {
+  return (
+    wakeEnabled.value &&
+    wake?.running &&
+    !disabled.value &&
+    recState.value === 'idle' &&
+    speakingIdx.value < 0 &&
+    !document.hidden
+  )
+}
 
 function startFollowupCapture() {
   // Small gap after playback so the speaker tail can't register as speech.
-  setTimeout(() => {
-    if (!wakeEnabled.value || !wake?.running) return
-    if (disabled.value || recState.value !== 'idle' || speakingIdx.value >= 0 || document.hidden) return
-    wake.chime(true)
+  setTimeout(async () => {
+    if (!followupClear()) return
+    // The mic opens only after "Anything else?" finishes, so the prompt can't
+    // land in the capture; the soft chime covers a prompt nothing could speak.
+    const spoke = await playPrompt(FOLLOWUP_PROMPT)
+    if (!followupClear()) return // state may have shifted during playback
+    if (!spoke) wake.chime(true)
     startRecording(wake.stream)
     wake.watchSilence((hadSpeech) => stopRecording(!hadSpeech), FOLLOWUP_CAPTURE)
   }, 250)
