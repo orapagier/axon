@@ -17,12 +17,17 @@
     positioning, etc.) render as inline style attributes — a real requirement,
     not laziness, and a far smaller XSS vector than inline script. connect-src
     covers same-origin fetch/XHR plus the dashboard's WebSocket chat (ws:/wss:).
+    media-src adds blob: on top of 'self' — spoken replies (ChatPage
+    toggleSpeak) play synthesized audio from a blob: URL built with
+    URL.createObjectURL, which default-src's 'self' does not cover; without
+    this the <audio> element silently fails and every reply falls back to the
+    browser's speechSynthesis regardless of tts.* config.
     frame-ancestors is deliberately omitted: browsers ignore it when set via
     <meta> (silently, or as a console warning) — it only takes effect as a
     real HTTP response header, which a reverse proxy (see deploy/Caddyfile.example)
     would need to add.
   -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self';" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self';" />
   <title>Axon Agent</title>
   <link rel="icon" type="image/png" href="/favicon.png" />
   <!--

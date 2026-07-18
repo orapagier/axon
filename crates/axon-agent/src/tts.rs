@@ -1,6 +1,6 @@
-//! Shared text-to-speech: one OpenAI-compatible `/audio/speech` client powering
-//! spoken agent replies on the dashboard Chat page. Configured via the `tts.*`
-//! settings (mirroring the `stt.*` voice-input group):
+//! Shared text-to-speech powering spoken agent replies on the dashboard Chat
+//! page. Configured via the `tts.*` settings (mirroring the `stt.*`
+//! voice-input group):
 //!   * Groq   — https://api.groq.com/openai/v1 + playai-tts + voice Fritz-PlayAI
 //!   * OpenAI — https://api.openai.com/v1 + gpt-4o-mini-tts + voice alloy
 //!   * Gemini — https://generativelanguage.googleapis.com/v1beta/openai +
@@ -9,10 +9,16 @@
 //!     base URLs are detected and served through the native
 //!     `models/{model}:generateContent` speech API instead, with the returned
 //!     PCM wrapped in a WAV header for the browser.
+//!   * Piper  — `tts.base_url = "piper"` selects a local, offline engine
+//!     instead of an HTTP host: `tts.model` names a voice (e.g.
+//!     `en_US-lessac-medium`) installed under [`piper_models_dir`], synthesis
+//!     runs as a subprocess of the `piper` binary at [`piper_bin_path`]. No
+//!     API key, no network round-trip, zero marginal cost.
 //!
 //! Also owns the TTS model listing that feeds the Settings page `tts.model`
-//! dropdown: `GET {base_url}/models` filtered down to speech-synthesis ids,
-//! cached in `provider_model_cache` under the provider key `"tts"`.
+//! dropdown: `GET {base_url}/models` filtered down to speech-synthesis ids
+//! for HTTP hosts, or the installed `.onnx` voices for Piper. Cached in
+//! `provider_model_cache` under the provider key `"tts"`.
 //!
 //! TTS is strictly best-effort: every caller falls back to its non-audio
 //! behavior (the browser's speechSynthesis, or plain text) when this module
@@ -22,6 +28,9 @@ use crate::config::RuntimeSettings;
 use crate::providers::ModelChoice;
 use anyhow::Context;
 use once_cell::sync::Lazy;
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use tokio::io::AsyncWriteExt;
 
 /// Hosted speech endpoints cap the `input` field (OpenAI: 4096 chars). Long
 /// agent replies are truncated to this many characters rather than erroring —
@@ -111,15 +120,20 @@ fn gemini_native_root(base_url: &str) -> Option<String> {
     }
 }
 
-/// Synthesize speech, picking the wire format from the base URL: Gemini hosts
-/// go through the native `generateContent` speech API, everything else POSTs
-/// the OpenAI-shaped `{base_url}/audio/speech`. For the OpenAI path `voice` is
-/// omitted when blank so hosts that require one answer with their own explicit
-/// 400 (which the caller treats like any other failure: log and fall back).
+/// Synthesize speech, picking the engine from the base URL: `"piper"` runs the
+/// local offline binary, Gemini hosts go through the native `generateContent`
+/// speech API, everything else POSTs the OpenAI-shaped `{base_url}/audio/speech`.
+/// For the OpenAI path `voice` is omitted when blank so hosts that require one
+/// answer with their own explicit 400 (which the caller treats like any other
+/// failure: log and fall back).
 pub async fn speak(cfg: &TtsConfig, text: &str) -> anyhow::Result<SpeechAudio> {
     let input = clamp_input(text.trim());
     if input.is_empty() {
         anyhow::bail!("no text to speak");
+    }
+
+    if is_piper(&cfg.base_url) {
+        return speak_piper(cfg, &input).await;
     }
 
     if let Some(root) = gemini_native_root(&cfg.base_url) {
@@ -207,6 +221,113 @@ async fn speak_gemini(cfg: &TtsConfig, root: &str, input: &str) -> anyhow::Resul
         content_type: "audio/wav",
         bytes: wav_from_pcm16(&pcm, rate, 1),
     })
+}
+
+/// `tts.base_url` value that selects the local Piper engine instead of an
+/// HTTP host.
+const PIPER_SENTINEL: &str = "piper";
+
+fn is_piper(base_url: &str) -> bool {
+    base_url.trim().eq_ignore_ascii_case(PIPER_SENTINEL)
+}
+
+/// Where the Piper binary lives — the release archive from
+/// https://github.com/rhasspy/piper/releases extracted as-is (the exe needs
+/// its sibling `.dll`/`.so` files and `espeak-ng-data/` alongside it, so this
+/// directory holds the whole extracted tree, not just the binary).
+fn piper_bin_path() -> PathBuf {
+    let exe = if cfg!(windows) { "piper.exe" } else { "piper" };
+    axon_core::data_dir().join("piper").join(exe)
+}
+
+/// Where Piper voice models (`<id>.onnx` + `<id>.onnx.json`) live.
+fn piper_models_dir() -> PathBuf {
+    axon_core::data_dir().join("piper").join("models")
+}
+
+/// Synthesize via a local Piper subprocess: `piper -m <voice>.onnx -f - -q`,
+/// text piped to stdin, a complete WAV read back from stdout. Stdin is
+/// written from a separate task so a long reply can't deadlock against Piper
+/// filling its stdout pipe before we finish writing.
+async fn speak_piper(cfg: &TtsConfig, input: &str) -> anyhow::Result<SpeechAudio> {
+    let bin = piper_bin_path();
+    if !bin.is_file() {
+        anyhow::bail!(
+            "Piper binary not found at {} — download it from https://github.com/rhasspy/piper/releases and extract it there",
+            bin.display()
+        );
+    }
+    let voice = cfg.model.trim().trim_end_matches(".onnx");
+    let model_path = piper_models_dir().join(format!("{voice}.onnx"));
+    if !model_path.is_file() {
+        anyhow::bail!(
+            "Piper voice '{}' not found at {} — download the .onnx + .onnx.json from https://huggingface.co/rhasspy/piper-voices into that folder",
+            voice,
+            model_path.display()
+        );
+    }
+
+    let mut child = tokio::process::Command::new(&bin)
+        .arg("-m")
+        .arg(&model_path)
+        .arg("-f")
+        .arg("-")
+        .arg("-q")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("spawn piper at {}", bin.display()))?;
+
+    let mut stdin = child.stdin.take().expect("piped stdin");
+    let text = input.to_string();
+    let writer = tokio::spawn(async move {
+        let _ = stdin.write_all(text.as_bytes()).await;
+        // Dropping closes the pipe, signalling EOF so piper starts synthesis.
+        drop(stdin);
+    });
+
+    let output = child
+        .wait_with_output()
+        .await
+        .context("run piper synthesis")?;
+    let _ = writer.await;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("piper exited with {}: {}", output.status, stderr.trim());
+    }
+    Ok(SpeechAudio::Buffered {
+        content_type: "audio/wav",
+        bytes: output.stdout,
+    })
+}
+
+/// Voices installed under `dir`: every `<id>.onnx` with a matching
+/// `<id>.onnx.json` sidecar, alphabetical. Split from [`piper_models_dir`]'s
+/// caller so it's testable against a temp directory.
+fn piper_voices_in(dir: &Path) -> Vec<ModelChoice> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut ids: Vec<String> = entries
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let path = e.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("onnx") {
+                return None;
+            }
+            let sidecar = PathBuf::from(format!("{}.json", path.display()));
+            if !sidecar.is_file() {
+                return None;
+            }
+            path.file_stem()?.to_str().map(str::to_string)
+        })
+        .collect();
+    ids.sort();
+    ids.into_iter()
+        .map(|id| ModelChoice { id, label: None })
+        .collect()
 }
 
 /// First inline audio blob in a `generateContent` response:
@@ -312,6 +433,9 @@ fn filter_tts_models(all: Vec<ModelChoice>) -> Vec<ModelChoice> {
 /// TTS-looking ids. Used by the Settings dropdown's live fallback and the
 /// daily prefetch sweep.
 pub async fn list_tts_models(base_url: &str, api_key: &str) -> anyhow::Result<Vec<ModelChoice>> {
+    if is_piper(base_url) {
+        return Ok(piper_voices_in(&piper_models_dir()));
+    }
     // Google's native root serves no OpenAI-shaped catalogue; its compat layer
     // at {root}/openai does, so Gemini listings go through there whichever
     // Google URL the user pasted.
@@ -430,6 +554,48 @@ mod tests {
         assert_eq!(u32::from_le_bytes(wav[28..32].try_into().unwrap()), 48_000);
         assert_eq!(&wav[36..40], b"data");
         assert_eq!(u32::from_le_bytes(wav[40..44].try_into().unwrap()), 480);
+    }
+
+    #[test]
+    fn piper_sentinel_is_case_and_whitespace_insensitive() {
+        assert!(is_piper("piper"));
+        assert!(is_piper("  Piper  "));
+        assert!(is_piper("PIPER"));
+        assert!(!is_piper("https://api.groq.com/openai/v1"));
+        assert!(!is_piper(""));
+    }
+
+    #[test]
+    fn piper_voices_lists_only_onnx_with_json_sidecar() {
+        let dir = std::env::temp_dir().join(format!(
+            "axon-piper-voices-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Complete voice: both files present.
+        std::fs::write(dir.join("en_US-lessac-medium.onnx"), b"fake").unwrap();
+        std::fs::write(dir.join("en_US-lessac-medium.onnx.json"), b"{}").unwrap();
+        // Onnx with no sidecar config — download interrupted, must be excluded.
+        std::fs::write(dir.join("en_US-amy-medium.onnx"), b"fake").unwrap();
+        // Unrelated file — must be ignored.
+        std::fs::write(dir.join("README.txt"), b"notes").unwrap();
+
+        let voices = piper_voices_in(&dir);
+        let ids: Vec<&str> = voices.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(ids, vec!["en_US-lessac-medium"]);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn piper_voices_empty_when_dir_missing() {
+        let dir = std::env::temp_dir().join("axon-piper-voices-does-not-exist");
+        assert!(piper_voices_in(&dir).is_empty());
     }
 
     #[test]
