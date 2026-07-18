@@ -4,6 +4,8 @@ import android.annotation.SuppressLint
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.NoiseSuppressor
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -16,12 +18,18 @@ import kotlin.math.sqrt
  * give up if nothing is said within [noSpeechTicks]*100ms, hard cap at 12s.
  * The follow-up window raises [speechRms] to ~2x so room-level chatter from
  * bystanders cancels the window instead of being sent as a command.
+ *
+ * [minSpeechTicks] is an Android-only addition: unlike the browser capture
+ * (which always has echoCancellation on), the phone mic can pick up the tail
+ * of our own TTS or a click, so the follow-up window requires that many
+ * consecutive loud ticks before counting it as speech.
  */
 class SilenceWatcher(
     private val speechRms: Double = RMS_SPEECH,
     private val quietTicks: Int = QUIET_TICKS,
     private val noSpeechTicks: Int = NO_SPEECH_TICKS,
     private val maxTicks: Int = MAX_TICKS,
+    private val minSpeechTicks: Int = 1,
 ) {
     companion object {
         const val RMS_SPEECH = 0.012
@@ -29,25 +37,54 @@ class SilenceWatcher(
         const val NO_SPEECH_TICKS = 50
         const val MAX_TICKS = 120
         const val FOLLOWUP_RMS = 0.025
+        const val FOLLOWUP_MIN_SPEECH_TICKS = 3
     }
 
     var hadSpeech = false
         private set
     private var quiet = 0
     private var ticks = 0
+    private var loud = 0
 
     /** Feed one ~100ms RMS tick; returns true when the capture should stop. */
     fun tick(rms: Double): Boolean {
         ticks++
         if (rms > speechRms) {
-            hadSpeech = true
+            loud++
+            if (loud >= minSpeechTicks) hadSpeech = true
             quiet = 0
-        } else if (hadSpeech) {
-            quiet++
+        } else {
+            loud = 0
+            if (hadSpeech) quiet++
         }
         return (hadSpeech && quiet >= quietTicks) ||
             (!hadSpeech && ticks >= noSpeechTicks) ||
             ticks >= maxTicks
+    }
+}
+
+/**
+ * Best-effort hardware echo cancellation + noise suppression on a capture
+ * session — the platform stand-in for the `echoCancellation: true` constraint
+ * the dashboard's browser capture always has, so the phone's own TTS output
+ * is less likely to land in a capture. Not every device implements the
+ * effects; callers must not rely on them alone.
+ */
+class MicEffects(sessionId: Int) {
+    private val aec: AcousticEchoCanceler? = if (AcousticEchoCanceler.isAvailable()) {
+        runCatching { AcousticEchoCanceler.create(sessionId)?.apply { enabled = true } }.getOrNull()
+    } else {
+        null
+    }
+    private val ns: NoiseSuppressor? = if (NoiseSuppressor.isAvailable()) {
+        runCatching { NoiseSuppressor.create(sessionId)?.apply { enabled = true } }.getOrNull()
+    } else {
+        null
+    }
+
+    fun release() {
+        runCatching { aec?.release() }
+        runCatching { ns?.release() }
     }
 }
 
@@ -83,6 +120,7 @@ class WavRecorder {
     }
 
     private var record: AudioRecord? = null
+    private var effects: MicEffects? = null
     private var worker: Thread? = null
 
     @Volatile
@@ -110,6 +148,7 @@ class WavRecorder {
             throw IllegalStateException("microphone unavailable")
         }
         record = rec
+        effects = MicEffects(rec.audioSessionId)
         pcm.reset()
         running = true
         rec.startRecording()
@@ -140,6 +179,8 @@ class WavRecorder {
             it.release()
         }
         record = null
+        effects?.release()
+        effects = null
         val raw = synchronized(pcm) { pcm.toByteArray() }
         return wavBytes(raw)
     }

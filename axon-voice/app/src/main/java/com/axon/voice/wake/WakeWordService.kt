@@ -19,6 +19,7 @@ import com.axon.voice.Prefs
 import com.axon.voice.R
 import com.axon.voice.api.AxonClient
 import com.axon.voice.api.ChatSocket
+import com.axon.voice.audio.MicEffects
 import com.axon.voice.audio.Sound
 import com.axon.voice.audio.SilenceWatcher
 import com.axon.voice.audio.TtsPlayer
@@ -48,6 +49,12 @@ class WakeWordService : Service(), ChatSocket.Listener {
         private const val CHANNEL = "axon_voice"
         private const val NOTIF_ID = 1
         const val ACTION_STOP = "com.axon.voice.STOP_WAKE"
+
+        /** MediaPlayer's completion callback can fire a few hundred ms before
+         *  the audio sink actually finishes playing out (worse on Bluetooth).
+         *  Waiting this long before the pre-capture drain keeps our own ack /
+         *  reply tail out of the follow-up capture. */
+        private const val AUDIO_SETTLE_MS = 250L
 
         @Volatile
         var running = false
@@ -79,6 +86,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
 
     private var ackYes: File? = null
     private var ackMore: File? = null
+    private var effects: MicEffects? = null
 
     // One reply in flight at a time: sendAndAwait parks on the latch, the WS
     // listener below fills the slot.
@@ -160,6 +168,8 @@ class WakeWordService : Service(), ChatSocket.Listener {
                 if (micHold) {
                     record?.release()
                     record = null
+                    effects?.release()
+                    effects = null
                     Thread.sleep(100)
                     continue
                 }
@@ -181,6 +191,8 @@ class WakeWordService : Service(), ChatSocket.Listener {
             }
         } finally {
             record?.release()
+            effects?.release()
+            effects = null
             detector.close()
         }
     }
@@ -205,6 +217,8 @@ class WakeWordService : Service(), ChatSocket.Listener {
             rec.release()
             return null
         }
+        effects?.release()
+        effects = MicEffects(rec.audioSessionId)
         rec.startRecording()
         return rec
     }
@@ -233,14 +247,24 @@ class WakeWordService : Service(), ChatSocket.Listener {
 
     private fun interact(rec: AudioRecord) {
         var first = true
+        var lastReply = ""
         while (alive && !micHold) {
             notify(getString(R.string.status_recording))
             playAckBlocking(if (first) ackYes else ackMore, soft = !first)
+            // Let the ack (and any reply tail still in the output pipeline)
+            // finish coming out of the speaker before the drain, so it can't
+            // leak into the capture and be transcribed as a command. Only in
+            // the follow-up window — after a wake the user may already be
+            // mid-command and every drained ms is their speech.
+            if (!first) Thread.sleep(AUDIO_SETTLE_MS)
             drain(rec)
             val watcher = if (first) {
                 SilenceWatcher()
             } else {
-                SilenceWatcher(speechRms = SilenceWatcher.FOLLOWUP_RMS)
+                SilenceWatcher(
+                    speechRms = SilenceWatcher.FOLLOWUP_RMS,
+                    minSpeechTicks = SilenceWatcher.FOLLOWUP_MIN_SPEECH_TICKS,
+                )
             }
             val wav = capture(rec, watcher)
             if (!watcher.hadSpeech) break
@@ -248,14 +272,36 @@ class WakeWordService : Service(), ChatSocket.Listener {
             notify(getString(R.string.status_thinking))
             val text = runCatching { client.transcribe(wav) }.getOrNull()
             if (text.isNullOrBlank()) break
+            // A capture that is just our own voice bounced back (ack phrase or
+            // a fragment of the reply we just spoke) must not become the next
+            // command — with session history the agent would happily re-answer
+            // the previous question in new words, looping the reply.
+            if (isSelfEcho(text, lastReply, if (first) "yes" else "anything else")) break
             val reply = sendAndAwait(text) ?: break
             if (reply.isNotBlank()) {
                 notify(getString(R.string.status_speaking))
                 speakBlocking(reply)
+                lastReply = reply
             }
             first = false // reopen as the follow-up window, raised speech bar
         }
         notify(getString(R.string.notif_listening))
+    }
+
+    /** True when [text] is (a fragment of) what the assistant itself just said
+     *  through the speaker: the ack phrase or the reply. Word-subset matching
+     *  because STT of an echo tail returns partial, punctuation-free text. */
+    private fun isSelfEcho(text: String, lastReply: String, ackWords: String): Boolean {
+        fun norm(s: String) = s.lowercase()
+            .filter { it.isLetterOrDigit() || it.isWhitespace() }
+            .split(Regex("\\s+"))
+            .filter { it.isNotEmpty() }
+
+        val words = norm(text)
+        if (words.isEmpty()) return true
+        val ref = norm("$lastReply $ackWords")
+        if (ref.joinToString(" ").contains(words.joinToString(" "))) return true
+        return words.size <= 12 && ref.containsAll(words)
     }
 
     private fun capture(rec: AudioRecord, watcher: SilenceWatcher): ByteArray {
@@ -347,6 +393,8 @@ class WakeWordService : Service(), ChatSocket.Listener {
             }
             "error" -> synchronized(replyLock) {
                 replyError = ev.optString("message", "something went wrong")
+                replyLatch?.countDown()
+                replyLatch = null
             }
         }
     }
