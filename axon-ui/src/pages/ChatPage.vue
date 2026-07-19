@@ -7,7 +7,7 @@ import { addNotification } from '../lib/notifications.js'
 import { confirmDialog } from '../lib/confirm.js'
 import { renderMarkdown } from '../lib/markdown.js'
 import { createWakeWord, wakeWordSupported, FOLLOWUP_CAPTURE } from '../lib/wakeword.js'
-import { prefetchPrompts, playPrompt, randomWakeAck, FOLLOWUP_PROMPT } from '../lib/voiceprompts.js'
+import { prefetchPrompts, playPrompt, randomWakeAck, FOLLOWUP_PROMPT, WAKE_ACKS } from '../lib/voiceprompts.js'
 import SearchInput from '../components/SearchInput.vue'
 
 // Each message: { role:'user'|'agent'|'trace', text, meta?, trace:[], thinking?:boolean }
@@ -499,6 +499,39 @@ let pendingVoiceText = null // transcript waiting out a streaming run
 // do. One run at a time (disabled gate), so a single flag is enough.
 let speakReplyOnDone = false
 
+// Browser echoCancellation is unreliable on the always-open wake mic, so the
+// spoken ack ("Yes?") and the read-aloud reply can still bleed into the
+// command capture and be transcribed — once sent, the agent would answer its
+// own voice (e.g. a transcribed "yes" → a reply to "yes"). The Android app
+// guards this with isSelfEcho; the web mirrors it as a transcript-level net:
+// a transcript whose every word is among the ack phrases or the last spoken
+// reply is dropped silently, never sent. Real commands ("what day is today")
+// always pass — their words aren't in the reference set.
+const SELF_ECHO_REF = new Set(
+  [...WAKE_ACKS, FOLLOWUP_PROMPT]
+    .join(' ')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+)
+let lastSpokenText = '' // set when a reply starts playing; cleared on stop
+
+function isSelfEcho(text) {
+  const words = String(text || '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+  if (words.length === 0) return true
+  if (words.length > 12) return false
+  if (lastSpokenText) {
+    const replyWords = new Set(lastSpokenText.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean))
+    if (words.every((w) => SELF_ECHO_REF.has(w) || replyWords.has(w))) return true
+  } else {
+    if (words.every((w) => SELF_ECHO_REF.has(w))) return true
+  }
+  return false
+}
+
 // getUserMedia needs a secure context (https/localhost); hide the mic instead
 // of showing a button that can only fail.
 const micSupported =
@@ -590,6 +623,10 @@ async function transcribe(blob) {
       notifyBell(`Voice transcription failed: ${res.error}`, false)
     } else if (!text) {
       toast('No speech detected in the recording.', false)
+    } else if (wakeEnabled.value && isSelfEcho(text)) {
+      // The capture was the assistant's own voice bouncing back (ack phrase or
+      // a fragment of the reply just read aloud) — drop it so it can't be sent
+      // as a command and answered, looping the conversation.
     } else if (disabled.value) {
       // A run is streaming — sending is blocked right now, so queue the
       // transcript; the done/error/stop handlers flush it as its own message.
@@ -597,6 +634,9 @@ async function transcribe(blob) {
     } else {
       sendMessage(text, true)
     }
+    // The self-echo reference only applies to the capture that just ended; once
+    // we've applied the check, the spoken reply is stale for the next capture.
+    lastSpokenText = ''
   } catch {
     notifyBell('Transcription failed — check the Voice Input settings.', false)
   } finally {
@@ -838,6 +878,9 @@ async function toggleSpeak(idx) {
   if (!text) return
   const seq = speakSeq
   speakingIdx.value = idx
+  // Remember the reply we're about to speak so a capture that echoes it back
+  // can be dropped by isSelfEcho() instead of answered.
+  lastSpokenText = text
 
   if (audioSupported) {
     try {
