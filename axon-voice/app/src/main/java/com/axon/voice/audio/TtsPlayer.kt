@@ -50,14 +50,17 @@ class TtsPlayer(ctx: Context) {
      * the first sentence is ready.
      */
     fun playFiller(file: File, onDone: () -> Unit) {
+        // Check and start under one lock: between an unlocked check and the
+        // start, playNextLocked could hand the speaker to the reply, and this
+        // stopPlayback would then cut the reply's first sentence off.
         synchronized(streamLock) {
             if (currentStream?.idle == false) {
                 onDone()
                 return
             }
+            stopPlayback()
+            startFile(file, onDone)
         }
-        stopPlayback()
-        startFile(file, onDone)
     }
 
     private fun startFile(file: File, onDone: () -> Unit) {

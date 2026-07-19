@@ -1,6 +1,7 @@
-// Spoken acknowledgments for the wake word flow: a short "Yes?" when "Hey
-// Axon" is heard and "Anything else?" before the follow-up window, so the
-// assistant answers with a voice instead of only a chime + recording timer.
+// The assistant's own short phrases: a "Yes?" ack when "Hey Axon" is heard,
+// "Anything else?" before the follow-up window, and a thinking filler while a
+// voice run works — so the assistant answers with a voice instead of a chime,
+// a recording timer and silence.
 //
 // Playback must be instant — it gates when the user can start talking — so the
 // phrases are synthesized once through the configured tts.* endpoint (same
@@ -13,6 +14,11 @@ import { postRaw } from './api.js'
 
 export const WAKE_ACKS = ['Yes?', 'Mm-hmm?', "I'm listening."]
 export const FOLLOWUP_PROMPT = 'Anything else?'
+// Spoken while the agent works, so a voice run isn't dead air. Kept identical
+// to THINKING_FILLERS in axon-voice's VoicePrompts.kt.
+export const THINKING_FILLERS = ['Let me check.', 'Working on it.', 'One sec.', 'On it.']
+
+const ALL_PROMPTS = [...WAKE_ACKS, FOLLOWUP_PROMPT, ...THINKING_FILLERS]
 
 const cache = new Map() // phrase -> object URL of the server-TTS audio blob
 const inflight = new Map() // phrase -> Promise<boolean> of a fetch in progress
@@ -25,6 +31,10 @@ const ON_DEMAND_MS = 2000
 
 export function randomWakeAck() {
   return WAKE_ACKS[Math.floor(Math.random() * WAKE_ACKS.length)]
+}
+
+export function randomFiller() {
+  return THINKING_FILLERS[Math.floor(Math.random() * THINKING_FILLERS.length)]
 }
 
 // Resolves true once the phrase is cached. Concurrent callers (the prefetch
@@ -59,25 +69,55 @@ function fetchPhrase(text) {
 // configured yet, server briefly down) retry on the next call rather than
 // looping.
 export function prefetchPrompts() {
-  for (const text of [...WAKE_ACKS, FOLLOWUP_PROMPT]) fetchPhrase(text)
+  for (const text of ALL_PROMPTS) fetchPhrase(text)
 }
 
 let pinnedUtterance = null // Chrome goes silent if the utterance is GC'd
+let activePrompt = null // { stop() } for the phrase currently coming out
+let promptSeq = 0 // bumping this invalidates a playPrompt still getting ready
+
+// Cut off whatever prompt is playing — used when the spoken reply takes over
+// the speaker, so a thinking filler can't overlap it. The pending playPrompt
+// resolves true: audio *was* produced, just cut short, so the caller must not
+// treat it as "nothing could speak" and chime.
+//
+// The sequence bump matters as much as the stop: a prompt cancelled while it
+// is still synthesizing has no audio to silence yet, and without it the fetch
+// would land afterwards and start talking over the reply.
+export function stopPrompt() {
+  promptSeq += 1
+  const p = activePrompt
+  activePrompt = null
+  if (p) p.stop()
+}
 
 function playCached(text) {
   const url = cache.get(text)
   if (!url) return Promise.resolve(false)
   return new Promise((resolve) => {
-    // The watchdog resolves even if the element never fires ended/error
-    // (phrases are 1-2 words; anything past 4s means events were swallowed).
-    const watchdog = setTimeout(() => resolve(true), 4000)
+    const el = new Audio(url)
+    let watchdog = null
     const done = (ok) => {
       clearTimeout(watchdog)
-      resolve(ok)
+      if (activePrompt === handle) activePrompt = null
+      resolve(ok) // later calls are no-ops: the promise is already settled
     }
-    const el = new Audio(url)
+    const handle = {
+      stop() {
+        try {
+          el.pause()
+        } catch {
+          // element already torn down — nothing to silence
+        }
+        done(true)
+      },
+    }
+    // The watchdog resolves even if the element never fires ended/error
+    // (phrases are 1-2 words; anything past 4s means events were swallowed).
+    watchdog = setTimeout(() => done(true), 4000)
     el.onended = () => done(true)
     el.onerror = () => done(false)
+    activePrompt = handle
     el.play().catch(() => done(false)) // autoplay blocked before any gesture
   })
 }
@@ -94,11 +134,19 @@ function playSynthesis(text) {
     const finish = (ok) => {
       clearTimeout(watchdog)
       if (pinnedUtterance === u) pinnedUtterance = null
+      if (activePrompt === handle) activePrompt = null
       resolve(ok)
+    }
+    const handle = {
+      stop() {
+        synth.cancel()
+        finish(true)
+      },
     }
     watchdog = setTimeout(() => finish(true), 4000)
     u.onend = () => finish(true)
     u.onerror = () => finish(false) // e.g. 'not-allowed' before any gesture
+    activePrompt = handle
     synth.speak(u)
     synth.resume() // Chrome: queue can come back from cancel() stuck paused
   })
@@ -106,9 +154,13 @@ function playSynthesis(text) {
 
 // Resolves once the phrase has finished playing (so callers can defer the
 // silence watcher until the speakers are quiet); resolves false when nothing
-// audible could be produced, letting the caller chime instead.
+// audible could be produced, letting the caller chime instead. A stopPrompt()
+// at any point resolves true — cut short still counts as spoken, and a chime
+// on top of the reply is exactly what the stop was avoiding.
 export async function playPrompt(text) {
+  const seq = promptSeq
   if (await playCached(text)) return true
+  if (seq !== promptSeq) return true
   // Cache miss — the prefetch is still in flight, never ran, or failed earlier.
   // Synthesize now so the phrase comes out in the configured tts.* voice
   // instead of the browser's, which sounds nothing like the spoken replies.
@@ -116,6 +168,8 @@ export async function playPrompt(text) {
     fetchPhrase(text),
     new Promise((r) => setTimeout(() => r(false), ON_DEMAND_MS)),
   ])
+  if (seq !== promptSeq) return true // reply took the speaker while we waited
   if (fetched && (await playCached(text))) return true
+  if (seq !== promptSeq) return true
   return playSynthesis(text)
 }

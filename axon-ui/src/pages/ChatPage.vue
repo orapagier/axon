@@ -7,7 +7,15 @@ import { addNotification } from '../lib/notifications.js'
 import { confirmDialog } from '../lib/confirm.js'
 import { renderMarkdown } from '../lib/markdown.js'
 import { createWakeWord, wakeWordSupported, FOLLOWUP_CAPTURE } from '../lib/wakeword.js'
-import { prefetchPrompts, playPrompt, randomWakeAck, FOLLOWUP_PROMPT, WAKE_ACKS } from '../lib/voiceprompts.js'
+import {
+  prefetchPrompts,
+  playPrompt,
+  stopPrompt,
+  randomWakeAck,
+  randomFiller,
+  FOLLOWUP_PROMPT,
+  WAKE_ACKS,
+} from '../lib/voiceprompts.js'
 import SearchInput from '../components/SearchInput.vue'
 
 // Each message: { role:'user'|'agent'|'trace', text, meta?, trace:[], thinking?:boolean }
@@ -332,6 +340,10 @@ function handleWsEvent(ev) {
         const dur = ev.total_duration_ms ? ` | ${ev.total_duration_ms}ms` : ''
         messages.value[agentIdx].meta = `${ev.iterations} iter | ${ev.total_tokens} tokens${dur}`
       }
+      // The run is answered — nothing more to fill, whether or not the reply
+      // is about to be read aloud (toggleSpeak's stopSpeaking would only cover
+      // the speaking case).
+      silenceFiller()
       if (speakReplyOnDone) {
         speakReplyOnDone = false
         if (agentIdx >= 0 && canSpeak) {
@@ -361,6 +373,7 @@ function handleWsEvent(ev) {
       // keep them in the bell as well as flashing a toast.
       notifyBell(ev.message || 'Agent error', false)
       speakReplyOnDone = false
+      silenceFiller()
       collapseTrace()
       resetRunTrackers()
       disabled.value = false
@@ -443,6 +456,8 @@ async function sendMessage(msg, voice) {
     if (voice) notifyBell(`Voice message not sent — not connected: "${msg}"`, false)
     else input.value = msg
     toast('Not connected to the agent yet — retry once the status shows Connected.', false)
+  } else if (voice) {
+    scheduleFiller()
   }
 }
 
@@ -469,6 +484,7 @@ function stop() {
     m.meta = m.meta ? `${m.meta} · stopped` : 'stopped'
   }
   speakReplyOnDone = false
+  silenceFiller()
   collapseTrace()
   resetRunTrackers()
   disabled.value = false
@@ -498,6 +514,40 @@ let pendingVoiceText = null // transcript waiting out a streaming run
 // A voice-initiated run has its reply read aloud on 'done'; typed sends never
 // do. One run at a time (disabled gate), so a single flag is enough.
 let speakReplyOnDone = false
+
+// ── Thinking filler ─────────────────────────────────────────────────────────
+// A voice run says nothing until 'done' — the whole reply is synthesized at
+// once here, unlike the phone's per-sentence streaming — so a slow run is dead
+// air for someone who isn't watching the "Thinking..." label. Speak a short
+// filler in the configured tts.* voice (same phrases as VoicePrompts.kt), and
+// let stopSpeaking() cut it off when the reply takes the speaker.
+//
+// Delayed so a fast run just answers instead of announcing itself first. The
+// filler needs no self-echo guard: it only plays while `disabled` is true, and
+// startRecording() refuses to open the mic during a run, so it can never be
+// captured — which is why its words stay out of SELF_ECHO_REF, where they
+// would strand real commands like "check on it".
+const FILLER_DELAY_MS = 700
+let fillerTimer = null
+
+function scheduleFiller() {
+  silenceFiller()
+  fillerTimer = setTimeout(() => {
+    fillerTimer = null
+    // The run can finish, be stopped, or start reading the reply aloud inside
+    // the delay — speaking over any of those is worse than staying quiet.
+    if (!disabled.value || speakingIdx.value >= 0) return
+    playPrompt(randomFiller())
+  }, FILLER_DELAY_MS)
+}
+
+// Drop a filler that is still pending *and* one already coming out of the
+// speaker — by 'done' the reply needs the speaker to itself.
+function silenceFiller() {
+  clearTimeout(fillerTimer)
+  fillerTimer = null
+  stopPrompt()
+}
 
 // Browser echoCancellation is unreliable on the always-open wake mic, so the
 // spoken ack ("Yes?") and the read-aloud reply can still bleed into the
@@ -603,6 +653,10 @@ async function startRecording(sharedStream = null) {
   }, 1000)
   mediaRecorder.start()
   recState.value = 'recording'
+  // A voice exchange is underway, so the filler is probably about to be needed:
+  // warm the cache now (no-op for phrases already there) rather than paying the
+  // synthesis round-trip mid-run, where it would fall back to the browser voice.
+  prefetchPrompts()
 }
 
 function stopRecording(cancel = false) {
@@ -818,6 +872,7 @@ function releaseAudio() {
 
 function stopSpeaking() {
   followupEligible = false
+  silenceFiller()
   speakSeq += 1
   if (speakAbort) {
     speakAbort.abort()
