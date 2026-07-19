@@ -79,12 +79,21 @@ class TtsPlayer(ctx: Context) {
             get() = !closed || !idle || queue.isNotEmpty()
     }
 
-    /** Begin a streamed reply. Cancels any prior playback first. */
+    /**
+     * Begin a streamed reply. Retires any previous stream but deliberately does
+     * NOT silence the speaker: this is called the moment the task is sent, and
+     * the first sentence is still a synthesis round-trip away. Cutting the audio
+     * here would kill the "thinking" filler the instant it started and leave
+     * dead air for the whole agent run. The speaker is taken over in
+     * [playNextLocked], when this reply actually has something to say.
+     */
     fun beginStream(onDone: () -> Unit): Stream {
-        stop()
-        val s = Stream(onDone)
-        currentStream = s
-        return s
+        synchronized(streamLock) {
+            currentStream?.let { it.closed = true; it.queue.clear() }
+            val s = Stream(onDone)
+            currentStream = s
+            return s
+        }
     }
 
     /** Enqueue a synthesized sentence file for back-to-back playback. Safe to
@@ -111,16 +120,24 @@ class TtsPlayer(ctx: Context) {
     /** Drop everything queued for [s] right now (barge-in). onDone will NOT
      *  fire — the caller is taking over the speaker. */
     fun abortStream(s: Stream) {
-        synchronized(streamLock) {
+        val owned = synchronized(streamLock) {
             s.closed = true
             s.queue.clear()
+            val cur = currentStream === s
+            if (cur) currentStream = null
+            cur
         }
-        stop()
+        // Only silence the speaker while this stream still owns it. A late
+        // abort from a finished reply must not cut off the next one.
+        if (owned) stopPlayback()
     }
 
     private fun playNextLocked(s: Stream) {
         val file = s.queue.poll() ?: return
         s.idle = false
+        // Anything still coming out of the speaker — the thinking filler, an
+        // ack tail — yields now that the reply can actually speak.
+        stopPlayback()
         val player = MediaPlayer()
         mp = player
         try {
@@ -187,6 +204,11 @@ class TtsPlayer(ctx: Context) {
             currentStream?.let { it.closed = true; it.queue.clear() }
             currentStream = null
         }
+        stopPlayback()
+    }
+
+    /** Silence the speaker without touching stream bookkeeping. */
+    private fun stopPlayback() {
         mp?.let {
             runCatching { it.stop() }
             it.release()

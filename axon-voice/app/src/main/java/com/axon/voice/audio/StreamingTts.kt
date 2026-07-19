@@ -33,6 +33,11 @@ class StreamingTts(
     private val onDone: () -> Unit,
 ) {
     private val buf = StringBuilder()
+
+    /** Every token ever appended. Separate from [buf], which is drained as
+     *  sentences are split off it — the built-in-TTS fallback has to speak the
+     *  whole reply, not just the trailing partial sentence left over. */
+    private val full = StringBuilder()
     private val lock = Any()
 
     private val stream: TtsPlayer.Stream = player.beginStream(onDone)
@@ -57,6 +62,7 @@ class StreamingTts(
         if (token.isEmpty() || abandoned) return
         val ready = synchronized(lock) {
             buf.append(token)
+            full.append(token)
             consumeSentences()
         }
         for (sentence in ready) synth.execute { synthAndEnqueue(sentence) }
@@ -87,7 +93,14 @@ class StreamingTts(
 
     /** Read-only snapshot of everything appended so far — for self-echo
      *  detection (wake path) and the transcript bubble (UI path). */
-    fun accumulated(): String = synchronized(lock) { buf.toString() }
+    fun accumulated(): String = synchronized(lock) { full.toString() }
+
+    /** True once any reply text has been fed in. Lets the caller tell a real
+     *  streamed reply apart from a stream that never received a token frame,
+     *  which must fall back to synthesizing `full_text` in one blob rather
+     *  than finalizing an empty stream (i.e. saying nothing at all). */
+    val hasContent: Boolean
+        get() = synchronized(lock) { full.isNotEmpty() }
 
     // ── internals ───────────────────────────────────────────────────────────
 
@@ -150,12 +163,18 @@ class StreamingTts(
         // speak the whole thing with the built-in engine (never silent). Once
         // we've spoken even one sentence via the server we keep streaming and
         // just drop this one bad chunk.
-        if (!anyServerTts) {
-            val whole = accumulated()
-            if (whole.isNotBlank()) {
-                player.abortStream(stream)
-                player.speakFallback(whole, onDone)
-            }
+        if (!anyServerTts && !abandoned) {
+            // One fallback per reply: further queued sentences must not each
+            // start their own utterance (and fire onDone again).
+            abandoned = true
+            val whole = accumulated().trim()
+            synchronized(lock) { buf.setLength(0) }
+            player.abortStream(stream)
+            // onDone MUST fire on every exit here. abortStream closed the
+            // stream, so the pending finish() can no longer finalize it — if we
+            // returned silently the wake service would block on its latch until
+            // the 310s timeout instead of moving to the follow-up window.
+            if (whole.isNotEmpty()) player.speakFallback(whole, onDone) else onDone()
         }
     }
 }

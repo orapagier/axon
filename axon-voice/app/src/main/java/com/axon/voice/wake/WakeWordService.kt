@@ -297,9 +297,9 @@ class WakeWordService : Service(), ChatSocket.Listener {
             // it shows in the Chat page (live, if open) like a typed message.
             ChatFeed.post(this, prefs.chatSessionId, "user", text)
             // Speak a short filler so the user knows they were heard while the
-            // agent works. Non-blocking: the streaming reply's first sentence
-            // calls TtsPlayer.stop() first (via beginStream), which cleanly
-            // cuts the filler off the instant speech can begin.
+            // agent works. Non-blocking: the reply's first synthesized sentence
+            // takes over the speaker when it is ready to play, which cuts the
+            // filler off the instant real speech can begin.
             playFillerNonBlocking()
             // Stream the reply: tokens flow into StreamingTts as they arrive,
             // so the first sentence plays ~1s after the agent starts replying
@@ -327,10 +327,9 @@ class WakeWordService : Service(), ChatSocket.Listener {
         notify(getString(R.string.notif_listening))
     }
 
-    /** Speak a random thinking filler on a throwaway thread. The reply's
-     *  StreamingTts→TtsPlayer.beginStream() stops any in-flight playback first,
-     *  so the filler is always interrupted before the reply — no overlap, no
-     *  extra locking. */
+    /** Speak a random thinking filler on a throwaway thread. The reply's first
+     *  sentence stops any in-flight playback as it starts, so the filler is
+     *  always interrupted before the reply — no overlap, no extra locking. */
     private fun playFillerNonBlocking() {
         val p = player ?: return
         val phrase = VoicePrompts.randomFiller()
@@ -491,15 +490,32 @@ class WakeWordService : Service(), ChatSocket.Listener {
                 // if we somehow got full_text with no tokens streamed (e.g. a
                 // server that doesn't emit token frames), synthesize it now as
                 // one fallback chunk so we're never silent.
-                val fallback = full.isNotBlank() && replyStream == null
                 val stream = synchronized(replyLock) {
                     replyText = full
                     val s = replyStream
                     replyStream = null
                     s
                 }
-                stream?.finish()
-                if (fallback) {
+                if (stream != null && stream.hasContent) {
+                    // Streaming reply: let it play out. finish() only schedules
+                    // the finalize behind any in-flight synths — it does NOT
+                    // block, so we must NOT count the latch down here. The
+                    // StreamingTts onDone callback (wired to latch.countDown)
+                    // fires once playback truly drains, and that is the only
+                    // path that releases the caller. Counting down here would
+                    // release interact() before the reply finished playing, and
+                    // its next ack's TtsPlayer.play()→stop() would cut the
+                    // reply's TTS off — the reply was never heard, only the ack.
+                    stream.finish()
+                    return
+                }
+                // The stream exists but never received a token frame. Finalizing
+                // it would speak nothing at all, so drop it and synthesize
+                // full_text below instead.
+                stream?.abort()
+                if (full.isNotBlank()) {
+                    // Synthesize the whole reply as one fallback chunk so we're
+                    // never silent.
                     // Off this thread: it's OkHttp's WS reader, and a slow
                     // synthesis here would stall pings and drop the socket.
                     thread(name = "axon-fallback-tts") {
@@ -521,6 +537,8 @@ class WakeWordService : Service(), ChatSocket.Listener {
                     }
                     return
                 }
+                // Empty reply, no stream — nothing to speak. Release the caller
+                // so it doesn't hang for the full 310s latch timeout.
                 synchronized(replyLock) {
                     replyLatch?.countDown()
                     replyLatch = null
