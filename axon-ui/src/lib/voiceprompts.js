@@ -1,7 +1,13 @@
-// The assistant's own short phrases: a "Yes?" ack when "Hey Axon" is heard,
-// "Anything else?" before the follow-up window, and a thinking filler while a
-// voice run works — so the assistant answers with a voice instead of a chime,
-// a recording timer and silence.
+// The assistant's own short phrases: a "Yes?" ack when "Hey Axon" is heard, and
+// "One sec." while a voice run works — so the assistant answers with a voice
+// instead of a chime, a recording timer and silence.
+//
+// Deliberately sparse. An earlier version rotated four thinking fillers and
+// spoke "Anything else?" to open the follow-up window; hearing a different
+// stock phrase each turn read as chatter rather than conversation. The wake
+// acks stay varied (they answer *you*, so repetition would be the unnatural
+// part), the filler is one fixed phrase, and the follow-up window is announced
+// by its soft chime alone.
 //
 // Playback must be instant — it gates when the user can start talking — so the
 // phrases are synthesized once through the configured tts.* endpoint (same
@@ -13,12 +19,12 @@
 import { postRaw } from './api.js'
 
 export const WAKE_ACKS = ['Yes?', 'Mm-hmm?', "I'm listening."]
-export const FOLLOWUP_PROMPT = 'Anything else?'
-// Spoken while the agent works, so a voice run isn't dead air. Kept identical
-// to THINKING_FILLERS in axon-voice's VoicePrompts.kt.
-export const THINKING_FILLERS = ['Let me check.', 'Working on it.', 'One sec.', 'On it.']
+// Spoken while the agent works, so a voice run isn't dead air. One fixed
+// phrase, not a rotation — kept identical to THINKING_FILLER in axon-voice's
+// VoicePrompts.kt.
+export const THINKING_FILLER = 'One sec.'
 
-const ALL_PROMPTS = [...WAKE_ACKS, FOLLOWUP_PROMPT, ...THINKING_FILLERS]
+const ALL_PROMPTS = [...WAKE_ACKS, THINKING_FILLER]
 
 const cache = new Map() // phrase -> object URL of the server-TTS audio blob
 const inflight = new Map() // phrase -> Promise<boolean> of a fetch in progress
