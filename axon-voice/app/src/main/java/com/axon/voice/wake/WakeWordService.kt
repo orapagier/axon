@@ -43,8 +43,8 @@ import kotlin.math.sqrt
  * rustpotter detector on a continuous 16k capture. On detection it speaks the
  * "Yes?" ack, captures the command with the ported silence watcher, ships it
  * through transcribe -> /ws task -> TTS, then opens the follow-up window
- * ("Anything else?") with the raised bystander bar — the same flow as the
- * dashboard wake word, minus the browser.
+ * (soft chime, no spoken prompt) with the raised bystander bar — the same flow
+ * as the dashboard wake word, minus the browser.
  *
  * Hands-free runs on the Chat page's session id, and every exchange is posted
  * through [ChatFeed]: it lands in the same saved conversation as typed chat,
@@ -92,11 +92,10 @@ class WakeWordService : Service(), ChatSocket.Listener {
     @Volatile
     private var alive = false
 
-    /** Cached server-TTS audio per phrase (wake acks, follow-up, thinking
-     *  fillers). Phrases whose prefetch failed are absent and retried on the
-     *  next service start — the resilience mirror of voiceprompts.js's
-     *  cache/inflight map. Concurrent: the prefetch thread writes while the
-     *  wake and filler threads read. */
+    /** Cached server-TTS audio per wake ack. Phrases whose prefetch failed are
+     *  absent and retried on the next service start — the resilience mirror of
+     *  voiceprompts.js's cache/inflight map. Concurrent: the prefetch thread
+     *  writes while the wake thread reads. */
     private val promptFiles = ConcurrentHashMap<String, File>()
 
     // One reply in flight at a time. The reply is *streamed*: each token is
@@ -267,9 +266,17 @@ class WakeWordService : Service(), ChatSocket.Listener {
         var lastReply = ""
         while (alive && !micHold) {
             notify(getString(R.string.status_recording))
-            val ackPhrase = if (first) VoicePrompts.randomWakeAck()
-                else VoicePrompts.FOLLOWUP_PROMPT
-            playAckBlocking(ackPhrase, promptFiles[ackPhrase], soft = !first)
+            // A wake is answered out loud; the follow-up window opens on its
+            // soft chime alone — no spoken prompt. Sound.chime is asynchronous,
+            // so hold here for the note (plus the settle below) and let the
+            // drain clear it rather than have its tail open the capture.
+            val ackPhrase = if (first) VoicePrompts.randomWakeAck() else ""
+            if (first) {
+                playAckBlocking(ackPhrase, promptFiles[ackPhrase])
+            } else {
+                Sound.chime(soft = true)
+                Thread.sleep(250)
+            }
             // Let the ack (and any reply tail still in the output pipeline)
             // finish coming out of the speaker before the drain, so it can't
             // leak into the capture and be transcribed as a command. Only in
@@ -295,15 +302,10 @@ class WakeWordService : Service(), ChatSocket.Listener {
             // a fragment of the reply we just spoke) must not become the next
             // command — with session history the agent would happily re-answer
             // the previous question in new words, looping the reply.
-            if (isSelfEcho(text, lastReply, if (first) "yes" else "anything else")) break
+            if (isSelfEcho(text, lastReply, ackPhrase)) break
             // The accepted command is part of the chat conversation from here:
             // it shows in the Chat page (live, if open) like a typed message.
             ChatFeed.post(this, prefs.chatSessionId, "user", text)
-            // Speak a short filler so the user knows they were heard while the
-            // agent works. Non-blocking: the reply's first synthesized sentence
-            // takes over the speaker when it is ready to play, which cuts the
-            // filler off the instant real speech can begin.
-            playFillerNonBlocking()
             // Stream the reply: tokens flow into StreamingTts as they arrive,
             // so the first sentence plays ~1s after the agent starts replying
             // instead of after the whole reply is synthesized. Blocks until
@@ -328,26 +330,6 @@ class WakeWordService : Service(), ChatSocket.Listener {
             first = false // reopen as the follow-up window, raised speech bar
         }
         notify(getString(R.string.notif_listening))
-    }
-
-    /** Speak a random thinking filler on a throwaway thread. The reply's first
-     *  sentence stops any in-flight playback as it starts, so the filler is
-     *  always interrupted before the reply — no overlap, no extra locking.
-     *
-     *  Prefers the prefetched server-TTS file so the filler is in the same voice
-     *  as the ack and the reply; the built-in engine is only the last resort,
-     *  same order as [playAckBlocking]. Uses playFiller (not play) so it cannot
-     *  retire the reply stream that is being set up alongside it. */
-    private fun playFillerNonBlocking() {
-        val p = player ?: return
-        val phrase = VoicePrompts.randomFiller()
-        val cached = promptFiles[phrase]?.takeIf { it.exists() && it.length() > 0 }
-        thread(name = "axon-filler") {
-            val done = CountDownLatch(1)
-            if (cached != null) p.playFiller(cached) { done.countDown() }
-            else p.speakFallback(phrase) { done.countDown() }
-            done.await(8, TimeUnit.SECONDS)
-        }
     }
 
     /** True when [text] is (a fragment of) what the assistant itself just said
@@ -390,7 +372,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
     /** Speak [phrase] using the same 3-tier "never silent" chain as a reply:
      *  prefetched server TTS -> built-in Android TTS -> synthesized chime.
      *  Mirrors voiceprompts.js playPrompt, which always resolves to sound. */
-    private fun playAckBlocking(phrase: String, cachedFile: File?, soft: Boolean) {
+    private fun playAckBlocking(phrase: String, cachedFile: File?) {
         val p = player ?: return
         if (cachedFile != null && cachedFile.exists() && cachedFile.length() > 0) {
             val latch = CountDownLatch(1)
@@ -402,8 +384,8 @@ class WakeWordService : Service(), ChatSocket.Listener {
         p.speakFallback(phrase) { spokeLatch.countDown() }
         if (spokeLatch.await(4, TimeUnit.SECONDS)) return
         // Last resort: the chime is always available.
-        Sound.chime(soft)
-        Thread.sleep(if (soft) 250 else 400)
+        Sound.chime()
+        Thread.sleep(400)
     }
 
     /**

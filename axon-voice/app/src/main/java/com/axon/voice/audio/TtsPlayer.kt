@@ -39,30 +39,6 @@ class TtsPlayer(ctx: Context) {
         startFile(file, onDone)
     }
 
-    /**
-     * One-shot playback that does NOT retire an in-flight streamed reply — for
-     * the thinking filler, which is started at the same moment the reply stream
-     * is being set up. [play]'s stop() would clear that stream's bookkeeping and
-     * the reply would never play a sentence.
-     *
-     * If the reply already owns the speaker the filler is dropped rather than
-     * cutting in; otherwise [playNextLocked] takes the speaker back the instant
-     * the first sentence is ready.
-     */
-    fun playFiller(file: File, onDone: () -> Unit) {
-        // Check and start under one lock: between an unlocked check and the
-        // start, playNextLocked could hand the speaker to the reply, and this
-        // stopPlayback would then cut the reply's first sentence off.
-        synchronized(streamLock) {
-            if (currentStream?.idle == false) {
-                onDone()
-                return
-            }
-            stopPlayback()
-            startFile(file, onDone)
-        }
-    }
-
     private fun startFile(file: File, onDone: () -> Unit) {
         val player = MediaPlayer()
         mp = player
@@ -110,10 +86,10 @@ class TtsPlayer(ctx: Context) {
     /**
      * Begin a streamed reply. Retires any previous stream but deliberately does
      * NOT silence the speaker: this is called the moment the task is sent, and
-     * the first sentence is still a synthesis round-trip away. Cutting the audio
-     * here would kill the "thinking" filler the instant it started and leave
-     * dead air for the whole agent run. The speaker is taken over in
-     * [playNextLocked], when this reply actually has something to say.
+     * the first sentence is still a synthesis round-trip away, so anything still
+     * playing (an ack tail, a read-aloud the user started) should finish rather
+     * than be chopped for a reply that has nothing to say yet. The speaker is
+     * taken over in [playNextLocked], once this reply actually does.
      */
     fun beginStream(onDone: () -> Unit): Stream {
         synchronized(streamLock) {
@@ -163,8 +139,8 @@ class TtsPlayer(ctx: Context) {
     private fun playNextLocked(s: Stream) {
         val file = s.queue.poll() ?: return
         s.idle = false
-        // Anything still coming out of the speaker — the thinking filler, an
-        // ack tail — yields now that the reply can actually speak.
+        // Anything still coming out of the speaker — an ack tail, a read-aloud
+        // in progress — yields now that the reply can actually speak.
         stopPlayback()
         val player = MediaPlayer()
         mp = player
@@ -246,8 +222,8 @@ class TtsPlayer(ctx: Context) {
     }
 
     /** Retire [player] — but only drop it as the sink if it still is the sink.
-     *  A filler that finishes after the reply took the speaker must not null out
-     *  (or release) the reply's player. */
+     *  A one-shot that finishes after the reply took the speaker must not null
+     *  out (or release) the reply's player. */
     private fun cleanup(player: MediaPlayer) {
         runCatching { player.release() }
         if (mp === player) mp = null

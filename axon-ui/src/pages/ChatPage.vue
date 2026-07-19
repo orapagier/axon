@@ -12,8 +12,6 @@ import {
   playPrompt,
   stopPrompt,
   randomWakeAck,
-  randomFiller,
-  FOLLOWUP_PROMPT,
   WAKE_ACKS,
 } from '../lib/voiceprompts.js'
 import SearchInput from '../components/SearchInput.vue'
@@ -340,10 +338,11 @@ function handleWsEvent(ev) {
         const dur = ev.total_duration_ms ? ` | ${ev.total_duration_ms}ms` : ''
         messages.value[agentIdx].meta = `${ev.iterations} iter | ${ev.total_tokens} tokens${dur}`
       }
-      // The run is answered — nothing more to fill, whether or not the reply
-      // is about to be read aloud (toggleSpeak's stopSpeaking would only cover
-      // the speaking case).
-      silenceFiller()
+      // The reply owns the speaker from here. A wake ack whose on-demand
+      // synthesis is still in flight would otherwise land mid-reply and talk
+      // over it, so invalidate it — whether or not this reply is about to be
+      // read aloud (toggleSpeak's stopSpeaking only covers the speaking case).
+      stopPrompt()
       if (speakReplyOnDone) {
         speakReplyOnDone = false
         if (agentIdx >= 0 && canSpeak) {
@@ -373,7 +372,7 @@ function handleWsEvent(ev) {
       // keep them in the bell as well as flashing a toast.
       notifyBell(ev.message || 'Agent error', false)
       speakReplyOnDone = false
-      silenceFiller()
+      stopPrompt()
       collapseTrace()
       resetRunTrackers()
       disabled.value = false
@@ -456,8 +455,6 @@ async function sendMessage(msg, voice) {
     if (voice) notifyBell(`Voice message not sent — not connected: "${msg}"`, false)
     else input.value = msg
     toast('Not connected to the agent yet — retry once the status shows Connected.', false)
-  } else if (voice) {
-    scheduleFiller()
   }
 }
 
@@ -484,7 +481,7 @@ function stop() {
     m.meta = m.meta ? `${m.meta} · stopped` : 'stopped'
   }
   speakReplyOnDone = false
-  silenceFiller()
+  stopPrompt()
   collapseTrace()
   resetRunTrackers()
   disabled.value = false
@@ -515,40 +512,6 @@ let pendingVoiceText = null // transcript waiting out a streaming run
 // do. One run at a time (disabled gate), so a single flag is enough.
 let speakReplyOnDone = false
 
-// ── Thinking filler ─────────────────────────────────────────────────────────
-// A voice run says nothing until 'done' — the whole reply is synthesized at
-// once here, unlike the phone's per-sentence streaming — so a slow run is dead
-// air for someone who isn't watching the "Thinking..." label. Speak a short
-// filler in the configured tts.* voice (same phrases as VoicePrompts.kt), and
-// let stopSpeaking() cut it off when the reply takes the speaker.
-//
-// Delayed so a fast run just answers instead of announcing itself first. The
-// filler needs no self-echo guard: it only plays while `disabled` is true, and
-// startRecording() refuses to open the mic during a run, so it can never be
-// captured — which is why its words stay out of SELF_ECHO_REF, where they
-// would strand real commands like "check on it".
-const FILLER_DELAY_MS = 700
-let fillerTimer = null
-
-function scheduleFiller() {
-  silenceFiller()
-  fillerTimer = setTimeout(() => {
-    fillerTimer = null
-    // The run can finish, be stopped, or start reading the reply aloud inside
-    // the delay — speaking over any of those is worse than staying quiet.
-    if (!disabled.value || speakingIdx.value >= 0) return
-    playPrompt(randomFiller())
-  }, FILLER_DELAY_MS)
-}
-
-// Drop a filler that is still pending *and* one already coming out of the
-// speaker — by 'done' the reply needs the speaker to itself.
-function silenceFiller() {
-  clearTimeout(fillerTimer)
-  fillerTimer = null
-  stopPrompt()
-}
-
 // Browser echoCancellation is unreliable on the always-open wake mic, so the
 // spoken ack ("Yes?") and the read-aloud reply can still bleed into the
 // command capture and be transcribed — once sent, the agent would answer its
@@ -558,7 +521,7 @@ function silenceFiller() {
 // reply is dropped silently, never sent. Real commands ("what day is today")
 // always pass — their words aren't in the reference set.
 const SELF_ECHO_REF = new Set(
-  [...WAKE_ACKS, FOLLOWUP_PROMPT]
+  [...WAKE_ACKS]
     .join(' ')
     .toLowerCase()
     .split(/[^a-z0-9]+/)
@@ -653,7 +616,7 @@ async function startRecording(sharedStream = null) {
   }, 1000)
   mediaRecorder.start()
   recState.value = 'recording'
-  // A voice exchange is underway, so the filler is probably about to be needed:
+  // A voice exchange is underway, so an ack is probably about to be needed:
   // warm the cache now (no-op for phrases already there) rather than paying the
   // synthesis round-trip mid-run, where it would fall back to the browser voice.
   prefetchPrompts()
@@ -780,8 +743,8 @@ function toggleWake() {
 }
 
 // ── Follow-up mode ───────────────────────────────────────────────────────────
-// After a wake-triggered reply finishes reading aloud, "Anything else?" plays
-// and the mic reopens so the next command needs no "Hey Axon". Two guards keep
+// After a wake-triggered reply finishes reading aloud, a soft chime plays and
+// the mic reopens so the next command needs no "Hey Axon". Two guards keep
 // bystanders out of the conversation: FOLLOWUP_CAPTURE raises the speech bar
 // to ~2x normal (a voice close to the mic passes, people talking across the
 // room don't) and allows ~5s to start answering; and a window that heard no
@@ -802,15 +765,21 @@ function followupClear() {
   )
 }
 
+// Long enough to cover the ~0.2s soft note plus its output-path tail.
+const CHIME_SETTLE_MS = 300
+
 function startFollowupCapture() {
   // Small gap after playback so the speaker tail can't register as speech.
   setTimeout(async () => {
     if (!followupClear()) return
-    // The mic opens only after "Anything else?" finishes, so the prompt can't
-    // land in the capture; the soft chime covers a prompt nothing could speak.
-    const spoke = await playPrompt(FOLLOWUP_PROMPT)
-    if (!followupClear()) return // state may have shifted during playback
-    if (!spoke) wake.chime(true)
+    // The soft chime alone opens the window — no spoken prompt. The mic waits
+    // for it to finish rather than opening behind it: it plays out of the same
+    // speaker the mic is listening to, and hearing our own chime would count as
+    // the speech onset this window is watching for, so an empty follow-up would
+    // capture and transcribe itself instead of quietly cancelling.
+    wake.chime(true)
+    await new Promise((r) => setTimeout(r, CHIME_SETTLE_MS))
+    if (!followupClear()) return // state may have shifted while the chime played
     startRecording(wake.stream)
     wake.watchSilence((hadSpeech) => stopRecording(!hadSpeech), FOLLOWUP_CAPTURE)
   }, 250)
@@ -872,7 +841,7 @@ function releaseAudio() {
 
 function stopSpeaking() {
   followupEligible = false
-  silenceFiller()
+  stopPrompt()
   speakSeq += 1
   if (speakAbort) {
     speakAbort.abort()

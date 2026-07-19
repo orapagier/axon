@@ -42,7 +42,7 @@ const MAX_TICKS = 120
 
 // Follow-up capture (reopened mic after a spoken reply, no wake word said)
 // deliberately listens with a raised speech bar: onset must be ~2x the normal
-// RMS and arrive within 5s ("Anything else?" gives that long to answer), so
+// RMS and arrive within 5s of the chime that opens the window, so
 // room-level chatter from people nearby cancels the window instead of being
 // transcribed and sent as a command.
 export const FOLLOWUP_CAPTURE = { speechRms: 0.025, noSpeechTicks: 50 }

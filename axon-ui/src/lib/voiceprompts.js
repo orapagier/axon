@@ -1,13 +1,13 @@
-// The assistant's own short phrases: a "Yes?" ack when "Hey Axon" is heard, and
-// "One sec." while a voice run works — so the assistant answers with a voice
-// instead of a chime, a recording timer and silence.
+// The assistant's own short phrases: a "Yes?" ack when "Hey Axon" is heard — so
+// the assistant answers with a voice instead of a chime and silence.
 //
-// Deliberately sparse. An earlier version rotated four thinking fillers and
-// spoke "Anything else?" to open the follow-up window; hearing a different
-// stock phrase each turn read as chatter rather than conversation. The wake
-// acks stay varied (they answer *you*, so repetition would be the unnatural
-// part), the filler is one fixed phrase, and the follow-up window is announced
-// by its soft chime alone.
+// Deliberately just the acks. Earlier versions also rotated four thinking
+// fillers ("Let me check.", "On it."…) while a run worked and spoke "Anything
+// else?" to open the follow-up window; hearing a stock phrase on every turn
+// read as chatter rather than conversation. Only the acks survive — they
+// answer *you*, which is why they stay varied — and the follow-up window is
+// announced by its soft chime alone. Don't reintroduce filler phrases here:
+// dead air during a run is the intended behavior, not a gap to paper over.
 //
 // Playback must be instant — it gates when the user can start talking — so the
 // phrases are synthesized once through the configured tts.* endpoint (same
@@ -19,12 +19,8 @@
 import { postRaw } from './api.js'
 
 export const WAKE_ACKS = ['Yes?', 'Mm-hmm?', "I'm listening."]
-// Spoken while the agent works, so a voice run isn't dead air. One fixed
-// phrase, not a rotation — kept identical to THINKING_FILLER in axon-voice's
-// VoicePrompts.kt.
-export const THINKING_FILLER = 'One sec.'
 
-const ALL_PROMPTS = [...WAKE_ACKS, THINKING_FILLER]
+const ALL_PROMPTS = [...WAKE_ACKS]
 
 const cache = new Map() // phrase -> object URL of the server-TTS audio blob
 const inflight = new Map() // phrase -> Promise<boolean> of a fetch in progress
@@ -37,10 +33,6 @@ const ON_DEMAND_MS = 2000
 
 export function randomWakeAck() {
   return WAKE_ACKS[Math.floor(Math.random() * WAKE_ACKS.length)]
-}
-
-export function randomFiller() {
-  return THINKING_FILLERS[Math.floor(Math.random() * THINKING_FILLERS.length)]
 }
 
 // Resolves true once the phrase is cached. Concurrent callers (the prefetch
@@ -83,7 +75,7 @@ let activePrompt = null // { stop() } for the phrase currently coming out
 let promptSeq = 0 // bumping this invalidates a playPrompt still getting ready
 
 // Cut off whatever prompt is playing — used when the spoken reply takes over
-// the speaker, so a thinking filler can't overlap it. The pending playPrompt
+// the speaker, so a late ack can't overlap it. The pending playPrompt
 // resolves true: audio *was* produced, just cut short, so the caller must not
 // treat it as "nothing could speak" and chime.
 //

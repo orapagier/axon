@@ -32,7 +32,7 @@ Android's built-in TextToSpeech when server TTS fails.
 2. **"Hey Axon" always-on** — the wake button in the input row starts a
    microphone foreground service running rustpotter (same `heyaxon.rpw` model
    as the dashboard, `spot -g -e -t 0.47` tuning). Wake → "Yes?" → command →
-   spoken reply → "Anything else?" follow-up window with the raised 2×
+   spoken reply → soft chime reopening a follow-up window with the raised 2×
    bystander RMS bar. Grant the battery-optimization exemption when prompted
    or Doze will eventually kill it. Exchanges land in the same chat thread.
 3. **Assistant gesture** — pick Axon under *Settings > Apps > Default apps >
