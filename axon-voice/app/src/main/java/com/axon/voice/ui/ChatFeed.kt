@@ -10,7 +10,7 @@ import android.content.Context
  */
 object ChatFeed {
     fun interface Listener {
-        fun onMessage(role: String, text: String)
+        fun onMessage(sessionId: String, role: String, text: String)
     }
 
     /** Set by [ChatActivity] for its lifetime; invoked from service threads. */
@@ -20,6 +20,10 @@ object ChatFeed {
     fun post(ctx: Context, sessionId: String, role: String, text: String) {
         if (text.isBlank()) return
         ChatHistory.append(ctx, sessionId, TranscriptAdapter.Msg(role, text))
-        listener?.onMessage(role, text)
+        // [sessionId] rides along so the open page can ignore exchanges that
+        // belong to a different conversation — each "Hey Axon" runs in its own
+        // wake conversation, which must not be interleaved into (or saved
+        // under) the manual chat thread the page is showing.
+        listener?.onMessage(sessionId, role, text)
     }
 }

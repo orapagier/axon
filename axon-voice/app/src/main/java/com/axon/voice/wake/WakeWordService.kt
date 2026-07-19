@@ -109,6 +109,13 @@ class WakeWordService : Service(), ChatSocket.Listener {
     private var replyError: String? = null
     private var replyStream: StreamingTts? = null
 
+    /** The last up-to-2 completed turns of the *previous* wake conversation,
+     *  offered as an optional hint (not loaded history) at the start of the
+     *  next one — so a fresh "Hey Axon" can pick up a thread if the user refers
+     *  back, but starts clean otherwise. Only ever touched from the wake
+     *  thread's interact(), so it needs no lock. */
+    private val previousTurns = ArrayList<Pair<String, String>>()
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -262,7 +269,19 @@ class WakeWordService : Service(), ChatSocket.Listener {
     // ── One wake interaction (command + follow-ups) ─────────────────────────
 
     private fun interact(rec: AudioRecord, detector: WakeDetector) {
+        // One "Hey Axon" starts one conversation. The id is minted here, once,
+        // and reused for every turn — follow-ups AND a mid-reply barge-in — so
+        // the whole interaction is saved as a single, separately reviewable
+        // conversation. The NEXT wake calls interact() again and mints another.
+        val sessionId = prefs.newWakeConversationId()
+        // Optional, non-authoritative hint built from the previous wake
+        // conversation (before we overwrite it below). Attached only to the
+        // first agent task of this conversation.
+        val hint = buildHint()
+        val turns = ArrayList<Pair<String, String>>()
+
         var first = true
+        var firstTask = true // gates the one-time hint; survives barge-in resets
         var lastReply = ""
         while (alive && !micHold) {
             notify(getString(R.string.status_recording))
@@ -303,33 +322,70 @@ class WakeWordService : Service(), ChatSocket.Listener {
             // command — with session history the agent would happily re-answer
             // the previous question in new words, looping the reply.
             if (isSelfEcho(text, lastReply, ackPhrase)) break
-            // The accepted command is part of the chat conversation from here:
-            // it shows in the Chat page (live, if open) like a typed message.
-            ChatFeed.post(this, prefs.chatSessionId, "user", text)
+            // The accepted command is part of THIS wake conversation from here:
+            // saved under [sessionId] (its own reviewable thread), and mirrored
+            // into the Chat page only if that page is showing this same thread.
+            ChatFeed.post(this, sessionId, "user", text)
+            // The clean spoken words are what gets saved; the previous-conversation
+            // hint (first task only) rides along to the agent but never into the
+            // saved user message. It is framed as reference-only, so a genuinely
+            // new topic ignores it.
+            val taskForAgent = if (firstTask && hint.isNotEmpty()) hint + text else text
+            firstTask = false
             // Stream the reply: tokens flow into StreamingTts as they arrive,
             // so the first sentence plays ~1s after the agent starts replying
             // instead of after the whole reply is synthesized. Blocks until
             // playback finishes or a barge-in cuts it off.
-            val barged = awaitStreamBlocking(text, rec, detector)
+            val barged = awaitStreamBlocking(taskForAgent, sessionId, rec, detector)
             val (reply, err) = synchronized(replyLock) { (replyText ?: "") to replyError }
             if (reply.isNotBlank()) {
-                ChatFeed.post(this, prefs.chatSessionId, "assistant", reply)
+                ChatFeed.post(this, sessionId, "assistant", reply)
             } else if (!barged && err != null) {
-                ChatFeed.post(this, prefs.chatSessionId, "error", "Sorry — $err")
+                ChatFeed.post(this, sessionId, "error", "Sorry — $err")
             }
             if (reply.isBlank() && !barged) break
             if (barged) {
-                // User said "Hey Axon" mid-reply. Ack and treat the next
-                // capture as a fresh wake — lenient watcher, no self-echo
-                // check against the half-spoken reply we just cut off.
+                // User said "Hey Axon" mid-reply: the barge monitor already cut
+                // the TTS. Re-listen for the follow-up in the SAME conversation
+                // (sessionId unchanged) — lenient watcher, no self-echo check
+                // against the half-spoken reply we just cut off. This is not a
+                // new conversation, so firstTask stays false (no re-hint).
                 first = true
                 lastReply = ""
                 continue
             }
+            turns.add(text to reply)
             lastReply = reply
             first = false // reopen as the follow-up window, raised speech bar
         }
+        // Carry this conversation's last two completed turns forward as the next
+        // wake's optional hint.
+        previousTurns.clear()
+        previousTurns.addAll(turns.takeLast(2))
         notify(getString(R.string.notif_listening))
+    }
+
+    /** An optional, deliberately non-authoritative reminder of the previous
+     *  wake conversation's last turns. Prepended to the first agent task of a
+     *  new conversation so the user can refer back ("what did you say about
+     *  that?") without it becoming loaded history that biases an unrelated new
+     *  request — the framing tells the agent to ignore it unless relevant. */
+    private fun buildHint(): String {
+        if (previousTurns.isEmpty()) return ""
+        val sb = StringBuilder()
+        sb.append("(Reference only — background from our previous spoken conversation. ")
+        sb.append("This is a NEW conversation; ignore the following unless what I ask next refers back to it.\n")
+        for ((u, a) in previousTurns) {
+            sb.append("- I said: \"").append(clip(u)).append("\"; you replied: \"").append(clip(a)).append("\"\n")
+        }
+        sb.append(")\n\n")
+        return sb.toString()
+    }
+
+    /** One-line, length-capped copy of a turn for the hint block. */
+    private fun clip(s: String, max: Int = 200): String {
+        val t = s.trim().replace(Regex("\\s+"), " ")
+        return if (t.length <= max) t else t.take(max).trimEnd() + "…"
     }
 
     /** True when [text] is (a fragment of) what the assistant itself just said
@@ -402,6 +458,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
      */
     private fun awaitStreamBlocking(
         task: String,
+        sessionId: String,
         rec: AudioRecord?,
         detector: WakeDetector?,
     ): Boolean {
@@ -425,7 +482,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
             replyError = null
             replyStream = stream
         }
-        if (!c.sendTask(task, prefs.chatSessionId)) {
+        if (!c.sendTask(task, sessionId)) {
             stream.abort()
             synchronized(replyLock) { replyStream = null }
             return false

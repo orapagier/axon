@@ -93,7 +93,12 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
 
     /** Live inserts from the wake service — its exchange is already persisted
      *  by [ChatFeed.post]; this only mirrors it into the open list. */
-    private val feedListener = ChatFeed.Listener { role, text ->
+    private val feedListener = ChatFeed.Listener { sessionId, role, text ->
+        // Only mirror exchanges for the conversation this page is showing.
+        // Hands-free ("Hey Axon") turns live in their own per-wake
+        // conversations, so they must not be interleaved into — or persisted
+        // under — the manual chat thread via this page's snapshot saves.
+        if (sessionId != prefs.chatSessionId) return@Listener
         main.post {
             adapter.add(role, text)
             scrollEnd()

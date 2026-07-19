@@ -48,6 +48,15 @@ class Prefs(ctx: Context) {
         return id
     }
 
+    /** Mint a brand-new id for one hands-free ("Hey Axon") conversation.
+     *  Unlike [newSession] this is deliberately NOT persisted as a surface's
+     *  shared session: every wake starts its own conversation — saved on its
+     *  own (server thread + local [com.axon.voice.ui.ChatHistory] file) and
+     *  reviewable in the dashboard chat history — and the next wake starts
+     *  another. Follow-ups and a mid-reply "Hey Axon" barge-in stay inside the
+     *  same id (the wake service mints it once per interaction, not per turn). */
+    fun newWakeConversationId(): String = "wake-" + UUID.randomUUID().toString().take(8)
+
     val configured: Boolean
         get() = baseUrl.isNotEmpty() && masterKey.isNotEmpty()
 
