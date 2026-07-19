@@ -88,12 +88,17 @@ fn clamp_input(text: &str) -> String {
     text.chars().take(MAX_TTS_CHARS).collect()
 }
 
-/// Agent replies are markdown; an utterance needs the prose only. Server-side
-/// mirror of ChatPage.vue's `plainTextForSpeech`, because not every caller
-/// strips before POSTing — the Android client streams raw reply tokens
-/// sentence-by-sentence straight to `/api/audio/speech`, which had every
-/// engine (Piper especially) reading asterisks, fences, and link URLs aloud.
-/// Idempotent, so the dashboard's already-stripped text passes through
+/// Agent replies are markdown; an utterance needs speakable prose only.
+/// Server-side mirror of ChatPage.vue's `plainTextForSpeech`, because not every
+/// caller strips before POSTing — the Android client streams raw reply tokens
+/// sentence-by-sentence straight to `/api/audio/speech`, which had every engine
+/// (Piper especially) reading asterisks, fences, and link URLs aloud.
+///
+/// Beyond markdown it drops the noise a listener does not want spelled out
+/// character by character — email addresses (bare, and the `<…>` form mail
+/// clients wrap around them), URLs, emoji, RFC-2822 timezone cruft (` +0000`,
+/// `(PDT)`), and list bullets — while keeping the surrounding sender/subject
+/// prose. Idempotent, so the dashboard's already-stripped text passes through
 /// unchanged.
 fn plain_text_for_speech(md: &str) -> String {
     static FENCED: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?s)```.*?```").unwrap());
@@ -101,6 +106,21 @@ fn plain_text_for_speech(md: &str) -> String {
     static IMAGE: Lazy<Regex> = Lazy::new(|| Regex::new(r"!\[[^\]]*\]\([^)]*\)").unwrap());
     static LINK: Lazy<Regex> = Lazy::new(|| Regex::new(r"\[([^\]]+)\]\([^)]*\)").unwrap());
     static HEADING: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?m)^#{1,6}\s+").unwrap());
+    // `<…>` wrapping an address (contains `@` or `:`), then bare emails, then
+    // URLs. Order matters: markdown links are unwrapped above first, so the URL
+    // sweep only hits genuinely bare links, not a link's visible text.
+    static ANGLE_ADDR: Lazy<Regex> = Lazy::new(|| Regex::new(r"<[^>]*[@:][^>]*>").unwrap());
+    static EMAIL: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}").unwrap());
+    static URL: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\b(?:https?://|www\.)\S+").unwrap());
+    // RFC-2822 date tail: numeric offset (` +0000`) and the parenthesized zone
+    // abbreviation. Kept deliberately narrow so real acronyms like "(NASA)" are
+    // left alone; the human-readable date itself is untouched.
+    static TZ_OFFSET: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s[+\-]\d{4}\b").unwrap());
+    static TZ_ABBR: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"\((?:UTC|GMT|[PMCE][SD]T|BST|CET|CEST|EET|IST|JST|PHT|AEST)\)").unwrap()
+    });
+    static BULLET: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?m)^[ \t]*[-+*][ \t]+").unwrap());
     static WS: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s+").unwrap());
 
     let s = FENCED.replace_all(md, " Code block omitted. ");
@@ -110,12 +130,33 @@ fn plain_text_for_speech(md: &str) -> String {
     let s = s.replace("```", " ");
     let s = IMAGE.replace_all(&s, "");
     let s = LINK.replace_all(&s, "$1");
+    let s = ANGLE_ADDR.replace_all(&s, " ");
+    let s = EMAIL.replace_all(&s, " ");
+    let s = URL.replace_all(&s, " ");
     let s = HEADING.replace_all(&s, "");
-    let s: String = s
-        .chars()
-        .filter(|c| !matches!(c, '*' | '_' | '~' | '>' | '#'))
-        .collect();
+    let s = BULLET.replace_all(&s, "");
+    let s = TZ_OFFSET.replace_all(&s, " ");
+    let s = TZ_ABBR.replace_all(&s, " ");
+    let s: String = s.chars().filter(|c| !is_speech_noise_char(*c)).collect();
     WS.replace_all(&s, " ").trim().to_string()
+}
+
+/// Characters dropped before synthesis: leftover markdown emphasis/quote
+/// markers, stray angle brackets, and emoji / pictographic symbols a voice
+/// would mispronounce or read aloud as their name.
+fn is_speech_noise_char(c: char) -> bool {
+    if matches!(c, '*' | '_' | '~' | '>' | '#' | '<') {
+        return true;
+    }
+    matches!(c as u32,
+        0x1F000..=0x1FAFF   // playing cards/dominoes + emoji & pictographs (incl. flags)
+        | 0x2600..=0x27BF   // misc symbols + dingbats (☀ ✅ ❤ …)
+        | 0x2B00..=0x2BFF   // misc symbols and arrows (⭐ …)
+        | 0x2300..=0x23FF   // misc technical (⏰ ⌚ ▶ …)
+        | 0x2500..=0x25FF   // box drawing + geometric shapes (● ▪ …)
+        | 0xFE00..=0xFE0F   // emoji variation selectors
+        | 0x200D            // zero-width joiner
+    )
 }
 
 /// Synthesized speech ready to send to the browser. OpenAI-shaped hosts stream
@@ -657,7 +698,7 @@ mod tests {
         );
         assert_eq!(
             plain_text_for_speech("# Heading\n\n- item one\n- item two"),
-            "Heading - item one - item two"
+            "Heading item one item two"
         );
         assert_eq!(
             plain_text_for_speech("Before\n```rust\nlet x = 1;\n```\nAfter"),
@@ -679,6 +720,45 @@ mod tests {
         );
         // Nothing but markup melts to empty -> speak() bails, caller falls back.
         assert_eq!(plain_text_for_speech("***"), "");
+    }
+
+    #[test]
+    fn speech_text_strips_unspeakable_noise() {
+        // The <…> address a mail client wraps is dropped; the sender name stays.
+        assert_eq!(
+            plain_text_for_speech(
+                "From \"Curiosity Stream\" <no-reply@hello.curiositystream.com> with the subject"
+            ),
+            "From \"Curiosity Stream\" with the subject"
+        );
+        // Bare email addresses are dropped too.
+        assert_eq!(
+            plain_text_for_speech("Reply to alice.smith@example.co.uk today"),
+            "Reply to today"
+        );
+        // Bare URLs are dropped (markdown links keep their visible text, tested above).
+        assert_eq!(
+            plain_text_for_speech("Open https://example.com/very/long/path now"),
+            "Open now"
+        );
+        // Emoji and pictographs are stripped, surrounding words kept.
+        assert_eq!(plain_text_for_speech("Deal 🍿 today ✅"), "Deal today");
+        assert_eq!(plain_text_for_speech("Verified 📞 supplier"), "Verified supplier");
+        // RFC-2822 timezone tail goes; the human-readable date is untouched.
+        assert_eq!(
+            plain_text_for_speech("on Sun, 19 Jul 2026 15:40:19 +0000 (PDT)"),
+            "on Sun, 19 Jul 2026 15:40:19"
+        );
+        // A real acronym in parentheses is NOT mistaken for a timezone.
+        assert_eq!(
+            plain_text_for_speech("A report from (NASA) today"),
+            "A report from (NASA) today"
+        );
+        // List bullets are dropped.
+        assert_eq!(
+            plain_text_for_speech("- item one\n- item two"),
+            "item one item two"
+        );
     }
 
     #[test]
