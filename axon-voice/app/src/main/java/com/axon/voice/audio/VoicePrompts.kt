@@ -31,6 +31,9 @@ object VoicePrompts {
 
     fun randomFiller(): String = THINKING_FILLERS[rng.nextInt(THINKING_FILLERS.size)]
 
-    /** Every phrase that needs a prefetched server-TTS audio file. */
-    val allPrefetchable: List<String> = WAKE_ACKS + FOLLOWUP_PROMPT
+    /** Every phrase that needs a prefetched server-TTS audio file. Fillers are
+     *  included: with no cached file they fall back to the device's built-in
+     *  engine, which sounds nothing like the configured tts.* voice the replies
+     *  and acks are spoken in. */
+    val allPrefetchable: List<String> = WAKE_ACKS + FOLLOWUP_PROMPT + THINKING_FILLERS
 }

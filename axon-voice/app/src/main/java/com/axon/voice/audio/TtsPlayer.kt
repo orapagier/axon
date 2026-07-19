@@ -36,6 +36,31 @@ class TtsPlayer(ctx: Context) {
 
     fun play(file: File, onDone: () -> Unit) {
         stop()
+        startFile(file, onDone)
+    }
+
+    /**
+     * One-shot playback that does NOT retire an in-flight streamed reply — for
+     * the thinking filler, which is started at the same moment the reply stream
+     * is being set up. [play]'s stop() would clear that stream's bookkeeping and
+     * the reply would never play a sentence.
+     *
+     * If the reply already owns the speaker the filler is dropped rather than
+     * cutting in; otherwise [playNextLocked] takes the speaker back the instant
+     * the first sentence is ready.
+     */
+    fun playFiller(file: File, onDone: () -> Unit) {
+        synchronized(streamLock) {
+            if (currentStream?.idle == false) {
+                onDone()
+                return
+            }
+        }
+        stopPlayback()
+        startFile(file, onDone)
+    }
+
+    private fun startFile(file: File, onDone: () -> Unit) {
         val player = MediaPlayer()
         mp = player
         try {
@@ -47,18 +72,18 @@ class TtsPlayer(ctx: Context) {
             )
             player.setDataSource(file.absolutePath)
             player.setOnCompletionListener {
-                cleanup()
+                cleanup(player)
                 onDone()
             }
             player.setOnErrorListener { _, _, _ ->
-                cleanup()
+                cleanup(player)
                 onDone()
                 true
             }
             player.prepare()
             player.start()
         } catch (_: Exception) {
-            cleanup()
+            cleanup(player)
             onDone()
         }
     }
@@ -149,18 +174,18 @@ class TtsPlayer(ctx: Context) {
             )
             player.setDataSource(file.absolutePath)
             player.setOnCompletionListener {
-                cleanup()
+                cleanup(player)
                 onStreamFileDone(s)
             }
             player.setOnErrorListener { _, _, _ ->
-                cleanup()
+                cleanup(player)
                 onStreamFileDone(s)
                 true
             }
             player.prepare()
             player.start()
         } catch (_: Exception) {
-            cleanup()
+            cleanup(player)
             onStreamFileDone(s)
         }
     }
@@ -217,9 +242,12 @@ class TtsPlayer(ctx: Context) {
         runCatching { fallback?.stop() }
     }
 
-    private fun cleanup() {
-        mp?.release()
-        mp = null
+    /** Retire [player] — but only drop it as the sink if it still is the sink.
+     *  A filler that finishes after the reply took the speaker must not null out
+     *  (or release) the reply's player. */
+    private fun cleanup(player: MediaPlayer) {
+        runCatching { player.release() }
+        if (mp === player) mp = null
     }
 
     fun release() {

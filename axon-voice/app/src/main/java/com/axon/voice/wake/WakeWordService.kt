@@ -32,6 +32,7 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
@@ -91,10 +92,12 @@ class WakeWordService : Service(), ChatSocket.Listener {
     @Volatile
     private var alive = false
 
-    /** Cached server-TTS audio per phrase (wake acks + follow-up). Phrases
-     *  whose prefetch failed are absent and retried on the next service start
-     *  — the resilience mirror of voiceprompts.js's cache/inflight map. */
-    private val ackFiles = mutableMapOf<String, File>()
+    /** Cached server-TTS audio per phrase (wake acks, follow-up, thinking
+     *  fillers). Phrases whose prefetch failed are absent and retried on the
+     *  next service start — the resilience mirror of voiceprompts.js's
+     *  cache/inflight map. Concurrent: the prefetch thread writes while the
+     *  wake and filler threads read. */
+    private val promptFiles = ConcurrentHashMap<String, File>()
 
     // One reply in flight at a time. The reply is *streamed*: each token is
     // fed to [replyStream] for per-sentence TTS so speech starts with the first
@@ -172,8 +175,8 @@ class WakeWordService : Service(), ChatSocket.Listener {
             return
         }
         // Off the wake thread: each miss burns a network timeout, and "Hey
-        // Axon" must be listening immediately, not after 4 slow fetches.
-        thread(name = "axon-ack-prefetch") { prefetchAcks() }
+        // Axon" must be listening immediately, not after a run of slow fetches.
+        thread(name = "axon-prompt-prefetch") { prefetchPrompts() }
 
         var record: AudioRecord? = null
         try {
@@ -266,7 +269,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
             notify(getString(R.string.status_recording))
             val ackPhrase = if (first) VoicePrompts.randomWakeAck()
                 else VoicePrompts.FOLLOWUP_PROMPT
-            playAckBlocking(ackPhrase, ackFiles[ackPhrase], soft = !first)
+            playAckBlocking(ackPhrase, promptFiles[ackPhrase], soft = !first)
             // Let the ack (and any reply tail still in the output pipeline)
             // finish coming out of the speaker before the drain, so it can't
             // leak into the capture and be transcribed as a command. Only in
@@ -329,13 +332,20 @@ class WakeWordService : Service(), ChatSocket.Listener {
 
     /** Speak a random thinking filler on a throwaway thread. The reply's first
      *  sentence stops any in-flight playback as it starts, so the filler is
-     *  always interrupted before the reply — no overlap, no extra locking. */
+     *  always interrupted before the reply — no overlap, no extra locking.
+     *
+     *  Prefers the prefetched server-TTS file so the filler is in the same voice
+     *  as the ack and the reply; the built-in engine is only the last resort,
+     *  same order as [playAckBlocking]. Uses playFiller (not play) so it cannot
+     *  retire the reply stream that is being set up alongside it. */
     private fun playFillerNonBlocking() {
         val p = player ?: return
         val phrase = VoicePrompts.randomFiller()
+        val cached = promptFiles[phrase]?.takeIf { it.exists() && it.length() > 0 }
         thread(name = "axon-filler") {
             val done = CountDownLatch(1)
-            p.speakFallback(phrase) { done.countDown() }
+            if (cached != null) p.playFiller(cached) { done.countDown() }
+            else p.speakFallback(phrase) { done.countDown() }
             done.await(8, TimeUnit.SECONDS)
         }
     }
@@ -460,17 +470,17 @@ class WakeWordService : Service(), ChatSocket.Listener {
         return bargedIn.get()
     }
 
-    private fun prefetchAcks() {
+    private fun prefetchPrompts() {
         // One stable file per phrase so existing good fetches survive across
         // prefetch runs (and service restarts); only missing/empty ones fetch.
         // SHA-1 of the phrase keeps filenames stable and collision-free.
         for (phrase in VoicePrompts.allPrefetchable) {
-            if (ackFiles[phrase]?.let { it.exists() && it.length() > 0 } == true) continue
+            if (promptFiles[phrase]?.let { it.exists() && it.length() > 0 } == true) continue
             val file = File(cacheDir, "ack_${phrase.hashCode().toString(16)}.audio")
             val ok = file.exists() && file.length() > 0 ||
                 runCatching { client.speech(phrase, file) }.getOrDefault(false)
             if (ok && file.length() > 0) {
-                ackFiles[phrase] = file
+                promptFiles[phrase] = file
             } else {
                 file.delete() // retry on the next prefetch / service start
             }
