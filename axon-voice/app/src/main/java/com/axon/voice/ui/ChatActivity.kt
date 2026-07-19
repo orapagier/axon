@@ -24,16 +24,23 @@ import com.axon.voice.R
 import com.axon.voice.api.AxonClient
 import com.axon.voice.api.ChatSocket
 import com.axon.voice.audio.SilenceWatcher
+import com.axon.voice.audio.StreamingTts
+import com.axon.voice.audio.TtsPlayer
 import com.axon.voice.audio.WavRecorder
 import com.axon.voice.wake.WakeWordService
 import org.json.JSONObject
+import java.io.File
 import kotlin.concurrent.thread
 
 /**
- * The app's home screen: type a message, or tap the mic to speak one — the
- * recording (silence-watched push-to-talk) is transcribed server-side and sent
- * as its own chat message, never left in the composer. Replies stream in as
- * text; the "Hey Axon" wake service is the spoken surface.
+ * The app's home screen — and its only page: type a message, or tap the mic to
+ * speak one. The recording (silence-watched push-to-talk) is transcribed
+ * server-side and sent as its own chat message, never left in the composer.
+ *
+ * Speaking to Axon gets a spoken answer: a push-to-talk reply is read aloud
+ * through [StreamingTts] as it streams, exactly as the "Hey Axon" wake service
+ * reads its own. A typed message is answered in text alone — the same rule the
+ * dashboard applies, so the keyboard never makes the phone talk.
  *
  * Runs on [Prefs.chatSessionId], which the wake service shares: hands-free
  * exchanges arrive through [ChatFeed] and show here (and persist via
@@ -72,6 +79,13 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
     private var pendingDictate = false
     private var pendingWake = false
 
+    private var player: TtsPlayer? = null
+
+    /** Non-null while a voice-initiated run streams its reply into TTS. Set by
+     *  push-to-talk sends only: like the dashboard, speaking to Axon gets a
+     *  spoken answer, while a typed message is answered in text alone. */
+    private var replyTts: StreamingTts? = null
+
     /** Adapter index of the assistant bubble the current run streams into.
      *  Index-addressed (not "last item") because a wake-word exchange can be
      *  appended below it mid-stream via [ChatFeed]. */
@@ -106,6 +120,7 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
 
         prefs = Prefs(this)
         client = AxonClient(prefs)
+        player = TtsPlayer(this)
 
         connLabel = findViewById(R.id.connLabel)
         wakeBtn = findViewById(R.id.wakeBtn)
@@ -178,6 +193,9 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
             recorder = null
             WakeWordService.micHold = false
         }
+        stopSpeaking()
+        player?.release()
+        player = null
         chat?.close()
         super.onDestroy()
     }
@@ -233,6 +251,9 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
             return
         }
         if (state != State.IDLE) return
+        // Don't talk over the user, and don't let the reply we are reading
+        // aloud bleed into the capture and be transcribed as their command.
+        stopSpeaking()
         state = State.RECORDING
         micBtn.setColorFilter(ContextCompat.getColor(this, R.color.error))
         input.hint = getString(R.string.chat_hint_listening)
@@ -289,7 +310,7 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
                 // Speak-and-go: the transcript sends as its own chat message,
                 // never through the composer — a typed draft stays untouched.
                 resetInputRow()
-                if (text.isNotBlank()) sendMessage(text)
+                if (text.isNotBlank()) sendMessage(text, voice = true)
             }
         }
     }
@@ -308,6 +329,7 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
         if (state == State.WAITING) {
             // Acts as "stop": cancel the in-flight run, keep what streamed.
             chat?.cancel(prefs.chatSessionId)
+            stopSpeaking()
             state = State.IDLE
             streamIdx = -1
             ChatHistory.save(this, prefs.chatSessionId, adapter.snapshot())
@@ -321,8 +343,9 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
     }
 
     /** The one path into a run for typed and push-to-talk messages alike: show
-     *  the user bubble, open a streaming assistant bubble, ship the task. */
-    private fun sendMessage(text: String) {
+     *  the user bubble, open a streaming assistant bubble, ship the task.
+     *  [voice] marks a push-to-talk send, whose reply is also read aloud. */
+    private fun sendMessage(text: String, voice: Boolean = false) {
         if (state != State.IDLE) return
         adapter.add("user", text)
         adapter.add("assistant", "")
@@ -330,10 +353,53 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
         scrollEnd()
         state = State.WAITING
         ChatHistory.save(this, prefs.chatSessionId, adapter.snapshot())
+        // A previous reply still being read aloud yields to the new request.
+        stopSpeaking()
+        val p = player
+        if (voice && p != null) {
+            // Distinct file prefix: the wake service synthesizes into the same
+            // cache dir and must not collide with this stream.
+            replyTts = StreamingTts(p, client, cacheDir, "reply_chat") {}
+        }
         if (chat?.sendTask(text, prefs.chatSessionId) != true) {
             adapter.setAt(streamIdx, getString(R.string.status_offline))
             streamIdx = -1
             state = State.IDLE
+            stopSpeaking()
+        }
+    }
+
+    /** Silence a reply being read aloud — a new send, stop, new conversation,
+     *  or the user reaching for the mic all take the speaker back. */
+    private fun stopSpeaking() {
+        replyTts?.abort()
+        replyTts = null
+        player?.stop()
+    }
+
+    /**
+     * Close out the read-aloud stream for a finished run. Mirrors the wake
+     * service: the server delivers a reply as one token frame followed
+     * immediately by done, so finish() must be what ends playback — and a run
+     * that emitted no token frame at all has nothing queued, where finalizing
+     * an empty stream would say nothing. Synthesize full_text in one blob then.
+     */
+    private fun finishSpeaking(full: String) {
+        val s = replyTts ?: return
+        replyTts = null
+        if (s.hasContent) {
+            s.finish()
+            return
+        }
+        s.abort()
+        val p = player
+        if (full.isBlank() || p == null) return
+        thread(name = "axon-chat-tts") {
+            val f = File(cacheDir, "reply_chat_full.audio")
+            val ok = runCatching { client.speech(full, f) }.getOrDefault(false)
+            main.post {
+                if (ok && f.length() > 0) p.play(f) {} else p.speakFallback(full) {}
+            }
         }
     }
 
@@ -347,6 +413,7 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
             if (state == State.WAITING) {
                 // The run may still finish server-side; its result lands in the
                 // dashboard thread. Unblock the composer rather than hanging.
+                stopSpeaking()
                 state = State.IDLE
                 streamIdx = -1
                 ChatHistory.save(this, prefs.chatSessionId, adapter.snapshot())
@@ -358,7 +425,9 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
         main.post {
             when (ev.optString("type")) {
                 "token" -> if (state == State.WAITING && streamIdx >= 0) {
-                    adapter.appendAt(streamIdx, ev.optString("text"))
+                    val text = ev.optString("text")
+                    adapter.appendAt(streamIdx, text)
+                    replyTts?.append(text)
                     scrollEnd()
                 }
 
@@ -367,6 +436,7 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
                     if (streamIdx >= 0 && adapter.textAt(streamIdx).isBlank() && full.isNotBlank()) {
                         adapter.setAt(streamIdx, full)
                     }
+                    finishSpeaking(full)
                     scrollEnd()
                     state = State.IDLE
                     streamIdx = -1
@@ -374,6 +444,7 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
                 }
 
                 "error" -> if (state == State.WAITING) {
+                    stopSpeaking()
                     adapter.add("error", ev.optString("message", "something went wrong"))
                     scrollEnd()
                     state = State.IDLE
@@ -392,6 +463,7 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
             state = State.IDLE
             streamIdx = -1
         }
+        stopSpeaking()
         // RECORDING/TRANSCRIBING are left to finish on their own — an
         // in-flight transcription simply sends into the fresh thread. The wake
         // service reads the session id per exchange, so it follows along too.
