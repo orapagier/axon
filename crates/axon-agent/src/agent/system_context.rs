@@ -330,6 +330,16 @@ FILE HANDLING:\n\
     sys.push_str(discovery_hint);
     sys.push_str(planning_hint);
 
+    // Spoken reply: the request came in by voice and the answer will be read
+    // aloud, so a listener can't skim a wall of records. Ask for a short,
+    // conversational summary up front rather than a raw enumeration. Applies to
+    // real chat/voice runs, never a tool-free structured node.
+    if ctx.voice && !tool_free {
+        sys.push_str(
+            "\n\nSPOKEN REPLY:\nThis reply will be read aloud, so answer as if you are speaking to the person. Lead with the direct answer in a sentence or two and keep it brief and conversational. Do NOT read out long lists, tables, raw records, email addresses, URLs, IDs, or timestamps one by one — a listener cannot follow that. Instead summarize the key points (e.g. how many there are and the most important few) and offer to go into detail if they want it. Say only what the person needs to hear.",
+        );
+    }
+
     RunSystemContext {
         sys,
         messages,

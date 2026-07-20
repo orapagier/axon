@@ -482,7 +482,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
             replyError = null
             replyStream = stream
         }
-        if (!c.sendTask(task, sessionId)) {
+        if (!c.sendTask(task, sessionId, voice = true)) {
             stream.abort()
             synchronized(replyLock) { replyStream = null }
             return false

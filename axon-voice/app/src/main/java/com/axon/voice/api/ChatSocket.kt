@@ -78,8 +78,14 @@ class ChatSocket(
         })
     }
 
-    fun sendTask(task: String, sessionId: String): Boolean {
-        val payload = JSONObject().put("task", task).put("session_id", sessionId)
+    /** [voice] true when the message was spoken and its reply will be read
+     *  aloud — the server answers with a short spoken summary instead of a raw
+     *  dump. Wake and push-to-talk pass true; typed chat passes false. */
+    fun sendTask(task: String, sessionId: String, voice: Boolean = false): Boolean {
+        val payload = JSONObject()
+            .put("task", task)
+            .put("session_id", sessionId)
+            .put("voice", voice)
         return ws?.send(payload.toString()) == true
     }
 

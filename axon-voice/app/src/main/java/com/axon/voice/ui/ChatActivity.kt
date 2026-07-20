@@ -366,7 +366,7 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
             // cache dir and must not collide with this stream.
             replyTts = StreamingTts(p, client, cacheDir, "reply_chat") {}
         }
-        if (chat?.sendTask(text, prefs.chatSessionId) != true) {
+        if (chat?.sendTask(text, prefs.chatSessionId, voice) != true) {
             adapter.setAt(streamIdx, getString(R.string.status_offline))
             streamIdx = -1
             state = State.IDLE

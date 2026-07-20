@@ -61,6 +61,12 @@ pub struct RunContext {
     /// field before `run_task` is called.
     #[serde(default)]
     pub image_content: Option<crate::providers::types::ContentBlock>,
+    /// True when the request came in by voice (dashboard mic / wake word /
+    /// push-to-talk) and its reply will be read aloud. The system prompt then
+    /// gets a SPOKEN REPLY hint so the agent answers with a short, conversational
+    /// summary instead of dumping long lists/records a listener can't follow.
+    #[serde(default)]
+    pub voice: bool,
 }
 
 impl RunContext {
@@ -96,6 +102,7 @@ impl RunContext {
             expects_structured_output: false,
             preferred_role: None,
             image_content: None,
+            voice: false,
         }
     }
 }

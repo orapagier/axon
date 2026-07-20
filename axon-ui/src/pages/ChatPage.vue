@@ -465,7 +465,9 @@ async function sendMessage(msg, voice) {
   }
 
   await scrollBottom()
-  const sent = wsSend({ task: msg, session_id: currentSessionId.value })
+  // `voice` tells the agent the reply will be read aloud, so it answers with a
+  // short spoken summary instead of a raw dump (see the server SPOKEN REPLY hint).
+  const sent = wsSend({ task: msg, session_id: currentSessionId.value, voice })
   if (!sent) {
     // Socket is down — undo the placeholders and give the message back
     // instead of dropping it silently and locking the input forever. A spoken

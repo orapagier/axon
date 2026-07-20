@@ -14,6 +14,10 @@ pub struct WsTask {
     pub user_time: Option<String>,
     #[serde(default)]
     pub attached_files: Vec<crate::files::AttachedFile>,
+    /// Set by the clients when the message was spoken (mic / wake word / PTT)
+    /// and the reply will be read aloud — drives the SPOKEN REPLY system hint.
+    #[serde(default)]
+    pub voice: bool,
 }
 
 pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
@@ -263,6 +267,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                     None,
                 );
                 context.attached_files = task_data.attached_files.clone();
+                context.voice = task_data.voice;
 
                 let sid = task_data.session_id.clone();
                 let run_id = context.run_id.clone();
