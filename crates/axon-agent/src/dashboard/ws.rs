@@ -363,7 +363,40 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     // keeps the collapsed "how I got here" block across page reloads.
     let mut traces: std::collections::HashMap<String, Vec<serde_json::Value>> =
         std::collections::HashMap::new();
-    while let Some(event) = rx.recv().await {
+
+    // Server-wide notifications (scheduler outcomes, watcher hits, background
+    // errors) arrive on a separate broadcast channel and are forwarded to this
+    // socket interleaved with its own run events. They carry an empty run_id,
+    // which is what lets the frontend's run-scoped guard pass them to the bell.
+    let mut notifications = fwd_state.notify.subscribe();
+    // Disables the broadcast select branch if the hub ever closes, so the socket
+    // keeps serving run events instead of spinning on a closed channel.
+    let mut notify_open = true;
+
+    loop {
+        let event = tokio::select! {
+            run_event = rx.recv() => match run_event {
+                Some(ev) => ev,
+                // The run channel closed: the receiver task is gone and no
+                // further chat events can arrive, so this socket is done.
+                None => break,
+            },
+            broadcast = notifications.recv(), if notify_open => match broadcast {
+                Ok(ev) => ev,
+                // Lagged: this socket fell behind the broadcast buffer. The rows
+                // are persisted, and the frontend re-fetches /api/notifications
+                // on reconnect, so skipping the missed ones is safe.
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!("WS notification receiver lagged, skipped {n}");
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    notify_open = false;
+                    continue;
+                }
+            },
+        };
+
         if let Some(finished_run) = tee_trace_event(&mut traces, &event) {
             if let Some(items) = traces.remove(&finished_run) {
                 persist_trace(&fwd_state, &finished_run, &items);

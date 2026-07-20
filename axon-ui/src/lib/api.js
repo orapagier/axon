@@ -40,7 +40,9 @@ export const get = (path) => api('GET', path)
 export const post = (path, body) => api('POST', path, body)
 export const postForm = (path, formData) => api('POST', path, formData)
 export const put = (path, body) => api('PUT', path, body)
-export const del = (path) => api('DELETE', path)
+// `body` is optional — DELETE endpoints that scope the delete (e.g. clearing
+// one notification vs. all) read it; the rest call this with the path alone.
+export const del = (path, body) => api('DELETE', path, body)
 
 // For endpoints whose success body is not JSON (e.g. /audio/speech streams
 // audio bytes): same auth handling, but the caller gets the raw Response and

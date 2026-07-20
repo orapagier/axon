@@ -21,6 +21,81 @@ pub struct SchedulerEngine {
     router: SharedRouter,
     settings: Arc<RuntimeSettings>,
     messaging: Arc<crate::messaging::MessagingHub>,
+    notify: Arc<crate::notify::NotifyHub>,
+}
+
+/// Deliver a finished job's output to one messaging platform.
+///
+/// Returns `Err` with an operator-readable reason when delivery didn't happen —
+/// including the silent case the raw `if let Some(gw)` arms used to swallow,
+/// where the gateway simply isn't connected. Callers turn the reason into a
+/// dashboard notification so a job whose output went nowhere is visible.
+async fn deliver_job_output(
+    messaging: &crate::messaging::MessagingHub,
+    platform: &str,
+    chat_id: &str,
+    msg: &str,
+) -> Result<(), String> {
+    let gateway_down = |p: &str| format!("{p} is not connected");
+    match platform {
+        "telegram" => match messaging.telegram.lock().await.as_ref() {
+            Some(gw) => gw.send_text(chat_id, msg).await.map(|_| ()).map_err(|e| e.to_string()),
+            None => Err(gateway_down("Telegram")),
+        },
+        "discord" => match messaging.discord.lock().await.as_ref() {
+            Some(gw) => gw.send_text(chat_id, msg).await.map(|_| ()).map_err(|e| e.to_string()),
+            None => Err(gateway_down("Discord")),
+        },
+        "slack" => match messaging.slack.lock().await.as_ref() {
+            Some(gw) => gw.send_text(chat_id, msg).await.map(|_| ()).map_err(|e| e.to_string()),
+            None => Err(gateway_down("Slack")),
+        },
+        other => Err(format!("unknown notification platform '{other}'")),
+    }
+}
+
+/// Persist + broadcast the outcome of a job's delivery attempt to the dashboard
+/// bell. Shared by the cron fire path and `run_once` so both report identically.
+async fn notify_job_outcome(
+    notify: &crate::notify::NotifyHub,
+    job_name: &str,
+    target_platform: &str,
+    target_cid: &str,
+    result: &Result<(), String>,
+) {
+    if target_cid.is_empty() || target_platform.is_empty() {
+        notify
+            .emit(
+                "scheduler",
+                "warning",
+                job_name,
+                "Output discarded — no delivery target configured. Set watcher.notify_chat_id (and watcher.notify_platform) in Settings.",
+            )
+            .await;
+        return;
+    }
+    match result {
+        Ok(()) => {
+            notify
+                .emit(
+                    "scheduler",
+                    "info",
+                    job_name,
+                    &format!("Sent to {target_platform}."),
+                )
+                .await
+        }
+        Err(e) => {
+            notify
+                .emit(
+                    "scheduler",
+                    "error",
+                    job_name,
+                    &format!("Delivery to {target_platform} failed: {e}"),
+                )
+                .await
+        }
+    }
 }
 
 impl SchedulerEngine {
@@ -29,6 +104,7 @@ impl SchedulerEngine {
         router: SharedRouter,
         settings: Arc<RuntimeSettings>,
         messaging: Arc<crate::messaging::MessagingHub>,
+        notify: Arc<crate::notify::NotifyHub>,
     ) -> anyhow::Result<Self> {
         let sched = JobScheduler::new().await.context("Create scheduler")?;
         Ok(SchedulerEngine {
@@ -40,6 +116,7 @@ impl SchedulerEngine {
             router,
             settings,
             messaging,
+            notify,
         })
     }
 
@@ -153,6 +230,7 @@ impl SchedulerEngine {
         let fire_guard = Arc::clone(&self.fire_guard);
 
         let messaging = Arc::clone(&self.messaging);
+        let notify = Arc::clone(&self.notify);
         let platform = job.platform.clone();
         let chat_id = job.chat_id.clone();
         let job_name = job.name.clone();
@@ -176,6 +254,7 @@ impl SchedulerEngine {
             let store = Arc::clone(&store);
             let stop_cond = stop_cond.clone();
             let messaging = Arc::clone(&messaging);
+            let notify = Arc::clone(&notify);
             let platform = platform.clone();
             let chat_id = chat_id.clone();
             let job_name = job_name.clone();
@@ -258,41 +337,25 @@ impl SchedulerEngine {
                     ("".to_string(), "".to_string())
                 };
 
-                if !target_cid.is_empty() && !target_platform.is_empty() {
-                    let msg = result.clone();
+                let delivery = if !target_cid.is_empty() && !target_platform.is_empty() {
                     tracing::info!(
                         "Sending cron job {} result to '{}' chat ID: {}",
                         job_id,
                         target_platform,
                         target_cid
                     );
-                    match target_platform.as_str() {
-                        "telegram" => {
-                            if let Some(tg) = messaging.telegram.lock().await.as_ref() {
-                                if let Err(e) = tg.send_text(&target_cid, &msg).await {
-                                    tracing::error!("Failed to send Telegram notification: {}", e);
-                                }
-                            }
-                        }
-                        "discord" => {
-                            if let Some(dc) = messaging.discord.lock().await.as_ref() {
-                                if let Err(e) = dc.send_text(&target_cid, &msg).await {
-                                    tracing::error!("Failed to send Discord notification: {}", e);
-                                }
-                            }
-                        }
-                        "slack" => {
-                            if let Some(sl) = messaging.slack.lock().await.as_ref() {
-                                if let Err(e) = sl.send_text(&target_cid, &msg).await {
-                                    tracing::error!("Failed to send Slack notification: {}", e);
-                                }
-                            }
-                        }
-                        _ => {}
+                    let d =
+                        deliver_job_output(&messaging, &target_platform, &target_cid, &result).await;
+                    if let Err(ref e) = d {
+                        tracing::error!("Job {} delivery to {} failed: {}", job_id, target_platform, e);
                     }
+                    d
                 } else {
                     tracing::warn!("Job {} finished, but watcher.notify_chat_id or platform is empty. Discarding output.", job_id);
-                }
+                    Ok(())
+                };
+                notify_job_outcome(&notify, &job_name, &target_platform, &target_cid, &delivery)
+                    .await;
 
                 if should_stop(&store, &job_id, &stop_cond, &result) {
                     tracing::info!("Job {} stop condition met — completing", job_id);
@@ -363,46 +426,30 @@ impl SchedulerEngine {
             target_cid
         );
 
-        if !target_cid.is_empty() && !target_platform.is_empty() {
-            let msg = result.clone();
+        let delivery = if !target_cid.is_empty() && !target_platform.is_empty() {
             tracing::info!(
                 "Sending message to '{}' chat ID: {}",
                 target_platform,
                 target_cid
             );
-            match target_platform.as_str() {
-                "telegram" => {
-                    if let Some(tg) = self.messaging.telegram.lock().await.as_ref() {
-                        if let Err(e) = tg.send_text(&target_cid, &msg).await {
-                            tracing::error!(
-                                "Failed to send Telegram notification (run_once): {}",
-                                e
-                            );
-                        }
-                    }
-                }
-                "discord" => {
-                    if let Some(dc) = self.messaging.discord.lock().await.as_ref() {
-                        if let Err(e) = dc.send_text(&target_cid, &msg).await {
-                            tracing::error!(
-                                "Failed to send Discord notification (run_once): {}",
-                                e
-                            );
-                        }
-                    }
-                }
-                "slack" => {
-                    if let Some(sl) = self.messaging.slack.lock().await.as_ref() {
-                        if let Err(e) = sl.send_text(&target_cid, &msg).await {
-                            tracing::error!("Failed to send Slack notification (run_once): {}", e);
-                        }
-                    }
-                }
-                _ => {}
+            let d =
+                deliver_job_output(&self.messaging, &target_platform, &target_cid, &result).await;
+            if let Err(ref e) = d {
+                tracing::error!("run_once: delivery to {} failed: {}", target_platform, e);
             }
+            d
         } else {
             tracing::warn!("run_once: job {} finished, but watcher.notify_chat_id or platform is empty. Discarding output.", job.id);
-        }
+            Ok(())
+        };
+        notify_job_outcome(
+            &self.notify,
+            &job.name,
+            &target_platform,
+            &target_cid,
+            &delivery,
+        )
+        .await;
 
         Ok(result)
     }

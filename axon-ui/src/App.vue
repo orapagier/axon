@@ -1,6 +1,8 @@
 <script setup>
-import { ref, computed, defineAsyncComponent, markRaw, onMounted, onUnmounted } from 'vue'
-import { wsStatus } from './lib/ws.js'
+import { ref, computed, defineAsyncComponent, markRaw, onMounted, onUnmounted, watch } from 'vue'
+import { wsStatus, connectWs, subscribe } from './lib/ws.js'
+import { loadNotifications, pushWsNotification } from './lib/notifications.js'
+import { toast } from './lib/toast.js'
 import { confirmDialog } from './lib/confirm.js'
 import { headerSearchFor } from './lib/headerSearch.js'
 import ConfirmDialog from './components/ConfirmDialog.vue'
@@ -179,8 +181,50 @@ function onGlobalKeydown(e) {
   e.preventDefault()
   topbarSearchRef.value?.focus()
 }
-onMounted(() => window.addEventListener('keydown', onGlobalKeydown))
-onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown))
+// The bell is app-wide: the socket is opened here (not by ChatPage) so
+// background notifications reach it from any page, and history is loaded up
+// front so the badge is right before a single event arrives.
+let unsubscribeWs = null
+
+function onAppWsEvent(ev) {
+  // Run-scoped notifications belong to ChatPage's own handler; the hub's
+  // server-wide broadcasts carry an empty run_id.
+  if (ev?.type !== 'notification' || ev.run_id) return
+  pushWsNotification(ev)
+  // Flash it too, so a job failing while the user is on another page is seen
+  // immediately rather than only on the badge.
+  const title = (ev.title || '').trim()
+  const message = (ev.message || '').trim()
+  toast(title ? `${title}\n${message}` : message || 'Notification', (ev.level || '') !== 'error')
+}
+
+function startRealtime() {
+  if (unsubscribeWs) return
+  unsubscribeWs = subscribe(onAppWsEvent)
+  connectWs()
+  loadNotifications()
+}
+
+// A dropped socket may have missed broadcasts; the persisted list is the source
+// of truth, so re-sync whenever the connection comes back.
+watch(wsStatus, (status, prev) => {
+  if (status === 'connected' && prev !== 'connected') loadNotifications()
+})
+
+// Logging in doesn't reload the page, so the socket has to start on the flag
+// flip too — not just on mount.
+watch(isAuthenticated, (authed) => {
+  if (authed) startRealtime()
+})
+
+onMounted(() => {
+  window.addEventListener('keydown', onGlobalKeydown)
+  if (isAuthenticated.value) startRealtime()
+})
+onUnmounted(() => {
+  window.removeEventListener('keydown', onGlobalKeydown)
+  unsubscribeWs?.()
+})
 
 function reload() {
   window.location.reload()

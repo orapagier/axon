@@ -11,6 +11,7 @@ pub mod mcp;
 pub mod memory;
 pub mod messaging;
 pub mod model_cache;
+pub mod notify;
 pub mod observability;
 
 pub mod providers;

@@ -5,6 +5,7 @@ use std::sync::Arc;
 use crate::config::RuntimeSettings;
 use crate::mcp::McpManager;
 use crate::memory::MemoryStore;
+use crate::notify::NotifyHub;
 use crate::router::{SharedRouter, ToolRouter};
 use crate::scheduler::SchedulerEngine;
 use crate::tools::{FileHandler, ToolRegistry};
@@ -25,6 +26,10 @@ pub struct AppState {
     pub mcp: Arc<McpManager>,
     pub files: Arc<FileHandler>,
     pub messaging: Arc<crate::messaging::MessagingHub>,
+    /// Dashboard-facing notification fan-out: persists to `notifications` and
+    /// broadcasts to every connected WS client. Additive — messaging delivery
+    /// (Telegram/Discord/Slack) still happens through `messaging`.
+    pub notify: Arc<NotifyHub>,
     pub settings: Arc<RuntimeSettings>,
     pub db: Arc<Pool<SqliteConnectionManager>>,
     pub workflow_tx: tokio::sync::mpsc::UnboundedSender<WorkflowCompletion>,

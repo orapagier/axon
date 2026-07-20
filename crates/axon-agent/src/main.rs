@@ -493,6 +493,9 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let files = Arc::new(FileHandler::new(Arc::clone(&db)).context("create file handler")?);
+    // Notification fan-out, built before the scheduler so background engines can
+    // hold their own handle rather than reaching back through AppState.
+    let notify = axon::notify::NotifyHub::new(Arc::clone(&db));
     let job_store = Arc::new(JobStore::new(Arc::clone(&db)));
     let scheduler = Arc::new(
         SchedulerEngine::new(
@@ -500,6 +503,7 @@ async fn main() -> anyhow::Result<()> {
             Arc::clone(&router),
             Arc::clone(&settings),
             Arc::clone(&messaging),
+            Arc::clone(&notify),
         )
         .await
         .context("create scheduler")?,
@@ -524,6 +528,7 @@ async fn main() -> anyhow::Result<()> {
         mcp,
         files,
         messaging: Arc::clone(&messaging),
+        notify: Arc::clone(&notify),
         settings: Arc::clone(&settings),
         db,
         workflow_tx,

@@ -56,6 +56,23 @@ pub async fn send_global_error_notification(
     preferred_platform: Option<&str>,
     preferred_chat_id: Option<&str>,
 ) -> Result<(), String> {
+    // The dashboard bell gets the error unconditionally, and first: this is the
+    // single funnel every background path (agent loop, watcher triage, workflow
+    // failures) already reports through, and the messaging send below can bail
+    // out entirely when no chat target is configured. Emitting up here is what
+    // makes those otherwise-invisible failures reach the operator.
+    // Many callers pass only a summary; fall back to it so the bell never shows
+    // a titled notification with an empty body.
+    let body = if details.trim().is_empty() {
+        summary.trim()
+    } else {
+        details.trim()
+    };
+    state
+        .notify
+        .emit(source.trim(), "error", summary.trim(), body)
+        .await;
+
     let Some(chat_id) = resolve_notification_target(state, preferred_chat_id) else {
         return Err("No notification target configured".to_string());
     };

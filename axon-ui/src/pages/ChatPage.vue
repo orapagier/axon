@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
-import { connectWs, wsSend, wsStatus } from '../lib/ws.js'
+import { subscribe, wsSend, wsStatus } from '../lib/ws.js'
 import { get, put, del, postForm, postRaw } from '../lib/api.js'
 import { toast, notifyBell } from '../lib/toast.js'
 import { addNotification } from '../lib/notifications.js'
@@ -323,7 +323,10 @@ function handleWsEvent(ev) {
       break
 
     case 'notification': {
-      if (ev.run_id && currentRunId && ev.run_id !== currentRunId) break
+      // Server-wide broadcasts (empty run_id) belong to App.vue's app-wide
+      // handler — handling them here too would double them in the bell.
+      if (!ev.run_id) break
+      if (currentRunId && ev.run_id !== currentRunId) break
       const title = (ev.title || '').trim()
       const message = (ev.message || '').trim()
       const body = title ? `${title}\n${message}` : (message || 'Notification')
@@ -1300,8 +1303,12 @@ function onWindowKeydown(e) {
   }
 }
 
+// App.vue owns the socket now (the bell needs it on every page); this page just
+// adds its own handler for run-scoped events.
+let unsubscribeWs = null
+
 onMounted(async () => {
-  connectWs(handleWsEvent)
+  unsubscribeWs = subscribe(handleWsEvent)
   window.addEventListener('keydown', onWindowKeydown)
   document.addEventListener('visibilitychange', onVisibilityChange)
   // Wake word survives reloads: getUserMedia without a gesture is allowed once
@@ -1322,6 +1329,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  unsubscribeWs?.()
   window.removeEventListener('keydown', onWindowKeydown)
   document.removeEventListener('visibilitychange', onVisibilityChange)
   stopRecording(true)

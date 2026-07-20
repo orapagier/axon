@@ -1490,12 +1490,29 @@ OTHER FORMATTING RULES:
         );
     }
 
+    /// Mirror a watcher hit into the dashboard bell. Best-effort and independent
+    /// of messaging delivery, so a hit stays visible (and reload-safe) even when
+    /// no chat target is configured or the gateway is down.
+    async fn notify_dashboard(&self, level: &str, title: &str, message: &str) {
+        // Clone the handle out and release the lock before emitting — `emit`
+        // awaits a blocking DB insert, and the state mutex is on the hot path of
+        // every watcher tick (same pattern as dispatch_router_alert_global).
+        let state = self.state.lock().await.clone();
+        if let Some(state) = state {
+            state.notify.emit("watcher", level, title, message).await;
+        }
+    }
+
     async fn send_notification(&self, text: &str, watcher_id: Option<&str>) {
         let platform = self.settings.get_str("watcher.notify_platform", "telegram");
         let chat_id = self.settings.get_str("watcher.notify_chat_id", "");
+        let title = watcher_id.unwrap_or("triage").to_string();
 
         if chat_id.is_empty() {
             tracing::warn!("Watcher: No notify_chat_id configured, skipping notification");
+            // Still surface the hit itself — dropping it entirely is the bug
+            // this hub exists to fix.
+            self.notify_dashboard("warning", &title, text).await;
             return;
         }
 
@@ -1549,6 +1566,11 @@ OTHER FORMATTING RULES:
             }
             _ => tracing::warn!("Unknown watcher notification platform: {}", platform),
         }
+
+        // The bell mirrors every hit regardless of how messaging delivery went,
+        // so the triage text survives a page reload and is readable after the
+        // moment of the toast.
+        self.notify_dashboard("info", &title, text).await;
     }
 
     // ── Database ───────────────────────────────────────────────────────────────

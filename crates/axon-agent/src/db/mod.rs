@@ -190,6 +190,12 @@ const MIGRATIONS: &[Migration] = &[
         sql: include_str!("migrations/0027_tts_piper_description.sql"),
         tolerant_dup_column: false,
     },
+    Migration {
+        version: 28,
+        name: "notifications",
+        sql: include_str!("migrations/0028_notifications.sql"),
+        tolerant_dup_column: false,
+    },
 ];
 
 const SEED_SQL: &str = include_str!("seed.sql");
@@ -360,6 +366,7 @@ mod tests {
             "observations",
             "schema_migrations",
             "telegram_reply_routes",
+            "notifications",
         ] {
             assert!(table_exists(&conn, t), "missing table {t}");
         }

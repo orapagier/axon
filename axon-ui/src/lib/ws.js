@@ -6,7 +6,9 @@ export const wsStatus = ref('connecting') // 'connected' | 'disconnected' | 'con
 let ws = null
 let reconnectTimer = null
 let keepaliveTimer = null
-let eventHandler = null
+// Multiple independent consumers share the one socket: ChatPage drives the run
+// stream, while the bell listens for server-wide notifications from any page.
+const handlers = new Set()
 
 function openSocket() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws'
@@ -39,16 +41,31 @@ function openSocket() {
   socket.onerror = () => socket.close()
   socket.onmessage = (e) => {
     if (ws !== socket) return
+    let ev
     try {
-      const ev = JSON.parse(e.data)
-      if (eventHandler) eventHandler(ev)
-    } catch { }
+      ev = JSON.parse(e.data)
+    } catch {
+      return
+    }
+    // One subscriber throwing must not starve the others.
+    for (const h of handlers) {
+      try {
+        h(ev)
+      } catch (err) {
+        console.error('ws handler failed', err)
+      }
+    }
   }
 }
 
-export function connectWs(onEvent) {
-  eventHandler = onEvent
+/// Register an event handler. Returns an unsubscribe function; call it on
+/// component unmount so handlers don't accumulate across remounts.
+export function subscribe(handler) {
+  handlers.add(handler)
+  return () => handlers.delete(handler)
+}
 
+export function connectWs() {
   // Reuse the live connection if there is one — callers may invoke this on
   // every page mount.
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {

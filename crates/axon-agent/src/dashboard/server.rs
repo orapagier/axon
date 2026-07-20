@@ -122,6 +122,18 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::post(api::search_memory),
         )
         .route("/api/memory/:id", axum::routing::delete(api::delete_memory))
+        .route(
+            "/api/notifications",
+            get(api::get_notifications).delete(api::delete_notifications),
+        )
+        .route(
+            "/api/notifications/unread_count",
+            get(api::get_notifications_unread_count),
+        )
+        .route(
+            "/api/notifications/mark_read",
+            axum::routing::post(api::mark_notifications_read),
+        )
         .route("/api/jobs", get(api::get_jobs).post(api::create_job))
         .route("/api/jobs/:id", axum::routing::put(api::update_job))
         .route("/api/jobs/:id/run", axum::routing::post(api::run_job))

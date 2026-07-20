@@ -42,16 +42,16 @@ onUnmounted(() => {
 
 function openNotification(n) {
   activeNotification.value = n
-  markRead(n.id)
+  markRead(n.key)
 }
 
 function closeDetail(v) {
   if (!v) activeNotification.value = null
 }
 
-function removeOne(e, id) {
+function removeOne(e, key) {
   e.stopPropagation()
-  deleteNotification(id)
+  deleteNotification(key)
 }
 
 async function clearAll() {
@@ -159,7 +159,7 @@ function fullTime(ts) {
         >
           <div
             v-for="n in notifications"
-            :key="n.id"
+            :key="n.key"
             class="notif-row"
             :class="{ unread: !n.read, error: !n.ok }"
             @click="openNotification(n)"
@@ -178,7 +178,7 @@ function fullTime(ts) {
               class="notif-row-delete"
               type="button"
               title="Delete"
-              @click="removeOne($event, n.id)"
+              @click="removeOne($event, n.key)"
             >
               <svg
                 viewBox="0 0 24 24"
