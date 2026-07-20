@@ -121,7 +121,9 @@ fn parse_piper_f32(raw: &str) -> Option<f32> {
     if raw.is_empty() {
         return None;
     }
-    raw.parse::<f32>().ok().filter(|v| v.is_finite() && *v >= 0.0)
+    raw.parse::<f32>()
+        .ok()
+        .filter(|v| v.is_finite() && *v >= 0.0)
 }
 
 /// Clamp speech input to [`MAX_TTS_CHARS`] on a char boundary.
@@ -406,7 +408,11 @@ async fn speak_piper(cfg: &TtsConfig, input: &str) -> anyhow::Result<SpeechAudio
     let out_path = std::env::temp_dir().join(format!("axon-piper-{}.wav", uuid::Uuid::new_v4()));
 
     let mut cmd = tokio::process::Command::new(&bin);
-    cmd.arg("-m").arg(&model_path).arg("-f").arg(&out_path).arg("-q");
+    cmd.arg("-m")
+        .arg(&model_path)
+        .arg("-f")
+        .arg(&out_path)
+        .arg("-q");
     // Optional voice-character overrides. Each flag is added only when set, so a
     // blank setting leaves Piper on the model's own default (see PiperOptions).
     let p = &cfg.piper;
@@ -817,7 +823,10 @@ mod tests {
         );
         // Emoji and pictographs are stripped, surrounding words kept.
         assert_eq!(plain_text_for_speech("Deal 🍿 today ✅"), "Deal today");
-        assert_eq!(plain_text_for_speech("Verified 📞 supplier"), "Verified supplier");
+        assert_eq!(
+            plain_text_for_speech("Verified 📞 supplier"),
+            "Verified supplier"
+        );
         // RFC-2822 timezone tail goes; the human-readable date is untouched.
         assert_eq!(
             plain_text_for_speech("on Sun, 19 Jul 2026 15:40:19 +0000 (PDT)"),
