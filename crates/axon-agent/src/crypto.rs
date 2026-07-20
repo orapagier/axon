@@ -11,9 +11,15 @@
 //!   Ciphertext is untagged base64. Still *readable* (so upgrades are seamless)
 //!   but never written anymore.
 //!
+//! ## Rotation
+//! Set `AXON_MASTER_KEY_OLD` to the previous key for one boot and every stored
+//! secret is re-encrypted under the new `AXON_MASTER_KEY` (see
+//! [`rekey_if_requested`]); then remove the variable. Without it, changing the
+//! master key leaves all stored credentials unreadable.
+//!
 //! ## Fail-closed behavior
-//! * Boot refuses to run without a real `AXON_MASTER_KEY` unless `AXON_DEV=1`
-//!   (see [`validate_master_key`]).
+//! * Boot refuses to run without a real `AXON_MASTER_KEY`, or on a weak one,
+//!   unless `AXON_DEV=1` (see [`validate_master_key`]).
 //! * Decryption of a `v2:` value under the wrong key returns `""` ("credential
 //!   needs re-entry"), never the raw ciphertext. The old code returned the
 //!   ciphertext as if it were the plaintext secret, which silently corrupted
@@ -242,6 +248,166 @@ pub fn decrypt_key(encoded: &str) -> String {
     encoded.to_string()
 }
 
+/// Env var holding the *previous* master key during a rotation. Set it
+/// alongside the new `AXON_MASTER_KEY` for one boot, then remove it.
+const OLD_KEY_VAR: &str = "AXON_MASTER_KEY_OLD";
+
+/// Every column that stores a value encrypted under the master key.
+///
+/// Deliberately a superset of [`SECRET_COLUMNS`] (which only lists the columns
+/// that ever held *v1* ciphertext). A re-key pass has to cover all of these or
+/// rotating the key silently orphans whatever it misses — `credentials.data`
+/// holds every Services-page credential, and `settings.value` holds the
+/// provider API keys seeded from `.env`.
+const ENCRYPTED_COLUMNS: &[(&str, &str)] = &[
+    ("models", "api_key"),
+    ("ssh_servers", "password"),
+    ("ssh_servers", "private_key"),
+    ("mcp_servers", "api_key"),
+    ("credentials", "data"),
+    ("settings", "value"),
+];
+
+/// Was this column ever written under the v1 (untagged) scheme? Only those get
+/// the untagged-value trial decryption; elsewhere an untagged value is genuine
+/// plaintext (a numeric setting, say) and must be left alone.
+fn had_legacy_scheme(table: &str, col: &str) -> bool {
+    SECRET_COLUMNS.contains(&(table, col))
+}
+
+/// Result of a rotation pass, for logging and tests.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct RekeyOutcome {
+    /// Re-encrypted from the old key to the current one.
+    pub rekeyed: usize,
+    /// Already readable under the current key — a re-run is a no-op.
+    pub already_current: usize,
+    /// Decrypted under neither key. Left untouched; needs manual re-entry.
+    pub undecryptable: usize,
+}
+
+/// Rotate stored secrets from `old_secret` onto the current `AXON_MASTER_KEY`.
+///
+/// Runs when `AXON_MASTER_KEY_OLD` is set, before anything reads a credential.
+/// Idempotent: values that already decrypt under the current key are counted
+/// and skipped, so leaving the variable set for an extra boot does no harm.
+///
+/// Fail-safe by construction — a value is only overwritten once it has been
+/// successfully decrypted and re-encrypted. AES-GCM authenticates, so a wrong
+/// guess fails rather than yielding garbage, and anything unreadable is
+/// reported and left exactly as it was rather than being destroyed.
+pub fn rekey_secrets(conn: &rusqlite::Connection, old_secret: &str) -> RekeyOutcome {
+    let old_v2 = derive_key_from(old_secret);
+    let old_v1 = legacy_key_from(old_secret);
+    let current = derive_key();
+    let mut out = RekeyOutcome::default();
+
+    for (table, col) in ENCRYPTED_COLUMNS {
+        // Table may be absent on a partially-migrated DB; skip quietly.
+        let rows: Vec<(i64, String)> = match conn.prepare(&format!(
+            "SELECT rowid, {col} FROM {table} WHERE {col} IS NOT NULL AND {col} != ''"
+        )) {
+            Ok(mut stmt) => stmt
+                .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
+                .and_then(|it| it.collect::<Result<Vec<_>, _>>())
+                .unwrap_or_default(),
+            Err(_) => continue,
+        };
+
+        for (rowid, value) in rows {
+            let plain = match value.strip_prefix(V2_PREFIX) {
+                Some(blob) => {
+                    if aes_decrypt(blob, &current).is_some() {
+                        out.already_current += 1;
+                        continue;
+                    }
+                    match aes_decrypt(blob, &old_v2) {
+                        Some(p) => p,
+                        None => {
+                            out.undecryptable += 1;
+                            tracing::warn!(
+                                "Re-key: {table}.{col} rowid {rowid} decrypts under neither the \
+                                 old nor the current AXON_MASTER_KEY — left untouched, it will \
+                                 need to be re-entered."
+                            );
+                            continue;
+                        }
+                    }
+                }
+                // Untagged. Only meaningful where v1 ciphertext could exist;
+                // anywhere else this is plaintext and must not be touched.
+                None => {
+                    if !had_legacy_scheme(table, col) {
+                        continue;
+                    }
+                    match aes_decrypt(&value, &old_v1) {
+                        Some(p) => p,
+                        // Not v1 ciphertext under the old key ⇒ genuine
+                        // plaintext. Leave it for reencrypt_legacy_secrets.
+                        None => continue,
+                    }
+                }
+            };
+
+            let reencrypted = encrypt_key(&plain);
+            if reencrypted.is_empty() {
+                // encrypt_key only yields "" on an AEAD failure; never replace
+                // a real secret with an empty value.
+                tracing::warn!("Re-key: {table}.{col} rowid {rowid} re-encryption produced empty");
+                continue;
+            }
+            match conn.execute(
+                &format!("UPDATE {table} SET {col} = ?1 WHERE rowid = ?2"),
+                rusqlite::params![reencrypted, rowid],
+            ) {
+                Ok(_) => out.rekeyed += 1,
+                Err(e) => tracing::warn!("Re-key: {table}.{col} rowid {rowid} update failed: {e}"),
+            }
+        }
+    }
+
+    out
+}
+
+/// Boot hook: run a rotation if `AXON_MASTER_KEY_OLD` is present.
+pub fn rekey_if_requested(conn: &rusqlite::Connection) {
+    let Ok(old) = env::var(OLD_KEY_VAR) else {
+        return;
+    };
+    let old = old.trim().to_string();
+    if old.is_empty() {
+        return;
+    }
+
+    if old == master_secret() {
+        tracing::warn!(
+            "{OLD_KEY_VAR} matches the current AXON_MASTER_KEY — nothing to rotate. \
+             Remove {OLD_KEY_VAR} from the environment."
+        );
+        return;
+    }
+
+    tracing::info!("{OLD_KEY_VAR} is set — rotating stored secrets onto the current key...");
+    let out = rekey_secrets(conn, &old);
+    tracing::info!(
+        "Re-key complete: {} rotated, {} already current, {} unreadable.",
+        out.rekeyed,
+        out.already_current,
+        out.undecryptable
+    );
+    if out.undecryptable > 0 {
+        tracing::warn!(
+            "{} stored secret(s) could not be decrypted with either key and must be \
+             re-entered in the dashboard.",
+            out.undecryptable
+        );
+    }
+    tracing::warn!(
+        "Rotation done — REMOVE {OLD_KEY_VAR} from the environment and redeploy. \
+         Leaving the old key configured keeps a superseded secret on disk."
+    );
+}
+
 /// One-shot boot upgrade: rewrite every legacy (v1, untagged) ciphertext in the
 /// known secret columns to the v2 (KDF) scheme. Idempotent — already-`v2:`
 /// values and genuine plaintext (which does not authenticate under the legacy
@@ -334,6 +500,231 @@ pub fn encrypt_credentials_at_rest(conn: &rusqlite::Connection) -> usize {
         tracing::info!("Encrypted {encrypted} plaintext credential blob(s) at rest");
     }
     encrypted
+}
+
+#[cfg(test)]
+mod rekey_tests {
+    use super::*;
+
+    /// The key the secrets were encrypted under before the rotation. The
+    /// *current* key is whatever `master_secret()` returns, so no test has to
+    /// mutate the environment (which would race across parallel tests).
+    const OLD: &str = "the-previous-master-key-value";
+
+    fn schema() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE models (name TEXT PRIMARY KEY, api_key TEXT NOT NULL);
+             CREATE TABLE ssh_servers (name TEXT PRIMARY KEY, password TEXT, private_key TEXT);
+             CREATE TABLE mcp_servers (name TEXT PRIMARY KEY, api_key TEXT);
+             CREATE TABLE credentials (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+             CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+        )
+        .unwrap();
+        conn
+    }
+
+    /// A `v2:` value encrypted under an arbitrary master secret.
+    fn v2_under(secret: &str, plain: &str) -> String {
+        format!(
+            "{V2_PREFIX}{}",
+            aes_encrypt(plain, &derive_key_from(secret)).unwrap()
+        )
+    }
+
+    fn get(conn: &rusqlite::Connection, sql: &str) -> String {
+        conn.query_row(sql, [], |r| r.get(0)).unwrap()
+    }
+
+    // The whole point: every one of the six encrypted locations must survive a
+    // rotation. Missing one silently orphans those credentials.
+    #[test]
+    fn rotates_every_encrypted_column() {
+        let conn = schema();
+        conn.execute(
+            "INSERT INTO models (name, api_key) VALUES ('m', ?1)",
+            [v2_under(OLD, "model-key")],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO ssh_servers (name, password, private_key) VALUES ('s', ?1, ?2)",
+            [v2_under(OLD, "ssh-pass"), v2_under(OLD, "ssh-priv")],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO mcp_servers (name, api_key) VALUES ('x', ?1)",
+            [v2_under(OLD, "mcp-key")],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO credentials (id, data) VALUES ('c', ?1)",
+            [v2_under(OLD, r#"{"token":"tg-secret"}"#)],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('GROQ_API_KEY', ?1)",
+            [v2_under(OLD, "gsk-live")],
+        )
+        .unwrap();
+
+        let out = rekey_secrets(&conn, OLD);
+        assert_eq!(out.rekeyed, 6, "all six encrypted values rotated");
+        assert_eq!(out.undecryptable, 0);
+
+        // Each now reads back under the CURRENT key.
+        assert_eq!(
+            decrypt_key(&get(&conn, "SELECT api_key FROM models")),
+            "model-key"
+        );
+        assert_eq!(
+            decrypt_key(&get(&conn, "SELECT password FROM ssh_servers")),
+            "ssh-pass"
+        );
+        assert_eq!(
+            decrypt_key(&get(&conn, "SELECT private_key FROM ssh_servers")),
+            "ssh-priv"
+        );
+        assert_eq!(
+            decrypt_key(&get(&conn, "SELECT api_key FROM mcp_servers")),
+            "mcp-key"
+        );
+        assert_eq!(
+            decrypt_key(&get(&conn, "SELECT data FROM credentials")),
+            r#"{"token":"tg-secret"}"#
+        );
+        assert_eq!(
+            decrypt_key(&get(&conn, "SELECT value FROM settings")),
+            "gsk-live"
+        );
+    }
+
+    // Leaving AXON_MASTER_KEY_OLD set for an extra boot must be harmless.
+    #[test]
+    fn is_idempotent() {
+        let conn = schema();
+        conn.execute(
+            "INSERT INTO models (name, api_key) VALUES ('m', ?1)",
+            [v2_under(OLD, "model-key")],
+        )
+        .unwrap();
+
+        assert_eq!(rekey_secrets(&conn, OLD).rekeyed, 1);
+        let second = rekey_secrets(&conn, OLD);
+        assert_eq!(second.rekeyed, 0, "nothing left to rotate");
+        assert_eq!(second.already_current, 1);
+        assert_eq!(
+            decrypt_key(&get(&conn, "SELECT api_key FROM models")),
+            "model-key"
+        );
+    }
+
+    // A value readable under neither key must be reported and LEFT ALONE —
+    // never overwritten with an empty or garbage value.
+    #[test]
+    fn unreadable_values_are_preserved_not_destroyed() {
+        let conn = schema();
+        let orphan = v2_under("some-third-unrelated-key", "unrecoverable");
+        conn.execute(
+            "INSERT INTO models (name, api_key) VALUES ('m', ?1)",
+            [orphan.clone()],
+        )
+        .unwrap();
+
+        let out = rekey_secrets(&conn, OLD);
+        assert_eq!(out.undecryptable, 1);
+        assert_eq!(out.rekeyed, 0);
+        assert_eq!(
+            get(&conn, "SELECT api_key FROM models"),
+            orphan,
+            "value must survive byte-for-byte"
+        );
+    }
+
+    // settings.value holds ordinary config ("30", "true") alongside encrypted
+    // provider keys. Untagged values there must never be touched.
+    #[test]
+    fn plaintext_settings_are_untouched() {
+        let conn = schema();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('router.timeout', '30'), ('a.b', 'true')",
+            [],
+        )
+        .unwrap();
+
+        let out = rekey_secrets(&conn, OLD);
+        assert_eq!(out.rekeyed, 0);
+        assert_eq!(
+            get(
+                &conn,
+                "SELECT value FROM settings WHERE key='router.timeout'"
+            ),
+            "30"
+        );
+        assert_eq!(
+            get(&conn, "SELECT value FROM settings WHERE key='a.b'"),
+            "true"
+        );
+    }
+
+    // Untagged v1 ciphertext written under the OLD key still has to come across;
+    // it is only trial-decrypted in columns that ever used the v1 scheme.
+    #[test]
+    fn legacy_v1_under_old_key_is_rotated() {
+        let conn = schema();
+        let v1 = aes_encrypt("old-legacy-value", &legacy_key_from(OLD)).unwrap();
+        assert!(!v1.starts_with(V2_PREFIX));
+        conn.execute("INSERT INTO models (name, api_key) VALUES ('m', ?1)", [&v1])
+            .unwrap();
+
+        assert_eq!(rekey_secrets(&conn, OLD).rekeyed, 1);
+        let stored = get(&conn, "SELECT api_key FROM models");
+        assert!(stored.starts_with(V2_PREFIX), "upgraded to v2 as well");
+        assert_eq!(decrypt_key(&stored), "old-legacy-value");
+    }
+
+    // credentials.data was historically plaintext JSON, never v1 ciphertext, so
+    // an untagged blob there must be left for encrypt_credentials_at_rest.
+    #[test]
+    fn untagged_outside_legacy_columns_is_skipped() {
+        let conn = schema();
+        conn.execute(
+            "INSERT INTO credentials (id, data) VALUES ('c', ?1)",
+            [r#"{"plain":"json"}"#],
+        )
+        .unwrap();
+
+        assert_eq!(rekey_secrets(&conn, OLD).rekeyed, 0);
+        assert_eq!(
+            get(&conn, "SELECT data FROM credentials"),
+            r#"{"plain":"json"}"#
+        );
+    }
+
+    // A missing table (partially-migrated DB) must not abort the pass.
+    #[test]
+    fn missing_tables_are_skipped() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE models (name TEXT PRIMARY KEY, api_key TEXT NOT NULL);")
+            .unwrap();
+        conn.execute(
+            "INSERT INTO models (name, api_key) VALUES ('m', ?1)",
+            [v2_under(OLD, "k")],
+        )
+        .unwrap();
+        assert_eq!(rekey_secrets(&conn, OLD).rekeyed, 1);
+    }
+
+    // Guards the superset relationship: every legacy column must also be in the
+    // re-key list, or a rotation would skip it.
+    #[test]
+    fn encrypted_columns_covers_secret_columns() {
+        for pair in SECRET_COLUMNS {
+            assert!(
+                ENCRYPTED_COLUMNS.contains(pair),
+                "{pair:?} is in SECRET_COLUMNS but missing from ENCRYPTED_COLUMNS"
+            );
+        }
+    }
 }
 
 #[cfg(test)]

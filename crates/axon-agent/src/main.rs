@@ -293,6 +293,11 @@ async fn main() -> anyhow::Result<()> {
     {
         let conn = pool.get().context("get DB connection")?;
         axon::db::init(&conn).context("initialize database")?;
+        // Key rotation, if AXON_MASTER_KEY_OLD is set. Must run before anything
+        // reads a credential, and before the v1→v2 upgrade below (that pass
+        // keys off the *current* master key, so it cannot read values still
+        // encrypted under the old one).
+        axon::crypto::rekey_if_requested(&conn);
         // D1: upgrade any pre-KDF (v1) stored secrets to the v2 scheme in place.
         axon::crypto::reencrypt_legacy_secrets(&conn);
         // D1: encrypt the credentials.data JSON blob at rest (was plaintext).
