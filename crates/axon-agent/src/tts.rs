@@ -52,6 +52,24 @@ static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
         .expect("build TTS HTTP client")
 });
 
+/// Optional Piper synthesis overrides read from `tts.piper.*`. Each is `None`
+/// when the setting is blank or unparseable, in which case that CLI flag is
+/// omitted and Piper keeps the voice model's own baked-in default — so an
+/// untouched install behaves exactly as before. Only consulted for the Piper
+/// backend; ignored by the hosted engines.
+#[derive(Debug, Clone, Default)]
+pub struct PiperOptions {
+    /// `--length_scale` (default 1.0): phoneme duration / speaking pace. >1
+    /// slows down, which usually reads as more natural; <1 speeds up.
+    pub length_scale: Option<f32>,
+    /// `--noise_scale` (default 0.667): generator noise / expressiveness.
+    pub noise_scale: Option<f32>,
+    /// `--noise_w` (default 0.8): phoneme-width variability (cadence).
+    pub noise_w: Option<f32>,
+    /// `--sentence_silence` (default 0.2): seconds of pause after each sentence.
+    pub sentence_silence: Option<f32>,
+}
+
 /// Resolved `tts.*` settings. `None` from [`config_from_settings`] means voice
 /// replies are not configured (no base URL or no model).
 #[derive(Debug, Clone)]
@@ -60,6 +78,7 @@ pub struct TtsConfig {
     pub model: String,
     pub voice: String,
     pub api_key: String,
+    pub piper: PiperOptions,
 }
 
 /// Read and `${VAR}`-resolve the `tts.*` settings. Returns `None` when
@@ -80,7 +99,29 @@ pub fn config_from_settings(settings: &RuntimeSettings) -> Option<TtsConfig> {
         model,
         voice: voice.trim().to_string(),
         api_key: api_key.trim().to_string(),
+        piper: PiperOptions {
+            length_scale: piper_f32(settings, "tts.piper.length_scale"),
+            noise_scale: piper_f32(settings, "tts.piper.noise_scale"),
+            noise_w: piper_f32(settings, "tts.piper.noise_w"),
+            sentence_silence: piper_f32(settings, "tts.piper.sentence_silence"),
+        },
     })
+}
+
+/// Read a numeric `tts.piper.*` override from settings.
+fn piper_f32(settings: &RuntimeSettings, key: &str) -> Option<f32> {
+    parse_piper_f32(&settings.get_str(key, ""))
+}
+
+/// Parse a `tts.piper.*` override value. Blank, non-numeric, or non-finite →
+/// `None` (Piper falls back to the model's own default for that flag); a
+/// negative value is likewise rejected since none of these flags accept one.
+fn parse_piper_f32(raw: &str) -> Option<f32> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    raw.parse::<f32>().ok().filter(|v| v.is_finite() && *v >= 0.0)
 }
 
 /// Clamp speech input to [`MAX_TTS_CHARS`] on a char boundary.
@@ -364,12 +405,24 @@ async fn speak_piper(cfg: &TtsConfig, input: &str) -> anyhow::Result<SpeechAudio
     // each must own its output file.
     let out_path = std::env::temp_dir().join(format!("axon-piper-{}.wav", uuid::Uuid::new_v4()));
 
-    let mut child = tokio::process::Command::new(&bin)
-        .arg("-m")
-        .arg(&model_path)
-        .arg("-f")
-        .arg(&out_path)
-        .arg("-q")
+    let mut cmd = tokio::process::Command::new(&bin);
+    cmd.arg("-m").arg(&model_path).arg("-f").arg(&out_path).arg("-q");
+    // Optional voice-character overrides. Each flag is added only when set, so a
+    // blank setting leaves Piper on the model's own default (see PiperOptions).
+    let p = &cfg.piper;
+    if let Some(v) = p.length_scale {
+        cmd.arg("--length_scale").arg(v.to_string());
+    }
+    if let Some(v) = p.noise_scale {
+        cmd.arg("--noise_scale").arg(v.to_string());
+    }
+    if let Some(v) = p.noise_w {
+        cmd.arg("--noise_w").arg(v.to_string());
+    }
+    if let Some(v) = p.sentence_silence {
+        cmd.arg("--sentence_silence").arg(v.to_string());
+    }
+    let mut child = cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -780,6 +833,22 @@ mod tests {
             plain_text_for_speech("- item one\n- item two"),
             "item one item two"
         );
+    }
+
+    #[test]
+    fn piper_override_parsing() {
+        // Blank / whitespace → None: keep the model's own default flag.
+        assert_eq!(parse_piper_f32(""), None);
+        assert_eq!(parse_piper_f32("   "), None);
+        // Valid numbers pass through (trimmed).
+        assert_eq!(parse_piper_f32("1.08"), Some(1.08));
+        assert_eq!(parse_piper_f32("  0.7 "), Some(0.7));
+        assert_eq!(parse_piper_f32("0"), Some(0.0));
+        // Garbage and out-of-range values are rejected, not passed to piper.
+        assert_eq!(parse_piper_f32("fast"), None);
+        assert_eq!(parse_piper_f32("-1"), None);
+        assert_eq!(parse_piper_f32("inf"), None);
+        assert_eq!(parse_piper_f32("NaN"), None);
     }
 
     #[test]
