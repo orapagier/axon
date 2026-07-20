@@ -326,10 +326,21 @@ fn piper_models_dir() -> PathBuf {
     axon_core::data_dir().join("piper").join("models")
 }
 
-/// Synthesize via a local Piper subprocess: `piper -m <voice>.onnx -f - -q`,
-/// text piped to stdin, a complete WAV read back from stdout. Stdin is
-/// written from a separate task so a long reply can't deadlock against Piper
-/// filling its stdout pipe before we finish writing.
+/// Synthesize via a local Piper subprocess: `piper -m <voice>.onnx -f <tmp> -q`,
+/// text piped to stdin, the WAV read back from the temp file Piper writes.
+///
+/// We deliberately do NOT use `-f -` (stdout). On Windows `piper.exe` opens
+/// stdout in text mode, so every `0x0A` byte of the binary WAV is rewritten to
+/// `0x0D 0x0A`: that corrupts the RIFF/`data` chunk lengths in the header and,
+/// worse, inserts a stray byte before each `0x0A`, shifting every following
+/// 16-bit PCM sample out of alignment — the audio decodes as a harsh crackle
+/// laid over the speech. The inserted `0x0D`s can't be stripped afterward (real
+/// PCM samples legitimately contain `0x0D`), so the fix is to keep the WAV off
+/// stdout entirely. A real output file is byte-exact on every platform; Linux,
+/// where the old stdout path happened to be safe, is unaffected.
+///
+/// Stdin is written from a separate task so a long reply can't deadlock against
+/// Piper filling a pipe before we finish writing.
 async fn speak_piper(cfg: &TtsConfig, input: &str) -> anyhow::Result<SpeechAudio> {
     let _slot = PIPER_GATE.acquire().await.expect("piper gate never closed");
     let bin = piper_bin_path();
@@ -349,25 +360,27 @@ async fn speak_piper(cfg: &TtsConfig, input: &str) -> anyhow::Result<SpeechAudio
         );
     }
 
+    // Unique per synthesis: up to PIPER_GATE subprocesses run concurrently, and
+    // each must own its output file.
+    let out_path = std::env::temp_dir().join(format!("axon-piper-{}.wav", uuid::Uuid::new_v4()));
+
     let mut child = tokio::process::Command::new(&bin)
         .arg("-m")
         .arg(&model_path)
         .arg("-f")
-        .arg("-")
+        .arg(&out_path)
         .arg("-q")
         .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .with_context(|| format!("spawn piper at {}", bin.display()))?;
 
     let mut stdin = child.stdin.take().expect("piped stdin");
-    // Piper treats each stdin line as a separate utterance and writes a
-    // complete WAV file to `-f -` for every one of them, so a multi-paragraph
-    // reply comes back as several RIFF chunks concatenated on stdout. A WAV
-    // parser only trusts the first chunk's declared data size, so the browser
-    // plays just the first line and silently drops the rest. Collapsing
-    // newlines keeps the whole reply as Piper's single utterance/single WAV.
+    // Piper treats each stdin line as a separate utterance and writes a fresh
+    // WAV for every one, overwriting `-f <path>` — so a multi-paragraph reply
+    // would leave only the last line's audio in the file. Collapsing whitespace
+    // keeps the whole reply as Piper's single utterance / single WAV.
     let text = input.split_whitespace().collect::<Vec<_>>().join(" ");
     let writer = tokio::spawn(async move {
         let _ = stdin.write_all(text.as_bytes()).await;
@@ -382,12 +395,20 @@ async fn speak_piper(cfg: &TtsConfig, input: &str) -> anyhow::Result<SpeechAudio
     let _ = writer.await;
 
     if !output.status.success() {
+        let _ = std::fs::remove_file(&out_path);
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!("piper exited with {}: {}", output.status, stderr.trim());
     }
+
+    // Read then remove regardless of the read's outcome — never leave the temp
+    // WAV behind.
+    let bytes = std::fs::read(&out_path)
+        .with_context(|| format!("read piper output {}", out_path.display()));
+    let _ = std::fs::remove_file(&out_path);
+
     Ok(SpeechAudio::Buffered {
         content_type: "audio/wav",
-        bytes: output.stdout,
+        bytes: bytes?,
     })
 }
 
