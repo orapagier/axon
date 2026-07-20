@@ -90,30 +90,50 @@ if ! $SKIP_BUILD; then
     echo ""
 
     echo "🔨 [3/6] Building Axon UI (Vue)..."
-    cd "$ROOT_DIR/axon-ui"
-    if $CLEAN; then
-        echo "  🧹 Cleaning node_modules and dist..."
-        rm -rf node_modules package-lock.json dist
-    fi
-    
-    # Auto-fix Windows/WSL conflict: if running on Linux but missing Linux Rollup binaries
-    if [ "$(uname -s)" = "Linux" ] && [ ! -d "node_modules/@rollup/rollup-linux-x64-gnu" ] && [ -d "node_modules" ]; then
-        echo "  ⚠️  Cross-OS conflict detected (missing Linux native bindings). Reinstalling frontend dependencies..."
-        # Use mv as a workaround for Windows file locks in WSL
-        mv node_modules node_modules.bak 2>/dev/null || true
-        rm -rf node_modules.bak package-lock.json 2>/dev/null || true
-        rm -rf node_modules package-lock.json 2>/dev/null || true
+
+    # Where the npm work happens. If this repo lives on a Windows mount
+    # (/mnt/c/... under WSL), build on the Linux filesystem instead: Windows and
+    # WSL otherwise share one axon-ui/node_modules, and npm prunes the other
+    # platform's native rollup/esbuild binaries on every alternating build, so
+    # each deploy paid for a full reinstall. drvfs is also very slow for the many
+    # small files an npm install writes.
+    UI_SRC="$ROOT_DIR/axon-ui"
+    UI_BUILD="$UI_SRC"
+    if [ "$(uname -s)" = "Linux" ] && [ "${ROOT_DIR#/mnt/}" != "$ROOT_DIR" ] \
+       && command -v rsync >/dev/null 2>&1; then
+        UI_BUILD="${XDG_CACHE_HOME:-$HOME/.cache}/axon-ui-build"
+        echo "  🐧 Windows-mounted repo — building UI in $UI_BUILD"
+        mkdir -p "$UI_BUILD"
+        # node_modules and dist stay local to the build dir, never synced either way.
+        rsync -a --delete \
+            --exclude 'node_modules' --exclude 'dist' --exclude 'graphify-out' \
+            "$UI_SRC/" "$UI_BUILD/"
     fi
 
-    if [ ! -d "node_modules" ]; then
-        npm install --no-fund --no-audit
+    cd "$UI_BUILD"
+    if $CLEAN; then
+        echo "  🧹 Cleaning node_modules and dist..."
+        rm -rf node_modules dist
     fi
-    npm run build
-    
+
+    # Reinstall only when the lockfile actually changed. package-lock.json is
+    # committed and must never be deleted here: npm ci is what keeps two deploys
+    # of the same commit shipping identical dependency versions.
+    NM_STAMP="node_modules/.axon-install-stamp"
+    if [ ! -d node_modules ] || ! cmp -s package-lock.json "$NM_STAMP"; then
+        echo "  📦 Installing frontend dependencies (npm ci)..."
+        npm ci --no-fund --no-audit
+        cp package-lock.json "$NM_STAMP"
+    fi
+
+    # prebuild writes crates/axon-agent/assets/node_types.json, which is
+    # include_str!'d into the binary — keep it aimed at the real repo.
+    AXON_NODE_TYPES_OUT="$ROOT_DIR/crates/axon-agent/assets/node_types.json" npm run build
+
     # Update crates/axon-agent/static with the new build
     rm -rf "$ROOT_DIR/crates/axon-agent/static"
     mkdir -p "$ROOT_DIR/crates/axon-agent/static"
-    cp -r dist/* "$ROOT_DIR/crates/axon-agent/static/"
+    cp -r "$UI_BUILD/dist/"* "$ROOT_DIR/crates/axon-agent/static/"
     echo "  ✅ Axon UI built and synced to crates/axon-agent/static"
     echo ""
 

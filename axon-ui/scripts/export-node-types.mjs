@@ -45,7 +45,11 @@ for (const [key, def] of Object.entries(NODE_TYPES)) {
 }
 
 const here = dirname(fileURLToPath(import.meta.url))
-const outPath = join(here, '..', '..', 'crates', 'axon-agent', 'assets', 'node_types.json')
+// Overridable so an out-of-tree build (the deploy scripts copy axon-ui to the
+// Linux filesystem when the repo sits on a Windows mount) still writes the
+// asset back into the real repo instead of next to the build copy.
+const outPath = process.env.AXON_NODE_TYPES_OUT
+    || join(here, '..', '..', 'crates', 'axon-agent', 'assets', 'node_types.json')
 mkdirSync(dirname(outPath), { recursive: true })
 writeFileSync(outPath, JSON.stringify(trimmed, null, 1) + '\n')
 console.log(`Wrote ${Object.keys(trimmed).length} node types to ${outPath}`)
