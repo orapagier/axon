@@ -81,7 +81,13 @@ fn verify_signature(secret: &str, body: &[u8], sig_header: &str) -> bool {
     };
     mac.update(body);
     let computed = hex::encode(mac.finalize().into_bytes());
-    computed == expected
+
+    // Constant-time: a plain `==` short-circuits on the first differing byte,
+    // so response timing would leak how much of a forged signature was correct,
+    // letting an attacker construct a valid one byte by byte. Matches the
+    // comparison discipline in dashboard/auth.rs and the Telegram trigger.
+    use subtle::ConstantTimeEq;
+    computed.as_bytes().ct_eq(expected.as_bytes()).into()
 }
 
 pub async fn handle_github_webhook(
@@ -104,15 +110,26 @@ pub async fn handle_github_webhook(
     let cfg = load_trigger_cfg(&state, &workflow_id);
 
     // Signature verification runs only when the node carries a secret.
-    if let Some(secret) = cfg.as_ref().and_then(|c| c.secret.as_deref()) {
-        let sig = headers
-            .get("x-hub-signature-256")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-        if !verify_signature(secret, &body, sig) {
-            tracing::warn!("GitHub webhook {workflow_id}: invalid HMAC signature");
-            return (StatusCode::UNAUTHORIZED, "invalid signature").into_response();
+    match cfg.as_ref().and_then(|c| c.secret.as_deref()) {
+        Some(secret) => {
+            let sig = headers
+                .get("x-hub-signature-256")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+            if !verify_signature(secret, &body, sig) {
+                tracing::warn!("GitHub webhook {workflow_id}: invalid HMAC signature");
+                return (StatusCode::UNAUTHORIZED, "invalid signature").into_response();
+            }
         }
+        // Left permissive deliberately: making the secret mandatory would break
+        // every GitHub trigger already configured without one. Surfaced loudly
+        // instead, because without a secret this endpoint will start a workflow
+        // run for anyone who knows the URL.
+        None => tracing::warn!(
+            "GitHub webhook {workflow_id}: no secret configured — this endpoint is \
+             UNAUTHENTICATED and will run the workflow for any caller that knows the URL. \
+             Set a secret on the GitHub trigger node and in the repo's webhook settings."
+        ),
     }
 
     // GitHub sends a one-off `ping` when the webhook is created. Acknowledge it

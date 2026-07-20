@@ -127,6 +127,26 @@ fn build_custom_response(resp: WebhookHttpResponse) -> Response {
     out
 }
 
+/// This endpoint has no authentication — the workflow id in the URL is the only
+/// thing standing between a caller and a workflow run, so it has to be
+/// unguessable. New workflows get a UUID v4, but `upsert_workflow_core` accepts
+/// a caller-supplied `id` (needed for export/import round-trips), and a
+/// human-friendly one turns this into a public trigger anyone can hit.
+///
+/// Not enforced, because rejecting these ids would break webhook URLs already
+/// registered with third parties; flagged so it is at least visible.
+fn warn_if_guessable(workflow_id: &str) {
+    let uuid_shaped = uuid::Uuid::parse_str(workflow_id).is_ok();
+    if !uuid_shaped {
+        tracing::warn!(
+            "External webhook fired for workflow '{}', whose id is not a random UUID. \
+             This URL is unauthenticated, so a guessable id lets anyone trigger the \
+             workflow. Consider recreating it so it gets a generated id.",
+            workflow_id
+        );
+    }
+}
+
 pub async fn handle_external_webhook(
     Path(workflow_id): Path<String>,
     State(state): State<AppState>,
@@ -134,6 +154,7 @@ pub async fn handle_external_webhook(
     body: Bytes,
 ) -> Response {
     tracing::info!("Received external webhook for workflow {}", workflow_id);
+    warn_if_guessable(&workflow_id);
     let payload = parse_webhook_body(&body);
 
     // C2: skip a duplicate delivery (sender retry / double-submit) when an

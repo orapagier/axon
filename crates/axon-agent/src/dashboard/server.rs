@@ -7,6 +7,50 @@ use tower_governor::{
 };
 use tower_http::services::{ServeDir, ServeFile};
 
+/// Per-request span that records query-string *names* but never their values.
+///
+/// `TraceLayer`'s `DefaultMakeSpan` records the whole URI (`uri = %request.uri()`),
+/// and several callers put secrets in the query string because they cannot set
+/// an `Authorization` header:
+///   * `/ws?api_key=…`            — the dashboard WebSocket (axon-ui `lib/ws.js`)
+///   * `/api/download?…&api_key=` — plain `<a href>` download links (FilesPage)
+///   * `/auth/:service/callback?code=…` — a live OAuth authorization code
+///
+/// That wrote the master key — which is also the KDF input for every stored
+/// credential (see `crypto.rs`) — into the logs in plaintext, and
+/// `AXON_LOG_FORMAT=json` ships those lines to an aggregator.
+///
+/// Values are dropped wholesale rather than scrubbed against a denylist of
+/// known-sensitive names, so a query parameter added later cannot silently
+/// reintroduce the leak. The names are kept because they carry the debugging
+/// signal (which callback arrived, whether `api_key` was supplied at all)
+/// without carrying the secret.
+#[derive(Clone)]
+struct RedactedMakeSpan;
+
+impl<B> tower_http::trace::MakeSpan<B> for RedactedMakeSpan {
+    fn make_span(&mut self, request: &axum::http::Request<B>) -> tracing::Span {
+        let query_keys = request.uri().query().map(redact_query).unwrap_or_default();
+        tracing::info_span!(
+            "request",
+            method = %request.method(),
+            path = %request.uri().path(),
+            query_keys = %query_keys,
+            version = ?request.version(),
+        )
+    }
+}
+
+/// `"api_key=secret&path=x"` → `"api_key,path"`. Values never survive.
+fn redact_query(query: &str) -> String {
+    query
+        .split('&')
+        .filter_map(|pair| pair.split('=').next())
+        .filter(|name| !name.is_empty())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 async fn health_check() -> &'static str {
     "OK"
 }
@@ -406,12 +450,54 @@ pub fn build_router(state: AppState) -> Router {
         // server-to-server. A permissive policy only invited cross-origin
         // requests from arbitrary sites.
         .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024))
-        // Automatic per-request span (method, URI, matched route, status,
-        // latency) around every request — the missing piece for correlating
-        // log lines to a single request, especially once AXON_LOG_FORMAT=json
-        // is on and lines are consumed by a log aggregator.
-        .layer(tower_http::trace::TraceLayer::new_for_http())
+        // Automatic per-request span (method, path, status, latency) around
+        // every request — the missing piece for correlating log lines to a
+        // single request, especially once AXON_LOG_FORMAT=json is on and lines
+        // are consumed by a log aggregator. RedactedMakeSpan replaces the
+        // default span so query-string *values* (master key, OAuth code) never
+        // reach those logs.
+        .layer(tower_http::trace::TraceLayer::new_for_http().make_span_with(RedactedMakeSpan))
         .with_state(state)
+}
+
+#[cfg(test)]
+mod redaction_tests {
+    use super::redact_query;
+
+    // The whole point of the span rewrite: a master key in the query string
+    // must not survive into a log line.
+    #[test]
+    fn query_values_never_survive() {
+        let key = "super-secret-master-key";
+        let out = redact_query(&format!("path=/tmp/a.txt&api_key={key}"));
+        assert_eq!(out, "path,api_key");
+        assert!(!out.contains(key));
+    }
+
+    // An OAuth authorization code arrives on /auth/:service/callback and is a
+    // credential in its own right.
+    #[test]
+    fn oauth_code_is_redacted() {
+        let out = redact_query("code=4/0AVGzR1B_live_auth_code&state=xyz");
+        assert_eq!(out, "code,state");
+        assert!(!out.contains("4/0AVGzR1B_live_auth_code"));
+    }
+
+    // A value containing '=' (base64 padding is the common case for keys)
+    // must not leak its tail through the split.
+    #[test]
+    fn padded_base64_value_is_redacted() {
+        let out = redact_query("api_key=YWJjZA==&x=1");
+        assert_eq!(out, "api_key,x");
+        assert!(!out.contains("YWJjZA"));
+    }
+
+    #[test]
+    fn empty_and_valueless_queries_are_handled() {
+        assert_eq!(redact_query(""), "");
+        assert_eq!(redact_query("flag"), "flag");
+        assert_eq!(redact_query("&&"), "");
+    }
 }
 
 #[cfg(test)]

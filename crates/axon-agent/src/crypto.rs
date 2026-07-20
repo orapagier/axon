@@ -67,7 +67,7 @@ fn dev_mode_allowed() -> bool {
 /// access.
 pub fn validate_master_key() -> Result<(), String> {
     if is_using_default_key() {
-        if dev_mode_allowed() {
+        return if dev_mode_allowed() {
             tracing::warn!(
                 "AXON_MASTER_KEY not set — using the INSECURE development key (AXON_DEV=1). \
                  Stored credentials are not protected. Never do this in production."
@@ -81,10 +81,68 @@ pub fn validate_master_key() -> Result<(), String> {
                  development."
                     .to_string(),
             )
-        }
-    } else {
-        Ok(())
+        };
     }
+
+    let key = env::var("AXON_MASTER_KEY").unwrap_or_default();
+    let key = key.trim();
+
+    if let Some(reason) = weak_key_reason(key) {
+        return if dev_mode_allowed() {
+            tracing::warn!(
+                "AXON_MASTER_KEY is weak ({reason}) — allowed only because AXON_DEV=1. \
+                 Never do this in production."
+            );
+            Ok(())
+        } else {
+            Err(format!(
+                "AXON_MASTER_KEY is weak ({reason}). Refusing to start.\n\
+                 \n\
+                 This key is the dashboard's only credential AND the encryption key for every \
+                 stored secret, so a guessable value exposes all of them.\n\
+                 \n\
+                 Generate a strong one:  openssl rand -base64 32\n\
+                 \n\
+                 Changing the key makes existing encrypted credentials unreadable — they must \
+                 be re-entered in the dashboard. To start once with the current key instead, \
+                 set AXON_DEV=1."
+            ))
+        };
+    }
+
+    Ok(())
+}
+
+/// Minimum accepted master-key length. 16 characters is the floor at which an
+/// online guessing attack is hopeless even before the dashboard's auth
+/// throttle (see `dashboard/auth.rs`) is taken into account.
+const MIN_KEY_LEN: usize = 16;
+
+/// Placeholder fragments shipped in docs/examples. A deployment that still has
+/// one of these is effectively unauthenticated, since the values are public.
+const PLACEHOLDER_FRAGMENTS: &[&str] =
+    &["changeme", "your-", "example", "placeholder", "secret123"];
+
+/// `None` when the key is acceptable; otherwise why it was rejected.
+fn weak_key_reason(key: &str) -> Option<String> {
+    if key.chars().count() < MIN_KEY_LEN {
+        return Some(format!(
+            "{} characters, minimum is {MIN_KEY_LEN}",
+            key.chars().count()
+        ));
+    }
+    let lowered = key.to_ascii_lowercase();
+    for fragment in PLACEHOLDER_FRAGMENTS {
+        if lowered.contains(fragment) {
+            return Some(format!("contains the placeholder text '{fragment}'"));
+        }
+    }
+    // A long run of one repeated character ("aaaaaaaa…") passes a length check
+    // while carrying almost no entropy.
+    if key.chars().collect::<std::collections::HashSet<_>>().len() < 5 {
+        return Some("fewer than 5 distinct characters".to_string());
+    }
+    None
 }
 
 /// v2 key: SHA-256 over the master secret → always exactly 32 bytes.
@@ -276,6 +334,47 @@ pub fn encrypt_credentials_at_rest(conn: &rusqlite::Connection) -> usize {
         tracing::info!("Encrypted {encrypted} plaintext credential blob(s) at rest");
     }
     encrypted
+}
+
+#[cfg(test)]
+mod key_strength_tests {
+    use super::weak_key_reason;
+
+    #[test]
+    fn rejects_short_keys() {
+        assert!(weak_key_reason("short").is_some());
+        assert!(weak_key_reason("123456789012345").is_some(), "15 chars");
+    }
+
+    #[test]
+    fn rejects_shipped_placeholders() {
+        // The literal value in crates/axon-agent/.env.example before this change.
+        assert!(weak_key_reason("changeme-master-key").is_some());
+        assert!(weak_key_reason("your-secret-key-here").is_some());
+    }
+
+    #[test]
+    fn rejects_low_entropy_padding() {
+        assert!(weak_key_reason(&"a".repeat(40)).is_some());
+        assert!(weak_key_reason(&"abab".repeat(10)).is_some());
+    }
+
+    #[test]
+    fn accepts_a_generated_key() {
+        // Representative `openssl rand -base64 32` output.
+        assert_eq!(
+            weak_key_reason("Yy1kQ0hLc2VjdXJlUmFuZG9tS2V5MTIzNA=="),
+            None
+        );
+        assert_eq!(weak_key_reason("f3Kq9-Zx71LmPw2v"), None, "16 chars, mixed");
+    }
+
+    // Length is counted in characters, not bytes, so a multi-byte key is not
+    // wrongly accepted for being byte-long.
+    #[test]
+    fn counts_characters_not_bytes() {
+        assert!(weak_key_reason("日本語日本語日本語").is_some(), "9 chars");
+    }
 }
 
 #[cfg(test)]
