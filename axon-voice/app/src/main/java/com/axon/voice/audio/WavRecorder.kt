@@ -15,7 +15,10 @@ import kotlin.math.sqrt
 /**
  * Decides when a voice capture should stop. Thresholds are a direct port of
  * axon-ui/src/lib/wakeword.js: stop after 1.4s of quiet once speech was heard,
- * give up if nothing is said within [noSpeechTicks]*100ms, hard cap at 12s.
+ * give up if nothing is said within [noSpeechTicks]*100ms. [maxTicks] is only a
+ * runaway safety net (a noisy room that never falls quiet enough to trip the
+ * quiet counter), so it is 60s — long enough that a real voice message is never
+ * cut off mid-sentence; normal speech still ends 1.4s after the talker stops.
  * The follow-up window raises [speechRms] to ~2x so room-level chatter from
  * bystanders cancels the window instead of being sent as a command.
  *
@@ -35,7 +38,7 @@ class SilenceWatcher(
         const val RMS_SPEECH = 0.012
         const val QUIET_TICKS = 14
         const val NO_SPEECH_TICKS = 50
-        const val MAX_TICKS = 120
+        const val MAX_TICKS = 600
         const val FOLLOWUP_RMS = 0.025
         const val FOLLOWUP_MIN_SPEECH_TICKS = 3
     }

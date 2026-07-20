@@ -34,11 +34,14 @@ const DETECTOR_CONFIG = {
 }
 
 // Command capture bounds (silence watcher): stop after 1.4s of quiet once
-// speech was heard, give up if nothing is said within 5s, hard cap at 12s.
+// speech was heard, give up if nothing is said within 5s. MAX_TICKS is only a
+// runaway safety net (a noisy room where the level never drops long enough to
+// trip QUIET_TICKS) — 60s, not 12s, so a genuinely long voice message is never
+// cut off mid-sentence. Normal speech still ends 1.4s after the talker stops.
 const RMS_SPEECH = 0.012
 const QUIET_TICKS = 14
 const NO_SPEECH_TICKS = 50
-const MAX_TICKS = 120
+const MAX_TICKS = 600
 
 // Follow-up capture (reopened mic after a spoken reply, no wake word said)
 // deliberately listens with a raised speech bar: onset must be ~2x the normal
