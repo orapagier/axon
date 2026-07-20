@@ -557,6 +557,13 @@ async fn main() -> anyhow::Result<()> {
             let db = retention_db.clone();
             let settings = retention_settings.clone();
             match tokio::task::spawn_blocking(move || {
+                // Unconditional (unlike retention): closes run rows whose task
+                // died without finalizing, so they stop reading as "running".
+                match axon::maintenance::reap_stale_runs(&db, &settings) {
+                    Ok(0) => {}
+                    Ok(n) => tracing::info!("Reaped {} stale 'running' run row(s)", n),
+                    Err(e) => tracing::warn!("Stale-run reap failed: {:#}", e),
+                }
                 axon::maintenance::run_retention(&db, &settings)
             })
             .await

@@ -68,6 +68,39 @@ impl fmt::Display for RetentionStats {
     }
 }
 
+/// Close out runs stranded at `running` by a task that died without recording a
+/// final status: a run future dropped by a timeout or abort (nothing inside a
+/// dropped future executes, so `finalize()` never fires), a panic mid-run, or a
+/// `finalize()` whose DB write failed and was only logged.
+///
+/// `db::recover_stale_state` already does this at boot, which is why short-lived
+/// dev instances never show the problem. A server that stays up for weeks needs
+/// the same sweep to happen *without* a restart — otherwise these rows pile up
+/// and read as perpetually "running" in the Memories page.
+///
+/// Deliberately only touches rows far past any legitimate deadline (several times
+/// the run timeout, floored at an hour), so a genuinely in-flight run is never
+/// mislabeled. Not gated behind `retention.enabled`: this is correctness, not
+/// retention policy. Blocking (SQLite); call from `spawn_blocking`.
+pub fn reap_stale_runs(
+    db: &Pool<SqliteConnectionManager>,
+    settings: &RuntimeSettings,
+) -> anyhow::Result<usize> {
+    let run_timeout = settings.get_int("agent.run_timeout_secs", 300).max(1);
+    let stale_after = (run_timeout * 4).max(3600);
+    let conn = db.get()?;
+    let n = conn.execute(
+        "UPDATE runs
+            SET status = 'failed',
+                result = COALESCE(result, 'Terminated: no completion was ever recorded'),
+                finished_at = datetime('now')
+          WHERE status = 'running'
+            AND created_at < datetime('now', ?1)",
+        params![format!("-{stale_after} seconds")],
+    )?;
+    Ok(n)
+}
+
 /// Prune append-only history tables according to the operator's retention
 /// settings, then reclaim disk space if enough has accumulated. Blocking
 /// (SQLite); call from `spawn_blocking`.
@@ -846,6 +879,60 @@ mod tests {
         run_retention(&pool, &settings).unwrap();
         // Old key pruned (default 7-day horizon), recent one kept.
         assert_eq!(count(&pool, "trigger_dedup"), 1);
+
+        drop(pool);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn reap_closes_only_long_dead_running_rows() {
+        let (pool, path) = temp_db();
+        {
+            let conn = pool.get().unwrap();
+            // Task died without finalizing, well past any legitimate deadline.
+            conn.execute(
+                "INSERT INTO runs (id, task, status, created_at)
+                 VALUES ('dead', 'task', 'running', datetime('now', '-2 days'))",
+                [],
+            )
+            .unwrap();
+            // Started moments ago — genuinely still in flight.
+            conn.execute(
+                "INSERT INTO runs (id, task, status) VALUES ('live', 'task', 'running')",
+                [],
+            )
+            .unwrap();
+            // Old but already finished — must not be rewritten.
+            conn.execute(
+                "INSERT INTO runs (id, task, status, result, created_at)
+                 VALUES ('done', 'task', 'completed', 'answer', datetime('now', '-2 days'))",
+                [],
+            )
+            .unwrap();
+        }
+
+        let settings = RuntimeSettings::new(Arc::clone(&pool));
+        assert_eq!(reap_stale_runs(&pool, &settings).unwrap(), 1);
+
+        let row = |id: &str| -> (String, Option<String>) {
+            pool.get()
+                .unwrap()
+                .query_row(
+                    "SELECT status, finished_at FROM runs WHERE id = ?1",
+                    params![id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .unwrap()
+        };
+
+        let (status, finished_at) = row("dead");
+        assert_eq!(status, "failed");
+        assert!(finished_at.is_some(), "reaped run gets a finished_at");
+        assert_eq!(row("live").0, "running", "in-flight run is left alone");
+        assert_eq!(row("done").0, "completed");
+
+        // Idempotent: nothing left to reap on a second pass.
+        assert_eq!(reap_stale_runs(&pool, &settings).unwrap(), 0);
 
         drop(pool);
         let _ = std::fs::remove_file(&path);

@@ -65,6 +65,21 @@ fn mark_run_cancelled(state: &AppState, run_id: &str, reason: &str) {
     }
 }
 
+/// Same idea for the outer safety timeout, which *drops* the run future instead
+/// of letting it return. Nothing inside a dropped future runs on the way out —
+/// neither `finalize()` nor the error path in `run_task_streaming` — so the row
+/// has to be closed from here or it sits at `running` until the next restart
+/// sweeps it (see `db::recover_stale_state`). Recorded as `failed` to match how
+/// the agent loop's own deadline finalizes a timed-out run.
+fn mark_run_timed_out(state: &AppState, run_id: &str, secs: u64) {
+    if let Ok(conn) = state.db.get() {
+        let _ = conn.execute(
+            "UPDATE runs SET status='failed', result=?2, finished_at=datetime('now') WHERE id=?1 AND status='running'",
+            rusqlite::params![run_id, format!("Terminated: exceeded the {secs}s safety timeout")],
+        );
+    }
+}
+
 /// Cap on persisted trace items per run so a pathological run can't bloat the
 /// transcript store.
 const MAX_TRACE_ITEMS: usize = 300;
@@ -284,7 +299,14 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 let t = task_data.task.clone();
                 let handle = tokio::spawn(async move {
                     let run_id = context.run_id.clone();
-                    let timeout_dur = tokio::time::Duration::from_secs(300); // 5 min safety
+                    // Backstop only. The agent loop enforces its own
+                    // `agent.run_timeout_secs` deadline and finalizes the run row
+                    // on the way out, so keep this strictly longer — otherwise the
+                    // two fire together and this one wins by dropping the run
+                    // future, losing the graceful finalize entirely.
+                    let timeout_dur = tokio::time::Duration::from_secs(
+                        s2.settings.get_int("agent.run_timeout_secs", 300).max(1) as u64 + 30,
+                    );
                     let result = tokio::time::timeout(
                         timeout_dur,
                         run_task_streaming(&t, &s2, context, tx2.clone()),
@@ -313,6 +335,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                         }
                         Err(_timeout) => {
                             tracing::error!("Agent task timed out after {:?}", timeout_dur);
+                            mark_run_timed_out(&s2, &run_id, timeout_dur.as_secs());
                             let _ = tx2
                                 .send(AgentEvent::Error {
                                     run_id: run_id.clone(),
