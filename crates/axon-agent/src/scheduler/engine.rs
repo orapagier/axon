@@ -24,12 +24,23 @@ pub struct SchedulerEngine {
     notify: Arc<crate::notify::NotifyHub>,
 }
 
+/// Platforms `deliver_job_output` can actually hand a message to.
+///
+/// A job's `platform` is its *origin*, not necessarily a gateway: an agent
+/// running inside a Cortex node creates jobs with platform `workflow`
+/// (see `tools/workflow/nodes/cortex.rs`), and `agent`/`api`/`dashboard` are
+/// likewise internal. Those aren't errors — they just mean the bell is the
+/// delivery target.
+fn is_messaging_platform(platform: &str) -> bool {
+    matches!(platform, "telegram" | "discord" | "slack")
+}
+
 /// Deliver a finished job's output to one messaging platform.
 ///
 /// Returns `Err` with an operator-readable reason when delivery didn't happen —
 /// including the silent case the raw `if let Some(gw)` arms used to swallow,
-/// where the gateway simply isn't connected. Callers turn the reason into a
-/// dashboard notification so a job whose output went nowhere is visible.
+/// where the gateway simply isn't connected. Callers fall back to the bell on
+/// `Err` so a job whose output went nowhere is still readable.
 async fn deliver_job_output(
     messaging: &crate::messaging::MessagingHub,
     platform: &str,
@@ -66,44 +77,85 @@ async fn deliver_job_output(
     }
 }
 
-/// Persist + broadcast the outcome of a job's delivery attempt to the dashboard
-/// bell. Shared by the cron fire path and `run_once` so both report identically.
-async fn notify_job_outcome(
-    notify: &crate::notify::NotifyHub,
-    job_name: &str,
-    target_platform: &str,
-    target_cid: &str,
-    result: &Result<(), String>,
-) {
-    if target_cid.is_empty() || target_platform.is_empty() {
-        notify
-            .emit(
-                "scheduler",
-                "warning",
-                job_name,
-                "Output discarded — no delivery target configured. Set watcher.notify_chat_id (and watcher.notify_platform) in Settings.",
-            )
-            .await;
-        return;
+/// Pick the messaging gateway a finished job's output should go to.
+///
+/// The job's own platform/chat wins when it came from a gateway; otherwise the
+/// configured watcher target is used. Returns `None` when neither resolves to a
+/// usable gateway — the caller then falls back to the bell.
+fn resolve_delivery_target(
+    settings: &RuntimeSettings,
+    job_platform: &str,
+    job_chat_id: Option<&str>,
+) -> Option<(String, String)> {
+    if is_messaging_platform(job_platform) {
+        if let Some(cid) = job_chat_id.filter(|c| !c.is_empty()) {
+            return Some((job_platform.to_string(), cid.to_string()));
+        }
     }
-    match result {
+    let platform = settings.get_str("watcher.notify_platform", "telegram");
+    let chat_id = settings.get_str("watcher.notify_chat_id", "");
+    if is_messaging_platform(&platform) && !chat_id.is_empty() {
+        return Some((platform, chat_id));
+    }
+    None
+}
+
+/// Deliver a finished job's output, then record what happened in the bell.
+///
+/// The result always reaches the user: it goes to whichever messaging gateway
+/// is configured for the job, and when none is usable — unset, a non-messaging
+/// origin like `workflow`, gateway not connected, or the send itself failing —
+/// the full result text is written to the bell instead of being discarded.
+/// Shared by the cron fire path and `run_once` so both behave identically.
+async fn deliver_and_notify(
+    messaging: &crate::messaging::MessagingHub,
+    notify: &crate::notify::NotifyHub,
+    settings: &RuntimeSettings,
+    job_id: &str,
+    job_name: &str,
+    job_platform: &str,
+    job_chat_id: Option<&str>,
+    result: &str,
+) {
+    let Some((platform, chat_id)) = resolve_delivery_target(settings, job_platform, job_chat_id)
+    else {
+        tracing::info!(
+            "Job {} ('{}') has no messaging target (platform '{}') — routing result to the bell",
+            job_id,
+            job_name,
+            job_platform
+        );
+        notify.emit("scheduler", "info", job_name, result).await;
+        return;
+    };
+
+    tracing::info!(
+        "Sending job {} result to '{}' chat ID: {}",
+        job_id,
+        platform,
+        chat_id
+    );
+    match deliver_job_output(messaging, &platform, &chat_id, result).await {
         Ok(()) => {
             notify
                 .emit(
                     "scheduler",
                     "info",
                     job_name,
-                    &format!("Sent to {target_platform}."),
+                    &format!("Sent to {platform}."),
                 )
                 .await
         }
         Err(e) => {
+            // Delivery failed, so the bell is now the only place this result
+            // exists — carry the text, not just the reason.
+            tracing::error!("Job {} delivery to {} failed: {}", job_id, platform, e);
             notify
                 .emit(
                     "scheduler",
-                    "error",
+                    "warning",
                     job_name,
-                    &format!("Delivery to {target_platform} failed: {e}"),
+                    &format!("Delivery to {platform} failed ({e}) — result below.\n\n{result}"),
                 )
                 .await
         }
@@ -335,39 +387,17 @@ impl SchedulerEngine {
                     .unwrap_or_else(|e| format!("Error: {}", e));
                 let _ = store.record_run(&job_id, &result);
 
-                // Send notifications
-                let (target_platform, target_cid) = if platform == "dashboard" {
-                    // For dashboard jobs, use watcher settings
-                    (
-                        settings.get_str("watcher.notify_platform", "telegram"),
-                        settings.get_str("watcher.notify_chat_id", ""),
-                    )
-                } else if let Some(ref cid) = chat_id {
-                    // For messaging-platform originated jobs, use the job's original platform/chat
-                    (platform.clone(), cid.clone())
-                } else {
-                    ("".to_string(), "".to_string())
-                };
-
-                let delivery = if !target_cid.is_empty() && !target_platform.is_empty() {
-                    tracing::info!(
-                        "Sending cron job {} result to '{}' chat ID: {}",
-                        job_id,
-                        target_platform,
-                        target_cid
-                    );
-                    let d =
-                        deliver_job_output(&messaging, &target_platform, &target_cid, &result).await;
-                    if let Err(ref e) = d {
-                        tracing::error!("Job {} delivery to {} failed: {}", job_id, target_platform, e);
-                    }
-                    d
-                } else {
-                    tracing::warn!("Job {} finished, but watcher.notify_chat_id or platform is empty. Discarding output.", job_id);
-                    Ok(())
-                };
-                notify_job_outcome(&notify, &job_name, &target_platform, &target_cid, &delivery)
-                    .await;
+                deliver_and_notify(
+                    &messaging,
+                    &notify,
+                    &settings,
+                    &job_id,
+                    &job_name,
+                    &platform,
+                    chat_id.as_deref(),
+                    &result,
+                )
+                .await;
 
                 if should_stop(&store, &job_id, &stop_cond, &result) {
                     tracing::info!("Job {} stop condition met — completing", job_id);
@@ -417,49 +447,15 @@ impl SchedulerEngine {
         let _ = self.store.record_run(&job.id, &result);
 
         // Send the result via the job's messaging platform (same as scheduled fires)
-        // Determine notification target
-        let (target_platform, target_cid) = if job.platform == "dashboard" {
-            // For dashboard jobs, use watcher settings
-            (
-                self.settings.get_str("watcher.notify_platform", "telegram"),
-                self.settings.get_str("watcher.notify_chat_id", ""),
-            )
-        } else if let Some(ref cid) = job.chat_id {
-            // For messaging-platform originated jobs, use the job's original platform/chat
-            (job.platform.clone(), cid.clone())
-        } else {
-            ("".to_string(), "".to_string())
-        };
-
-        tracing::info!(
-            "run_once: job platform={}, target={}, target_cid={}",
-            job.platform,
-            target_platform,
-            target_cid
-        );
-
-        let delivery = if !target_cid.is_empty() && !target_platform.is_empty() {
-            tracing::info!(
-                "Sending message to '{}' chat ID: {}",
-                target_platform,
-                target_cid
-            );
-            let d =
-                deliver_job_output(&self.messaging, &target_platform, &target_cid, &result).await;
-            if let Err(ref e) = d {
-                tracing::error!("run_once: delivery to {} failed: {}", target_platform, e);
-            }
-            d
-        } else {
-            tracing::warn!("run_once: job {} finished, but watcher.notify_chat_id or platform is empty. Discarding output.", job.id);
-            Ok(())
-        };
-        notify_job_outcome(
+        deliver_and_notify(
+            &self.messaging,
             &self.notify,
+            &self.settings,
+            &job.id,
             &job.name,
-            &target_platform,
-            &target_cid,
-            &delivery,
+            &job.platform,
+            job.chat_id.as_deref(),
+            &result,
         )
         .await;
 
