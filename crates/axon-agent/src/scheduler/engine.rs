@@ -39,15 +39,27 @@ async fn deliver_job_output(
     let gateway_down = |p: &str| format!("{p} is not connected");
     match platform {
         "telegram" => match messaging.telegram.lock().await.as_ref() {
-            Some(gw) => gw.send_text(chat_id, msg).await.map(|_| ()).map_err(|e| e.to_string()),
+            Some(gw) => gw
+                .send_text(chat_id, msg)
+                .await
+                .map(|_| ())
+                .map_err(|e| e.to_string()),
             None => Err(gateway_down("Telegram")),
         },
         "discord" => match messaging.discord.lock().await.as_ref() {
-            Some(gw) => gw.send_text(chat_id, msg).await.map(|_| ()).map_err(|e| e.to_string()),
+            Some(gw) => gw
+                .send_text(chat_id, msg)
+                .await
+                .map(|_| ())
+                .map_err(|e| e.to_string()),
             None => Err(gateway_down("Discord")),
         },
         "slack" => match messaging.slack.lock().await.as_ref() {
-            Some(gw) => gw.send_text(chat_id, msg).await.map(|_| ()).map_err(|e| e.to_string()),
+            Some(gw) => gw
+                .send_text(chat_id, msg)
+                .await
+                .map(|_| ())
+                .map_err(|e| e.to_string()),
             None => Err(gateway_down("Slack")),
         },
         other => Err(format!("unknown notification platform '{other}'")),
