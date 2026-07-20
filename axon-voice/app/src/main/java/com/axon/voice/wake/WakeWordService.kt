@@ -306,10 +306,9 @@ class WakeWordService : Service(), ChatSocket.Listener {
             val watcher = if (first) {
                 SilenceWatcher()
             } else {
-                SilenceWatcher(
-                    speechRms = SilenceWatcher.FOLLOWUP_RMS,
-                    minSpeechTicks = SilenceWatcher.FOLLOWUP_MIN_SPEECH_TICKS,
-                )
+                // The onset requirement is the shared default now; the
+                // follow-up window only still raises the level bar.
+                SilenceWatcher(speechRms = SilenceWatcher.FOLLOWUP_RMS)
             }
             val wav = capture(rec, watcher)
             if (!watcher.hadSpeech) break

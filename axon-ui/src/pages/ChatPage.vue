@@ -726,7 +726,11 @@ async function onWakeDetected() {
     return
   }
   await startRecording(wake.stream)
-  if (recState.value === 'recording') wake.watchSilence(() => stopRecording())
+  // Cancel the capture when the window closed without anyone actually speaking
+  // (same contract the follow-up window uses). Uploading a silent clip is how
+  // the transcriber ends up inventing a stock phrase — "Thank you." — and
+  // sending it as if it were a command.
+  if (recState.value === 'recording') wake.watchSilence((hadSpeech) => stopRecording(!hadSpeech))
 }
 
 async function startWake() {

@@ -22,17 +22,20 @@ import kotlin.math.sqrt
  * The follow-up window raises [speechRms] to ~2x so room-level chatter from
  * bystanders cancels the window instead of being sent as a command.
  *
- * [minSpeechTicks] is an Android-only addition: unlike the browser capture
- * (which always has echoCancellation on), the phone mic can pick up the tail
- * of our own TTS or a click, so the follow-up window requires that many
- * consecutive loud ticks before counting it as speech.
+ * [minSpeechTicks] consecutive loud ticks are required before a capture counts
+ * as speech. One tick used to be enough on a wake capture, so a cough, a click,
+ * the tail of our own TTS, or a shout from another room latched [hadSpeech] and
+ * the clip was uploaded — where a transcriber handed near-silence invents a
+ * stock phrase ("Thank you.") and it gets sent as a command. Real speech holds
+ * the level well past 300ms; impulse noise does not. Mirrored in
+ * axon-ui/src/lib/wakeword.js — keep the two in step.
  */
 class SilenceWatcher(
     private val speechRms: Double = RMS_SPEECH,
     private val quietTicks: Int = QUIET_TICKS,
     private val noSpeechTicks: Int = NO_SPEECH_TICKS,
     private val maxTicks: Int = MAX_TICKS,
-    private val minSpeechTicks: Int = 1,
+    private val minSpeechTicks: Int = SPEECH_ONSET_TICKS,
 ) {
     companion object {
         const val RMS_SPEECH = 0.012
@@ -40,7 +43,7 @@ class SilenceWatcher(
         const val NO_SPEECH_TICKS = 50
         const val MAX_TICKS = 600
         const val FOLLOWUP_RMS = 0.025
-        const val FOLLOWUP_MIN_SPEECH_TICKS = 3
+        const val SPEECH_ONSET_TICKS = 3
     }
 
     var hadSpeech = false

@@ -76,6 +76,139 @@ fn extract_transcript(body: &str) -> Option<String> {
         .map(|s| s.trim().to_string())
 }
 
+/// Stock phrases Whisper-family models emit when handed silence or near-silence.
+/// The training corpus was largely video captions, so a clip with no speech in
+/// it decodes to whatever ends a video: a thank-you, a subscribe plug, or a
+/// subtitle credit. "Thank you." is by far the most common, and on an always-on
+/// mic it arrives constantly.
+///
+/// Compared against the WHOLE normalized transcript only — never a substring —
+/// so a real sentence that happens to contain "thank you" is untouched. The
+/// cost of dropping a genuine one-word "thank you" is nothing; the cost of
+/// keeping a hallucinated one is a full agent run against words nobody said.
+const SILENCE_ARTIFACTS: &[&str] = &[
+    "you",
+    "thank you",
+    "thanks",
+    "thank you very much",
+    "thank you so much",
+    "thanks a lot",
+    "thank you for watching",
+    "thanks for watching",
+    "thank you for watching this video",
+    "thanks for watching this video",
+    "please subscribe",
+    "subscribe to my channel",
+    "like and subscribe",
+    "dont forget to subscribe",
+    "bye",
+    "bye bye",
+    "goodbye",
+    "the end",
+    "blank audio",
+    "subtitles by the amaraorg community",
+    "subtitles by the amara org community",
+    "transcription by castingwords",
+];
+
+/// Lowercase, drop everything that isn't a letter/digit/space, collapse runs of
+/// whitespace. Turns "Thank you.", "THANK YOU!!", and " thank  you " into the
+/// same key, and reduces a pure-punctuation transcript ("...") to empty.
+fn normalize_artifact(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut last_was_space = true; // leading whitespace never emits
+    for ch in text.chars() {
+        if ch.is_alphanumeric() {
+            for lower in ch.to_lowercase() {
+                out.push(lower);
+            }
+            last_was_space = false;
+        } else if !last_was_space {
+            out.push(' ');
+            last_was_space = true;
+        }
+    }
+    while out.ends_with(' ') {
+        out.pop();
+    }
+    out
+}
+
+/// Non-speech events the model describes instead of transcribing, when the clip
+/// has no words in it. Matched against the inside of a wrapped tag only.
+const NON_SPEECH_TAGS: &[&str] = &[
+    "music",
+    "silence",
+    "silent",
+    "applause",
+    "laughter",
+    "laughs",
+    "laughing",
+    "noise",
+    "blank audio",
+    "blankaudio",
+    "inaudible",
+    "unintelligible",
+    "no speech",
+    "no audio",
+    "sound",
+    "sounds",
+    "beep",
+    "static",
+    "coughing",
+    "coughs",
+    "sighs",
+    "breathing",
+    "wind",
+    "clicking",
+];
+
+/// True when `trimmed` is wholly wrapped in `[]`, `()` or `**` and the inside
+/// names a non-speech event: "[Music]", "(upbeat music)", "[BLANK_AUDIO]",
+/// "*silence*".
+///
+/// Deliberately checks the inner text against [`NON_SPEECH_TAGS`] rather than
+/// dropping anything that happens to be wrapped — a transcript like
+/// "*turn on the lights*" is speech that merely arrived with stray delimiters,
+/// and matching on the wrapper alone would silently discard the command.
+fn is_non_speech_tag(trimmed: &str) -> bool {
+    // The length guard matters for a lone "*", where the opening and closing
+    // test match the same byte and the inner slice would invert.
+    let wrapped = trimmed.len() >= 2
+        && ((trimmed.starts_with('[') && trimmed.ends_with(']'))
+            || (trimmed.starts_with('(') && trimmed.ends_with(')'))
+            || (trimmed.starts_with('*') && trimmed.ends_with('*')));
+    if !wrapped {
+        return false;
+    }
+    // A second opener inside means the tag is a prefix on real speech
+    // ("[Music] turn on the lights"), which must survive.
+    let inner = &trimmed[1..trimmed.len() - 1];
+    if inner.contains(['[', '(']) {
+        return false;
+    }
+    let inner = normalize_artifact(inner);
+    // `ends_with` catches the qualified forms — "upbeat music", "soft music".
+    NON_SPEECH_TAGS
+        .iter()
+        .any(|t| inner == *t || inner.ends_with(&format!(" {t}")))
+}
+
+/// True when a transcript is a silence hallucination rather than speech:
+/// nothing but punctuation, a non-speech caption tag, or one of
+/// [`SILENCE_ARTIFACTS`] standing alone.
+fn is_silence_artifact(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    if is_non_speech_tag(trimmed) {
+        return true;
+    }
+    let normalized = normalize_artifact(trimmed);
+    normalized.is_empty() || SILENCE_ARTIFACTS.contains(&normalized.as_str())
+}
+
 /// POST one audio clip to `{base_url}/audio/transcriptions` and return the
 /// transcript. `filename`'s extension is how Whisper-style endpoints detect the
 /// container; `mime` is a bonus hint attached only when it parses as valid.
@@ -103,7 +236,13 @@ pub async fn transcribe(
     let mut form = reqwest::multipart::Form::new()
         .part("file", part)
         .text("model", cfg.model.clone())
-        .text("response_format", "json");
+        .text("response_format", "json")
+        // Greedy decoding. Whisper's default temperature-fallback ladder kicks
+        // in exactly on the low-confidence audio we care about (silence, distant
+        // speech) and re-rolls until something decodes — which is how a silent
+        // clip becomes "Thank you.". Pinning it to 0 makes the artifact both
+        // rarer and deterministic enough for the filter below to catch.
+        .text("temperature", "0");
     if !cfg.language.is_empty() {
         form = form.text("language", cfg.language.clone());
     }
@@ -123,12 +262,21 @@ pub async fn transcribe(
         let snippet: String = body.chars().take(300).collect();
         anyhow::bail!("transcription failed ({}): {}", status, snippet);
     }
-    extract_transcript(&body).ok_or_else(|| {
+    let text = extract_transcript(&body).ok_or_else(|| {
         anyhow::anyhow!(
             "unexpected transcription response shape: {}",
             body.chars().take(200).collect::<String>()
         )
-    })
+    })?;
+
+    // Silence in, stock phrase out — drop it rather than hand every caller a
+    // sentence nobody spoke. Empty is already every caller's "no speech" path
+    // (dashboard toast, Telegram/Slack skip), so this needs no new signalling.
+    if is_silence_artifact(&text) {
+        tracing::debug!("STT dropped silence artifact: {:?}", text);
+        return Ok(String::new());
+    }
+    Ok(text)
 }
 
 /// True when a model id looks like a speech-to-text model. Heuristic over the
@@ -206,6 +354,70 @@ mod tests {
         );
         assert_eq!(extract_transcript("not json"), None);
         assert_eq!(extract_transcript(r#"{"no_text":true}"#), None);
+    }
+
+    #[test]
+    fn silence_artifacts_are_dropped() {
+        for s in [
+            "Thank you.",
+            "thank you",
+            "  Thank  you!!  ",
+            "THANK YOU SO MUCH",
+            "Thanks for watching!",
+            "you",
+            "You.",
+            "Bye.",
+            "[Music]",
+            "(upbeat music)",
+            "[BLANK_AUDIO]",
+            "...",
+            ".",
+            "   ",
+            "Subtitles by the Amara.org community",
+        ] {
+            assert!(is_silence_artifact(s), "should be dropped: {s:?}");
+        }
+    }
+
+    #[test]
+    fn real_speech_survives_the_artifact_filter() {
+        // The filter matches whole transcripts only: a real sentence that
+        // contains an artifact phrase, or is merely short, must get through.
+        for s in [
+            "Thank you for adding that to my calendar",
+            "thanks, now send it to Maria",
+            "What's on my schedule today?",
+            "turn on the lights",
+            "yes",
+            "no",
+            "stop",
+            "[Music] turn on the lights",
+            "Can you thank her for me?",
+        ] {
+            assert!(!is_silence_artifact(s), "should survive: {s:?}");
+        }
+    }
+
+    #[test]
+    fn artifact_check_handles_degenerate_delimiters() {
+        // A lone "*" opens and closes on the same byte; without the length
+        // guard the inner slice inverts and panics. It still ends up dropped —
+        // as punctuation-only, via the normalizer rather than the tag rule.
+        assert!(is_silence_artifact("*"));
+        assert!(is_silence_artifact("["));
+        assert!(is_silence_artifact("[]"));
+        assert!(is_silence_artifact("*silence*"));
+        // Real speech wrapped in stray delimiters is still speech — the tag
+        // rule matches on the described event, not on the wrapper.
+        assert!(!is_silence_artifact("*turn on the lights*"));
+        assert!(!is_silence_artifact("(remind me to call the bank)"));
+    }
+
+    #[test]
+    fn normalize_artifact_collapses_case_and_punctuation() {
+        assert_eq!(normalize_artifact("  Thank, YOU!! "), "thank you");
+        assert_eq!(normalize_artifact("..."), "");
+        assert_eq!(normalize_artifact("Amara.org"), "amara org");
     }
 
     #[test]

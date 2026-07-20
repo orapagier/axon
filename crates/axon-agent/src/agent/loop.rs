@@ -332,12 +332,22 @@ pub(crate) fn is_bulk_task(task: &str) -> bool {
     has_positive && !has_negative
 }
 
+/// Meta-tools the hybrid scope attaches to *every* non-conversational turn.
+/// They discover and track work rather than fetch data, so their presence says
+/// nothing about whether an answer was meant to be tool-backed.
+const META_TOOLS: &[&str] = &["search_tools", "update_plan"];
+
+/// Cap on claim-guard corrections per run. Unlike the nudge and QC guards this
+/// one was uncapped, so a false positive re-fired every iteration and ate the
+/// whole `agent.max_corrections` budget on its own. Two attempts is enough for
+/// a model that is going to fix the claim at all.
+const MAX_CLAIM_GUARD_CORRECTIONS: u32 = 2;
+
 fn deterministic_tool_claim_guard(
     text: &str,
     routed_tools: &[String],
     tool_receipts: &[ToolExecutionReceipt],
 ) -> Option<String> {
-    let lower = text.to_ascii_lowercase();
     let any_success = tool_receipts.iter().any(|r| r.ok);
     let any_mutating_success = tool_receipts.iter().any(|r| r.ok && r.is_mutating);
     let successful_tools = tool_receipts
@@ -345,10 +355,19 @@ fn deterministic_tool_claim_guard(
         .filter(|r| r.ok)
         .map(|r| r.name.as_str())
         .collect::<Vec<_>>();
-    let routed_or_attempted_tools = !routed_tools.is_empty() || !tool_receipts.is_empty();
+    // Only data-bearing tools count. With the meta-tools included this was
+    // never empty under the hybrid scope, so every answer looked tool-backed.
+    let data_tools_routed = routed_tools
+        .iter()
+        .any(|t| !META_TOOLS.contains(&t.as_str()));
+    let routed_or_attempted_tools = data_tools_routed || !tool_receipts.is_empty();
     let claims_mutation = RE_MUTATION_CLAIM.is_match(text);
-    let claims_tool_backed_data = RE_DATA_CLAIM.is_match(text)
-        || (lower.contains("your ") && routed_or_attempted_tools && !any_success);
+    // Presenting fresh data has to be *stated* ("I checked", "in your inbox").
+    // A bare "your" is not a claim: ordinary conversational replies say "your"
+    // constantly ("your question", "your path"), and pairing that with the
+    // always-attached meta-tools turned every empathetic answer into a
+    // correction loop that ran until the budget was gone.
+    let claims_tool_backed_data = RE_DATA_CLAIM.is_match(text);
 
     if claims_mutation && !any_mutating_success {
         let executed = if successful_tools.is_empty() {
@@ -401,16 +420,20 @@ async fn validate_response(
     run_id: &str,
     expects_structured_output: bool,
 ) -> ValidationDecision {
-    // 1. Claim guard (deterministic, zero cost)
-    if let Some(correction) = deterministic_tool_claim_guard(text, tool_names, tool_receipts) {
-        guard_counts.claim_guard_count += 1;
-        return ValidationDecision::Retry {
-            message: format!(
-                "TOOL EXECUTION GUARD — revise your response.\n{}\n\nYou may either call the correct tool natively or rewrite the answer so it honestly states what has and has not actually been done.",
-                correction
-            ),
-            reason: RetryReason::ClaimGuard,
-        };
+    // 1. Claim guard (deterministic, zero cost). Bounded like the other guards:
+    // if two corrections haven't landed, a third won't either, and letting it
+    // run free meant one false positive consumed the entire correction budget.
+    if guard_counts.claim_guard_count < MAX_CLAIM_GUARD_CORRECTIONS {
+        if let Some(correction) = deterministic_tool_claim_guard(text, tool_names, tool_receipts) {
+            guard_counts.claim_guard_count += 1;
+            return ValidationDecision::Retry {
+                message: format!(
+                    "TOOL EXECUTION GUARD — revise your response.\n{}\n\nYou may either call the correct tool natively or rewrite the answer so it honestly states what has and has not actually been done.",
+                    correction
+                ),
+                reason: RetryReason::ClaimGuard,
+            };
+        }
     }
 
     // 2. Refusal nudge (deterministic, zero cost)
@@ -1280,7 +1303,19 @@ pub(crate) async fn run_inner(
             if final_output.is_empty() {
                 final_output = "I reached my token budget for this request before fully finishing. Please narrow the request or try again.".to_string();
             } else {
-                final_output.push_str("\n\n(Note: I reached my token budget for this request, so this is my best-effort answer and some steps may be incomplete.)");
+                // The caveat is operator telemetry, not part of the answer — it
+                // belongs in the notification bell with every other run alert,
+                // not glued onto a reply the user may be reading or hearing
+                // aloud. See the matching correction-budget branch below.
+                state
+                    .notify
+                    .emit(
+                        "agent.runtime",
+                        "warning",
+                        "Token budget reached",
+                        "A run hit its token ceiling and returned a best-effort answer — some steps may be incomplete.",
+                    )
+                    .await;
             }
             if !token_emitted {
                 emit!(AgentEvent::Token {
@@ -1376,13 +1411,23 @@ pub(crate) async fn run_inner(
                         let mut final_output = strip_router_alert_footer(clean.trim());
                         if final_output.is_empty() {
                             final_output = "I wasn't able to fully verify this request after several attempts. Please rephrase or check the logs and try again.".to_string();
-                        } else if ctx.platform != "workflow" {
-                            // Workflow nodes (Cortex, Classifier, etc.) feed their output
-                            // into other nodes or straight out to an integration — this
-                            // meta caveat has no reader there and just pollutes the data.
-                            // Only surface it to a human on the other end: dashboard chat
-                            // or a messaging gateway (Telegram/Discord/Slack/...).
-                            final_output.push_str("\n\n(Note: I reached my self-correction limit, so this is my best-effort answer and some details may be unverified.)");
+                        } else {
+                            // Goes to the bell rather than onto the reply. The
+                            // old inline note rode along everywhere the answer
+                            // went — read aloud by TTS, forwarded to Telegram,
+                            // piped into downstream workflow nodes as data —
+                            // when it is really a note about the run, for the
+                            // operator. The bell is where run alerts live, and
+                            // it reaches the dashboard from every platform.
+                            state
+                                .notify
+                                .emit(
+                                    "agent.runtime",
+                                    "warning",
+                                    "Self-correction limit reached",
+                                    "A run exhausted its correction budget and returned a best-effort answer — some details may be unverified.",
+                                )
+                                .await;
                         }
 
                         if !token_emitted {
@@ -2349,6 +2394,58 @@ mod tests {
                 assert!(!RE_PROMISE_ONLY.is_match(s), "should not match: {s}");
             }
         }
+    }
+
+    #[test]
+    fn claim_guard_ignores_always_attached_meta_tools() {
+        // The hybrid tool scope attaches search_tools + update_plan to every
+        // non-conversational turn. A conversational reply that merely says
+        // "your" used to trip the guard on that alone, and since the guard was
+        // uncapped it re-fired every iteration until the whole correction
+        // budget was gone — the answer then shipped with a "self-correction
+        // limit" caveat for a question that never needed a tool.
+        let meta = vec!["search_tools".to_string(), "update_plan".to_string()];
+        let reply = "I hear that you are reflecting on your path and want to \
+                     live with more purpose. That is worth sitting with.";
+        assert!(
+            deterministic_tool_claim_guard(reply, &meta, &[]).is_none(),
+            "meta-tools alone must not make a reply look tool-backed"
+        );
+    }
+
+    #[test]
+    fn claim_guard_still_catches_unbacked_data_claims() {
+        // The guard must keep firing where it matters: a real data tool was
+        // routed, nothing succeeded, and the answer presents fetched results.
+        let routed = vec!["gmail_search".to_string()];
+        assert!(
+            deterministic_tool_claim_guard("I checked and found 3 new emails.", &routed, &[])
+                .is_some()
+        );
+        assert!(deterministic_tool_claim_guard(
+            "There are 2 messages in your inbox.",
+            &routed,
+            &[]
+        )
+        .is_some());
+        // ...and a mutation claim with no successful mutating receipt.
+        let read_only = [ToolExecutionReceipt {
+            name: "gmail_search".to_string(),
+            ok: true,
+            is_mutating: false,
+        }];
+        assert!(deterministic_tool_claim_guard("I sent the reply.", &routed, &read_only).is_some());
+    }
+
+    #[test]
+    fn claim_guard_passes_answers_backed_by_a_real_receipt() {
+        let routed = vec!["gmail_send".to_string()];
+        let sent = [ToolExecutionReceipt {
+            name: "gmail_send".to_string(),
+            ok: true,
+            is_mutating: true,
+        }];
+        assert!(deterministic_tool_claim_guard("I sent the reply.", &routed, &sent).is_none());
     }
 
     #[test]

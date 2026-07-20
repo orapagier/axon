@@ -43,6 +43,14 @@ const QUIET_TICKS = 14
 const NO_SPEECH_TICKS = 50
 const MAX_TICKS = 600
 
+// Speech onset needs this many *consecutive* ticks (300ms) over the bar before
+// the capture counts as "someone spoke". A single tick used to latch it, so one
+// door slam, cough, or shouted word two rooms away marked the whole window as
+// speech — the clip then got uploaded and transcribed into something nobody
+// said. Real speech holds the level far longer than 300ms; impulse noise
+// doesn't. Mirrored in axon-voice SilenceWatcher — keep the two in step.
+const SPEECH_ONSET_TICKS = 3
+
 // Follow-up capture (reopened mic after a spoken reply, no wake word said)
 // deliberately listens with a raised speech bar: onset must be ~2x the normal
 // RMS and arrive within 5s of the chime that opens the window, so
@@ -175,6 +183,7 @@ export function createWakeWord({ onDetection, onState }) {
     const data = new Float32Array(analyser.fftSize)
     let hadSpeech = false
     let quiet = 0
+    let loud = 0
     let ticks = 0
     silenceTimer = setInterval(() => {
       analyser.getFloatTimeDomainData(data)
@@ -183,10 +192,12 @@ export function createWakeWord({ onDetection, onState }) {
       const rms = Math.sqrt(acc / data.length)
       ticks++
       if (rms > speechRms) {
-        hadSpeech = true
+        loud++
+        if (loud >= SPEECH_ONSET_TICKS) hadSpeech = true
         quiet = 0
-      } else if (hadSpeech) {
-        quiet++
+      } else {
+        loud = 0
+        if (hadSpeech) quiet++
       }
       if ((hadSpeech && quiet >= QUIET_TICKS) || (!hadSpeech && ticks >= noSpeechTicks) || ticks >= MAX_TICKS) {
         cancelSilenceWatch()
