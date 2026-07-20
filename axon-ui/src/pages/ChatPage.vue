@@ -304,6 +304,13 @@ function handleWsEvent(ev) {
         messages.value[agentIdx].thinking = false
         messages.value[agentIdx].status = ''
         messages.value[agentIdx].text += ev.text
+        // Voice reply: feed tokens to the streamed read-aloud so speech starts
+        // with the first sentence, not after 'done'. Server TTS only (the
+        // browser voice can't synthesize incrementally); audioSupported gates it.
+        if (speakReplyOnDone && audioSupported) {
+          if (!streamingSpeech) streamingSpeech = makeStreamingSpeech(agentIdx)
+          streamingSpeech.append(ev.text)
+        }
         scrollBottom()
       }
       break
@@ -346,11 +353,22 @@ function handleWsEvent(ev) {
       if (speakReplyOnDone) {
         speakReplyOnDone = false
         if (agentIdx >= 0 && canSpeak) {
-          // Arm follow-up mode after toggleSpeak: its synchronous prefix runs
-          // stopSpeaking(), which would immediately clear the flag.
           const wantFollowup = wakeEnabled.value && wake?.running
-          toggleSpeak(agentIdx)
-          followupEligible = wantFollowup
+          if (streamingSpeech && streamingSpeech.hasContent()) {
+            // The reply was streamed sentence-by-sentence during generation;
+            // just flush the tail and let it play out. followupEligible is set
+            // BEFORE finish() because a short reply can drain synchronously and
+            // fire the controller's natural-end callback (which reads it) now.
+            followupEligible = wantFollowup
+            streamingSpeech.finish()
+          } else {
+            // No streamed audio (server sent full_text only, or no Audio API):
+            // speak the whole reply in one shot. Arm follow-up AFTER toggleSpeak,
+            // whose synchronous stopSpeaking() prefix would clear the flag.
+            abortStreamingSpeech()
+            toggleSpeak(agentIdx)
+            followupEligible = wantFollowup
+          }
         }
       }
       collapseTrace()
@@ -372,6 +390,7 @@ function handleWsEvent(ev) {
       // keep them in the bell as well as flashing a toast.
       notifyBell(ev.message || 'Agent error', false)
       speakReplyOnDone = false
+      abortStreamingSpeech()
       stopPrompt()
       collapseTrace()
       resetRunTrackers()
@@ -419,6 +438,9 @@ async function send() {
 // the composer, and the reply is read aloud when the run completes.
 async function sendMessage(msg, voice) {
   if (!msg || disabled.value) return
+  // A new turn takes over the speaker: retire any reply still being read aloud
+  // so its tail can't play over — or fire a follow-up during — the new run.
+  abortStreamingSpeech()
   speakReplyOnDone = voice
   if (!currentSessionId.value) newChat()
 
@@ -481,6 +503,7 @@ function stop() {
     m.meta = m.meta ? `${m.meta} · stopped` : 'stopped'
   }
   speakReplyOnDone = false
+  abortStreamingSpeech()
   stopPrompt()
   collapseTrace()
   resetRunTrackers()
@@ -812,6 +835,7 @@ let audioEl = null
 let audioUrl = null
 let synthUtterance = null // pinned: Chrome goes silent if the utterance is GC'd
 let ttsFailureToasted = false // explain a dead tts.* config once, not per click
+let streamingSpeech = null // active per-sentence streamed read-aloud (voice replies)
 
 // The agent bubble renders markdown; the utterance needs the prose only.
 function plainTextForSpeech(md) {
@@ -842,6 +866,7 @@ function releaseAudio() {
 function stopSpeaking() {
   followupEligible = false
   stopPrompt()
+  abortStreamingSpeech()
   speakSeq += 1
   if (speakAbort) {
     speakAbort.abort()
@@ -962,6 +987,266 @@ async function toggleSpeak(idx) {
     if (seq !== speakSeq) return // user hit stop during the attempt
   }
   speakWithSynthesis(idx, text)
+}
+
+// ── Streaming read-aloud (spoken while the reply is still being written) ─────
+// A voice reply is spoken as it generates, not after: reply tokens are split
+// into sentences and each is synthesized (server TTS) and played back-to-back,
+// so the first sentence is heard while the rest is still streaming — the same
+// design as the Android client's StreamingTts. Time-to-first-audio drops from
+// "synthesize the whole reply" to "synthesize one sentence". Server TTS only;
+// if it is unavailable for the whole reply we defer to the browser voice when
+// generation finishes (instant, no per-sentence benefit lost), never silent.
+
+// Index just past the first sentence boundary in [s], or -1 if none yet — a
+// direct port of the Android StreamingTts splitter so both clients chunk the
+// same way (`. ` `! ` `? ` or a newline, trailing quotes/brackets included).
+function nextSpeechBoundary(s) {
+  const n = s.length
+  for (let i = 0; i < n; i++) {
+    const c = s[i]
+    if (c === '\n' || c === '\r') return i + 1
+    if (c === '.' || c === '!' || c === '?') {
+      let j = i + 1
+      while (j < n && !/\s/.test(s[j])) {
+        const cj = s[j]
+        if (cj !== '"' && cj !== "'" && cj !== ']' && cj !== ')' && cj !== '”' && cj !== '’') break
+        j++
+      }
+      if (j < n && /\s/.test(s[j])) return j + 1
+      if (j >= n) return -1 // boundary at the tail — flushed by finish()
+    }
+  }
+  return -1
+}
+
+class StreamingSpeech {
+  constructor(idx, onNaturalEnd, onFallback) {
+    this.idx = idx
+    this.onNaturalEnd = onNaturalEnd // fired once playback drains naturally
+    this.onFallback = onFallback // (fullText) => browser-voice the whole reply
+    this.buf = '' // undrained text still being split into sentences
+    this.full = '' // every token, for the fallback voice
+    this.pending = [] // complete sentences awaiting synthesis
+    this.playQueue = [] // synthesized blob URLs awaiting playback
+    this.synthing = false
+    this.playing = false
+    this.finished = false // finish() called (no more tokens)
+    this.aborted = false
+    this.ended = false
+    this.fellBack = false
+    this.serverDown = false // server TTS failed → collect text, browser voice later
+    this.anyServer = false // at least one sentence synthesized by the server
+    this.curAudio = null
+    this.curUrl = null
+    this.fetchAbort = null
+  }
+
+  hasContent() {
+    return this.full.trim().length > 0
+  }
+
+  append(token) {
+    if (this.aborted || this.finished || !token) return
+    this.full += token
+    if (this.serverDown) return // keep only the full text for the browser voice
+    this.buf += token
+    let i
+    while ((i = nextSpeechBoundary(this.buf)) >= 0) {
+      const sentence = this.buf.slice(0, i).trim()
+      this.buf = this.buf.slice(i)
+      if (sentence) this.pending.push(sentence)
+    }
+    this.pumpSynth()
+  }
+
+  finish() {
+    if (this.aborted || this.finished) return
+    this.finished = true
+    if (this.serverDown) {
+      this.doFallback()
+      return
+    }
+    const tail = this.buf.trim()
+    this.buf = ''
+    if (tail) this.pending.push(tail)
+    this.pumpSynth()
+    this.maybeFinish()
+  }
+
+  abort() {
+    if (this.aborted) return
+    this.aborted = true
+    this.pending = []
+    if (this.fetchAbort) {
+      try {
+        this.fetchAbort.abort()
+      } catch {
+        /* already settled */
+      }
+      this.fetchAbort = null
+    }
+    this.stopCurrentAudio()
+    for (const url of this.playQueue) URL.revokeObjectURL(url)
+    this.playQueue = []
+  }
+
+  stopCurrentAudio() {
+    if (this.curAudio) {
+      this.curAudio.onended = null
+      this.curAudio.onerror = null
+      try {
+        this.curAudio.pause()
+      } catch {
+        /* not started */
+      }
+      this.curAudio = null
+    }
+    if (this.curUrl) {
+      URL.revokeObjectURL(this.curUrl)
+      this.curUrl = null
+    }
+  }
+
+  async pumpSynth() {
+    if (this.synthing || this.aborted || this.serverDown) return
+    this.synthing = true
+    while (this.pending.length && !this.aborted && !this.serverDown) {
+      const sentence = this.pending.shift()
+      let ok = false
+      try {
+        this.fetchAbort = new AbortController()
+        const res = await postRaw('/audio/speech', { text: sentence }, this.fetchAbort.signal)
+        this.fetchAbort = null
+        if (this.aborted) return
+        const type = res.headers.get('content-type') || ''
+        if (res.ok && type.startsWith('audio/')) {
+          const blob = await res.blob()
+          if (this.aborted) return
+          this.anyServer = true
+          this.playQueue.push(URL.createObjectURL(blob))
+          this.startPlaybackIfIdle()
+          ok = true
+        }
+      } catch {
+        this.fetchAbort = null
+        if (this.aborted) return
+      }
+      // First failure with no server audio yet: stop trying and speak the whole
+      // reply with the browser voice once it finishes (matches the whole-blob
+      // path and the Android client). A failure after some audio already played
+      // just drops that one sentence and keeps streaming.
+      if (!ok && !this.anyServer) {
+        this.serverDown = true
+        this.pending = []
+        break
+      }
+    }
+    this.synthing = false
+    if (this.serverDown && this.finished) {
+      this.doFallback()
+      return
+    }
+    this.maybeFinish()
+  }
+
+  startPlaybackIfIdle() {
+    if (!this.playing && !this.aborted) this.playNext()
+  }
+
+  playNext() {
+    if (this.aborted) return
+    const url = this.playQueue.shift()
+    if (url === undefined) {
+      this.playing = false
+      this.maybeFinish()
+      return
+    }
+    this.playing = true
+    const el = new Audio(url)
+    this.curAudio = el
+    this.curUrl = url
+    if (speakingIdx.value !== this.idx) speakingIdx.value = this.idx
+    let advanced = false
+    const advance = () => {
+      if (advanced) return
+      advanced = true
+      if (this.curUrl === url) {
+        URL.revokeObjectURL(url)
+        this.curUrl = null
+      }
+      if (this.curAudio === el) this.curAudio = null
+      this.playNext()
+    }
+    el.onended = advance
+    el.onerror = advance
+    // Autoplay is permitted here — playback only starts for a reply the user
+    // asked for by voice — but a rejected/decoded-badly chunk is just skipped.
+    el.play().catch(() => advance())
+  }
+
+  maybeFinish() {
+    if (this.aborted || this.ended || this.fellBack || !this.finished) return
+    if (this.synthing || this.pending.length || this.playing || this.playQueue.length) return
+    if (this.anyServer) {
+      this.ended = true
+      this.aborted = true
+      this.onNaturalEnd()
+    } else {
+      this.doFallback()
+    }
+  }
+
+  doFallback() {
+    if (this.fellBack) return
+    this.fellBack = true
+    this.aborted = true
+    this.stopCurrentAudio()
+    for (const url of this.playQueue) URL.revokeObjectURL(url)
+    this.playQueue = []
+    this.onFallback(this.full)
+  }
+}
+
+// Build a controller bound to the [idx] agent bubble, wiring its two terminal
+// callbacks into the same follow-up / self-echo bookkeeping toggleSpeak uses.
+function makeStreamingSpeech(idx) {
+  return new StreamingSpeech(
+    idx,
+    () => {
+      // Natural end: the whole reply played out via server TTS.
+      const followup = followupEligible
+      followupEligible = false
+      lastSpokenText = plainTextForSpeech(messages.value[idx]?.text)
+      speakingIdx.value = -1
+      streamingSpeech = null
+      if (followup) startFollowupCapture()
+    },
+    (whole) => {
+      // Server TTS never worked for this reply — speak it all with the browser
+      // voice (speakWithSynthesis fires the follow-up from its own onend).
+      streamingSpeech = null
+      const text = plainTextForSpeech(whole)
+      if (!text) {
+        speakingIdx.value = -1
+        followupEligible = false
+        return
+      }
+      lastSpokenText = text
+      speakingIdx.value = idx
+      speakWithSynthesis(idx, text)
+    },
+  )
+}
+
+// Tear down any active streamed reply without firing its terminal callbacks
+// (a new send, a stop, an error, or a manual stopSpeaking took over).
+function abortStreamingSpeech() {
+  if (!streamingSpeech) return
+  const idx = streamingSpeech.idx
+  streamingSpeech.abort()
+  streamingSpeech = null
+  if (speakingIdx.value === idx) speakingIdx.value = -1
 }
 
 function onWindowKeydown(e) {
