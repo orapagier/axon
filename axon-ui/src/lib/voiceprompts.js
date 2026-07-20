@@ -18,7 +18,12 @@
 // false and the caller plays the old chime.
 import { postRaw } from './api.js'
 
-export const WAKE_ACKS = ['Yes?', 'Mm-hmm?', "I'm listening."]
+// Keep every ack to words a text-to-speech engine reads as a word, not as
+// spelled-out letters. Piper's espeak-ng phonemizer turns "Mm-hmm?" into
+// ˌɛmˈɛmhəm ("em-em-hum") — it treats the m-run as the letter M — and the same
+// goes for "Mmm"/"Mhm". "Uh-huh?" (ˈʌhˈʌ) is the affirmative that survives it,
+// and hosted neural voices say it just as naturally.
+export const WAKE_ACKS = ['Yes?', 'Uh-huh?', "I'm listening."]
 
 const ALL_PROMPTS = [...WAKE_ACKS]
 

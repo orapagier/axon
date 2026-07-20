@@ -16,8 +16,11 @@ import kotlin.random.Random
  */
 object VoicePrompts {
 
-    /** Spoken right after "Hey Axon" fires. Mirrors WAKE_ACKS in voiceprompts.js. */
-    val WAKE_ACKS: List<String> = listOf("Yes?", "Mm-hmm?", "I'm listening.")
+    /** Spoken right after "Hey Axon" fires. Mirrors WAKE_ACKS in voiceprompts.js.
+     *  Every phrase must read as a word, not spelled-out letters: Piper's
+     *  espeak-ng turns "Mm-hmm?" into "em-em-hum", so the affirmative here is
+     *  "Uh-huh?" (which every engine, hosted or local, says naturally). */
+    val WAKE_ACKS: List<String> = listOf("Yes?", "Uh-huh?", "I'm listening.")
 
     private val rng = Random.Default
 

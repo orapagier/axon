@@ -701,20 +701,29 @@ const wakeEnabled = ref(wakeSupported && localStorage.getItem('axon-wake-word') 
 const wakeState = ref('off') // 'off' | 'starting' | 'listening'
 let wake = null
 
-function onWakeDetected() {
+async function onWakeDetected() {
   // A streaming run, an active recording/transcription, or read-aloud playback
   // disqualifies a trigger — the speaking guard keeps the assistant from
   // waking itself off its own voice coming out of the speakers.
   if (disabled.value || recState.value !== 'idle' || speakingIdx.value >= 0) return
-  // The recorder starts before the ack plays so words spoken over "Yes?" are
-  // captured; the silence watcher waits for the ack to finish so the speaker
-  // output can't register as command speech (echo cancellation catches most of
-  // it, but a spoken phrase is longer and louder than the old chime was).
-  startRecording(wake.stream)
-  playPrompt(randomWakeAck()).then((spoke) => {
-    if (!spoke) wake.chime()
-    if (recState.value === 'recording') wake.watchSilence(() => stopRecording())
-  })
+  // Answer first, then open the mic — the same order the Android client uses
+  // (play the ack blocking, then capture). Recording *through* the ack meant
+  // the assistant's own "I'm listening" bled into the capture and rode along on
+  // the command ("I'm listening turn on the lights"): echo cancellation on the
+  // always-open wake mic doesn't reliably cancel a full spoken phrase, and the
+  // self-echo net only drops a capture that is *nothing but* ack words, so an
+  // ack glued to a real command slips through. The acks are short, so the beat
+  // after them is where the user naturally starts talking anyway.
+  const spoke = await playPrompt(randomWakeAck())
+  if (!spoke) wake.chime()
+  // The ack took ~0.5-1s; re-check the guards in case a run started, the tab
+  // was hidden (which tears down the mic), or the user touched a control while
+  // it played.
+  if (disabled.value || recState.value !== 'idle' || speakingIdx.value >= 0 || !wake?.running) {
+    return
+  }
+  await startRecording(wake.stream)
+  if (recState.value === 'recording') wake.watchSilence(() => stopRecording())
 }
 
 async function startWake() {
