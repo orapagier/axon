@@ -38,7 +38,7 @@ async function handleLogin() {
 
 <template>
   <div class="login-page">
-    <div class="login-card premium-card">
+    <div class="login-card">
       <div class="login-header">
         <img
           src="/favicon.png"
@@ -53,12 +53,11 @@ async function handleLogin() {
         class="login-form"
         @submit.prevent="handleLogin"
       >
-        <div class="form-group-modern">
+        <div class="form-field">
           <label>Master Access Key</label>
           <input
             v-model="masterKey"
             type="password"
-            class="premium-input"
             placeholder="Paste your master key"
             required
             autofocus
@@ -82,20 +81,19 @@ async function handleLogin() {
 </template>
 
 <style scoped>
-.login-page {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100vh;
-  width: 100vw;
-  background: radial-gradient(circle at center, #ffffff 0%, #dde2ee 100%);
+/* Login-page specifics that aren't part of the global token system. The page
+   chrome (.login-page, .login-card, .login-header, .login-form, .login-btn,
+   .login-footer) is styled globally in style.css so the dark theme is
+   consistent. Only the logo sizing and fade-in animation live here. */
+.login-logo {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 16px;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--border);
 }
 
 .login-card {
-  width: 100%;
-  max-width: 400px;
-  padding: 40px;
-  text-align: center;
   animation: fadeIn 0.5s ease-out;
 }
 
@@ -109,51 +107,5 @@ async function handleLogin() {
     opacity: 1;
     transform: translateY(0);
   }
-}
-
-.login-logo {
-  width: 64px;
-  height: 64px;
-  margin-bottom: 16px;
-}
-
-.login-header h1 {
-  font-size: 28px;
-  letter-spacing: 0.1em;
-  margin-bottom: 4px;
-  color: var(--text);
-}
-
-.login-header p {
-  color: var(--muted);
-  font-size: 14px;
-  margin-bottom: 32px;
-}
-
-.login-form {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  text-align: left;
-}
-
-.login-btn {
-  width: 100%;
-  padding: 12px;
-  font-size: 15px;
-  margin-top: 10px;
-}
-
-.login-footer {
-  margin-top: 32px;
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.login-footer code {
-  background: rgba(0, 0, 0, 0.05);
-  padding: 2px 6px;
-  border-radius: 4px;
-  color: #a29bfe;
 }
 </style>
