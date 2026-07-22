@@ -14,29 +14,8 @@
 //! items. Operators and combine (AND/OR) logic are shared with IF via
 //! `evaluate_condition_typed`, so the two nodes never drift.
 
-use crate::tools::workflow::{evaluate_condition_typed, parse_path_pointer};
+use crate::tools::workflow::{evaluate_condition_typed, parse_path_pointer, to_items};
 use serde_json::Value;
-
-/// Turn the primary input into an item list. An array is the items; a `Null`
-/// contributes none; anything else (a bare object or scalar) is a single item —
-/// this mirrors Merge's `flatten_items` rather than Loop's aggressive "find any
-/// array field" scan, so a nested field is never silently filtered by surprise.
-/// `array_path` is the explicit escape hatch for a wrapper like `{ results: [...] }`.
-fn to_items(input: &Value, array_path: Option<&str>) -> Vec<Value> {
-    if let Some(path) = array_path.map(str::trim).filter(|p| !p.is_empty()) {
-        // A path was given: honor it exactly (absent path → nothing to filter).
-        return match input.pointer(&parse_path_pointer(path)) {
-            Some(Value::Array(a)) => a.clone(),
-            Some(Value::Null) | None => Vec::new(),
-            Some(other) => vec![other.clone()],
-        };
-    }
-    match input {
-        Value::Array(a) => a.clone(),
-        Value::Null => Vec::new(),
-        other => vec![other.clone()],
-    }
-}
 
 /// Read `field` (a dot/bracket path) out of `item`. An empty path returns the whole
 /// item, so scalar arrays (numbers/strings) can be filtered directly. A missing

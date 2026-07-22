@@ -8,8 +8,7 @@
 
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
-
-use crate::tools::whatsapp::constant_time_eq;
+use subtle::ConstantTimeEq;
 
 /// Verifies a Meta `X-Hub-Signature-256` header against `body` using
 /// `app_secret`. `source` is only used for log messages (e.g. "FB",
@@ -42,5 +41,5 @@ pub fn verify_meta_signature(
     mac.update(body);
     let computed_hex = hex::encode(mac.finalize().into_bytes());
 
-    constant_time_eq(computed_hex.as_bytes(), expected_hex.as_bytes())
+    computed_hex.as_bytes().ct_eq(expected_hex.as_bytes()).into()
 }

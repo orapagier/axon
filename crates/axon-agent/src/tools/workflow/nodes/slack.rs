@@ -14,24 +14,12 @@
 //! on failure (mirrors `messaging::slack`), so success is decided by the `ok`
 //! field, not the HTTP status.
 
+use crate::tools::workflow::str_val;
 use serde_json::{json, Value};
 
 const API_BASE: &str = "https://slack.com/api";
 
 // ── Config helpers ──────────────────────────────────────────────────────────
-
-fn str_val(config: &Value, key: &str) -> Option<String> {
-    config.get(key).and_then(|v| match v {
-        Value::String(s) => Some(s.clone()),
-        Value::Number(n) => Some(n.to_string()),
-        Value::Bool(b) => Some(b.to_string()),
-        Value::Null => None,
-        Value::Object(_) | Value::Array(_) => {
-            let s = serde_json::to_string(v).unwrap_or_default();
-            (!s.is_empty()).then_some(s)
-        }
-    })
-}
 
 fn require(config: &Value, key: &str) -> Result<String, String> {
     match str_val(config, key) {

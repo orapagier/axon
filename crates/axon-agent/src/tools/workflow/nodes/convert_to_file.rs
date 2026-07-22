@@ -23,18 +23,9 @@
 //! re-runs keep only the newest copy — same rule as every other producer.
 
 use crate::tools::telegram::binary_descriptor;
-use crate::tools::workflow::{parse_path_pointer, val_to_string};
+use crate::tools::workflow::{cfg_str, to_items, val_to_string};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Value};
-
-/// Non-blank trimmed string config value.
-fn cfg_str<'a>(config: &'a Value, key: &str) -> Option<&'a str> {
-    config
-        .get(key)
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-}
 
 /// The value to convert: the `data` expression when it resolved to something,
 /// else the primary input. Expression results keep their JSON type through
@@ -44,24 +35,6 @@ fn source_value<'a>(config: &'a Value, input: &'a Value) -> &'a Value {
         None | Some(Value::Null) => input,
         Some(Value::String(s)) if s.trim().is_empty() => input,
         Some(v) => v,
-    }
-}
-
-/// Turn the source into an item list for CSV — same shape rules as Filter/
-/// Aggregate: an array is the items, a bare object/scalar is one item, and
-/// `arrayPath` unwraps a `{ results: [...] }` wrapper.
-fn to_items(input: &Value, array_path: Option<&str>) -> Vec<Value> {
-    if let Some(path) = array_path.map(str::trim).filter(|p| !p.is_empty()) {
-        return match input.pointer(&parse_path_pointer(path)) {
-            Some(Value::Array(a)) => a.clone(),
-            Some(Value::Null) | None => Vec::new(),
-            Some(other) => vec![other.clone()],
-        };
-    }
-    match input {
-        Value::Array(a) => a.clone(),
-        Value::Null => Vec::new(),
-        other => vec![other.clone()],
     }
 }
 

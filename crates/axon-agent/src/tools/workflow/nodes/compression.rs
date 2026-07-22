@@ -26,22 +26,13 @@
 //! never meaningfully "raw text".
 
 use crate::tools::telegram::binary_descriptor;
-use crate::tools::workflow::cfg_usize;
+use crate::tools::workflow::{cfg_str, cfg_usize};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use flate2::{Compression, GzBuilder};
 use serde_json::{json, Value};
 use std::io::{Read, Write};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
-
-/// Non-blank trimmed string config value.
-fn cfg_str<'a>(config: &'a Value, key: &str) -> Option<&'a str> {
-    config
-        .get(key)
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-}
 
 /// Find the standard binary descriptor's `local_path` + a display file name
 /// on a value: direct `local_path`/`localPath` + `file_name`/`fileName`

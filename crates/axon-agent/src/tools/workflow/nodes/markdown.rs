@@ -14,17 +14,9 @@
 //! not a full-fidelity one — good enough for message bodies and scraped
 //! content, not a spec-complete HTML-to-Markdown engine.
 
+use crate::tools::workflow::cfg_str;
 use scraper::Node;
 use serde_json::{Map, Value};
-
-/// Non-blank trimmed string config value.
-fn cfg_str<'a>(config: &'a Value, key: &str) -> Option<&'a str> {
-    config
-        .get(key)
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-}
 
 /// Wrap a computed result under `outputField` (defaulting to `default_field`),
 /// optionally merged onto the incoming item — identical convention to

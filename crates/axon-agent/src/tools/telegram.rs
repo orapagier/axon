@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::tools::schema::{ToolDefinition, ToolSource};
+use crate::tools::workflow::str_val;
 
 // ── Credentials ───────────────────────────────────────────────────────────────
 
@@ -160,25 +161,6 @@ impl TelegramClient {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-fn str_val(config: &Value, key: &str) -> Option<String> {
-    config.get(key).and_then(|v| match v {
-        Value::String(s) => Some(s.clone()),
-        Value::Number(n) => Some(n.to_string()),
-        Value::Bool(b) => Some(b.to_string()),
-        Value::Null => None,
-        // Objects/Arrays: stringify so workflow expressions resolving
-        // to structured data still produce a usable string value.
-        Value::Object(_) | Value::Array(_) => {
-            let s = serde_json::to_string(v).unwrap_or_default();
-            if s.is_empty() {
-                None
-            } else {
-                Some(s)
-            }
-        }
-    })
-}
 
 fn require_str(config: &Value, key: &str) -> Result<String, String> {
     str_val(config, key).ok_or_else(|| format!("Missing required field '{key}' in Telegram config"))
@@ -1789,7 +1771,9 @@ pub async fn handle_telegram_webhook(
     if !workflow_id.is_empty() && !node_id.is_empty() {
         let expected = derive_secret_token(&workflow_id, &node_id);
         // Constant-time comparison avoids timing attacks (mirrors crypto.timingSafeEqual).
-        if !constant_time_eq(incoming_secret.as_bytes(), expected.as_bytes()) {
+        use subtle::ConstantTimeEq;
+        let matches: bool = incoming_secret.as_bytes().ct_eq(expected.as_bytes()).into();
+        if !matches {
             return TriggerResult::Rejected {
                 reason: "Invalid secret token".into(),
             };
@@ -2598,19 +2582,6 @@ fn apply_additional_fields_to_form(form: &mut multipart::Form, config: &Value) {
     *form = new_form;
 }
 
-// ── Utility ───────────────────────────────────────────────────────────────────
-
-/// Constant-time byte comparison (avoids timing attacks on secret tokens).
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    a.iter()
-        .zip(b.iter())
-        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
-        == 0
-}
-
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -2782,13 +2753,6 @@ mod tests {
     #[test]
     fn test_derive_secret_token_basic() {
         assert_eq!(derive_secret_token("wf1", "n2"), "wf1_n2");
-    }
-
-    #[test]
-    fn test_constant_time_eq() {
-        assert!(constant_time_eq(b"hello", b"hello"));
-        assert!(!constant_time_eq(b"hello", b"world"));
-        assert!(!constant_time_eq(b"hi", b"hello"));
     }
 
     #[test]

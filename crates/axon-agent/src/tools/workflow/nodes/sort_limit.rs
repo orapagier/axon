@@ -18,7 +18,7 @@
 //! array.
 
 use crate::tools::workflow::{
-    cfg_usize, parse_path_pointer, val_to_datetime, val_to_number, val_to_string,
+    cfg_usize, parse_path_pointer, to_items, val_to_datetime, val_to_number, val_to_string,
 };
 use serde_json::Value;
 use std::cmp::Ordering;
@@ -26,24 +26,6 @@ use std::collections::HashSet;
 
 /// Per-node cap on persisted seen-keys (oldest evicted past it).
 const DEDUPE_MAX_ENTRIES_DEFAULT: usize = 10_000;
-
-/// Turn the primary input into an item list — same convention as the other list
-/// nodes (array = items, Null = none, else a single item; `array_path` unwraps a
-/// `{ results: [...] }` wrapper).
-fn to_items(input: &Value, array_path: Option<&str>) -> Vec<Value> {
-    if let Some(path) = array_path.map(str::trim).filter(|p| !p.is_empty()) {
-        return match input.pointer(&parse_path_pointer(path)) {
-            Some(Value::Array(a)) => a.clone(),
-            Some(Value::Null) | None => Vec::new(),
-            Some(other) => vec![other.clone()],
-        };
-    }
-    match input {
-        Value::Array(a) => a.clone(),
-        Value::Null => Vec::new(),
-        other => vec![other.clone()],
-    }
-}
 
 /// Read `field` from `item`; a blank path returns the whole item (for scalar arrays).
 fn field_or_self(item: &Value, field: &str) -> Value {

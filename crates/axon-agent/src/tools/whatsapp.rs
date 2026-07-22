@@ -29,6 +29,7 @@ use reqwest::multipart;
 use serde_json::{json, Value};
 
 use crate::tools::schema::{ToolDefinition, ToolSource};
+use crate::tools::workflow::str_val;
 
 // ── Credentials ───────────────────────────────────────────────────────────────
 
@@ -218,23 +219,6 @@ impl WhatsAppClient {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-fn str_val(config: &Value, key: &str) -> Option<String> {
-    config.get(key).and_then(|v| match v {
-        Value::String(s) => Some(s.clone()),
-        Value::Number(n) => Some(n.to_string()),
-        Value::Bool(b) => Some(b.to_string()),
-        Value::Null => None,
-        Value::Object(_) | Value::Array(_) => {
-            let s = serde_json::to_string(v).unwrap_or_default();
-            if s.is_empty() {
-                None
-            } else {
-                Some(s)
-            }
-        }
-    })
-}
 
 fn require_str(config: &Value, key: &str) -> Result<String, String> {
     str_val(config, key).ok_or_else(|| format!("Missing required field '{key}' in WhatsApp config"))
@@ -702,7 +686,9 @@ pub fn verify_whatsapp_webhook(
     let expected = expected_verify_token(config);
 
     // Constant-time compare to avoid timing attacks.
-    if !constant_time_eq(hub_verify_token.as_bytes(), expected.as_bytes()) {
+    use subtle::ConstantTimeEq;
+    let matches: bool = hub_verify_token.as_bytes().ct_eq(expected.as_bytes()).into();
+    if !matches {
         return WebhookVerifyResult::Forbidden {
             reason: "Invalid verify_token".into(),
         };
@@ -993,18 +979,6 @@ pub fn trigger_tool_definition() -> ToolDefinition {
     }
 }
 
-// ── Utility ───────────────────────────────────────────────────────────────────
-
-pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    a.iter()
-        .zip(b.iter())
-        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
-        == 0
-}
-
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1091,13 +1065,6 @@ mod tests {
     fn test_expected_verify_token_derived() {
         let config = json!({ "workflow_id": "wf#1", "node_id": "node@2" });
         assert_eq!(expected_verify_token(&config), "wf1_node2");
-    }
-
-    #[test]
-    fn test_constant_time_eq() {
-        assert!(constant_time_eq(b"hello", b"hello"));
-        assert!(!constant_time_eq(b"hello", b"world"));
-        assert!(!constant_time_eq(b"hi", b"hello"));
     }
 
     #[test]

@@ -16,20 +16,11 @@
 //!     wraps under `rootName` (default `root`). Output lands under
 //!     `outputField`, same convention as `dateTime`/`crypto`.
 
-use crate::tools::workflow::val_to_string;
+use crate::tools::workflow::{cfg_str, val_to_string};
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::{Reader, Writer};
 use serde_json::{json, Map, Value};
 use std::io::Cursor;
-
-/// Non-blank trimmed string config value.
-fn cfg_str<'a>(config: &'a Value, key: &str) -> Option<&'a str> {
-    config
-        .get(key)
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-}
 
 /// Wrap a computed result under `outputField` (defaulting to `default_field`),
 /// optionally merged onto the incoming item — identical convention to

@@ -26,18 +26,9 @@
 //!   - `text` — the whole file as a string, or one array item per line when
 //!     `splitLines` is on.
 
-use crate::tools::workflow::{cfg_usize, val_to_string};
+use crate::tools::workflow::{cfg_str, cfg_usize, val_to_string};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Map, Value};
-
-/// Non-blank trimmed string config value.
-fn cfg_str<'a>(config: &'a Value, key: &str) -> Option<&'a str> {
-    config
-        .get(key)
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-}
 
 /// Find the standard binary descriptor's `local_path` on the incoming item:
 /// direct `local_path`/`localPath` keys, a nested `binary` descriptor, or the

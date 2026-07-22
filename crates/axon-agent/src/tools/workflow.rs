@@ -554,6 +554,98 @@ mod cfg_usize_tests {
     }
 }
 
+/// Extract a config value as a string, coercing scalars (numbers/bools) to
+/// their string form and stringifying objects/arrays so workflow
+/// expressions that resolve to structured data still produce a usable
+/// string value. For fields that should only ever hold a literal JSON
+/// string, use `cfg_str` instead.
+pub(crate) fn str_val(config: &Value, key: &str) -> Option<String> {
+    config.get(key).and_then(|v| match v {
+        Value::String(s) => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        Value::Bool(b) => Some(b.to_string()),
+        Value::Null => None,
+        Value::Object(_) | Value::Array(_) => {
+            let s = serde_json::to_string(v).unwrap_or_default();
+            (!s.is_empty()).then_some(s)
+        }
+    })
+}
+
+/// Extract a config value that's already a JSON string, trimmed with empty
+/// strings treated as absent. Unlike `str_val`, this does not coerce
+/// numbers/bools to strings.
+pub(crate) fn cfg_str<'a>(config: &'a Value, key: &str) -> Option<&'a str> {
+    config
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
+#[cfg(test)]
+mod str_val_tests {
+    use super::{cfg_str, str_val};
+    use serde_json::json;
+
+    #[test]
+    fn str_val_coerces_scalars() {
+        let cfg = json!({ "a": "x", "b": 3, "c": true, "d": null });
+        assert_eq!(str_val(&cfg, "a"), Some("x".into()));
+        assert_eq!(str_val(&cfg, "b"), Some("3".into()));
+        assert_eq!(str_val(&cfg, "c"), Some("true".into()));
+        assert_eq!(str_val(&cfg, "d"), None);
+    }
+
+    #[test]
+    fn cfg_str_rejects_non_strings_and_blanks() {
+        let cfg = json!({ "a": "  x  ", "b": 3, "c": "  " });
+        assert_eq!(cfg_str(&cfg, "a"), Some("x"));
+        assert_eq!(cfg_str(&cfg, "b"), None);
+        assert_eq!(cfg_str(&cfg, "c"), None);
+        assert_eq!(cfg_str(&cfg, "missing"), None);
+    }
+}
+
+/// Resolve a node's working item list: honor an explicit array-path pointer
+/// when given (missing/wrong-typed data at that path yields no items), else
+/// treat the whole input as the item list (a bare scalar/object counts as a
+/// single-item list, per the node convention).
+pub(crate) fn to_items(input: &Value, array_path: Option<&str>) -> Vec<Value> {
+    if let Some(path) = array_path.map(str::trim).filter(|p| !p.is_empty()) {
+        return match input.pointer(&parse_path_pointer(path)) {
+            Some(Value::Array(a)) => a.clone(),
+            Some(Value::Null) | None => Vec::new(),
+            Some(other) => vec![other.clone()],
+        };
+    }
+    match input {
+        Value::Array(a) => a.clone(),
+        Value::Null => Vec::new(),
+        other => vec![other.clone()],
+    }
+}
+
+#[cfg(test)]
+mod to_items_tests {
+    use super::to_items;
+    use serde_json::json;
+
+    #[test]
+    fn no_path_wraps_bare_value_as_single_item() {
+        assert_eq!(to_items(&json!({"a": 1}), None), vec![json!({"a": 1})]);
+        assert_eq!(to_items(&json!([1, 2]), None), vec![json!(1), json!(2)]);
+        assert_eq!(to_items(&json!(null), None), Vec::<serde_json::Value>::new());
+    }
+
+    #[test]
+    fn path_missing_or_wrong_type_yields_empty() {
+        let input = json!({"items": "not an array"});
+        assert_eq!(to_items(&input, Some("/items")), Vec::<serde_json::Value>::new());
+        assert_eq!(to_items(&input, Some("/missing")), Vec::<serde_json::Value>::new());
+    }
+}
+
 pub(crate) fn extract_items_for_loop(
     raw_items: &Value,
     array_path: Option<&str>,

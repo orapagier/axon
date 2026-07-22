@@ -9,6 +9,7 @@
 //! `page_id`. Each credential is created by the "Connect a Page" OAuth flow.
 //! Error/JSON handling mirrors `nodes::discord`.
 
+use crate::tools::workflow::str_val;
 use serde_json::{json, Value};
 
 const FB_API: &str = "https://graph.facebook.com/v25.0";
@@ -18,21 +19,6 @@ const POST_FIELDS: &str = "id,message,story,created_time,full_picture,permalink_
      likes.summary(true),comments.summary(true),shares";
 
 // ── Config helpers ──────────────────────────────────────────────────────────
-
-/// Read a scalar config value as a string. Objects/arrays (from resolved
-/// expressions) are stringified; null/missing → None.
-fn str_val(config: &Value, key: &str) -> Option<String> {
-    config.get(key).and_then(|v| match v {
-        Value::String(s) => Some(s.clone()),
-        Value::Number(n) => Some(n.to_string()),
-        Value::Bool(b) => Some(b.to_string()),
-        Value::Null => None,
-        Value::Object(_) | Value::Array(_) => {
-            let s = serde_json::to_string(v).unwrap_or_default();
-            (!s.is_empty()).then_some(s)
-        }
-    })
-}
 
 /// Like `str_val` but treats missing/empty/whitespace as a hard error.
 fn require(config: &Value, key: &str) -> Result<String, String> {

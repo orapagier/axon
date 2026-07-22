@@ -15,26 +15,8 @@
 //! missing/null values; count counts items (all of them, or only those where the
 //! field is present when a field is given).
 
-use crate::tools::workflow::{parse_path_pointer, val_to_number, val_to_string};
+use crate::tools::workflow::{parse_path_pointer, to_items, val_to_number, val_to_string};
 use serde_json::{json, Map, Value};
-
-/// Turn the primary input into an item list — identical convention to Filter: an
-/// array is the items, a `Null` contributes none, anything else is a single item,
-/// and an explicit `array_path` unwraps a `{ results: [...] }` wrapper.
-fn to_items(input: &Value, array_path: Option<&str>) -> Vec<Value> {
-    if let Some(path) = array_path.map(str::trim).filter(|p| !p.is_empty()) {
-        return match input.pointer(&parse_path_pointer(path)) {
-            Some(Value::Array(a)) => a.clone(),
-            Some(Value::Null) | None => Vec::new(),
-            Some(other) => vec![other.clone()],
-        };
-    }
-    match input {
-        Value::Array(a) => a.clone(),
-        Value::Null => Vec::new(),
-        other => vec![other.clone()],
-    }
-}
 
 /// Read `field` (a dot/bracket path) out of `item`; an empty path returns the whole
 /// item so scalar arrays reduce directly.

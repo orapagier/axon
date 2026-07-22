@@ -31,6 +31,7 @@
 //! The whole operation runs under a `timeout` (seconds, default 120).
 
 use crate::tools::telegram::binary_descriptor;
+use crate::tools::workflow::cfg_str as shared_cfg_str;
 use crate::tools::workflow::nodes::ssh::resolve_local_path;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -39,14 +40,10 @@ use suppaftp::tokio::{AsyncRustlsConnector, AsyncRustlsFtpStream};
 use suppaftp::types::FileType;
 use tokio_rustls::rustls;
 
-/// Config string accessor: trimmed, None when absent/blank.
+/// Config string accessor: trimmed, None when absent/blank, owned since
+/// every call site here stores or moves the value.
 fn cfg_str(config: &Value, key: &str) -> Option<String> {
-    config
-        .get(key)
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
+    shared_cfg_str(config, key).map(str::to_string)
 }
 
 fn cfg_bool(config: &Value, key: &str, default: bool) -> bool {

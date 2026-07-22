@@ -17,6 +17,7 @@
 //! trust level as the Execute Query action, which is available anyway — so callers
 //! who need parameterized filters should use Execute Query with `params`.
 
+use crate::tools::workflow::str_val;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Map, Value};
 use sqlx::any::{AnyArguments, AnyPoolOptions, AnyRow};
@@ -63,20 +64,7 @@ impl Dialect {
     }
 }
 
-// ── Config helpers (mirrors github.rs) ────────────────────────────────────────
-
-fn str_val(config: &Value, key: &str) -> Option<String> {
-    config.get(key).and_then(|v| match v {
-        Value::String(s) => Some(s.clone()),
-        Value::Number(n) => Some(n.to_string()),
-        Value::Bool(b) => Some(b.to_string()),
-        Value::Null => None,
-        Value::Object(_) | Value::Array(_) => {
-            let s = serde_json::to_string(v).unwrap_or_default();
-            (!s.is_empty()).then_some(s)
-        }
-    })
-}
+// ── Config helpers ───────────────────────────────────────────────────────────
 
 fn require(config: &Value, key: &str) -> Result<String, String> {
     match str_val(config, key) {

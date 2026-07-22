@@ -15,26 +15,8 @@
 //! base and the exploded element merges over them, so the split data stays
 //! authoritative on key conflicts.
 
-use crate::tools::workflow::parse_path_pointer;
+use crate::tools::workflow::{parse_path_pointer, to_items};
 use serde_json::{Map, Value};
-
-/// Turn the primary input into a source-item list — same convention as Filter /
-/// Aggregate (array = items, Null = none, else a single item; `array_path` unwraps
-/// a `{ results: [...] }` wrapper).
-fn to_items(input: &Value, array_path: Option<&str>) -> Vec<Value> {
-    if let Some(path) = array_path.map(str::trim).filter(|p| !p.is_empty()) {
-        return match input.pointer(&parse_path_pointer(path)) {
-            Some(Value::Array(a)) => a.clone(),
-            Some(Value::Null) | None => Vec::new(),
-            Some(other) => vec![other.clone()],
-        };
-    }
-    match input {
-        Value::Array(a) => a.clone(),
-        Value::Null => Vec::new(),
-        other => vec![other.clone()],
-    }
-}
 
 /// Read a dot/bracket path out of `item` (missing → Null).
 fn get_path(item: &Value, path: &str) -> Value {
