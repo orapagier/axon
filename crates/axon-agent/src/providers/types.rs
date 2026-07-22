@@ -255,6 +255,12 @@ pub struct ModelRecord {
     pub priority: i32,
     pub max_tokens: u32,
     pub enabled: bool,
+    /// Why the model is currently disabled: `None` when enabled (or disabled
+    /// before this field existed), `Some("manual")` for a deliberate dashboard
+    /// toggle/bulk action, or a router `FAILURE_CATEGORIES` value when the
+    /// Homeostasis health check auto-disabled it.
+    #[serde(default)]
+    pub disabled_reason: Option<String>,
     pub role: String,
     /// Thinking mode (models.toml, optional), provider-specific values:
     /// Anthropic — "adaptive" (Claude 4.6+), "budget" (older Claude models

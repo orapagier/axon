@@ -891,6 +891,7 @@ mod tests {
             priority: 1,
             max_tokens: 8192,
             enabled: true,
+            disabled_reason: None,
             role: "".into(),
             thinking_mode: thinking_mode.map(|s| s.to_string()),
             no_reasoning: false,

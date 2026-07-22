@@ -100,3 +100,30 @@ describe('ModelsPage — API key secrecy', () => {
     expect(apiKeyInput.value).toBe('')
   })
 })
+
+describe('ModelsPage — disabled reason', () => {
+  let wrapper
+
+  afterEach(() => {
+    wrapper?.unmount()
+    wrapper = undefined
+    api.get.mockReset()
+  })
+
+  it('labels a manually-disabled model distinctly from an auto-disabled one', async () => {
+    api.get.mockResolvedValue({
+      models: [
+        { ...EXISTING_MODEL, name: 'manual-off', enabled: false, disabled_reason: 'manual' },
+        { ...EXISTING_MODEL, name: 'auto-off', enabled: false, disabled_reason: 'payment_required' },
+        { ...EXISTING_MODEL, name: 'legacy-off', enabled: false, disabled_reason: null },
+      ],
+    })
+    wrapper = mount(ModelsPage)
+    await flushPromises()
+
+    const text = wrapper.text()
+    expect(text).toContain('Disabled manually')
+    expect(text).toContain('Auto-disabled: payment required')
+    expect(text).toContain('Disabled (reason unknown)')
+  })
+})

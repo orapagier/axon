@@ -125,7 +125,7 @@ pub(crate) async fn execute(config: &Value, state: &AppState) -> Result<Value, S
                         }
                     }
                     for (cat, name) in &disable_targets {
-                        match crate::dashboard::api::apply_disable_model(&conn, name) {
+                        match crate::dashboard::api::apply_disable_model(&conn, name, cat) {
                             Ok(0) => {} // missing or already disabled — nothing to record
                             Ok(_) => {
                                 disabled_count += 1;

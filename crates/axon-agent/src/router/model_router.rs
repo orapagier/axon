@@ -1061,6 +1061,7 @@ pub async fn get_status(router: &SharedRouter) -> Vec<serde_json::Value> {
                 "priority": m.priority, "role": m.role, "status": m.status,
                 "max_tokens": m.max_tokens,
                 "enabled": m.enabled,
+                "disabled_reason": m.disabled_reason,
                 "rate_limit_reset_at": m.rate_limit_reset_at,
                 "consecutive_errors": m.consecutive_errors,
                 "consecutive_rate_limits": m.consecutive_rate_limits,

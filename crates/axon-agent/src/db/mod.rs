@@ -196,6 +196,12 @@ const MIGRATIONS: &[Migration] = &[
         sql: include_str!("migrations/0028_notifications.sql"),
         tolerant_dup_column: false,
     },
+    Migration {
+        version: 29,
+        name: "model_disabled_reason",
+        sql: include_str!("migrations/0029_model_disabled_reason.sql"),
+        tolerant_dup_column: true,
+    },
 ];
 
 const SEED_SQL: &str = include_str!("seed.sql");

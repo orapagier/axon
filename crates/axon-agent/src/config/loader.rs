@@ -72,6 +72,7 @@ pub fn load_models(path: &str) -> anyhow::Result<Vec<ModelRecord>> {
             priority: m.priority.unwrap_or(99),
             max_tokens: m.max_tokens.unwrap_or(4096),
             enabled: m.enabled,
+            disabled_reason: None,
             role: normalize_role(&m.role),
             thinking_mode: m.thinking_mode,
             no_reasoning: false,
@@ -128,7 +129,7 @@ pub fn sync_toml_models(conn: &rusqlite::Connection, toml_models: Vec<ModelRecor
 }
 
 pub fn load_models_from_db(conn: &rusqlite::Connection) -> anyhow::Result<Vec<ModelRecord>> {
-    let mut s = conn.prepare("SELECT name, provider, model_id, api_key, base_url, timeout_secs, priority, max_tokens, enabled, role, thinking_mode FROM models")?;
+    let mut s = conn.prepare("SELECT name, provider, model_id, api_key, base_url, timeout_secs, priority, max_tokens, enabled, role, thinking_mode, disabled_reason FROM models")?;
     let rows = s.query_map([], |r| {
         let provider: String = r.get(1)?;
         let base_url: Option<String> = r.get(4)?;
@@ -144,6 +145,7 @@ pub fn load_models_from_db(conn: &rusqlite::Connection) -> anyhow::Result<Vec<Mo
             priority: r.get(6)?,
             max_tokens: r.get(7)?,
             enabled: r.get::<_, i32>(8)? != 0,
+            disabled_reason: r.get::<_, Option<String>>(11)?,
             role: normalize_role(&r.get::<_, String>(9)?),
             thinking_mode: r.get::<_, Option<String>>(10)?,
             no_reasoning: false,
@@ -308,6 +310,7 @@ mod tests {
             priority: 1,
             max_tokens: 4096,
             enabled: true,
+            disabled_reason: None,
             role: "".into(),
             thinking_mode: None,
             no_reasoning: false,

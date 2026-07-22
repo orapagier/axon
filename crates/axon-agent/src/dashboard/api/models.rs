@@ -162,9 +162,15 @@ pub(crate) fn apply_update_model(
     m: &Value,
 ) -> Result<(), String> {
     if let Some(enabled) = m.get("enabled").and_then(|v| v.as_bool()) {
+        // A deliberate enabled/disabled flip through this path is always a
+        // manual dashboard action (or an explicit Homeostasis Update node) —
+        // never the health-check auto-disable, which goes through
+        // `apply_disable_model` with its own category reason instead.
+        // Re-enabling always clears any prior reason.
+        let reason: Option<&str> = if enabled { None } else { Some("manual") };
         conn.execute(
-            "UPDATE models SET enabled=?1 WHERE name=?2",
-            rusqlite::params![if enabled { 1 } else { 0 }, name],
+            "UPDATE models SET enabled=?1, disabled_reason=?2 WHERE name=?3",
+            rusqlite::params![if enabled { 1 } else { 0 }, reason, name],
         )
         .map_err(|e| e.to_string())?;
     }
@@ -245,14 +251,17 @@ pub(crate) fn apply_delete_model(conn: &rusqlite::Connection, name: &str) -> Res
 /// number of rows changed (0 when the model is missing or already disabled). The
 /// `AND enabled=1` guard is what lets Homeostasis' Health Check auto-disable count
 /// only models it actually parked this run, so a repeated run doesn't keep
-/// "re-disabling" the same rows.
+/// "re-disabling" the same rows. `reason` is one of the router's
+/// `FAILURE_CATEGORIES` (e.g. `payment_required`) and is recorded in
+/// `disabled_reason` so the dashboard can show why the model was parked.
 pub(crate) fn apply_disable_model(
     conn: &rusqlite::Connection,
     name: &str,
+    reason: &str,
 ) -> Result<usize, String> {
     conn.execute(
-        "UPDATE models SET enabled=0 WHERE name=?1 AND enabled=1",
-        rusqlite::params![name],
+        "UPDATE models SET enabled=0, disabled_reason=?2 WHERE name=?1 AND enabled=1",
+        rusqlite::params![name, reason],
     )
     .map_err(|e| e.to_string())
 }
@@ -311,14 +320,18 @@ pub async fn update_models_bulk(
         return Json(json!({"ok": true}));
     }
 
+    // Bulk enable/disable is always a manual dashboard action ("Enable all" /
+    // "Disable all"), same as the single-model toggle in apply_update_model.
+    let reason: Option<&str> = if enabled { None } else { Some("manual") };
+
     if let Ok(mut conn) = state.db.get() {
         let res: Result<(), rusqlite::Error> = (|| {
             let tx = conn.transaction()?;
             for name_val in names {
                 if let Some(name) = name_val.as_str() {
                     tx.execute(
-                        "UPDATE models SET enabled=?1 WHERE name=?2",
-                        rusqlite::params![if enabled { 1 } else { 0 }, name],
+                        "UPDATE models SET enabled=?1, disabled_reason=?2 WHERE name=?3",
+                        rusqlite::params![if enabled { 1 } else { 0 }, reason, name],
                     )?;
                 }
             }
@@ -346,4 +359,60 @@ pub async fn delete_model(State(state): State<AppState>, Path(name): Path<String
         return Json(json!({"ok": true}));
     }
     Json(json!({"ok": false, "error": "DB error"}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{apply_add_model, apply_disable_model, apply_update_model};
+    use rusqlite::Connection;
+    use serde_json::json;
+
+    fn test_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::init(&conn).unwrap();
+        conn
+    }
+
+    fn disabled_reason(conn: &Connection, name: &str) -> Option<String> {
+        conn.query_row(
+            "SELECT disabled_reason FROM models WHERE name=?1",
+            [name],
+            |r| r.get(0),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn health_check_auto_disable_records_the_failure_category() {
+        let conn = test_db();
+        apply_add_model(&conn, &json!({"name": "m1", "provider": "groq", "api_key": "k"})).unwrap();
+
+        apply_disable_model(&conn, "m1", "payment_required").unwrap();
+        assert_eq!(disabled_reason(&conn, "m1").as_deref(), Some("payment_required"));
+    }
+
+    #[test]
+    fn manual_toggle_records_manual_and_clears_on_re_enable() {
+        let conn = test_db();
+        apply_add_model(&conn, &json!({"name": "m1", "provider": "groq", "api_key": "k"})).unwrap();
+
+        apply_update_model(&conn, "m1", &json!({"enabled": false})).unwrap();
+        assert_eq!(disabled_reason(&conn, "m1").as_deref(), Some("manual"));
+
+        apply_update_model(&conn, "m1", &json!({"enabled": true})).unwrap();
+        assert_eq!(disabled_reason(&conn, "m1"), None);
+    }
+
+    #[test]
+    fn manual_toggle_overrides_an_auto_disable_reason() {
+        // A model auto-disabled by Health Check, then manually re-toggled off
+        // via the dashboard, should read as "manual" — the more recent, more
+        // specific human action — not the stale auto-disable category.
+        let conn = test_db();
+        apply_add_model(&conn, &json!({"name": "m1", "provider": "groq", "api_key": "k"})).unwrap();
+        apply_disable_model(&conn, "m1", "timeout").unwrap();
+        apply_update_model(&conn, "m1", &json!({"enabled": true})).unwrap();
+        apply_update_model(&conn, "m1", &json!({"enabled": false})).unwrap();
+        assert_eq!(disabled_reason(&conn, "m1").as_deref(), Some("manual"));
+    }
 }

@@ -207,6 +207,25 @@ function stateKey(m) {
 
 const STATE_LABEL = { ok: 'available', warn: 'rate limited', err: 'unavailable', off: 'disabled' }
 
+// Homeostasis auto-disable categories (see homeostasis.rs DISABLEABLE_CATEGORIES)
+// plus the dashboard's own 'manual' reason, mapped to a plain-language label.
+const DISABLED_REASON_LABEL = {
+  manual: 'Disabled manually',
+  payment_required: 'Auto-disabled: payment required',
+  server_error: 'Auto-disabled: provider server error',
+  timeout: 'Auto-disabled: timed out',
+  unreachable: 'Auto-disabled: provider unreachable',
+}
+
+function disabledReasonLabel(m) {
+  if (m.enabled !== false) return ''
+  if (m.disabled_reason && DISABLED_REASON_LABEL[m.disabled_reason]) {
+    return DISABLED_REASON_LABEL[m.disabled_reason]
+  }
+  if (m.disabled_reason) return `Auto-disabled: ${m.disabled_reason}`
+  return 'Disabled (reason unknown)'
+}
+
 const summary = computed(() => {
   const c = { total: models.value.length, healthy: 0, rateLimited: 0, unavailable: 0, disabled: 0 }
   for (const m of models.value) {
@@ -336,6 +355,11 @@ onMounted(load)
                 class="model-state-label"
                 :class="stateKey(m)"
               >{{ STATE_LABEL[stateKey(m)] }}</span>
+              <span
+                v-if="m.enabled === false"
+                class="mono-chip disabled-reason-chip"
+                :class="{ 'is-manual': m.disabled_reason === 'manual' }"
+              >{{ disabledReasonLabel(m) }}</span>
             </div>
             <div class="model-actions">
               <button
@@ -582,6 +606,17 @@ onMounted(load)
 
 .model-state-label.warn { color: var(--yellow); }
 .model-state-label.err { color: var(--red); }
+
+/* Why a model is disabled: quiet by default (auto-disable), a touch warmer
+   for a deliberate manual toggle so the two read as distinct causes. */
+.disabled-reason-chip {
+  color: var(--muted);
+  border-color: color-mix(in srgb, var(--yellow) 35%, var(--border));
+}
+
+.disabled-reason-chip.is-manual {
+  color: var(--text);
+}
 
 /* ── Row actions: quiet until the row is engaged ──────────────────────────── */
 .model-actions {
