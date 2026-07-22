@@ -2001,6 +2001,8 @@ label {
 
 .chat-textarea:focus {
     outline: none;
+    border-color: transparent;
+    box-shadow: none;
 }
 
 .chat-textarea::placeholder {
