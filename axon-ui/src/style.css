@@ -581,6 +581,8 @@ textarea {
     -webkit-backdrop-filter: blur(var(--glass-blur));
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
+    position: relative;
+    z-index: 5;
 }
 
 .shell-topbar-left,
