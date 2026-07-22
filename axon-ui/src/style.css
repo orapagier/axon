@@ -1,13 +1,16 @@
 /* ════════════════════════════════════════════════════════════════════════════
-   AXON · design system v5 — the single source of truth
+   AXON · design system v6 — "Midnight Glass" — the single source of truth
    ----------------------------------------------------------------------------
-   Graphite Lab: a dim instrument surface. Flat graphite planes separated by
-   hairlines, soft-ink type, one signal-teal accent, IBM Plex Mono for every
-   data readout. Token-driven throughout — every color/radius/shadow reads from
-   :root, so the palette changes in exactly one place.
+   A deep cool workspace: near-black graphite planes that catch a faint ambient
+   glow, frosted-glass chrome bars and panels, one electric-blue accent with a
+   cyan focus halo, IBM Plex Mono for every data readout. Token-driven
+   throughout — every color/radius/shadow/glass value reads from :root, so the
+   palette changes in exactly one place.
 
-   Predecessors (6 stacked layers, ~5200 lines of !important wars) were removed
-   in the v5 consolidation. This is the only global stylesheet.
+   Glass is scoped to chrome (.shell-topbar, .sidebar, .mobile-tabbar) plus
+   .panel and .modal — inputs, buttons, .card and chat bubbles stay solid so
+   text stays crisp. Honors prefers-reduced-transparency at the bottom of the
+   file. This is the only global stylesheet.
    ════════════════════════════════════════════════════════════════════════════ */
 
 /* ── Reset ────────────────────────────────────────────────────────────────── */
@@ -77,18 +80,19 @@
 :root {
     color-scheme: dark;
 
-    /* Core surfaces & text */
-    --bg: #16181d;
-    --bg-card: #1e222a;
-    --surface: #1a1d23;
-    --surface2: #262b34;
-    --border: rgba(188, 204, 230, 0.13);
-    --text: #dce2eb;
-    --muted: #8f99a8;
+    /* Core surfaces & text — deep cool graphite */
+    --bg: #0d1017;
+    --bg-card: #161b26;
+    --surface: #11151e;
+    --surface2: #1e2433;
+    --border: rgba(120, 150, 200, 0.12);
+    --text: #e6ebf5;
+    --muted: #7e8aa0;
 
-    /* Accent & semantic palette — one signal teal + lab semantics, lifted for legibility */
-    --accent: #3ecfae;
-    --accentDim: rgba(62, 207, 174, 0.14);
+    /* Accent & semantic palette — one electric blue accent + cyan glow + lab semantics */
+    --accent: #4dabf7;
+    --accentDim: rgba(77, 171, 247, 0.16);
+    --accent-glow: #22d3ee;
     --green: #4cc98a;
     --greenDim: #17352a;
     --red: #e8808f;
@@ -105,9 +109,9 @@
     --font-mono: 'IBM Plex Mono', Consolas, 'SFMono-Regular', monospace;
 
     /* Radius scale — softly rounded, never pill */
-    --r-sm: 6px;
-    --r-md: 8px;
-    --r-lg: 12px;
+    --r-sm: 8px;
+    --r-md: 12px;
+    --r-lg: 16px;
 
     /* Button sizing — single source of truth. Every button derives from these.
        HEIGHT IS UNIFORM across base / -sm / -xs by design. */
@@ -130,8 +134,17 @@
 
     /* Layout, shadows */
     --sidebar-w: 252px;
-    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.28);
-    --shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.42);
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.5);
+
+    /* ── Glass system · one source of truth for frosted surfaces ─────────
+       Consumed by .shell-topbar, .sidebar, .mobile-tabbar, .panel, .modal.
+       The body's ambient glow (see body {}) gives these surfaces something
+       to refract; inputs/buttons/.card stay solid for text crispness. */
+    --glass-bg: color-mix(in srgb, var(--bg-card) 72%, transparent);
+    --glass-border: rgba(170, 200, 255, 0.10);
+    --glass-blur: 12px;
+    --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 
     /* ── Canvas / workflow-editor node system ────────────────────────────
        Self-contained palette used only by the workflow canvas components
@@ -176,7 +189,12 @@ html {
 
 body {
     font-family: var(--font-body);
-    background: var(--bg);
+    background:
+        radial-gradient(ellipse 60% 50% at 15% -5%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 70%),
+        radial-gradient(ellipse 50% 45% at 85% 0%, color-mix(in srgb, var(--accent-glow) 9%, transparent), transparent 70%),
+        radial-gradient(ellipse 70% 50% at 50% 110%, color-mix(in srgb, var(--blue) 7%, transparent), transparent 70%),
+        var(--bg);
+    background-attachment: fixed;
     color: var(--text);
     font-size: 14px;
     line-height: 1.5;
@@ -277,7 +295,9 @@ textarea {
    ════════════════════════════════════════════════════════════════════════════ */
 .sidebar {
     width: var(--sidebar-w);
-    background: var(--surface);
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
     border-right: 1px solid var(--border);
     display: flex;
     flex-direction: column;
@@ -556,7 +576,9 @@ textarea {
     justify-content: space-between;
     gap: 12px;
     padding: 12px 22px;
-    background: var(--surface);
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
 }
@@ -767,10 +789,12 @@ textarea {
    PANELS & ROWS
    ════════════════════════════════════════════════════════════════════════════ */
 .panel {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid var(--glass-border);
     border-radius: var(--r-lg);
-    box-shadow: var(--shadow-sm);
+    box-shadow: var(--glass-highlight), var(--shadow-sm);
     overflow: hidden;
 }
 
@@ -1256,7 +1280,8 @@ textarea:focus,
 select:focus {
     outline: none;
     border-color: color-mix(in srgb, var(--accent) 60%, transparent);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent),
+                0 0 14px color-mix(in srgb, var(--accent-glow) 22%, transparent);
 }
 
 input::placeholder,
@@ -1324,8 +1349,8 @@ label {
     position: fixed;
     inset: 0;
     background: rgba(8, 8, 12, 0.66);
-    backdrop-filter: blur(6px);
-    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
     z-index: 2000;
     align-items: center;
     justify-content: center;
@@ -1336,9 +1361,10 @@ label {
 }
 
 .modal {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
     border-radius: var(--r-lg);
+    box-shadow: var(--glass-highlight);
     padding: 28px;
     max-width: 720px;
     width: min(100%, 720px);
@@ -2078,9 +2104,10 @@ label {
     width: 100vw;
     padding: 24px;
     background:
-        radial-gradient(circle at 20% 16%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 20%),
-        radial-gradient(circle at 80% 10%, color-mix(in srgb, var(--teal) 8%, transparent), transparent 18%),
-        linear-gradient(180deg, #090c0c 0%, #101414 100%);
+        radial-gradient(circle at 20% 16%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 20%),
+        radial-gradient(circle at 80% 10%, color-mix(in srgb, var(--accent-glow) 9%, transparent), transparent 18%),
+        radial-gradient(circle at 50% 100%, color-mix(in srgb, var(--blue) 7%, transparent), transparent 22%),
+        linear-gradient(180deg, #07090d 0%, #0d1017 100%);
 }
 
 .login-card {
@@ -2410,10 +2437,10 @@ textarea {
         grid-template-columns: repeat(5, 1fr);
         min-height: var(--tabbar-h);
         padding: 4px max(6px, env(safe-area-inset-right)) max(4px, env(safe-area-inset-bottom)) max(6px, env(safe-area-inset-left));
-        background: color-mix(in srgb, var(--surface) 88%, transparent);
-        backdrop-filter: blur(16px);
-        -webkit-backdrop-filter: blur(16px);
-        border-top: 1px solid var(--border);
+        background: var(--glass-bg);
+        backdrop-filter: blur(var(--glass-blur));
+        -webkit-backdrop-filter: blur(var(--glass-blur));
+        border-top: 1px solid var(--glass-border);
         user-select: none;
         -webkit-user-select: none;
     }
@@ -2583,5 +2610,17 @@ textarea {
     .list-row,
     .nav-item {
         transition: none;
+    }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+    .shell-topbar,
+    .sidebar,
+    .mobile-tabbar,
+    .panel,
+    .modal {
+        background: var(--bg-card);
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
     }
 }
