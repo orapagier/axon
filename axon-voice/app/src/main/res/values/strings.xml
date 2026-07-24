@@ -39,7 +39,7 @@
     <string name="voice_id_enroll">Enroll my voice</string>
     <string name="voice_id_reenroll">Re-enroll</string>
     <string name="voice_id_clear">Clear</string>
-    <string name="voice_id_recording">Recording — speak naturally for a few seconds…</string>
+    <string name="voice_id_recording_take">Recording %1$d of %2$d — speak naturally for a few seconds…</string>
     <string name="voice_id_processing">Processing…</string>
     <string name="voice_id_enrolled">Voice ID enrolled ✓ — only your voice confirms a barge-in</string>
     <string name="voice_id_not_enrolled">Not enrolled — barge-in uses sound level only</string>

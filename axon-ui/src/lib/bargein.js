@@ -47,12 +47,23 @@
 // but not speech-shaped, mid-onset, is treated exactly like a quiet tick:
 // it pushes toward FALSE_ALARM rather than resetting the onset outright,
 // so one misjudged tick inside a real interruption (e.g. a leading fricative)
-// costs at most a little delay, not a dropped confirm.
+// costs at most a little delay, not a dropped confirm. But that tolerance is
+// deliberately narrow — ONSET_MISS_GRACE below caps it at one isolated tick,
+// not an unbounded number scattered across the whole tentative window. A
+// real loud cough is rarely one clean broadband burst: forceful coughs often
+// have a brief voiced release that can slip past the shape gate for a tick,
+// and a coughing fit is several such bursts in a row. Without a cap, three of
+// those stray qualifying ticks — even minutes apart, as long as no single
+// gap reaches FALSE_ALARM_TICKS — would still accumulate to a false CONFIRMED.
+// Requiring the misses between qualifying ticks to be isolated (never two in
+// a row) keeps the one-fricative tolerance for real speech while denying a
+// cough's sparse, mostly-unshaped pattern the same leniency.
 
 export const ABS_FLOOR = 0.025 // mirrors FOLLOWUP_RMS in wakeword.js
 export const MARGIN = 2.0
 export const MIN_ONSET_TICKS = 3 // ~300ms at the standard 100ms tick cadence
 export const FALSE_ALARM_TICKS = 6 // ~600ms
+export const ONSET_MISS_GRACE = 1 // at most one isolated non-qualifying tick tolerated mid-onset
 export const GAIN_ALPHA = 0.02 // slow EMA — learns over seconds, not one tick
 export const GAIN_MIN = 0.05
 export const GAIN_MAX = 5.0
@@ -93,12 +104,14 @@ export function createBargeDetector({
   margin = MARGIN,
   minOnsetTicks = MIN_ONSET_TICKS,
   falseAlarmTicks = FALSE_ALARM_TICKS,
+  onsetMissGrace = ONSET_MISS_GRACE,
 } = {}) {
   let playRef = 0
   let gain = GAIN_DEFAULT
   let tentative = false
   let onsetTicks = 0
   let quietTicks = 0
+  let missStreak = 0 // consecutive non-qualifying ticks since the last qualifying one
 
   // A negative value (the same "nothing playing" convention PcmPlayback's
   // onLevel and the web envelope both use) never raises the peak-hold, but
@@ -127,6 +140,7 @@ export function createBargeDetector({
         tentative = true
         onsetTicks = 1
         quietTicks = 0
+        missStreak = 0
         event = BargeEvent.TENTATIVE
       } else {
         // Only ever learn from ticks that are genuinely quiet (below
@@ -138,6 +152,7 @@ export function createBargeDetector({
     } else if (qualifies) {
       onsetTicks++
       quietTicks = 0
+      missStreak = 0
       if (onsetTicks >= minOnsetTicks) {
         tentative = false
         onsetTicks = 0
@@ -145,6 +160,14 @@ export function createBargeDetector({
       }
     } else {
       quietTicks++
+      missStreak++
+      // More than the tolerated isolated miss in a row: this onset's
+      // qualifying ticks aren't holding together as one continuous
+      // interruption, so give up its progress rather than let it keep
+      // accumulating indefinitely (see the module doc — this is what stops
+      // a sparse, mostly-unshaped cough or coughing fit from eventually
+      // reaching minOnsetTicks one stray tick at a time).
+      if (missStreak > onsetMissGrace) onsetTicks = 0
       if (quietTicks >= falseAlarmTicks) {
         tentative = false
         onsetTicks = 0
@@ -164,6 +187,7 @@ export function createBargeDetector({
     tentative = false
     onsetTicks = 0
     quietTicks = 0
+    missStreak = 0
     return BargeEvent.CONFIRMED
   }
 
@@ -176,6 +200,7 @@ export function createBargeDetector({
     tentative = false
     onsetTicks = 0
     quietTicks = 0
+    missStreak = 0
   }
 
   return { feedPlayback, feedMic, wakeWordHit, reset }

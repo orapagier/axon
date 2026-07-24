@@ -47,6 +47,7 @@ class BargeDetector(
     private val margin: Double = MARGIN,
     private val minOnsetTicks: Int = MIN_ONSET_TICKS,
     private val falseAlarmTicks: Int = FALSE_ALARM_TICKS,
+    private val onsetMissGrace: Int = ONSET_MISS_GRACE,
 ) {
     enum class Event { NONE, TENTATIVE, CONFIRMED, FALSE_ALARM }
 
@@ -63,6 +64,16 @@ class BargeDetector(
         /** ~600ms — how long a tentative onset is allowed to keep fading
          *  before it's written off as a false alarm and volume is restored. */
         const val FALSE_ALARM_TICKS = 6
+
+        /** At most one isolated non-loud tick in a row is tolerated mid-onset
+         *  without resetting progress toward [MIN_ONSET_TICKS] — see
+         *  [feedMic]'s miss-streak tracking. Without this cap, a bursty loud
+         *  noise (a door slam, dropped object, a cough) spread over several
+         *  ticks with gaps under [FALSE_ALARM_TICKS] could accumulate three
+         *  non-consecutive loud ticks and confirm on energy alone, invoking
+         *  the speaker-embedding check (or, worse, occasionally passing it)
+         *  for noise that was never a sustained interruption to begin with. */
+        const val ONSET_MISS_GRACE = 1
 
         /** Slow EMA rate for the learned echo gain: learns over several
          *  seconds of reply audio, not one tick, so one loud consonant can't
@@ -90,6 +101,7 @@ class BargeDetector(
     private var tentative = false
     private var onsetTicks = 0
     private var quietTicks = 0
+    private var missStreak = 0 // consecutive non-loud ticks since the last loud one, while tentative
 
     /** Feed a playback RMS sample (0..1); a negative value (the convention
      *  [PcmPlayback.onLevel] and the web envelope both use) means "nothing
@@ -118,6 +130,7 @@ class BargeDetector(
                 tentative = true
                 onsetTicks = 1
                 quietTicks = 0
+                missStreak = 0
                 Event.TENTATIVE
             } else {
                 if (playRef > absFloor) learnGain(rms)
@@ -127,6 +140,7 @@ class BargeDetector(
             if (rms > threshold) {
                 onsetTicks++
                 quietTicks = 0
+                missStreak = 0
                 if (onsetTicks >= minOnsetTicks) {
                     tentative = false
                     onsetTicks = 0
@@ -136,6 +150,12 @@ class BargeDetector(
                 }
             } else {
                 quietTicks++
+                missStreak++
+                // More than one miss in a row: this onset's loud ticks
+                // aren't holding together as a sustained interruption, so
+                // give up its progress instead of letting a bursty, gappy
+                // noise keep accumulating toward minOnsetTicks indefinitely.
+                if (missStreak > onsetMissGrace) onsetTicks = 0
                 if (quietTicks >= falseAlarmTicks) {
                     tentative = false
                     onsetTicks = 0
@@ -159,6 +179,7 @@ class BargeDetector(
         tentative = false
         onsetTicks = 0
         quietTicks = 0
+        missStreak = 0
         return Event.CONFIRMED
     }
 
@@ -172,6 +193,7 @@ class BargeDetector(
         tentative = false
         onsetTicks = 0
         quietTicks = 0
+        missStreak = 0
     }
 
     private fun learnGain(micRms: Double) {

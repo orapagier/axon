@@ -80,6 +80,26 @@ fun cosineSimilarity(a: FloatArray, b: FloatArray): Float {
     return dot
 }
 
+/** Averages several L2-normalized embeddings of the same enrolling speaker
+ *  into one L2-normalized centroid. Enrollment feeds this multiple takes
+ *  (see [com.axon.voice.ui.SettingsActivity]'s finishEnrollment) rather than
+ *  a single embedding, so the stored voiceprint reflects a speaker's typical
+ *  range across a few deliveries instead of pinning verification to
+ *  whatever pitch/tone happened to come out in one 4s clip — the mismatch
+ *  users hit as "it only recognizes me if I sound exactly like enrollment". */
+fun averageEmbeddings(embeddings: List<FloatArray>): FloatArray {
+    require(embeddings.isNotEmpty()) { "need at least one embedding to average" }
+    val dim = embeddings[0].size
+    val sum = FloatArray(dim)
+    for (e in embeddings) for (i in 0 until dim) sum[i] += e[i]
+    for (i in 0 until dim) sum[i] /= embeddings.size
+    var sumSq = 0.0
+    for (v in sum) sumSq += v.toDouble() * v.toDouble()
+    val norm = sqrt(sumSq).toFloat()
+    if (norm < 1e-9f) return sum
+    return FloatArray(dim) { sum[it] / norm }
+}
+
 /** Untuned starting point, not calibrated against real recordings — expect
  *  to retune once this ships. Cosine similarity between two CAM++ embeddings
  *  of the same speaker typically lands well above this; different speakers

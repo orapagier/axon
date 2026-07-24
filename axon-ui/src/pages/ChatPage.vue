@@ -981,15 +981,31 @@ let streamingSpeech = null // active per-sentence streamed read-aloud (voice rep
 // separately (lib/audioLevel.js) — so it can never mute the reply.
 let speakEl = null
 let speakEnv = null
+// Fallback level for the brief window after a new sentence starts playing
+// but before buildTtsEnvelope's decode resolves (attachSpeakEnvelope sets
+// speakEl immediately, speakEnv arrives async). Without this, speakSample()
+// reported "nothing playing" for that window, which reads to bargeTick as
+// the reply going silent — collapsing the barge threshold toward the
+// absolute floor right as the new sentence's own echo starts, so ordinary
+// room noise could trip a TENTATIVE duck at the start of every sentence in
+// a streamed reply, then a FALSE_ALARM a few hundred ms later once the real
+// envelope caught up. Carrying the last real reading forward instead means
+// only the very first sentence of a session (before any envelope has ever
+// resolved) sees the gap.
+let lastPlayRms = 0
 
 function speakSample() {
-  if (!speakEnv || !speakEl) return null
-  return speakEnv.level(speakEl.currentTime)
+  if (!speakEl) return null // nothing assigned to play — genuinely silent
+  if (!speakEnv) return lastPlayRms // playing, but this sentence's envelope isn't decoded yet
+  const level = speakEnv.level(speakEl.currentTime)
+  lastPlayRms = level
+  return level
 }
 
 function clearSpeakEnvelope() {
   speakEl = null
   speakEnv = null
+  lastPlayRms = 0
 }
 
 // Attach the reactive envelope for a reply element: point the orb at it now,

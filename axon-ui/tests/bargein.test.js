@@ -145,6 +145,24 @@ describe('BargeDetector', () => {
       expect(events[1]).toBe(BargeEvent.TENTATIVE)
       expect(events).toContain(BargeEvent.CONFIRMED)
     })
+
+    it('never confirms on a sparse, mostly-unshaped pattern (a cough or coughing fit)', () => {
+      const detector = createBargeDetector()
+      drive(detector, 0.1, Array(20).fill(0.03))
+      // Three loud ticks happen to read as speech-shaped (a forceful cough's
+      // brief voiced release, or several coughs in a fit), but each is
+      // isolated by two clearly-unshaped/quiet ticks — never sustained like
+      // real held speech. Without a cap on how many misses in a row an onset
+      // survives, these three qualifying ticks would eventually accumulate
+      // to minOnsetTicks and confirm; two-in-a-row misses must reset it.
+      const events = driveShaped(
+        detector,
+        0.1,
+        [0.2, 0.03, 0.03, 0.2, 0.03, 0.03, 0.2],
+        [true, false, false, true, false, false, true]
+      )
+      expect(events).not.toContain(BargeEvent.CONFIRMED)
+    })
   })
 })
 

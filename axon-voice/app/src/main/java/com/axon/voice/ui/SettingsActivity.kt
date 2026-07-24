@@ -20,6 +20,7 @@ import com.axon.voice.R
 import com.axon.voice.api.AxonClient
 import com.axon.voice.audio.SpeakerEmbedder
 import com.axon.voice.audio.VoicePrint
+import com.axon.voice.audio.averageEmbeddings
 import com.axon.voice.audio.WavRecorder
 import com.axon.voice.wake.WakeWordService
 import org.json.JSONObject
@@ -294,6 +295,12 @@ class SettingsActivity : AppCompatActivity() {
 
     private companion object {
         const val ENROLL_DURATION_MS = 4000L
+        // Multiple takes, averaged into one centroid embedding (see
+        // finishEnrollment), so the stored voiceprint spans the natural
+        // pitch/tone range across a few deliveries rather than pinning
+        // verification to whatever one clip happened to sound like.
+        const val ENROLL_TAKES = 3
+        const val ENROLL_TAKE_GAP_MS = 400L
     }
 
     private fun updateVoiceIdUi() {
@@ -316,25 +323,32 @@ class SettingsActivity : AppCompatActivity() {
         startEnrollRecording()
     }
 
-    /** Records a fixed [ENROLL_DURATION_MS] window (no silence-watching — the
-     *  point is to just capture a clean sample of the user's voice) and
-     *  hands it to [finishEnrollment]. Borrows the wake service's mic the
-     *  same way [ChatActivity.startDictation] does. */
+    /** Records [ENROLL_TAKES] separate [ENROLL_DURATION_MS] windows back to
+     *  back (no silence-watching — the point is to just capture clean
+     *  samples of the user's voice) and hands all of the raw WAVs to
+     *  [finishEnrollment]. Borrows the wake service's mic the same way
+     *  [ChatActivity.startDictation] does. */
     private fun startEnrollRecording() {
         enrolling = true
         updateVoiceIdUi()
-        voiceIdStatus.text = getString(R.string.voice_id_recording)
         val serviceWasListening = WakeWordService.running
         WakeWordService.micHold = true
-        val recorder = WavRecorder()
         thread(name = "axon-enroll") {
             if (serviceWasListening) Thread.sleep(300)
             try {
-                recorder.start { /* fixed duration — ticks unused */ }
-                Thread.sleep(ENROLL_DURATION_MS)
-                val wav = recorder.stop()
+                val takes = mutableListOf<ByteArray>()
+                for (take in 1..ENROLL_TAKES) {
+                    runOnUiThread {
+                        voiceIdStatus.text = getString(R.string.voice_id_recording_take, take, ENROLL_TAKES)
+                    }
+                    val recorder = WavRecorder()
+                    recorder.start { /* fixed duration — ticks unused */ }
+                    Thread.sleep(ENROLL_DURATION_MS)
+                    takes.add(recorder.stop())
+                    if (take < ENROLL_TAKES) Thread.sleep(ENROLL_TAKE_GAP_MS)
+                }
                 WakeWordService.micHold = false
-                finishEnrollment(wav)
+                finishEnrollment(takes)
             } catch (e: Exception) {
                 WakeWordService.micHold = false
                 runOnUiThread {
@@ -347,16 +361,23 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     /** Off the enrollment thread: loading the ~28MB model and running
-     *  inference is too slow for the main thread. */
-    private fun finishEnrollment(wav: ByteArray) {
+     *  inference is too slow for the main thread. Embeds each take
+     *  separately and averages them into one centroid (see
+     *  [averageEmbeddings]) rather than saving a single take's embedding, so
+     *  the enrolled voiceprint isn't pinned to one narrow pitch/tone. A take
+     *  that fails to embed (e.g. too quiet) is just dropped, not fatal,
+     *  as long as at least one other take succeeds. */
+    private fun finishEnrollment(wavs: List<ByteArray>) {
         runOnUiThread { voiceIdStatus.text = getString(R.string.voice_id_processing) }
-        val embedding = runCatching {
-            SpeakerEmbedder(this).use { it.embed(pcm16FromWav(wav)) }
-        }.getOrNull()
+        val embeddings = runCatching {
+            SpeakerEmbedder(this).use { embedder ->
+                wavs.mapNotNull { embedder.embed(pcm16FromWav(it)) }
+            }
+        }.getOrDefault(emptyList())
         runOnUiThread {
             enrolling = false
-            if (embedding != null) {
-                VoicePrint.save(this, embedding)
+            if (embeddings.isNotEmpty()) {
+                VoicePrint.save(this, averageEmbeddings(embeddings))
                 toastMsg(getString(R.string.saved))
             } else {
                 toastMsg(getString(R.string.voice_id_failed))
