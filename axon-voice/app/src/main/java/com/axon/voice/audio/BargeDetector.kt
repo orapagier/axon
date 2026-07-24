@@ -11,8 +11,16 @@ package com.axon.voice.audio
  * been ducked down, where a real interruption keeps going and a stray echo or
  * cough does not.
  *
- * State machine (mirrored line-for-line in axon-ui/src/lib/bargein.js — keep
- * the two in step, same convention as [SilenceWatcher] / wakeword.js):
+ * The energy/gain state machine below still matches axon-ui/src/lib/bargein.js
+ * line-for-line, but the two platforms now diverge above this class: web
+ * layers a cheap spectral speech-shape gate directly into `feedMic` (a
+ * browser can't afford much more per 100ms tick), while Android layers a
+ * heavier, stronger check — [BargeMonitor]'s `verifySpeaker` runs a CAM++
+ * speaker-embedding match ([SpeakerEmbedder]) once, right as an energy-based
+ * CONFIRMED fires here, rejecting anyone who isn't the enrolled user
+ * ([VoicePrint]) instead of just anyone who isn't speech-shaped. This class
+ * itself is unchanged either way — same convention as [SilenceWatcher] /
+ * wakeword.js:
  *
  * ```
  *   idle --[mic over threshold]--> tentative (caller ducks the reply)

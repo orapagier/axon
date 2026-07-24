@@ -34,4 +34,15 @@
     <string name="voice_history_empty">No hands-free conversations yet — say “Hey Axon” to start one.</string>
     <string name="delete_conversation">Delete conversation</string>
     <string name="delete_conversation_confirm">Delete this conversation? This can\'t be undone.</string>
+    <string name="voice_id_title">Voice ID (barge-in)</string>
+    <string name="voice_id_description">Enroll your voice so an interruption only counts if it sounds like you — filters out background talk, coughs, and other noise.</string>
+    <string name="voice_id_enroll">Enroll my voice</string>
+    <string name="voice_id_reenroll">Re-enroll</string>
+    <string name="voice_id_clear">Clear</string>
+    <string name="voice_id_recording">Recording — speak naturally for a few seconds…</string>
+    <string name="voice_id_processing">Processing…</string>
+    <string name="voice_id_enrolled">Voice ID enrolled ✓ — only your voice confirms a barge-in</string>
+    <string name="voice_id_not_enrolled">Not enrolled — barge-in uses sound level only</string>
+    <string name="voice_id_failed">Enrollment failed — try again somewhere quieter</string>
+    <string name="voice_id_cleared">Voice ID cleared</string>
 </resources>

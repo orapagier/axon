@@ -23,10 +23,13 @@ import com.axon.voice.audio.BargeDetector
 import com.axon.voice.audio.BargeMonitor
 import com.axon.voice.audio.Sound
 import com.axon.voice.audio.SilenceWatcher
+import com.axon.voice.audio.SpeakerEmbedder
 import com.axon.voice.audio.StreamingTts
 import com.axon.voice.audio.TtsPlayer
+import com.axon.voice.audio.VoicePrint
 import com.axon.voice.audio.VoicePrompts
 import com.axon.voice.audio.WavRecorder
+import com.axon.voice.audio.speakerVerifier
 import com.axon.voice.ui.ChatFeed
 import com.axon.voice.ui.ChatActivity
 import com.axon.voice.ui.VoiceOverlay
@@ -126,6 +129,15 @@ class WakeWordService : Service(), ChatSocket.Listener {
      *  state at the start of every new reply. */
     private val bargeDetector = BargeDetector()
 
+    /** Loaded once, lazily, only if a voiceprint is enrolled — a
+     *  [SpeakerEmbedder] loads ~28MB of model weights, not worth paying for
+     *  on a device where barge-in speaker verification was never set up
+     *  (Settings > Voice ID). Null [voiceprint] means [speakerVerifier]
+     *  returns null too, and barge-in falls back to energy-only, same as
+     *  before this existed. */
+    private var speakerEmbedder: SpeakerEmbedder? = null
+    private var voiceprint: FloatArray? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -142,6 +154,10 @@ class WakeWordService : Service(), ChatSocket.Listener {
                 VoiceOverlay.speakLevel(rms)
                 bargeDetector.feedPlayback(rms)
             }
+        }
+        voiceprint = VoicePrint.load(this)
+        if (voiceprint != null) {
+            speakerEmbedder = runCatching { SpeakerEmbedder(this) }.getOrNull()
         }
     }
 
@@ -179,6 +195,8 @@ class WakeWordService : Service(), ChatSocket.Listener {
         wakeLock = null
         worker?.join(1500)
         worker = null
+        speakerEmbedder?.close()
+        speakerEmbedder = null
         super.onDestroy()
     }
 
@@ -605,6 +623,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
                     readFrame = { f -> fillFrame(rec, f) },
                     onTentative = { p.duck() },
                     onFalseAlarm = { p.restoreVolume() },
+                    verifySpeaker = speakerVerifier(speakerEmbedder, voiceprint),
                     onConfirmed = { preroll ->
                         val spoken = stream.spokenSoFar()
                         stream.abort() // cut the TTS mid-sentence

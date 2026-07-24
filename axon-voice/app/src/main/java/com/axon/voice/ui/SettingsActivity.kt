@@ -1,5 +1,7 @@
 package com.axon.voice.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.text.InputType
 import android.util.TypedValue
@@ -9,13 +11,20 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.axon.voice.Prefs
 import com.axon.voice.R
 import com.axon.voice.api.AxonClient
+import com.axon.voice.audio.SpeakerEmbedder
+import com.axon.voice.audio.VoicePrint
+import com.axon.voice.audio.WavRecorder
+import com.axon.voice.wake.WakeWordService
 import org.json.JSONObject
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import kotlin.concurrent.thread
 
 /**
@@ -43,6 +52,16 @@ class SettingsActivity : AppCompatActivity() {
     private val voiceRows = mutableListOf<Row>()
     private var voiceLoading = false
 
+    private lateinit var voiceIdStatus: TextView
+    private lateinit var voiceIdEnrollBtn: Button
+    private lateinit var voiceIdClearBtn: Button
+    private var enrolling = false
+
+    private val micPermLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) startEnrollRecording() else toastMsg(getString(R.string.voice_id_failed))
+        }
+
     /** Show base_url and model above voice/api_key/language, like a setup flow
      *  reads — the API returns rows in key order, which buries base_url. */
     private val fieldOrder = listOf("base_url", "model", "voice", "api_key", "language")
@@ -58,6 +77,16 @@ class SettingsActivity : AppCompatActivity() {
         val testResult = findViewById<TextView>(R.id.testResult)
         voiceStatus = findViewById(R.id.voiceStatus)
         voiceContainer = findViewById(R.id.voiceContainer)
+        voiceIdStatus = findViewById(R.id.voiceIdStatus)
+        voiceIdEnrollBtn = findViewById(R.id.voiceIdEnrollBtn)
+        voiceIdClearBtn = findViewById(R.id.voiceIdClearBtn)
+        updateVoiceIdUi()
+        voiceIdEnrollBtn.setOnClickListener { onEnrollTap() }
+        voiceIdClearBtn.setOnClickListener {
+            VoicePrint.clear(this)
+            updateVoiceIdUi()
+            toastMsg(getString(R.string.voice_id_cleared))
+        }
 
         serverUrl.setText(prefs.baseUrl)
         masterKey.setText(prefs.masterKey)
@@ -259,6 +288,89 @@ class SettingsActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    // ── Voice ID (on-device speaker-embedding enrollment for barge-in) ─────
+
+    private companion object {
+        const val ENROLL_DURATION_MS = 4000L
+    }
+
+    private fun updateVoiceIdUi() {
+        val enrolled = VoicePrint.exists(this)
+        voiceIdStatus.text = getString(
+            if (enrolled) R.string.voice_id_enrolled else R.string.voice_id_not_enrolled
+        )
+        voiceIdEnrollBtn.text = getString(if (enrolled) R.string.voice_id_reenroll else R.string.voice_id_enroll)
+        voiceIdClearBtn.isEnabled = enrolled && !enrolling
+        voiceIdEnrollBtn.isEnabled = !enrolling
+    }
+
+    private fun onEnrollTap() {
+        val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        if (!granted) {
+            micPermLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        startEnrollRecording()
+    }
+
+    /** Records a fixed [ENROLL_DURATION_MS] window (no silence-watching — the
+     *  point is to just capture a clean sample of the user's voice) and
+     *  hands it to [finishEnrollment]. Borrows the wake service's mic the
+     *  same way [ChatActivity.startDictation] does. */
+    private fun startEnrollRecording() {
+        enrolling = true
+        updateVoiceIdUi()
+        voiceIdStatus.text = getString(R.string.voice_id_recording)
+        val serviceWasListening = WakeWordService.running
+        WakeWordService.micHold = true
+        val recorder = WavRecorder()
+        thread(name = "axon-enroll") {
+            if (serviceWasListening) Thread.sleep(300)
+            try {
+                recorder.start { /* fixed duration — ticks unused */ }
+                Thread.sleep(ENROLL_DURATION_MS)
+                val wav = recorder.stop()
+                WakeWordService.micHold = false
+                finishEnrollment(wav)
+            } catch (e: Exception) {
+                WakeWordService.micHold = false
+                runOnUiThread {
+                    enrolling = false
+                    toastMsg(e.message ?: "microphone unavailable")
+                    updateVoiceIdUi()
+                }
+            }
+        }
+    }
+
+    /** Off the enrollment thread: loading the ~28MB model and running
+     *  inference is too slow for the main thread. */
+    private fun finishEnrollment(wav: ByteArray) {
+        runOnUiThread { voiceIdStatus.text = getString(R.string.voice_id_processing) }
+        val embedding = runCatching {
+            SpeakerEmbedder(this).use { it.embed(pcm16FromWav(wav)) }
+        }.getOrNull()
+        runOnUiThread {
+            enrolling = false
+            if (embedding != null) {
+                VoicePrint.save(this, embedding)
+                toastMsg(getString(R.string.saved))
+            } else {
+                toastMsg(getString(R.string.voice_id_failed))
+            }
+            updateVoiceIdUi()
+        }
+    }
+
+    /** [WavRecorder.stop] returns a 44-byte-header WAV; strip it back to raw
+     *  little-endian PCM16 samples for [SpeakerEmbedder]. */
+    private fun pcm16FromWav(wav: ByteArray): ShortArray {
+        val n = (wav.size - 44) / 2
+        val buf = ByteBuffer.wrap(wav, 44, n * 2).order(ByteOrder.LITTLE_ENDIAN)
+        return ShortArray(n) { buf.short }
     }
 
     private fun dp(v: Int): Int =

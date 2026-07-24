@@ -79,3 +79,26 @@ fun cosineSimilarity(a: FloatArray, b: FloatArray): Float {
     for (i in a.indices) dot += a[i] * b[i]
     return dot
 }
+
+/** Untuned starting point, not calibrated against real recordings — expect
+ *  to retune once this ships. Cosine similarity between two CAM++ embeddings
+ *  of the same speaker typically lands well above this; different speakers
+ *  well below, but the margin depends on mic/room/threshold conditions this
+ *  hasn't been measured against yet. */
+const val SPEAKER_SIMILARITY_THRESHOLD = 0.5f
+
+/** Builds a synchronous [BargeMonitor] speaker check from a loaded
+ *  [SpeakerEmbedder] and the enrolled voiceprint, or null if either is
+ *  missing — [BargeMonitor] treats null as "skip the check", falling back to
+ *  the energy-only confirm. */
+fun speakerVerifier(
+    embedder: SpeakerEmbedder?,
+    voiceprint: FloatArray?,
+    threshold: Float = SPEAKER_SIMILARITY_THRESHOLD,
+): ((ShortArray) -> Boolean)? {
+    if (embedder == null || voiceprint == null) return null
+    return verifier@{ pcm ->
+        val candidate = embedder.embed(pcm) ?: return@verifier false
+        cosineSimilarity(candidate, voiceprint) >= threshold
+    }
+}
