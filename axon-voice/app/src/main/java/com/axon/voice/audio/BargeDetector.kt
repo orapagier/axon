@@ -20,7 +20,11 @@ package com.axon.voice.audio
  *     own output); the reply's echo drops with it and fades out. A tentative
  *     onset that keeps holding [MIN_ONSET_TICKS] is real; one that fades within
  *     [FALSE_ALARM_TICKS] was echo (or a brief impulse — a cough/clap doesn't
- *     hold ~300ms), reported as FALSE_ALARM so volume is restored.
+ *     hold ~300ms), reported as FALSE_ALARM so volume is restored. A false alarm
+ *     also folds the echo level that tripped it into [gain] (fast — see
+ *     [FALSE_ALARM_GAIN_ALPHA]), so recurring echo peaks stop re-triggering the
+ *     duck; without this the same echo kept ducking the reply, heard as the
+ *     reply volume pumping up and down.
  *
  * Barge-in as a whole is a user toggle ([com.axon.voice.Prefs.bargeInEnabled]);
  * when it's off the mic isn't watched during a reply at all. [MARGIN] and
@@ -74,6 +78,14 @@ class BargeDetector(
          *  and mistrain the threshold. */
         const val GAIN_ALPHA = 0.02
 
+        /** Faster gain adaptation used when a tentative onset turns out to be
+         *  echo (a FALSE_ALARM): the mic has just demonstrated how loud echo
+         *  actually gets, so the threshold should climb to cover it within a
+         *  couple of such events rather than the many seconds [GAIN_ALPHA] would
+         *  take. This is what stops ordinary echo peaks from repeatedly ducking
+         *  the reply (the audible volume pumping). */
+        const val FALSE_ALARM_GAIN_ALPHA = 0.3
+
         const val GAIN_MIN = 0.05
         const val GAIN_MAX = 5.0
 
@@ -101,6 +113,10 @@ class BargeDetector(
     private var tentative = false
     private var onsetTicks = 0
     private var quietTicks = 0
+
+    /** Loudest mic/playback ratio seen during the current tentative window, so a
+     *  FALSE_ALARM can teach [gain] how loud the echo that tripped it reached. */
+    private var tentPeakRatio = 0.0
 
     // Last tick's mic RMS and the threshold it faced, kept only so the Android
     // call sites can log "rms=… thr=… gain=…" on each barge event for on-device
@@ -140,17 +156,23 @@ class BargeDetector(
         val threshold = maxOf(absFloor, gain * playRef * margin)
         lastMicRms = rms
         lastThreshold = threshold
+        // Mic level as a multiple of what's playing — the echo coupling if this
+        // tick is just the reply bouncing back. Undefined when nothing is playing
+        // (playRef ~ 0); guarded everywhere it feeds learning.
+        val ratio = if (playRef > absFloor) rms / playRef else 0.0
         val event = if (!tentative) {
             if (rms > threshold) {
                 tentative = true
                 onsetTicks = 1
                 quietTicks = 0
+                tentPeakRatio = ratio
                 Event.TENTATIVE
             } else {
-                if (playRef > absFloor) learnGain(rms)
+                if (playRef > absFloor) learnGain(ratio)
                 Event.NONE
             }
         } else {
+            if (ratio > tentPeakRatio) tentPeakRatio = ratio
             if (rms > threshold) {
                 onsetTicks++
                 quietTicks = 0
@@ -164,6 +186,12 @@ class BargeDetector(
             } else {
                 quietTicks++
                 if (quietTicks >= falseAlarmTicks) {
+                    // The onset faded once we ducked, so it was our own echo, not
+                    // the user. Fold the loudest echo ratio it reached into the
+                    // gain (fast) so the threshold rises above that echo and it
+                    // stops re-tripping — the fix for the reply volume pumping as
+                    // ordinary echo peaks kept ducking it.
+                    if (tentPeakRatio > 0.0) learnGain(tentPeakRatio, FALSE_ALARM_GAIN_ALPHA)
                     tentative = false
                     onsetTicks = 0
                     quietTicks = 0
@@ -198,10 +226,14 @@ class BargeDetector(
         tentative = false
         onsetTicks = 0
         quietTicks = 0
+        tentPeakRatio = 0.0
     }
 
-    private fun learnGain(micRms: Double) {
-        val observed = micRms / playRef
-        gain = (gain + GAIN_ALPHA * (observed - gain)).coerceIn(GAIN_MIN, GAIN_MAX)
+    /** Fold an observed mic/playback ratio into the learned echo [gain]. Slow by
+     *  default (one loud consonant shouldn't swing the threshold); a confirmed
+     *  false alarm passes [FALSE_ALARM_GAIN_ALPHA] to adapt faster, since it has
+     *  just proven echo genuinely reaches that level. */
+    private fun learnGain(observedRatio: Double, alpha: Double = GAIN_ALPHA) {
+        gain = (gain + alpha * (observedRatio - gain)).coerceIn(GAIN_MIN, GAIN_MAX)
     }
 }

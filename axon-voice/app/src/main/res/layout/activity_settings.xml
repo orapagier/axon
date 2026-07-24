@@ -41,54 +41,10 @@
             android:textColorHint="@color/text_dim"
             android:importantForAutofill="no" />
 
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:layout_marginTop="20dp">
-
-            <Button
-                android:id="@+id/saveBtn"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/save" />
-
-            <Button
-                android:id="@+id/testBtn"
-                style="@style/Widget.Material3.Button.OutlinedButton"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="12dp"
-                android:text="@string/test_connection" />
-        </LinearLayout>
-
-        <TextView
-            android:id="@+id/testResult"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:textColor="@color/text_dim" />
-
-        <!-- Server-side voice settings (tts.* / stt.*), built dynamically from
-             GET /api/settings — same rows as the dashboard's Voice Input /
-             Voice Replies sections. -->
-        <TextView
-            android:id="@+id/voiceStatus"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
-            android:textColor="@color/text_dim" />
-
-        <LinearLayout
-            android:id="@+id/voiceContainer"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical" />
-
-        <!-- Barge-in: talk over a spoken reply to interrupt it. Self-calibrating
-             echo rejection (BargeDetector) means there's nothing to tune — just
-             on or off. Off = the mic isn't watched during a reply, so you wait
-             for it to finish before speaking again. -->
+        <!-- Barge-in: talk over a spoken reply to interrupt it. Grouped with the
+             connection fields at the top of the page. Off = the mic isn't watched
+             during a reply, so you wait for it to finish before speaking again;
+             the tuning sliders adjust its echo-rejection sensitivity and hold. -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -136,5 +92,49 @@
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:layout_marginTop="8dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="20dp">
+
+            <Button
+                android:id="@+id/saveBtn"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/save" />
+
+            <Button
+                android:id="@+id/testBtn"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:text="@string/test_connection" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/testResult"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:textColor="@color/text_dim" />
+
+        <!-- Server-side voice settings (tts.* / stt.*), built dynamically from
+             GET /api/settings — same rows as the dashboard's Voice Input /
+             Voice Replies sections. -->
+        <TextView
+            android:id="@+id/voiceStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:textColor="@color/text_dim" />
+
+        <LinearLayout
+            android:id="@+id/voiceContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
     </LinearLayout>
 </ScrollView>

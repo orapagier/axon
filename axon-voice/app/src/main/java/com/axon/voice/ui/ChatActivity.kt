@@ -66,6 +66,12 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
 
     companion object {
         const val EXTRA_AUTO_LISTEN = "auto_listen"
+
+        /** Grace period before an IDLE phase actually hides the orb. A brief
+         *  IDLE between phases (a socket reconnect blip, a phase race) shouldn't
+         *  blink the orb out mid-conversation — any real phase arriving within
+         *  this window cancels the pending hide. */
+        private const val ORB_HIDE_DELAY_MS = 500L
     }
 
     private enum class State { IDLE, RECORDING, TRANSCRIBING, WAITING }
@@ -91,6 +97,19 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
      *  threads, so every touch of a view is marshalled to the main thread. */
     private val voiceListener = VoiceOverlay.Listener { phase, level ->
         main.post { applyVoiceState(phase, level) }
+    }
+
+    /** The orb phase currently shown, so [applyVoiceState] only touches the orb
+     *  and status text when the phase actually changes — it's called ~50×/sec
+     *  during speech (one per reply-audio level sample) and rewriting the view
+     *  every time is needless main-thread churn. Null = orb hidden. */
+    private var shownPhase: VoiceOverlay.Phase? = null
+
+    /** Deferred hide for the debounce in [applyVoiceState]; see [ORB_HIDE_DELAY_MS]. */
+    private val hideOrb = Runnable {
+        voiceOverlay.visibility = View.GONE
+        voiceOrb.setPhase(VoiceOrbView.Phase.IDLE)
+        shownPhase = null
     }
 
     private var state = State.IDLE
@@ -243,7 +262,11 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
 
     override fun onStop() {
         if (VoiceOverlay.listener === voiceListener) VoiceOverlay.listener = null
+        main.removeCallbacks(hideOrb)
         voiceOrb.setPhase(VoiceOrbView.Phase.IDLE) // stop the animation loop
+        // Force onStart's applyVoiceState to re-assert the phase (and restart the
+        // orb) even if the service is still on the same phase we left on.
+        shownPhase = null
         ChatHistory.save(this, prefs.chatSessionId, adapter.snapshot())
         super.onStop()
     }
@@ -304,25 +327,31 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
      *  just disappeared." */
     private fun applyVoiceState(phase: VoiceOverlay.Phase, level: Float) {
         if (phase == VoiceOverlay.Phase.IDLE) {
-            voiceOverlay.visibility = View.GONE
-            voiceOrb.setPhase(VoiceOrbView.Phase.IDLE)
+            // Debounce the hide so a momentary IDLE doesn't blink the orb out —
+            // a genuine end still hides it ORB_HIDE_DELAY_MS later.
+            main.removeCallbacks(hideOrb)
+            main.postDelayed(hideOrb, ORB_HIDE_DELAY_MS)
             return
         }
+        main.removeCallbacks(hideOrb)
         voiceOverlay.visibility = View.VISIBLE
-        voiceOrb.setPhase(
-            when (phase) {
-                VoiceOverlay.Phase.LISTENING -> VoiceOrbView.Phase.LISTENING
-                VoiceOverlay.Phase.THINKING -> VoiceOrbView.Phase.THINKING
-                else -> VoiceOrbView.Phase.SPEAKING
-            }
-        )
-        voiceOverlayStatus.setText(
-            when (phase) {
-                VoiceOverlay.Phase.LISTENING -> R.string.status_recording
-                VoiceOverlay.Phase.THINKING -> R.string.status_thinking
-                else -> R.string.status_speaking
-            }
-        )
+        if (phase != shownPhase) {
+            shownPhase = phase
+            voiceOrb.setPhase(
+                when (phase) {
+                    VoiceOverlay.Phase.LISTENING -> VoiceOrbView.Phase.LISTENING
+                    VoiceOverlay.Phase.THINKING -> VoiceOrbView.Phase.THINKING
+                    else -> VoiceOrbView.Phase.SPEAKING
+                }
+            )
+            voiceOverlayStatus.setText(
+                when (phase) {
+                    VoiceOverlay.Phase.LISTENING -> R.string.status_recording
+                    VoiceOverlay.Phase.THINKING -> R.string.status_thinking
+                    else -> R.string.status_speaking
+                }
+            )
+        }
         if (level >= 0f) voiceOrb.setLevel(level)
     }
 
