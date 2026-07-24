@@ -79,8 +79,15 @@ class BargeMonitor(
             }
             if (tickSamples < TICK_SAMPLES) continue
             val rms = sqrt(tickSumSq / tickSamples)
+            // Spectral shape of this same window, so BargeDetector can reject a
+            // loud broadband burst (cough/clap/pop) that clears the threshold
+            // but isn't voiced speech. Computed from the tick's raw PCM before
+            // flushTick() resets the accumulator.
+            val tickPcm = pcm16(tickBytes.toByteArray())
+            val flatness = SpeechShape.flatness(tickPcm)
+            val zcr = SpeechShape.zcr(tickPcm)
             flushTick()
-            when (detector.feedMic(rms)) {
+            when (detector.feedMic(rms, flatness, zcr)) {
                 BargeDetector.Event.TENTATIVE -> onTentative()
                 BargeDetector.Event.FALSE_ALARM -> onFalseAlarm()
                 BargeDetector.Event.CONFIRMED -> {
