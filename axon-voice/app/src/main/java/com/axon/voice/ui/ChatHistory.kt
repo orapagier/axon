@@ -56,4 +56,30 @@ object ChatHistory {
     fun delete(ctx: Context, sessionId: String) {
         file(ctx, sessionId).delete()
     }
+
+    /** One saved "Hey Axon" conversation, as shown in the History list: enough
+     *  to identify and preview it without the caller loading the full
+     *  transcript twice. [updatedAt] is the file's last-write time — good
+     *  enough for "most recent first" without a separate timestamp in the
+     *  JSON itself. */
+    data class Summary(val sessionId: String, val preview: String, val updatedAt: Long)
+
+    /** Every saved wake conversation ([Prefs.newWakeConversationId] mints one
+     *  id per "Hey Axon", distinct from the single ongoing
+     *  [Prefs.chatSessionId] thread the Chat page already shows), newest
+     *  first. The manual chat thread is deliberately excluded — it's always
+     *  one tap away by just opening the app, where this list surfaces the
+     *  hands-free exchanges that otherwise have no other way back to them. */
+    @Synchronized
+    fun listWakeConversations(ctx: Context): List<Summary> {
+        val files = ctx.filesDir.listFiles { f -> f.name.startsWith("chat_wake-") && f.name.endsWith(".json") }
+            ?: return emptyList()
+        return files.mapNotNull { f ->
+            val sessionId = f.name.removePrefix("chat_").removeSuffix(".json")
+            val msgs = load(ctx, sessionId)
+            if (msgs.isEmpty()) return@mapNotNull null
+            val preview = msgs.firstOrNull { it.role == "user" }?.text ?: msgs.first().text
+            Summary(sessionId, preview, f.lastModified())
+        }.sortedByDescending { it.updatedAt }
+    }
 }

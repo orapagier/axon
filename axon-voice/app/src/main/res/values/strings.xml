@@ -29,4 +29,9 @@
     <string name="dictate">Dictate</string>
     <string name="new_conversation">New conversation</string>
     <string name="new_conversation_started">Started a new conversation</string>
+    <string name="back">Back</string>
+    <string name="voice_history_title">Voice History</string>
+    <string name="voice_history_empty">No hands-free conversations yet — say “Hey Axon” to start one.</string>
+    <string name="delete_conversation">Delete conversation</string>
+    <string name="delete_conversation_confirm">Delete this conversation? This can\'t be undone.</string>
 </resources>

@@ -223,5 +223,11 @@ export function createWakeWord({ onDetection, onState }) {
     get running() {
       return running
     },
+    // Live AnalyserNode on the wake mic stream — the same one watchSilence
+    // reads for RMS, exposed so the hands-free voice orb (VoiceOrb.vue) can
+    // drive its animation off real mic level instead of a synthetic pulse.
+    get analyser() {
+      return analyser
+    },
   }
 }

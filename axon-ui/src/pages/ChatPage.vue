@@ -14,7 +14,9 @@ import {
   randomWakeAck,
   WAKE_ACKS,
 } from '../lib/voiceprompts.js'
+import { ensureAudioCtx, tapElement } from '../lib/audioLevel.js'
 import SearchInput from '../components/SearchInput.vue'
+import VoiceOrb from '../components/VoiceOrb.vue'
 
 // Each message: { role:'user'|'agent'|'trace', text, meta?, trace:[], thinking?:boolean }
 const messages = ref([])
@@ -398,6 +400,7 @@ function handleWsEvent(ev) {
       collapseTrace()
       resetRunTrackers()
       disabled.value = false
+      endHandsFree()
       flushPendingVoice()
       break
   }
@@ -479,6 +482,7 @@ async function sendMessage(msg, voice) {
     traceIdx = -1
     agentIdx = -1
     disabled.value = false
+    endHandsFree()
     if (voice) notifyBell(`Voice message not sent — not connected: "${msg}"`, false)
     else input.value = msg
     toast('Not connected to the agent yet — retry once the status shows Connected.', false)
@@ -513,6 +517,7 @@ function stop() {
   collapseTrace()
   resetRunTrackers()
   disabled.value = false
+  endHandsFree()
   flushPendingVoice()
 }
 
@@ -666,12 +671,15 @@ async function transcribe(blob) {
     const text = (res.text || '').trim()
     if (res.error) {
       notifyBell(`Voice transcription failed: ${res.error}`, false)
+      endHandsFree()
     } else if (!text) {
       toast('No speech detected in the recording.', false)
+      endHandsFree()
     } else if (wakeEnabled.value && isSelfEcho(text)) {
       // The capture was the assistant's own voice bouncing back (ack phrase or
       // a fragment of the reply just read aloud) — drop it so it can't be sent
       // as a command and answered, looping the conversation.
+      endHandsFree()
     } else if (disabled.value) {
       // A run is streaming — sending is blocked right now, so queue the
       // transcript; the done/error/stop handlers flush it as its own message.
@@ -684,6 +692,7 @@ async function transcribe(blob) {
     lastSpokenText = ''
   } catch {
     notifyBell('Transcription failed — check the Voice Input settings.', false)
+    endHandsFree()
   } finally {
     recState.value = 'idle'
     recSeconds.value = 0
@@ -704,11 +713,52 @@ const wakeEnabled = ref(wakeSupported && localStorage.getItem('axon-wake-word') 
 const wakeState = ref('off') // 'off' | 'starting' | 'listening'
 let wake = null
 
+// ── Hands-free overlay (JARVIS-style orb) ────────────────────────────────────
+// While a "Hey Axon" exchange is actively in progress — recording, waiting on
+// the agent, or reading the reply aloud — the chat log and composer are
+// covered by a full-panel animated orb instead: the point of hands-free is
+// not staring at text. The exchange still writes into `messages` exactly as
+// before, so scrolling back once the overlay closes shows the normal
+// transcript. Manual typing and push-to-talk (mic button) never set this —
+// only the two wake-triggered recording entry points do.
+const handsFreeActive = ref(false)
+const handsFreePhase = ref('listening') // 'listening' | 'thinking' | 'speaking'
+const ttsAnalyser = ref(null) // live AnalyserNode for the TTS <audio> currently playing (hands-free only)
+
+const orbAnalyser = computed(() => {
+  if (handsFreePhase.value === 'listening') return wake?.analyser || null
+  if (handsFreePhase.value === 'speaking') return ttsAnalyser.value
+  return null // 'thinking' has nothing to meter — VoiceOrb fills in ambient motion
+})
+
+const handsFreeStatusText = computed(
+  () =>
+    ({ listening: 'Listening…', thinking: 'Thinking…', speaking: 'Axon is speaking…' })[handsFreePhase.value] || ''
+)
+
+function endHandsFree() {
+  handsFreeActive.value = false
+  ttsAnalyser.value = null
+}
+
+// The overlay's close button: bail out of hands-free back to the normal chat
+// view without turning "Hey Axon" off — cancels whatever turn is in flight
+// (recording, the agent run, or the read-aloud) the same way the equivalent
+// manual control would.
+function dismissHandsFree() {
+  if (recState.value === 'recording') stopRecording(true)
+  else if (disabled.value) stop()
+  else stopSpeaking()
+  endHandsFree()
+}
+
 async function onWakeDetected() {
   // A streaming run, an active recording/transcription, or read-aloud playback
   // disqualifies a trigger — the speaking guard keeps the assistant from
   // waking itself off its own voice coming out of the speakers.
   if (disabled.value || recState.value !== 'idle' || speakingIdx.value >= 0) return
+  handsFreeActive.value = true
+  handsFreePhase.value = 'listening'
   // Answer first, then open the mic — the same order the Android client uses
   // (play the ack blocking, then capture). Recording *through* the ack meant
   // the assistant's own "I'm listening" bled into the capture and rode along on
@@ -723,6 +773,7 @@ async function onWakeDetected() {
   // was hidden (which tears down the mic), or the user touched a control while
   // it played.
   if (disabled.value || recState.value !== 'idle' || speakingIdx.value >= 0 || !wake?.running) {
+    endHandsFree()
     return
   }
   await startRecording(wake.stream)
@@ -730,7 +781,14 @@ async function onWakeDetected() {
   // (same contract the follow-up window uses). Uploading a silent clip is how
   // the transcriber ends up inventing a stock phrase — "Thank you." — and
   // sending it as if it were a command.
-  if (recState.value === 'recording') wake.watchSilence((hadSpeech) => stopRecording(!hadSpeech))
+  if (recState.value === 'recording') {
+    wake.watchSilence((hadSpeech) => {
+      stopRecording(!hadSpeech)
+      if (!hadSpeech) endHandsFree()
+    })
+  } else {
+    endHandsFree()
+  }
 }
 
 async function startWake() {
@@ -752,6 +810,7 @@ async function startWake() {
   } catch (err) {
     wakeState.value = 'off'
     wakeEnabled.value = false
+    endHandsFree()
     try {
       localStorage.setItem('axon-wake-word', '0')
     } catch {
@@ -775,8 +834,16 @@ function setWakeEnabled(on) {
   } catch {
     // storage unavailable — the toggle still works for this session
   }
-  if (on) startWake()
-  else wake?.stop()
+  if (on) {
+    startWake()
+    // Warm the shared TTS-tap AudioContext (lib/audioLevel.js) on a real user
+    // gesture now, rather than the first time a hands-free reply plays —
+    // browsers gate AudioContext audio output on prior page interaction.
+    ensureAudioCtx()
+  } else {
+    wake?.stop()
+    endHandsFree()
+  }
 }
 
 function toggleWake() {
@@ -821,8 +888,13 @@ function startFollowupCapture() {
     wake.chime(true)
     await new Promise((r) => setTimeout(r, CHIME_SETTLE_MS))
     if (!followupClear()) return // state may have shifted while the chime played
+    handsFreeActive.value = true
+    handsFreePhase.value = 'listening'
     startRecording(wake.stream)
-    wake.watchSilence((hadSpeech) => stopRecording(!hadSpeech), FOLLOWUP_CAPTURE)
+    wake.watchSilence((hadSpeech) => {
+      stopRecording(!hadSpeech)
+      if (!hadSpeech) endHandsFree()
+    }, FOLLOWUP_CAPTURE)
   }, 250)
 }
 
@@ -833,6 +905,7 @@ function onVisibilityChange() {
     // battery is spared; listening resumes when the tab returns.
     if (recState.value === 'recording' && wake?.running) stopRecording(true)
     wake?.stop()
+    endHandsFree()
   } else if (wakeState.value === 'off') {
     startWake()
   }
@@ -854,6 +927,19 @@ let audioUrl = null
 let synthUtterance = null // pinned: Chrome goes silent if the utterance is GC'd
 let ttsFailureToasted = false // explain a dead tts.* config once, not per click
 let streamingSpeech = null // active per-sentence streamed read-aloud (voice replies)
+
+// Hands-free orb phase follows the two state machines it's already wired
+// into rather than being set from every call site by hand: recState covers
+// listening/thinking, speakingIdx covers speaking. Both watchers are no-ops
+// unless a wake-triggered exchange is actually active.
+watch(recState, (state) => {
+  if (!handsFreeActive.value) return
+  if (state === 'recording') handsFreePhase.value = 'listening'
+  else if (state === 'transcribing') handsFreePhase.value = 'thinking'
+})
+watch(speakingIdx, (idx) => {
+  if (handsFreeActive.value && idx >= 0) handsFreePhase.value = 'speaking'
+})
 
 // The agent bubble renders markdown; the utterance needs the prose only.
 function plainTextForSpeech(md) {
@@ -883,6 +969,7 @@ function releaseAudio() {
 
 function stopSpeaking() {
   followupEligible = false
+  ttsAnalyser.value = null
   stopPrompt()
   abortStreamingSpeech()
   speakSeq += 1
@@ -902,6 +989,10 @@ function stopSpeaking() {
 // with no live reference can be GC'd mid-sentence, and the queue sometimes
 // comes back from cancel() stuck in the paused state.
 function speakWithSynthesis(idx, text) {
+  // No raw audio access for this path (browser TTS, not the server's) — the
+  // orb falls back to a synthesized "talking" envelope instead of reacting to
+  // a stale analyser left over from a server-TTS chunk.
+  ttsAnalyser.value = null
   if (!ttsSupported) {
     if (speakingIdx.value === idx) speakingIdx.value = -1
     return
@@ -918,13 +1009,22 @@ function speakWithSynthesis(idx, text) {
       speakingIdx.value = -1
       const followup = followupEligible
       followupEligible = false
-      if (followup) startFollowupCapture()
+      if (followup) {
+        // Neutral "thinking" until the follow-up mic actually reopens (a
+        // ~550ms gap of chime + settle) — a bare fake "speaking" pulse with
+        // nothing left to say would read as stuck, not alive.
+        handsFreePhase.value = 'thinking'
+        startFollowupCapture()
+      } else {
+        endHandsFree()
+      }
     }
   }
   u.onerror = () => {
     if (synthUtterance === u) synthUtterance = null
     followupEligible = false
     if (speakingIdx.value === idx) speakingIdx.value = -1
+    endHandsFree()
   }
   const seq = speakSeq
   setTimeout(() => {
@@ -959,16 +1059,32 @@ async function toggleSpeak(idx) {
         if (seq !== speakSeq) return // stopped while synthesizing
         audioUrl = URL.createObjectURL(blob)
         audioEl = new Audio(audioUrl)
+        // Tap this element's output for the hands-free orb (manual "read
+        // aloud" clicks skip it — no overlay showing, no point spending an
+        // AudioContext node on it).
+        if (handsFreeActive.value) {
+          try {
+            ttsAnalyser.value = tapElement(audioEl)
+          } catch {
+            ttsAnalyser.value = null
+          }
+        }
         // Natural end and failure diverge: only a played-to-the-end reply may
         // open the follow-up window (read the flag before stopSpeaking clears it).
         audioEl.onended = () => {
           if (speakingIdx.value !== idx) return
           const followup = followupEligible
           stopSpeaking()
-          if (followup) startFollowupCapture()
+          if (followup) {
+            handsFreePhase.value = 'thinking'
+            startFollowupCapture()
+          } else {
+            endHandsFree()
+          }
         }
         audioEl.onerror = () => {
           if (speakingIdx.value === idx) stopSpeaking()
+          endHandsFree()
         }
         await audioEl.play()
         return
@@ -1185,6 +1301,15 @@ class StreamingSpeech {
     this.curAudio = el
     this.curUrl = url
     if (speakingIdx.value !== this.idx) speakingIdx.value = this.idx
+    // Re-tapped per chunk (each sentence is its own <audio>) so the orb tracks
+    // whichever element is actually making sound right now.
+    if (handsFreeActive.value) {
+      try {
+        ttsAnalyser.value = tapElement(el)
+      } catch {
+        ttsAnalyser.value = null
+      }
+    }
     let advanced = false
     const advance = () => {
       if (advanced) return
@@ -1238,7 +1363,12 @@ function makeStreamingSpeech(idx) {
       lastSpokenText = plainTextForSpeech(messages.value[idx]?.text)
       speakingIdx.value = -1
       streamingSpeech = null
-      if (followup) startFollowupCapture()
+      if (followup) {
+        handsFreePhase.value = 'thinking'
+        startFollowupCapture()
+      } else {
+        endHandsFree()
+      }
     },
     (whole) => {
       // Server TTS never worked for this reply — speak it all with the browser
@@ -1248,6 +1378,7 @@ function makeStreamingSpeech(idx) {
       if (!text) {
         speakingIdx.value = -1
         followupEligible = false
+        endHandsFree()
         return
       }
       lastSpokenText = text
@@ -1595,6 +1726,42 @@ watch(disabled, (newVal) => {
           <span>New chat</span>
         </button>
       </div>
+
+      <div
+        v-if="handsFreeActive"
+        class="handsfree-overlay"
+      >
+        <button
+          class="handsfree-close"
+          type="button"
+          title="Close (keeps “Hey Axon” listening)"
+          @click="dismissHandsFree"
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+            aria-hidden="true"
+          >
+            <path
+              d="M18 6 6 18M6 6l12 12"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+            />
+          </svg>
+        </button>
+        <VoiceOrb
+          :phase="handsFreePhase"
+          :analyser="orbAnalyser"
+        />
+        <div class="handsfree-status">
+          {{ handsFreeStatusText }}
+        </div>
+      </div>
+
       <div
         ref="messagesEl"
         class="chat-messages"
@@ -2293,6 +2460,53 @@ watch(disabled, (newVal) => {
 .btn-wake.is-listening {
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+/* ── Hands-free overlay ─────────────────────────────────────────────────── */
+/* Covers the log + composer with the animated orb (VoiceOrb.vue) for the
+   duration of an active "Hey Axon" exchange — see handsFreeActive in the
+   script. .chat-layout carries position: relative for this (style.css). */
+.handsfree-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  backdrop-filter: blur(6px);
+}
+
+.handsfree-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid color-mix(in srgb, var(--text) 18%, transparent);
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.handsfree-close:hover {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.handsfree-status {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--text) 72%, transparent);
 }
 
 /* ── Read aloud ─────────────────────────────────────────────────────────── */

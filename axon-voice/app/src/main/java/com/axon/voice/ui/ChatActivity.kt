@@ -33,19 +33,21 @@ import java.io.File
 import kotlin.concurrent.thread
 
 /**
- * The app's home screen — and its only page: type a message, or tap the mic to
- * speak one. The recording (silence-watched push-to-talk) is transcribed
- * server-side and sent as its own chat message, never left in the composer.
+ * The app's home screen: type a message, or tap the mic to speak one. The
+ * recording (silence-watched push-to-talk) is transcribed server-side and
+ * sent as its own chat message, never left in the composer.
  *
  * Speaking to Axon gets a spoken answer: a push-to-talk reply is read aloud
  * through [StreamingTts] as it streams, exactly as the "Hey Axon" wake service
  * reads its own. A typed message is answered in text alone — the same rule the
  * dashboard applies, so the keyboard never makes the phone talk.
  *
- * Runs on [Prefs.chatSessionId], which the wake service shares: hands-free
- * exchanges arrive through [ChatFeed] and show here (and persist via
- * [ChatHistory]) exactly like typed messages, so the whole conversation —
- * typed, push-to-talk, and hands-free — lives in one saved thread. The wake
+ * Runs on [Prefs.chatSessionId] for typed and push-to-talk messages. Each
+ * "Hey Axon" wake is its own separate thread ([Prefs.newWakeConversationId])
+ * rather than joining this one — [ChatFeed] only mirrors an exchange into this
+ * page's live list when it happens to match [Prefs.chatSessionId], which a
+ * wake conversation never does. [HistoryActivity] (the toolbar's history icon)
+ * is where those hands-free conversations are actually reviewed. The wake
  * button in the input row toggles the hands-free listener without leaving the
  * page.
  *
@@ -142,6 +144,9 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
 
         findViewById<ImageButton>(R.id.settingsBtn).setOnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
+        }
+        findViewById<ImageButton>(R.id.historyBtn).setOnClickListener {
+            startActivity(Intent(this, HistoryActivity::class.java))
         }
         findViewById<ImageButton>(R.id.newChatBtn).setOnClickListener { newConversation() }
         micBtn.setOnClickListener { onMicTap() }

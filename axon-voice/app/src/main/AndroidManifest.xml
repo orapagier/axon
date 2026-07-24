@@ -36,6 +36,14 @@
             android:name=".ui.SettingsActivity"
             android:exported="false" />
 
+        <activity
+            android:name=".ui.HistoryActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".ui.ConversationDetailActivity"
+            android:exported="false" />
+
         <service
             android:name=".wake.WakeWordService"
             android:exported="false"

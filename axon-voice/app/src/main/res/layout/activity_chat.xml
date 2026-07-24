@@ -44,6 +44,14 @@
             android:contentDescription="@string/new_conversation" />
 
         <ImageButton
+            android:id="@+id/historyBtn"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:src="@drawable/ic_history"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/voice_history_title" />
+
+        <ImageButton
             android:id="@+id/settingsBtn"
             android:layout_width="40dp"
             android:layout_height="40dp"
