@@ -14,19 +14,28 @@ export function ensureAudioCtx() {
 }
 
 // Taps a fresh <audio> element's output with an AnalyserNode so TTS playback
-// can drive the same amplitude-reactive animation as the mic. Once tapped, the
-// element's audio is routed through the Web Audio graph instead of playing
-// directly — reconnecting to destination keeps it audible. Only ever call this
-// once per element (StreamingSpeech/toggleSpeak both create a fresh Audio()
-// per chunk, so this always holds); a second call on the same element throws.
+// can drive the same amplitude-reactive animation as the mic.
+//
+// Deliberately uses captureStream() -> createMediaStreamSource(), NOT
+// createMediaElementSource(el). The latter reroutes the element's actual
+// output through the Web Audio graph — reconnecting to ctx.destination is
+// required to keep it audible, and if this AudioContext isn't confirmed
+// 'running' yet (e.g. wake word auto-restarted from a saved toggle on page
+// load, with no fresh click in this session to satisfy the autoplay-unlock
+// requirement) that reconnect silently produces no sound while the element
+// still looks like it's playing. captureStream() instead hands us a copy of
+// the element's audio for analysis only; the element keeps playing through
+// its own normal output path completely untouched, so a suspended analysis
+// context can only make the orb less reactive, never mute the reply.
 export function tapElement(el) {
+  if (typeof el.captureStream !== 'function') return null // Safari etc. — orb falls back to a synthetic pulse
   const ctx = ensureAudioCtx()
-  const source = ctx.createMediaElementSource(el)
+  const stream = el.captureStream()
+  const source = ctx.createMediaStreamSource(stream)
   const analyser = ctx.createAnalyser()
   analyser.fftSize = 512
   analyser.smoothingTimeConstant = 0.6
   source.connect(analyser)
-  source.connect(ctx.destination)
   return analyser
 }
 
