@@ -131,5 +131,37 @@
                 android:layout_marginStart="12dp"
                 android:text="@string/voice_id_clear" />
         </LinearLayout>
+
+        <!-- Barge-in speaker-match strictness. Adjusts the cosine-similarity
+             cutoff in Prefs.bargeMatchThreshold / speakerVerifier — the fix
+             for "it won't recognize my voice when I try to interrupt". -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="22dp"
+            android:text="@string/barge_match_title"
+            android:textColor="@color/text"
+            android:textSize="14sp" />
+
+        <SeekBar
+            android:id="@+id/bargeMatchSlider"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp" />
+
+        <TextView
+            android:id="@+id/bargeMatchValue"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="@color/text_dim"
+            android:textSize="12sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/barge_match_description"
+            android:textColor="@color/text_dim"
+            android:textSize="12sp" />
     </LinearLayout>
 </ScrollView>

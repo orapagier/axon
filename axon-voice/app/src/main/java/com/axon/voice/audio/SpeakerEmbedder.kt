@@ -4,6 +4,7 @@ import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import android.content.Context
+import android.util.Log
 import java.nio.FloatBuffer
 import kotlin.math.sqrt
 
@@ -119,6 +120,13 @@ fun speakerVerifier(
     if (embedder == null || voiceprint == null) return null
     return verifier@{ pcm ->
         val candidate = embedder.embed(pcm) ?: return@verifier false
-        cosineSimilarity(candidate, voiceprint) >= threshold
+        val similarity = cosineSimilarity(candidate, voiceprint)
+        val pass = similarity >= threshold
+        // Real on-device numbers for tuning the Settings "Barge-in voice match"
+        // slider (Prefs.bargeMatchThreshold): `adb logcat -s SpeakerVerify`
+        // while trying to interrupt shows what your own voice actually scores,
+        // so the cutoff can be set from data instead of guessed.
+        Log.d("SpeakerVerify", "barge-in speaker check: similarity=$similarity threshold=$threshold pass=$pass")
+        pass
     }
 }

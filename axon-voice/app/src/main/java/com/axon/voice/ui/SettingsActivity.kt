@@ -9,6 +9,7 @@ import android.view.Gravity
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -59,6 +60,9 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var voiceIdClearBtn: Button
     private var enrolling = false
 
+    private lateinit var bargeMatchSlider: SeekBar
+    private lateinit var bargeMatchValue: TextView
+
     private val micPermLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) startEnrollRecording() else toastMsg(getString(R.string.voice_id_failed))
@@ -89,6 +93,10 @@ class SettingsActivity : AppCompatActivity() {
             updateVoiceIdUi()
             toastMsg(getString(R.string.voice_id_cleared))
         }
+
+        bargeMatchSlider = findViewById(R.id.bargeMatchSlider)
+        bargeMatchValue = findViewById(R.id.bargeMatchValue)
+        setupBargeMatchSlider()
 
         serverUrl.setText(prefs.baseUrl)
         masterKey.setText(prefs.masterKey)
@@ -305,6 +313,57 @@ class SettingsActivity : AppCompatActivity() {
         // original 400ms gap was inaudible/easy to miss, so five takes felt
         // like one continuous ~20s recording instead of five distinct ones.
         const val ENROLL_TAKE_GAP_MS = 900L
+
+        // Range the barge-in voice-match slider spans, in cosine-similarity
+        // units. Below ~0.2 essentially anything matches (the check stops
+        // meaning much); above ~0.8 even the enrolled user rarely clears it,
+        // so those make poor endpoints to expose. The SPEAKER_SIMILARITY_THRESHOLD
+        // default (0.5) sits mid-range.
+        const val BARGE_MATCH_MIN = 0.20f
+        const val BARGE_MATCH_MAX = 0.80f
+        // 0.01 per step across the [MIN, MAX] span.
+        const val BARGE_MATCH_STEPS = 60
+    }
+
+    /** Barge-in speaker-match strictness. The slider edits
+     *  [Prefs.bargeMatchThreshold] live (each reply's barge monitor reads it
+     *  fresh, so no restart is needed); the label spells out the raw cutoff
+     *  plus a lenient/balanced/strict word so it's tunable without knowing
+     *  what a cosine similarity is. */
+    private fun setupBargeMatchSlider() {
+        bargeMatchSlider.max = BARGE_MATCH_STEPS
+        bargeMatchSlider.progress = thresholdToProgress(prefs.bargeMatchThreshold)
+        updateBargeMatchLabel(prefs.bargeMatchThreshold)
+        bargeMatchSlider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar, progress: Int, fromUser: Boolean) {
+                val threshold = progressToThreshold(progress)
+                if (fromUser) prefs.bargeMatchThreshold = threshold
+                updateBargeMatchLabel(threshold)
+            }
+
+            override fun onStartTrackingTouch(sb: SeekBar) {}
+            override fun onStopTrackingTouch(sb: SeekBar) {}
+        })
+    }
+
+    private fun progressToThreshold(progress: Int): Float =
+        BARGE_MATCH_MIN + (BARGE_MATCH_MAX - BARGE_MATCH_MIN) * progress / BARGE_MATCH_STEPS
+
+    private fun thresholdToProgress(threshold: Float): Int {
+        val span = BARGE_MATCH_MAX - BARGE_MATCH_MIN
+        val p = Math.round((threshold - BARGE_MATCH_MIN) / span * BARGE_MATCH_STEPS)
+        return p.coerceIn(0, BARGE_MATCH_STEPS)
+    }
+
+    private fun updateBargeMatchLabel(threshold: Float) {
+        val descriptor = when {
+            threshold < 0.40f -> R.string.barge_match_lenient
+            threshold <= 0.60f -> R.string.barge_match_balanced
+            else -> R.string.barge_match_strict
+        }
+        bargeMatchValue.text = getString(
+            R.string.barge_match_value, String.format("%.2f", threshold), getString(descriptor)
+        )
     }
 
     private fun updateVoiceIdUi() {

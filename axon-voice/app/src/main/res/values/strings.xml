@@ -45,4 +45,10 @@
     <string name="voice_id_not_enrolled">Not enrolled — wake word and barge-in use sound/keyword match only</string>
     <string name="voice_id_failed">Enrollment failed — try again somewhere quieter</string>
     <string name="voice_id_cleared">Voice ID cleared</string>
+    <string name="barge_match_title">Barge-in voice match</string>
+    <string name="barge_match_description">How closely a mid-reply interruption must match your enrolled voice before Axon stops to listen. Lower it if Axon ignores your real interruptions; raise it if other voices cut in. Only applies while Voice ID is enrolled.</string>
+    <string name="barge_match_value">Strictness: %1$s — %2$s</string>
+    <string name="barge_match_lenient">Lenient</string>
+    <string name="barge_match_balanced">Balanced</string>
+    <string name="barge_match_strict">Strict</string>
 </resources>

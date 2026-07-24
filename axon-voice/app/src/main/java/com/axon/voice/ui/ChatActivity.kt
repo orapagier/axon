@@ -590,7 +590,7 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
                 readFrame = { f -> fillBargeFrame(rec, f, gen) },
                 onTentative = { player?.duck() },
                 onFalseAlarm = { player?.restoreVolume() },
-                verifySpeaker = speakerVerifier(speakerEmbedder, voiceprint),
+                verifySpeaker = speakerVerifier(speakerEmbedder, voiceprint, prefs.bargeMatchThreshold),
                 onConfirmed = { preroll ->
                     confirmed = true
                     main.post { onBargeConfirmed(gen, preroll) }

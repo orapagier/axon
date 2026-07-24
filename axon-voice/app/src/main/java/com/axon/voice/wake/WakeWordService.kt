@@ -704,7 +704,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
                     readFrame = { f -> fillFrame(rec, f) },
                     onTentative = { p.duck() },
                     onFalseAlarm = { p.restoreVolume() },
-                    verifySpeaker = speakerVerifier(speakerEmbedder, voiceprint),
+                    verifySpeaker = speakerVerifier(speakerEmbedder, voiceprint, prefs.bargeMatchThreshold),
                     onConfirmed = { preroll ->
                         val spoken = stream.spokenSoFar()
                         stream.abort() // cut the TTS mid-sentence

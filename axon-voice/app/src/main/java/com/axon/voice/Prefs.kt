@@ -1,6 +1,7 @@
 package com.axon.voice
 
 import android.content.Context
+import com.axon.voice.audio.SPEAKER_SIMILARITY_THRESHOLD
 import java.net.URLEncoder
 import java.util.UUID
 
@@ -27,6 +28,22 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("wake_enabled", false)
         set(v) {
             sp.edit().putBoolean("wake_enabled", v).apply()
+        }
+
+    /** Cosine-similarity cutoff a mid-reply interruption's voice must clear
+     *  against the enrolled voiceprint before it counts as a real barge-in
+     *  (see [com.axon.voice.audio.speakerVerifier]). Lower = easier for your
+     *  own voice to interrupt (but lets more of other people's through);
+     *  higher = stricter. User-tweakable in Settings because the right value
+     *  depends on mic/room/voice and the [SPEAKER_SIMILARITY_THRESHOLD]
+     *  default was never calibrated on real hardware. Read fresh at the start
+     *  of every reply's barge monitor, so a change takes effect on the next
+     *  reply with no restart. Only has any effect while a voiceprint is
+     *  enrolled — barge-in is energy-only otherwise. */
+    var bargeMatchThreshold: Float
+        get() = sp.getFloat("barge_match_threshold", SPEAKER_SIMILARITY_THRESHOLD)
+        set(v) {
+            sp.edit().putFloat("barge_match_threshold", v).apply()
         }
 
     /** The chat thread id, shared by the Chat page and the "Hey Axon" wake
