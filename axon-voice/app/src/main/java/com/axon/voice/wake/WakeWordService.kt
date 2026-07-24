@@ -265,7 +265,12 @@ class WakeWordService : Service(), ChatSocket.Listener {
         // was trained on — NS/AEC strip the quiet, far-field wake word right
         // out (regression from fe4e1fe). Follow-up self-echo is handled by the
         // settle + drain + 3-tick gate below, not by mangling the capture.
-        rec.startRecording()
+        try {
+            rec.startRecording()
+        } catch (_: Exception) {
+            rec.release()
+            return null
+        }
         return rec
     }
 

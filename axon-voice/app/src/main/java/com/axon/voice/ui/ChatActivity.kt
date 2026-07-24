@@ -564,8 +564,15 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
     private fun startBargeMonitor(gen: Int) {
         bargeDetector.tune(prefs.bargeMargin.toDouble(), prefs.bargeOnsetTicks)
         bargeDetector.reset()
+        val serviceWasListening = WakeWordService.running
         WakeWordService.micHold = true
         thread(name = "axon-chat-barge") {
+            // Give the wake service a beat to release the shared microphone —
+            // the same race startDictation() guards against. Skipping this let
+            // openBargeRecord() race the service's still-open AudioRecord: it
+            // could fail to open at all (barge-in silently not engaging that
+            // reply) or throw out of startRecording().
+            if (serviceWasListening) Thread.sleep(300)
             val rec = openBargeRecord()
             if (rec == null) {
                 WakeWordService.micHold = false
@@ -615,7 +622,17 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
             rec.release()
             return null
         }
-        rec.startRecording()
+        // A mic that's still busy (the wake service's own AudioRecord hasn't
+        // let go yet) can make startRecording() throw rather than just fail to
+        // initialize. Uncaught, that's an IllegalStateException on a
+        // background thread — which crashes the whole app, not just this
+        // reply's barge monitor.
+        try {
+            rec.startRecording()
+        } catch (_: Exception) {
+            rec.release()
+            return null
+        }
         return rec
     }
 
