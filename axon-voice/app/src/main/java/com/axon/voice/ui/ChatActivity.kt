@@ -558,6 +558,9 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
      *  reply's [speakGen] snapshot: the monitor stops the instant it no
      *  longer matches, whether that's a natural end or an abort. */
     private fun startBargeMonitor(gen: Int) {
+        bargeDetector.tune(
+            prefs.bargeMargin.toDouble(), prefs.bargeOnsetTicks, prefs.bargeSpeechThreshold.toDouble()
+        )
         bargeDetector.reset()
         WakeWordService.micHold = true
         thread(name = "axon-chat-barge") {

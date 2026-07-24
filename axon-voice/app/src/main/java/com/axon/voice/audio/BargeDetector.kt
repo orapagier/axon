@@ -59,12 +59,39 @@ package com.axon.voice.audio
  */
 class BargeDetector(
     private val absFloor: Double = SilenceWatcher.FOLLOWUP_RMS,
-    private val margin: Double = MARGIN,
-    private val minOnsetTicks: Int = MIN_ONSET_TICKS,
+    margin: Double = MARGIN,
+    minOnsetTicks: Int = MIN_ONSET_TICKS,
     private val falseAlarmTicks: Int = FALSE_ALARM_TICKS,
     private val onsetMissGrace: Int = ONSET_MISS_GRACE,
+    flatnessMax: Double = FLATNESS_MAX,
+    zcrMax: Double = ZCR_MAX,
 ) {
     enum class Event { NONE, TENTATIVE, CONFIRMED, FALSE_ALARM }
+
+    // Runtime-tunable via [tune] (user settings, read fresh each reply). Start
+    // at the constructor values, which default to the companion constants.
+    private var margin = margin
+    private var minOnsetTicks = minOnsetTicks
+    private var flatnessMax = flatnessMax
+    private var zcrMax = zcrMax
+
+    /** Apply user settings for the upcoming reply. Deliberately does NOT touch
+     *  the learned [gain] (that stays valid across replies in the same room) —
+     *  callers pair this with [reset], which clears only per-turn state. */
+    @Synchronized
+    fun tune(margin: Double, minOnsetTicks: Int, speechThreshold: Double) {
+        this.margin = margin
+        this.minOnsetTicks = minOnsetTicks
+        // One user-facing "cough/clap filter" knob drives both shape ceilings.
+        this.flatnessMax = speechThreshold
+        this.zcrMax = speechThreshold
+    }
+
+    /** True when a tick's shape reads as voiced speech rather than a broadband
+     *  burst. Requires BOTH features to look speech-like (stricter than either
+     *  alone). Thresholds are [flatnessMax]/[zcrMax], tunable via [tune]. */
+    private fun looksLikeSpeech(flatness: Double, zcr: Double): Boolean =
+        flatness < flatnessMax && zcr < zcrMax
 
     companion object {
         /** How far above the learned echo level the mic must read to count as a
@@ -119,17 +146,9 @@ class BargeDetector(
         const val FLATNESS_MAX = 0.35
 
         /** Zero-crossing-rate ceiling for [looksLikeSpeech]. Same voiced-vs-burst
-         *  split as [FLATNESS_MAX]. Unvalidated — calibrate from [diagnostics]. */
+         *  split as [FLATNESS_MAX]. Unvalidated — calibrate from [diagnostics].
+         *  Default only; the live value is tunable via [tune]. */
         const val ZCR_MAX = 0.35
-
-        /** True when a tick's shape reads as voiced speech rather than a
-         *  broadband burst. Requires BOTH features to look speech-like (stricter
-         *  than either alone) — deliberately conservative about calling
-         *  something "not speech", since the state machine already tolerates an
-         *  occasional misclassified tick mid-interruption (see [onsetMissGrace])
-         *  but does NOT tolerate a cough being let all the way through. */
-        fun looksLikeSpeech(flatness: Double, zcr: Double): Boolean =
-            flatness < FLATNESS_MAX && zcr < ZCR_MAX
     }
 
     private var playRef = 0.0

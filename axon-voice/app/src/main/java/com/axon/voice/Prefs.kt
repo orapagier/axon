@@ -42,6 +42,40 @@ class Prefs(ctx: Context) {
             sp.edit().putBoolean("barge_in_enabled", v).apply()
         }
 
+    // ── Barge-in tuning ──────────────────────────────────────────────────────
+    // Optional per-device/room adjustments layered on the self-calibrating
+    // detector. Defaults equal BargeDetector's own constants, so an untouched
+    // install behaves exactly as before. All are read fresh at the start of each
+    // reply's barge monitor (no restart needed) and clamped to safe ranges.
+
+    /** Echo-rejection margin: how far over the learned echo the mic must read to
+     *  start ducking. Lower = more sensitive (easier to interrupt), higher =
+     *  stricter. Default = BargeDetector.MARGIN (2.0). */
+    var bargeMargin: Float
+        get() = sp.getFloat("barge_margin", 2.0f).coerceIn(1.2f, 3.0f)
+        set(v) { sp.edit().putFloat("barge_margin", v).apply() }
+
+    /** Speech-shape gate ceiling (spectral flatness + zero-crossing rate) that
+     *  rejects loud non-speech bursts (coughs, claps, pops). Lower = stricter
+     *  (more is filtered out). Default = BargeDetector.FLATNESS_MAX (0.35). */
+    var bargeSpeechThreshold: Float
+        get() = sp.getFloat("barge_speech_threshold", 0.35f).coerceIn(0.20f, 0.50f)
+        set(v) { sp.edit().putFloat("barge_speech_threshold", v).apply() }
+
+    /** Interrupt hold: consecutive ~100ms speech ticks required to confirm a
+     *  barge-in. Higher = you must keep talking longer to interrupt. Default =
+     *  BargeDetector.MIN_ONSET_TICKS (3 ≈ 300ms). */
+    var bargeOnsetTicks: Int
+        get() = sp.getInt("barge_onset_ticks", 3).coerceIn(1, 8)
+        set(v) { sp.edit().putInt("barge_onset_ticks", v).apply() }
+
+    /** Follow-up window: ~100ms ticks the mic stays open after a spoken reply
+     *  before the hands-free exchange ends. Higher = longer to start answering.
+     *  Default = SilenceWatcher.NO_SPEECH_TICKS (50 ≈ 5s). */
+    var followupWindowTicks: Int
+        get() = sp.getInt("followup_window_ticks", 50).coerceIn(30, 150)
+        set(v) { sp.edit().putInt("followup_window_ticks", v).apply() }
+
     /** The chat thread id, shared by the Chat page and the "Hey Axon" wake
      *  service so hands-free exchanges land in the same conversation (history,
      *  agent context, dashboard thread) as typed and push-to-talk messages.

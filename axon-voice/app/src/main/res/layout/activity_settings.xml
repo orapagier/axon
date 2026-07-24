@@ -126,5 +126,15 @@
             android:text="@string/barge_enable_description"
             android:textColor="@color/text_dim"
             android:textSize="12sp" />
+
+        <!-- Optional barge-in tuning sliders, built programmatically in
+             SettingsActivity.buildBargeTuners(). Each persists on change and
+             takes effect on the next reply. -->
+        <LinearLayout
+            android:id="@+id/bargeTuneContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginTop="8dp" />
     </LinearLayout>
 </ScrollView>

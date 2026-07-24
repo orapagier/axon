@@ -450,8 +450,13 @@ class WakeWordService : Service(), ChatSocket.Listener {
                     SilenceWatcher()
                 } else {
                     // The onset requirement is the shared default now; the
-                    // follow-up window only still raises the level bar.
-                    SilenceWatcher(speechRms = SilenceWatcher.FOLLOWUP_RMS)
+                    // follow-up window still raises the level bar, and its length
+                    // (how long to wait for the user to start answering) is a
+                    // user setting so it doesn't close before they respond.
+                    SilenceWatcher(
+                        speechRms = SilenceWatcher.FOLLOWUP_RMS,
+                        noSpeechTicks = prefs.followupWindowTicks,
+                    )
                 }
                 wav = capture(rec, watcher)
             }
@@ -690,8 +695,12 @@ class WakeWordService : Service(), ChatSocket.Listener {
             synchronized(replyLock) { replyStream = null }
             return BargeOutcome(false)
         }
-        // Fresh reply: forget the last one's ducked/tentative state, but keep
-        // the self-calibrated echo gain — it's still the same device and room.
+        // Fresh reply: apply the user's current tuning, then forget the last
+        // one's ducked/tentative state (keeping the self-calibrated echo gain —
+        // it's still the same device and room).
+        bargeDetector.tune(
+            prefs.bargeMargin.toDouble(), prefs.bargeOnsetTicks, prefs.bargeSpeechThreshold.toDouble()
+        )
         bargeDetector.reset()
         // Monitor for a barge-in while the reply streams — only if the user has
         // barge-in turned on AND there's a live mic to listen with. Off (or
@@ -742,6 +751,29 @@ class WakeWordService : Service(), ChatSocket.Listener {
     }
 
     // ── Chat plumbing ───────────────────────────────────────────────────────
+
+    /** A dropped socket won't have its in-flight run redelivered on reconnect —
+     *  the server binds a run to the socket it started on — so a reply left
+     *  awaiting would otherwise freeze the hands-free orb until the 310s latch
+     *  backstop in [awaitStreamBlocking] finally fires. Release it now instead:
+     *  OkHttp's 25s pingInterval surfaces even a half-open mobile socket here
+     *  within ~25-50s, so [interact] sees a blank reply + error and ends the
+     *  exchange promptly (VoiceOverlay back to IDLE). No-op when nothing is
+     *  awaiting (idle wake-word listening) — [ChatSocket] just reconnects and
+     *  the conversation was never mid-reply to begin with. */
+    override fun onWsDisconnected() {
+        synchronized(replyLock) {
+            if (replyLatch == null) return // idle: nothing to unstick
+            if (replyError == null) replyError = "Connection lost before the reply finished."
+            replyStream?.abort()
+            replyStream = null
+        }
+        player?.stop()
+        synchronized(replyLock) {
+            replyLatch?.countDown()
+            replyLatch = null
+        }
+    }
 
     override fun onWsEvent(ev: JSONObject) {
         when (ev.optString("type")) {

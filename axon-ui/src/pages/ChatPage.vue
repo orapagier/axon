@@ -16,6 +16,7 @@ import {
   WAKE_ACKS,
 } from '../lib/voiceprompts.js'
 import { buildTtsEnvelope, readLevel, readSpectralFlatness, readZeroCrossingRate } from '../lib/audioLevel.js'
+import { loadVoiceTuning, saveVoiceTuning, VOICE_TUNING_RANGES, VOICE_TUNING_DEFAULTS } from '../lib/voiceTuning.js'
 import SearchInput from '../components/SearchInput.vue'
 import VoiceOrb from '../components/VoiceOrb.vue'
 
@@ -35,6 +36,31 @@ const starterPrompts = [
 let currentRunId = null
 let agentIdx = -1 // index in messages[] of the in-progress agent msg
 let traceIdx = -1 // index of the trace block preceding it
+let runWatchdog = null // unsticks a run whose terminal 'done'/'error' never arrives
+
+// A run locks the UI until its 'done'/'error' arrives, but the server binds a
+// run to the socket it started on: if that socket drops (a mobile network blip,
+// a half-open connection that never fires onclose), reconnecting yields a fresh
+// socket that the old run is not attached to, so its terminal event is never
+// redelivered — the UI would spin on "Thinking…" forever. This inactivity
+// watchdog is the backstop: every run event refreshes it (see handleWsEvent),
+// so it only fires when the stream has gone genuinely silent, well past any
+// normal gap between events but far short of forever. Server run cap is 300s;
+// a live run streams status/tool/token events throughout, so 90s of total
+// silence means the stream is dead, not slow.
+const RUN_INACTIVITY_MS = 90000
+function armRunWatchdog() {
+  clearTimeout(runWatchdog)
+  runWatchdog = setTimeout(onRunStalled, RUN_INACTIVITY_MS)
+}
+function clearRunWatchdog() {
+  clearTimeout(runWatchdog)
+  runWatchdog = null
+}
+function onRunStalled() {
+  if (!disabled.value) return
+  abandonRun('No response — the connection may have dropped. Please try again.', 'interrupted — timed out')
+}
 
 // Conversation threads (ChatGPT-style). Each thread has its own session_id, so
 // the agent only sees that thread's history; long-term memory stays shared.
@@ -124,6 +150,28 @@ function resetRunTrackers() {
   currentRunId = null
   agentIdx = -1
   traceIdx = -1
+  clearRunWatchdog()
+}
+
+// Resolve a run that ended without a clean 'done' (socket dropped mid-run, the
+// watchdog tripped): unlock the composer, mark the bubble, retire any read-
+// aloud, and — crucially — recover hands-free, which the older wsStatus watcher
+// left stuck on the "Thinking…" orb because handsFreePhase never changed again.
+function abandonRun(bubbleText, metaText) {
+  if (agentIdx >= 0) {
+    const m = messages.value[agentIdx]
+    m.thinking = false
+    m.status = ''
+    if (!m.text) m.text = bubbleText
+    else m.meta = metaText
+  }
+  speakReplyOnDone = false
+  abortStreamingSpeech()
+  stopPrompt()
+  collapseTrace()
+  resetRunTrackers()
+  disabled.value = false
+  if (handsFreeActive.value) endHandsFree()
 }
 
 async function loadConversations() {
@@ -222,6 +270,10 @@ function prettyStatus(text) {
 
 function handleWsEvent(ev) {
   if (!currentRunId && ev.run_id) currentRunId = ev.run_id
+  // Any event for the live run means the stream is alive — push the stall
+  // watchdog back out. (Terminal events also refresh here, then clear it via
+  // resetRunTrackers in their case below; order is harmless.)
+  if (disabled.value && ev.run_id && ev.run_id === currentRunId) armRunWatchdog()
 
   switch (ev.type) {
     case 'thinking':
@@ -455,6 +507,7 @@ async function sendMessage(msg, voice, taskPrefix = '') {
 
   messages.value.push({ role: 'user', text: msg })
   disabled.value = true
+  armRunWatchdog()
 
   // Add trace block (expanded while the run streams) then agent bubble
   messages.value.push({ role: 'trace', trace: [], collapsed: false })
@@ -940,20 +993,36 @@ function startFollowupCapture() {
     wake.watchSilence((hadSpeech) => {
       stopRecording(!hadSpeech)
       if (!hadSpeech) endHandsFree()
-    }, FOLLOWUP_CAPTURE)
+      // Follow-up window length is user-tunable so it doesn't close before the
+      // user starts answering (a common "it just stopped" cause on mobile).
+    }, { ...FOLLOWUP_CAPTURE, noSpeechTicks: voiceTuning.value.followupTicks })
   }, 250)
 }
 
+// A brief blur — a pulled-down notification shade, the app switcher, a
+// lock-then-immediate-unlock — fires 'hidden' too, and tearing hands-free down
+// on it is exactly the "it just stopped even though I didn't touch anything"
+// the user hit on mobile. Only release the mic if the page stays hidden past a
+// short grace window; a quick return cancels the teardown and resumes seamlessly.
+let hiddenTimer = null
+const HIDDEN_GRACE_MS = 2500
 function onVisibilityChange() {
   if (!wakeEnabled.value) return
   if (document.hidden) {
-    // Release the mic in the background: the OS indicator turns off and the
-    // battery is spared; listening resumes when the tab returns.
-    if (recState.value === 'recording' && wake?.running) stopRecording(true)
-    wake?.stop()
-    endHandsFree()
-  } else if (wakeState.value === 'off') {
-    startWake()
+    clearTimeout(hiddenTimer)
+    hiddenTimer = setTimeout(() => {
+      hiddenTimer = null
+      if (!document.hidden) return // came back during the grace window
+      // Genuinely backgrounded: release the mic (OS indicator off, battery
+      // spared). Listening resumes when the tab returns.
+      if (recState.value === 'recording' && wake?.running) stopRecording(true)
+      wake?.stop()
+      endHandsFree()
+    }, HIDDEN_GRACE_MS)
+  } else {
+    clearTimeout(hiddenTimer)
+    hiddenTimer = null
+    if (wakeState.value === 'off') startWake()
   }
 }
 
@@ -1090,8 +1159,38 @@ function stopSpeaking() {
 // immediately, seeded with nothing lost — the user was mid-sentence already.
 // One long-lived detector for the page's lifetime so its learned echo gain
 // only gets more accurate the longer it listens to this device's speakers.
-const barge = createBargeDetector()
+// Per-device barge-in tuning (localStorage — acoustic, so client-local). The
+// tuning modal edits this; changes persist and rebuild the detector so they
+// apply to the next reply. margin + onset feed the detector at construction;
+// speechThreshold + followupTicks are read live (bargeTick / startFollowupCapture).
+const voiceTuning = ref(loadVoiceTuning())
+const tuningOpen = ref(false)
+let barge = createBargeDetector({
+  margin: voiceTuning.value.margin,
+  minOnsetTicks: voiceTuning.value.onsetTicks,
+})
 let bargeTimer = null
+
+function applyVoiceTuning() {
+  saveVoiceTuning(voiceTuning.value)
+  // The detector reads margin/onset at construction, so rebuild to apply them.
+  // Only its learned echo gain is lost — it re-converges within a few seconds of
+  // the next reply, and tuning changes are rare.
+  barge = createBargeDetector({
+    margin: voiceTuning.value.margin,
+    minOnsetTicks: voiceTuning.value.onsetTicks,
+  })
+}
+
+function resetVoiceTuning() {
+  voiceTuning.value = { ...VOICE_TUNING_DEFAULTS }
+  applyVoiceTuning()
+}
+
+const filterLabel = computed(() => {
+  const v = voiceTuning.value.speechThreshold
+  return v <= 0.27 ? 'strict' : v >= 0.43 ? 'lenient' : 'balanced'
+})
 
 // Whichever mechanism is currently reading a reply aloud, ducked/restored
 // uniformly. speechSynthesis (the last-resort browser voice) is deliberately
@@ -1129,10 +1228,14 @@ function bargeTick() {
   // advances the onset when it's shaped like voiced speech — otherwise a
   // cough or a mic pop is just as "loud" as a real interruption and would
   // confirm on energy alone.
-  const speechShaped = looksLikeSpeech({
-    flatness: readSpectralFlatness(analyser),
-    zcr: readZeroCrossingRate(analyser),
-  })
+  const speechShaped = looksLikeSpeech(
+    {
+      flatness: readSpectralFlatness(analyser),
+      zcr: readZeroCrossingRate(analyser),
+    },
+    // One user "cough/clap filter" knob drives both shape ceilings (read live).
+    { flatnessMax: voiceTuning.value.speechThreshold, zcrMax: voiceTuning.value.speechThreshold }
+  )
   barge.feedPlayback(playRms == null ? -1 : playRms)
   const event = barge.feedMic(micRms, speechShaped)
   if (event === BargeEvent.TENTATIVE) {
@@ -1678,6 +1781,8 @@ onUnmounted(() => {
   unsubscribeWs?.()
   window.removeEventListener('keydown', onWindowKeydown)
   document.removeEventListener('visibilitychange', onVisibilityChange)
+  clearTimeout(hiddenTimer)
+  clearRunWatchdog()
   stopRecording(true)
   wake?.stop()
   clearInterval(recTimer)
@@ -1686,19 +1791,13 @@ onUnmounted(() => {
 
 watch(messages, () => scrollBottom(), { deep: true })
 watch(wsStatus, (s) => {
-  // If the socket drops mid-run the 'done' event never arrives; unlock the
-  // input and mark the response as interrupted instead of spinning forever.
+  // If the socket drops mid-run the 'done' event never arrives (the server
+  // binds the run to the old socket and won't redeliver on reconnect); unlock
+  // the input, recover hands-free, and mark the response interrupted instead of
+  // spinning forever. Only fires when onclose actually fired — a half-open
+  // socket that never closes is caught by the run watchdog instead.
   if (s === 'disconnected' && disabled.value) {
-    if (agentIdx >= 0) {
-      const m = messages.value[agentIdx]
-      m.thinking = false
-      m.status = ''
-      if (!m.text) m.text = 'Connection lost before a response arrived. Please try again.'
-      else m.meta = 'interrupted — connection lost'
-    }
-    collapseTrace()
-    resetRunTrackers()
-    disabled.value = false
+    abandonRun('Connection lost before a response arrived. Please try again.', 'interrupted — connection lost')
   }
 })
 watch(input, () => nextTick(adjustInputHeight))
@@ -2216,6 +2315,23 @@ watch(disabled, (newVal) => {
             </svg>
           </button>
           <button
+            v-if="wakeSupported"
+            class="btn-mic btn-wake-tune"
+            type="button"
+            title="Voice & barge-in tuning"
+            @click="tuningOpen = true"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2" />
+              <path
+                d="M12 2v3M12 19v3M2 12h3M19 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+            </svg>
+          </button>
+          <button
             v-if="micSupported"
             class="btn-mic"
             :class="{ 'is-recording': recState === 'recording' }"
@@ -2326,6 +2442,94 @@ watch(disabled, (newVal) => {
             v-if="wakeState === 'listening'"
             class="hint"
           >Say “Hey Axon” to talk</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Voice & barge-in tuning (per-device, localStorage — see voiceTuning.js) -->
+    <div
+      v-if="tuningOpen"
+      class="tune-backdrop"
+      @click.self="tuningOpen = false"
+    >
+      <div
+        class="tune-modal"
+        role="dialog"
+        aria-label="Voice and barge-in tuning"
+      >
+        <div class="tune-head">
+          <h3>Voice &amp; barge-in tuning</h3>
+          <button
+            class="tune-close"
+            title="Close"
+            @click="tuningOpen = false"
+          >✕</button>
+        </div>
+        <p class="tune-note">
+          For talking over spoken replies. Saved on this device; applies to the next reply.
+        </p>
+
+        <label class="tune-row">
+          <span class="tune-label">Interrupt sensitivity <em>{{ voiceTuning.margin.toFixed(1) }}×</em></span>
+          <input
+            type="range"
+            :min="VOICE_TUNING_RANGES.margin[0]"
+            :max="VOICE_TUNING_RANGES.margin[1]"
+            step="0.1"
+            v-model.number="voiceTuning.margin"
+            @change="applyVoiceTuning"
+          />
+          <span class="tune-hint">Lower = easier to interrupt</span>
+        </label>
+
+        <label class="tune-row">
+          <span class="tune-label">Cough / clap filter <em>{{ filterLabel }}</em></span>
+          <input
+            type="range"
+            :min="VOICE_TUNING_RANGES.speechThreshold[0]"
+            :max="VOICE_TUNING_RANGES.speechThreshold[1]"
+            step="0.01"
+            v-model.number="voiceTuning.speechThreshold"
+            @change="applyVoiceTuning"
+          />
+          <span class="tune-hint">Lower = filter more non-speech (coughs, claps, pops)</span>
+        </label>
+
+        <label class="tune-row">
+          <span class="tune-label">Talk-over hold <em>{{ (voiceTuning.onsetTicks / 10).toFixed(1) }}s</em></span>
+          <input
+            type="range"
+            :min="VOICE_TUNING_RANGES.onsetTicks[0]"
+            :max="VOICE_TUNING_RANGES.onsetTicks[1]"
+            step="1"
+            v-model.number="voiceTuning.onsetTicks"
+            @change="applyVoiceTuning"
+          />
+          <span class="tune-hint">How long you must keep talking to interrupt</span>
+        </label>
+
+        <label class="tune-row">
+          <span class="tune-label">Follow-up window <em>{{ Math.round(voiceTuning.followupTicks / 10) }}s</em></span>
+          <input
+            type="range"
+            :min="VOICE_TUNING_RANGES.followupTicks[0]"
+            :max="VOICE_TUNING_RANGES.followupTicks[1]"
+            step="10"
+            v-model.number="voiceTuning.followupTicks"
+            @change="applyVoiceTuning"
+          />
+          <span class="tune-hint">How long the mic stays open after a reply before it stops listening</span>
+        </label>
+
+        <div class="tune-actions">
+          <button
+            class="tune-reset"
+            @click="resetVoiceTuning"
+          >Reset to defaults</button>
+          <button
+            class="tune-done"
+            @click="tuningOpen = false"
+          >Done</button>
         </div>
       </div>
     </div>
@@ -2875,5 +3079,114 @@ watch(disabled, (newVal) => {
   .chat-msg.agent .msg-speak {
     opacity: 0.55;
   }
+}
+
+/* ── Voice & barge-in tuning modal ─────────────────────────────────────────── */
+.btn-wake-tune {
+  opacity: 0.7;
+}
+.btn-wake-tune:hover {
+  opacity: 1;
+}
+.tune-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.5);
+}
+.tune-modal {
+  width: 100%;
+  max-width: 420px;
+  max-height: 90vh;
+  overflow-y: auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 20px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+}
+.tune-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.tune-head h3 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--accent);
+}
+.tune-close {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+.tune-close:hover {
+  color: var(--text);
+}
+.tune-note {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.tune-row {
+  display: block;
+  margin-top: 16px;
+}
+.tune-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+.tune-label em {
+  font-style: normal;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.tune-row input[type='range'] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+.tune-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.tune-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 22px;
+}
+.tune-reset,
+.tune-done {
+  border-radius: var(--r-md);
+  padding: 8px 16px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.tune-reset {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+}
+.tune-reset:hover {
+  color: var(--text);
+}
+.tune-done {
+  border: none;
+  background: var(--accent);
+  color: var(--bg);
+  font-weight: 600;
 }
 </style>

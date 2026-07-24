@@ -7,6 +7,7 @@ import android.view.Gravity
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
@@ -68,6 +69,7 @@ class SettingsActivity : AppCompatActivity() {
         val bargeSwitch = findViewById<Switch>(R.id.bargeEnabledSwitch)
         bargeSwitch.isChecked = prefs.bargeInEnabled
         bargeSwitch.setOnCheckedChangeListener { _, checked -> prefs.bargeInEnabled = checked }
+        buildBargeTuners()
 
         serverUrl.setText(prefs.baseUrl)
         masterKey.setText(prefs.masterKey)
@@ -269,6 +271,64 @@ class SettingsActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    // ── Barge-in tuning sliders ─────────────────────────────────────────────
+    // Persist on change (read fresh per reply, no save button needed). Values
+    // are stored raw in Prefs; the SeekBars use scaled integers.
+    private fun buildBargeTuners() {
+        val c = findViewById<LinearLayout>(R.id.bargeTuneContainer)
+        // Sensitivity via echo margin (stored ×10): 1.2..3.0×. Lower = more sensitive.
+        addSlider(c, R.string.barge_tune_sensitivity, 12, 30, (prefs.bargeMargin * 10).toInt(),
+            { p -> "%.1f×".format(p / 10f) }) { p -> prefs.bargeMargin = p / 10f }
+        // Cough/clap filter via speech-shape ceiling (stored ×100): 0.20..0.50. Lower = stricter.
+        addSlider(c, R.string.barge_tune_filter, 20, 50, (prefs.bargeSpeechThreshold * 100).toInt(),
+            { p -> if (p <= 27) "strict" else if (p >= 43) "lenient" else "balanced" }) { p ->
+            prefs.bargeSpeechThreshold = p / 100f
+        }
+        // Interrupt hold (onset ticks): 1..8 → 0.1..0.8s.
+        addSlider(c, R.string.barge_tune_hold, 1, 8, prefs.bargeOnsetTicks,
+            { p -> "%.1fs".format(p / 10f) }) { p -> prefs.bargeOnsetTicks = p }
+        // Follow-up window (ticks): 30..150 → 3..15s.
+        addSlider(c, R.string.barge_tune_followup, 30, 150, prefs.followupWindowTicks,
+            { p -> "${p / 10}s" }) { p -> prefs.followupWindowTicks = p }
+    }
+
+    private fun addSlider(
+        parent: LinearLayout,
+        labelRes: Int,
+        min: Int,
+        max: Int,
+        current: Int,
+        format: (Int) -> String,
+        onChange: (Int) -> Unit,
+    ) {
+        val label = TextView(this).apply {
+            setTextColor(ContextCompat.getColor(context, R.color.text))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setPadding(0, dp(14), 0, 0)
+        }
+        fun render(p: Int) {
+            label.text = "${getString(labelRes)}:  ${format(p)}"
+        }
+        val start = current.coerceIn(min, max)
+        render(start)
+        parent.addView(label)
+        parent.addView(SeekBar(this).apply {
+            this.max = max
+            this.min = min
+            progress = start
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar, p: Int, fromUser: Boolean) {
+                    val v = p.coerceIn(min, max)
+                    render(v)
+                    onChange(v)
+                }
+
+                override fun onStartTrackingTouch(sb: SeekBar) {}
+                override fun onStopTrackingTouch(sb: SeekBar) {}
+            })
+        })
     }
 
     private fun dp(v: Int): Int =
