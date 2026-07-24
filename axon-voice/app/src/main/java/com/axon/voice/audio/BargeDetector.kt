@@ -11,16 +11,17 @@ package com.axon.voice.audio
  * been ducked down, where a real interruption keeps going and a stray echo or
  * cough does not.
  *
- * The energy/gain state machine below still matches axon-ui/src/lib/bargein.js
- * line-for-line, but the two platforms now diverge above this class: web
- * layers a cheap spectral speech-shape gate directly into `feedMic` (a
- * browser can't afford much more per 100ms tick), while Android layers a
- * heavier, stronger check — [BargeMonitor]'s `verifySpeaker` runs a CAM++
- * speaker-embedding match ([SpeakerEmbedder]) once, right as an energy-based
- * CONFIRMED fires here, rejecting anyone who isn't the enrolled user
- * ([VoicePrint]) instead of just anyone who isn't speech-shaped. This class
- * itself is unchanged either way — same convention as [SilenceWatcher] /
- * wakeword.js:
+ * The energy/gain state machine below is the same shape as
+ * axon-ui/src/lib/bargein.js, but the two platforms now diverge: web layers a
+ * cheap spectral speech-shape gate directly into `feedMic` (a browser can't
+ * afford much more per 100ms tick), while Android layers a heavier, stronger
+ * check — [BargeMonitor]'s `verifySpeaker` runs a CAM++ speaker-embedding
+ * match ([SpeakerEmbedder]) once, right as an energy-based CONFIRMED fires
+ * here, rejecting anyone who isn't the enrolled user ([VoicePrint]) instead of
+ * just anyone who isn't speech-shaped. Android also nudges the learned echo
+ * [gain] up on a FALSE_ALARM (see [FALSE_ALARM_GAIN_BOOST]) so a low estimate
+ * can't leave the reply's volume pumping; web still relies on [learnGain]
+ * alone. Same convention as [SilenceWatcher] / wakeword.js:
  *
  * ```
  *   idle --[mic over threshold]--> tentative (caller ducks the reply)
@@ -83,6 +84,22 @@ class BargeDetector(
         const val GAIN_MIN = 0.05
         const val GAIN_MAX = 5.0
 
+        /** Multiplicative bump applied to the learned echo [gain] on every
+         *  FALSE_ALARM. A false alarm means the loud tick that made us duck
+         *  faded out once ducked — it was the reply's own echo, not a real
+         *  interruption, so the echo estimate that set the threshold was too
+         *  low. The slow per-tick [learnGain] can't fix that here: it only
+         *  runs on non-tentative quiet ticks, so once the echo is loud enough
+         *  to keep tripping TENTATIVE the detector oscillates duck<->restore
+         *  (the reply's volume audibly "pumping") and never learns its way
+         *  out. Bumping [gain] geometrically per false alarm lifts the
+         *  threshold back above the echo within a cycle or two; the slow
+         *  [learnGain] then settles it at the true ratio and it holds (kept
+         *  across replies by [reset]). Bounded and self-limiting, so one loud
+         *  transient can't slam the gain the way learning straight toward its
+         *  raw ratio would. */
+        const val FALSE_ALARM_GAIN_BOOST = 2.0
+
         /** Default prior before any learning has happened: a phone's own
          *  speaker-into-own-mic echo is typically well below unity gain. */
         const val GAIN_DEFAULT = 0.3
@@ -109,6 +126,13 @@ class BargeDetector(
     private var onsetTicks = 0
     private var quietTicks = 0
     private var missStreak = 0 // consecutive non-loud ticks since the last loud one, while tentative
+
+    /** Whether the reply was actually playing (playRef above the absolute
+     *  floor) at the tick that opened the current tentative onset. Gates the
+     *  FALSE_ALARM gain bump so a barge attempt during the silent "thinking"
+     *  phase — real speech, no echo reference at all — can never be mistaken
+     *  for an echo overshoot and mistrain the echo gain. */
+    private var onsetHadPlayback = false
 
     /** Feed a playback RMS sample (0..1); a negative value (the convention
      *  [PcmPlayback.onLevel] and the web envelope both use) means "nothing
@@ -138,6 +162,7 @@ class BargeDetector(
                 onsetTicks = 1
                 quietTicks = 0
                 missStreak = 0
+                onsetHadPlayback = playRef > absFloor
                 Event.TENTATIVE
             } else {
                 if (playRef > absFloor) learnGain(rms)
@@ -167,6 +192,15 @@ class BargeDetector(
                     tentative = false
                     onsetTicks = 0
                     quietTicks = 0
+                    // The loud onset that ducked us faded once ducked — echo,
+                    // not a real interruption. Lift the echo gain so ordinary
+                    // playback stops crossing the threshold; otherwise the
+                    // detector keeps ducking and restoring and the reply's
+                    // volume pumps. Only when the reply was actually playing at
+                    // onset (never off a thinking-phase barge attempt).
+                    if (onsetHadPlayback) {
+                        gain = (gain * FALSE_ALARM_GAIN_BOOST).coerceAtMost(GAIN_MAX)
+                    }
                     Event.FALSE_ALARM
                 } else {
                     Event.NONE
@@ -201,6 +235,7 @@ class BargeDetector(
         onsetTicks = 0
         quietTicks = 0
         missStreak = 0
+        onsetHadPlayback = false
     }
 
     private fun learnGain(micRms: Double) {
