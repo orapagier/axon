@@ -23,8 +23,10 @@ class TtsPlayer(ctx: Context) {
     companion object {
         /** Barge-in "tentative" attenuation — quiet enough that the mic can
          *  hear past the echo, not so quiet the user loses their place if it
-         *  turns out to be a false alarm and playback resumes at full volume. */
-        private const val DUCK_VOLUME = 0.15f
+         *  turns out to be a false alarm and playback resumes at full volume.
+         *  Public so the barge monitor can scale its echo reference by the same
+         *  factor while ducked (see ChatActivity.bargeOutputGain). */
+        const val DUCK_VOLUME = 0.15f
     }
 
     private var current: PcmPlayback? = null

@@ -146,6 +146,16 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
     @Volatile
     private var speakGen = 0
 
+    /** Current output attenuation applied to the reply for barge ducking (1.0
+     *  = full, [TtsPlayer.DUCK_VOLUME] while ducked). The playback level handed
+     *  to [bargeDetector] is scaled by this so its echo reference tracks what's
+     *  actually leaving the speaker — otherwise, once ducked, the threshold
+     *  stays pinned to the full-volume echo and real speech can't hold above
+     *  it. Touched from the barge monitor thread (duck/restore) and read on the
+     *  playback thread ([TtsPlayer.onLevel]), hence [Volatile]. */
+    @Volatile
+    private var bargeOutputGain = 1f
+
     /** Interruption note for the very next voice send after a barge-in — set
      *  by [onBargeConfirmed], consumed and cleared by [resetInputRow]/
      *  [stopDictation]. Empty when nothing is pending (the common case): it
@@ -186,7 +196,17 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
 
         prefs = Prefs(this)
         client = AxonClient(prefs)
-        player = TtsPlayer(this)
+        // Feed the reply's live playback level into the barge-in detector as its
+        // echo reference — the ONE thing that lets it tell the user's voice from
+        // the reply bouncing back into the mic. Without this the detector runs
+        // on a flat floor threshold: it ducks on its own echo (audible volume
+        // pumping) and can't confirm a real barge-in. Mirrors WakeWordService's
+        // wiring; scaled by bargeOutputGain so the reference drops with the reply
+        // when ducked. (This activity doesn't drive the shared voice orb from
+        // here — that's WakeWordService's job — so onLevel feeds only the detector.)
+        player = TtsPlayer(this).apply {
+            onLevel = { rms -> bargeDetector.feedPlayback(rms * bargeOutputGain) }
+        }
 
         connLabel = findViewById(R.id.connLabel)
         wakeBtn = findViewById(R.id.wakeBtn)
@@ -564,6 +584,7 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
     private fun startBargeMonitor(gen: Int) {
         bargeDetector.tune(prefs.bargeMargin.toDouble(), prefs.bargeOnsetTicks)
         bargeDetector.reset()
+        bargeOutputGain = 1f // reply starts at full volume
         val serviceWasListening = WakeWordService.running
         WakeWordService.micHold = true
         thread(name = "axon-chat-barge") {
@@ -589,8 +610,8 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
                 detector = bargeDetector,
                 wakeDetector = null, // no wake-word listener shares this mic — our own reply is playing
                 readFrame = { f -> fillBargeFrame(rec, f, gen) },
-                onTentative = { player?.duck(); Log.d("BargeDetector", "barge tentative (ducked): ${bargeDetector.diagnostics()}") },
-                onFalseAlarm = { player?.restoreVolume(); Log.d("BargeDetector", "barge false-alarm (restored): ${bargeDetector.diagnostics()}") },
+                onTentative = { bargeOutputGain = TtsPlayer.DUCK_VOLUME; player?.duck(); Log.d("BargeDetector", "barge tentative (ducked): ${bargeDetector.diagnostics()}") },
+                onFalseAlarm = { bargeOutputGain = 1f; player?.restoreVolume(); Log.d("BargeDetector", "barge false-alarm (restored): ${bargeDetector.diagnostics()}") },
                 onConfirmed = { preroll ->
                     Log.d("BargeDetector", "barge CONFIRMED: ${bargeDetector.diagnostics()}")
                     confirmed = true
