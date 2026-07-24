@@ -18,6 +18,7 @@ import androidx.core.content.ContextCompat
 import com.axon.voice.Prefs
 import com.axon.voice.R
 import com.axon.voice.api.AxonClient
+import com.axon.voice.audio.Sound
 import com.axon.voice.audio.SpeakerEmbedder
 import com.axon.voice.audio.VoicePrint
 import com.axon.voice.audio.averageEmbeddings
@@ -300,7 +301,10 @@ class SettingsActivity : AppCompatActivity() {
         // pitch/tone range across a few deliveries rather than pinning
         // verification to whatever one clip happened to sound like.
         const val ENROLL_TAKES = 5
-        const val ENROLL_TAKE_GAP_MS = 400L
+        // Long enough to clearly separate takes once the chime plays — the
+        // original 400ms gap was inaudible/easy to miss, so five takes felt
+        // like one continuous ~20s recording instead of five distinct ones.
+        const val ENROLL_TAKE_GAP_MS = 900L
     }
 
     private fun updateVoiceIdUi() {
@@ -345,7 +349,15 @@ class SettingsActivity : AppCompatActivity() {
                     recorder.start { /* fixed duration — ticks unused */ }
                     Thread.sleep(ENROLL_DURATION_MS)
                     takes.add(recorder.stop())
-                    if (take < ENROLL_TAKES) Thread.sleep(ENROLL_TAKE_GAP_MS)
+                    if (take < ENROLL_TAKES) {
+                        // Audible break between takes — the status text alone
+                        // was too easy to miss mid-sentence, so five takes felt
+                        // like one long recording. Also nudges the user to
+                        // actually pause/reset before the next take, which is
+                        // the whole point of capturing separate deliveries.
+                        Sound.chime(soft = true)
+                        Thread.sleep(ENROLL_TAKE_GAP_MS)
+                    }
                 }
                 WakeWordService.micHold = false
                 finishEnrollment(takes)

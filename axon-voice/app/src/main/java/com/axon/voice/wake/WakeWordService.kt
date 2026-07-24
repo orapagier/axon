@@ -15,12 +15,14 @@ import android.media.MediaRecorder
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.util.Log
 import com.axon.voice.Prefs
 import com.axon.voice.R
 import com.axon.voice.api.AxonClient
 import com.axon.voice.api.ChatSocket
 import com.axon.voice.audio.BargeDetector
 import com.axon.voice.audio.BargeMonitor
+import com.axon.voice.audio.SPEAKER_SIMILARITY_THRESHOLD
 import com.axon.voice.audio.Sound
 import com.axon.voice.audio.SilenceWatcher
 import com.axon.voice.audio.SpeakerEmbedder
@@ -29,6 +31,7 @@ import com.axon.voice.audio.TtsPlayer
 import com.axon.voice.audio.VoicePrint
 import com.axon.voice.audio.VoicePrompts
 import com.axon.voice.audio.WavRecorder
+import com.axon.voice.audio.cosineSimilarity
 import com.axon.voice.audio.speakerVerifier
 import com.axon.voice.ui.ChatFeed
 import com.axon.voice.ui.ChatActivity
@@ -60,6 +63,7 @@ import kotlin.math.sqrt
 class WakeWordService : Service(), ChatSocket.Listener {
 
     companion object {
+        private const val LOG_TAG = "WakeWordService"
         private const val CHANNEL = "axon_voice"
         private const val NOTIF_ID = 1
         const val ACTION_STOP = "com.axon.voice.STOP_WAKE"
@@ -77,6 +81,19 @@ class WakeWordService : Service(), ChatSocket.Listener {
          *  rather than reusing whatever internal buffer rustpotter has. ~1.6s
          *  comfortably covers the two-word phrase plus a little lead-in. */
         private const val WAKE_PREROLL_SAMPLES = WavRecorder.SAMPLE_RATE * 8 / 5
+
+        /** Diagnostic-only for now: [passesSpeakerCheck] still runs and logs
+         *  its similarity score on every wake hit, but doesn't gate whether
+         *  [interact] fires. First real-device run of this gate silenced the
+         *  wake word outright — comparing a ~1-1.5s "Hey Axon" embedding
+         *  against a voiceprint averaged from full-sentence enrollment takes
+         *  is a much noisier match than embedding-to-embedding comparisons of
+         *  similar-length clips, and this was never validated on hardware
+         *  before shipping (no device/emulator was available). Flip this back
+         *  on once logcat shows real similarity numbers for genuine attempts
+         *  vs. strangers, so the threshold (or preroll length) can be picked
+         *  from data instead of guessed twice. */
+        private const val WAKE_SPEAKER_GATE_ENABLED = false
 
         @Volatile
         var running = false
@@ -264,7 +281,10 @@ class WakeWordService : Service(), ChatSocket.Listener {
                 }
                 val score = detector.process(frame)
                 if (score >= 0f) {
-                    if (passesSpeakerCheck(wakePreroll)) {
+                    // See WAKE_SPEAKER_GATE_ENABLED: runs and logs unconditionally
+                    // right now, gates interact() only once it's proven out.
+                    val speakerOk = passesSpeakerCheck(wakePreroll)
+                    if (!WAKE_SPEAKER_GATE_ENABLED || speakerOk) {
                         interact(rec, detector)
                         drain(rec)
                     }
@@ -281,19 +301,39 @@ class WakeWordService : Service(), ChatSocket.Listener {
     /** True if nothing is enrolled (same energy/keyword-only fallback
      *  [BargeMonitor.verifySpeaker] uses), or if the enrolled voice matches
      *  [preroll] — the ~1.6s of raw mic audio leading up to and including the
-     *  phrase that just triggered rustpotter. Rejecting here means a "Hey
-     *  Axon" said by someone else (or a TV/radio) never even reaches the ack
-     *  + capture flow, the same gate the mid-reply barge-in already applies
-     *  via [awaitStreamBlocking]. */
+     *  phrase that just triggered rustpotter. Logs the raw cosine similarity
+     *  either way (see [WAKE_SPEAKER_GATE_ENABLED]) instead of going through
+     *  [speakerVerifier]'s opaque true/false, so real on-device numbers are
+     *  visible in logcat. Never lets a broken check silence the wake word
+     *  outright: any exception is logged and treated as a pass. */
     private fun passesSpeakerCheck(preroll: ArrayDeque<ShortArray>): Boolean {
-        val verify = speakerVerifier(speakerEmbedder, voiceprint) ?: return true
-        val pcm = ShortArray(preroll.sumOf { it.size })
-        var offset = 0
-        for (chunk in preroll) {
-            chunk.copyInto(pcm, offset)
-            offset += chunk.size
+        val embedder = speakerEmbedder
+        val enrolled = voiceprint
+        if (embedder == null || enrolled == null) return true
+        return try {
+            val pcm = ShortArray(preroll.sumOf { it.size })
+            var offset = 0
+            for (chunk in preroll) {
+                chunk.copyInto(pcm, offset)
+                offset += chunk.size
+            }
+            val candidate = embedder.embed(pcm)
+            if (candidate == null) {
+                Log.w(LOG_TAG, "wake speaker check: embed() returned null for ${pcm.size} samples")
+                false
+            } else {
+                val similarity = cosineSimilarity(candidate, enrolled)
+                Log.d(
+                    LOG_TAG,
+                    "wake speaker check: similarity=$similarity threshold=$SPEAKER_SIMILARITY_THRESHOLD " +
+                        "gateEnabled=$WAKE_SPEAKER_GATE_ENABLED"
+                )
+                similarity >= SPEAKER_SIMILARITY_THRESHOLD
+            }
+        } catch (e: Exception) {
+            Log.e(LOG_TAG, "wake speaker check threw — treating as a pass", e)
+            true
         }
-        return verify(pcm)
     }
 
     @SuppressLint("MissingPermission")
