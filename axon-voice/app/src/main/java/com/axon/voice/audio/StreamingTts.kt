@@ -3,6 +3,7 @@ package com.axon.voice.audio
 import com.axon.voice.api.AxonClient
 import java.io.File
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -73,11 +74,16 @@ class StreamingTts(
      *  call from any thread; the flush is sequenced behind in-flight synths. */
     fun finish() {
         if (abandoned) return
-        synth.execute {
-            val final = synchronized(lock) { takeBuffered() }
-            if (final.isNotEmpty()) synthAndEnqueue(final)
-            player.finalizeStream(stream)
-            synth.shutdown() // all synth work for this reply is done
+        try {
+            synth.execute {
+                val final = synchronized(lock) { takeBuffered() }
+                if (final.isNotEmpty()) synthAndEnqueue(final)
+                player.finalizeStream(stream)
+                synth.shutdown() // all synth work for this reply is done
+            }
+        } catch (_: RejectedExecutionException) {
+            // Executor already shut down by a prior finish()/abort(); nothing
+            // left to flush. Never crash the caller over a redundant finish.
         }
     }
 
@@ -85,9 +91,19 @@ class StreamingTts(
     fun abort() {
         abandoned = true
         synchronized(lock) { buf.setLength(0) }
-        synth.execute {
+        try {
+            synth.execute {
+                player.abortStream(stream)
+                synth.shutdown()
+            }
+        } catch (_: RejectedExecutionException) {
+            // The reply's text had already finished (finish() ran and shut the
+            // executor down) while its audio was still PLAYING — then a
+            // barge-in confirm calls abort(). This is the common case, not an
+            // error: it used to crash the barge thread with
+            // RejectedExecutionException. No synth work is in flight to
+            // sequence behind, so stop playback directly.
             player.abortStream(stream)
-            synth.shutdown()
         }
     }
 
