@@ -87,12 +87,19 @@ class BargeDetector(
          *  speaker-into-own-mic echo is typically well below unity gain. */
         const val GAIN_DEFAULT = 0.3
 
-        /** Peak-hold decay applied to the playback reference on every
-         *  [feedMic] tick that didn't see a fresh, louder [feedPlayback]
-         *  sample — smooths across the ~20ms native sampling gaps and short
-         *  inter-sentence pauses so a brief lull mid-reply doesn't read as
-         *  the echo suddenly vanishing (which would misfire a confirm). */
-        const val PLAYREF_DECAY = 0.85
+        /** Peak-hold decay applied once per [feedMic] tick regardless of how
+         *  often [feedPlayback] fires — including a genuine gap where it
+         *  doesn't fire at all, e.g. [PcmPlayback] tearing down and building a
+         *  fresh [android.media.MediaCodec] between two streamed sentences.
+         *  At the original 0.85 (~430ms half-life), that gap decayed the
+         *  reference substantially before the next sentence's own echo
+         *  arrived, so the threshold — computed from the now-artificially-low
+         *  reference — read ordinary continuing playback as loud enough to
+         *  tentatively confirm, duck, then false-alarm back a few hundred ms
+         *  later: the reply's volume visibly pumping at every sentence
+         *  boundary. 0.94 (~1.1s half-life) gives the reference enough runway
+         *  to survive a real pause without depending on decode/codec timing. */
+        const val PLAYREF_DECAY = 0.94
     }
 
     private var playRef = 0.0

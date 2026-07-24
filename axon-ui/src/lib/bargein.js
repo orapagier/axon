@@ -68,7 +68,18 @@ export const GAIN_ALPHA = 0.02 // slow EMA — learns over seconds, not one tick
 export const GAIN_MIN = 0.05
 export const GAIN_MAX = 5.0
 export const GAIN_DEFAULT = 0.3
-export const PLAYREF_DECAY = 0.85
+// Peak-hold decay applied once per feedMic tick regardless of how often
+// feedPlayback fires — including during a genuine gap where it doesn't fire
+// at all (a streamed reply's between-sentence pause while the next chunk
+// decodes). At the original 0.85 (~430ms half-life), that gap decayed the
+// reference substantially before the next sentence's own echo arrived, so
+// the threshold — computed from the now-artificially-low reference — read
+// ordinary continuing playback as loud enough to tentatively confirm,
+// duck, then false-alarm back a few hundred ms later: the reply's volume
+// visibly pumping at every sentence boundary. 0.94 (~1.1s half-life) gives
+// the reference enough runway to survive a real pause without the fix
+// depending on either side's decode/codec timing.
+export const PLAYREF_DECAY = 0.94
 
 // Unvalidated starting points, not measured against real recordings — expect
 // to retune both against actual cough/speech/noise samples once this ships.

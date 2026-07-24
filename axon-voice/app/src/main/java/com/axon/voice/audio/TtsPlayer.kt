@@ -44,6 +44,18 @@ class TtsPlayer(ctx: Context) {
     @Volatile
     var onLevel: ((Float) -> Unit)? = null
 
+    /** Last real (non-negative) level seen this stream, or -1 before any has.
+     *  Each queued sentence file's [PcmPlayback] emits -1 the instant it ends
+     *  (see its class doc), before [playNextLocked] even runs to find out
+     *  whether another sentence is queued right behind it — a real gap
+     *  between sentences and the reply having genuinely finished look
+     *  identical at that moment. [playNextLocked] re-asserts this value the
+     *  instant it decides to start the next file, so a barge-in detector
+     *  downstream of [onLevel] sees "still speaking" again immediately
+     *  instead of reading a full decode/codec-setup's worth of silence. */
+    @Volatile
+    private var lastLevel = -1f
+
     private val speechAttrs = AudioAttributes.Builder()
         .setUsage(AudioAttributes.USAGE_ASSISTANT)
         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
@@ -79,7 +91,7 @@ class TtsPlayer(ctx: Context) {
      *  too, so a bad file advances the queue just like a finished one. */
     private fun newPlayback(file: File, after: () -> Unit): PcmPlayback {
         var pb: PcmPlayback? = null
-        val p = PcmPlayback(file, speechAttrs, { l -> onLevel?.invoke(l) }) {
+        val p = PcmPlayback(file, speechAttrs, { l -> if (l >= 0f) lastLevel = l; onLevel?.invoke(l) }) {
             pb?.let { cleanup(it) }
             after()
         }
@@ -150,6 +162,7 @@ class TtsPlayer(ctx: Context) {
         synchronized(streamLock) {
             currentStream?.let { it.closed = true; it.queue.clear() }
             duckedVolume = 1f // a fresh reply always starts at full volume
+            lastLevel = -1f // no carry-over from whatever last played
             val s = Stream(onDone)
             currentStream = s
             return s
@@ -206,6 +219,13 @@ class TtsPlayer(ctx: Context) {
         // Anything still coming out of the speaker — an ack tail, a read-aloud
         // in progress — yields now that the reply can actually speak.
         stopPlayback()
+        // The previous file's PcmPlayback already emitted -1 (onEnd fires
+        // after onLevel(-1), and this call happens as a result of that onEnd)
+        // — re-assert the last real level now that we know another sentence
+        // is actually coming, so a barge-in detector downstream of onLevel
+        // sees "still speaking" again immediately rather than reading a full
+        // decode/codec-setup's worth of silence as the reply having stopped.
+        onLevel?.invoke(lastLevel)
         try {
             val pb = newPlayback(item.file) { onStreamFileDone(s) }
             current = pb
