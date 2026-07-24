@@ -67,13 +67,21 @@ class BargeDetector(
     enum class Event { NONE, TENTATIVE, CONFIRMED, FALSE_ALARM }
 
     companion object {
-        /** How far above the estimated echo level the mic must read to count as
-         *  real speech rather than the reply bouncing back. With the peak-hold
-         *  [gain] sitting at the echo ratio, ordinary echo lands at ~half the
-         *  threshold and a deliberate interruption (louder than the echo) clears
-         *  it. Fixed, not tunable — the room-dependent part is [gain], which
-         *  self-calibrates. */
-        const val MARGIN = 2.0
+        /** How far above the estimated echo level the mic must read to *start*
+         *  ducking (the tentative onset). This only has to clear ordinary echo
+         *  well enough to begin the duck-and-fade test — that test, not this
+         *  margin, is what actually rejects echo: a real interruption keeps
+         *  holding once ducked while echo fades. The mic runs with no AEC
+         *  ([WakeWordService.openRecord]), and a phone's own speaker sits closer
+         *  to its mic than the user does, so at 2.0 a normal-volume talk-over
+         *  often couldn't clear 2x the full-volume echo and never engaged the
+         *  duck at all. 1.4 keeps the peak-hold [gain] riding above steady echo
+         *  (which sits below its own recent peak) while letting an ordinary
+         *  interruption trip the first duck; false onsets from echo peaks still
+         *  fade out and are caught as [Event.FALSE_ALARM], bounded to a brief dip
+         *  by [FALSE_ALARM_COOLDOWN_TICKS]. Fixed, not tunable — the
+         *  room-dependent part is [gain], which self-calibrates. */
+        const val MARGIN = 1.4
 
         /** ~300ms at the standard 100ms tick cadence — long enough that a
          *  cough or a door-slam impulse (mirrors SPEECH_ONSET_TICKS elsewhere)
