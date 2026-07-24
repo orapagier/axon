@@ -1,125 +1,159 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:background="@color/bg"
-    android:fitsSystemWindows="true"
-    android:padding="16dp">
+    android:fitsSystemWindows="true">
 
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical">
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:padding="16dp">
 
-        <TextView
-            android:layout_width="wrap_content"
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="4dp"
-            android:text="@string/app_name"
-            android:textColor="@color/accent"
-            android:textSize="20sp"
-            android:textStyle="bold" />
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
 
-        <Space
-            android:layout_width="0dp"
-            android:layout_height="1dp"
-            android:layout_weight="1" />
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:text="@string/app_name"
+                android:textColor="@color/accent"
+                android:textSize="20sp"
+                android:textStyle="bold" />
 
-        <TextView
-            android:id="@+id/connLabel"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:textColor="@color/text_dim"
-            android:textSize="12sp"
-            android:layout_marginEnd="6dp" />
+            <Space
+                android:layout_width="0dp"
+                android:layout_height="1dp"
+                android:layout_weight="1" />
 
-        <ImageButton
-            android:id="@+id/newChatBtn"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:src="@drawable/ic_new_chat"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@string/new_conversation" />
+            <TextView
+                android:id="@+id/connLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/text_dim"
+                android:textSize="12sp"
+                android:layout_marginEnd="6dp" />
 
-        <ImageButton
-            android:id="@+id/historyBtn"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:src="@drawable/ic_history"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@string/voice_history_title" />
+            <ImageButton
+                android:id="@+id/newChatBtn"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:src="@drawable/ic_new_chat"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/new_conversation" />
 
-        <ImageButton
-            android:id="@+id/settingsBtn"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:src="@drawable/ic_settings"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@string/settings_title" />
-    </LinearLayout>
+            <ImageButton
+                android:id="@+id/historyBtn"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:src="@drawable/ic_history"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/voice_history_title" />
 
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/chatList"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:layout_marginTop="8dp"
-        android:clipToPadding="false"
-        android:paddingBottom="8dp" />
+            <ImageButton
+                android:id="@+id/settingsBtn"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:src="@drawable/ic_settings"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/settings_title" />
+        </LinearLayout>
 
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="bottom"
-        android:layout_marginTop="4dp">
-
-        <EditText
-            android:id="@+id/chatInput"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/chatList"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
             android:layout_weight="1"
-            android:minHeight="44dp"
-            android:maxLines="4"
-            android:inputType="textCapSentences|textMultiLine"
-            android:hint="@string/chat_hint"
-            android:background="@drawable/bubble"
-            android:paddingStart="14dp"
-            android:paddingEnd="14dp"
-            android:paddingTop="10dp"
-            android:paddingBottom="10dp"
-            android:textColor="@color/text"
-            android:textColorHint="@color/text_dim"
-            android:textSize="15sp"
-            android:importantForAutofill="no" />
+            android:layout_marginTop="8dp"
+            android:clipToPadding="false"
+            android:paddingBottom="8dp" />
 
-        <ImageButton
-            android:id="@+id/wakeBtn"
-            android:layout_width="44dp"
-            android:layout_height="44dp"
-            android:layout_marginStart="6dp"
-            android:src="@drawable/ic_wake"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@string/wake_toggle" />
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="bottom"
+            android:layout_marginTop="4dp">
 
-        <ImageButton
-            android:id="@+id/micBtn"
-            android:layout_width="44dp"
-            android:layout_height="44dp"
-            android:layout_marginStart="2dp"
-            android:src="@drawable/ic_mic"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@string/dictate" />
+            <EditText
+                android:id="@+id/chatInput"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:minHeight="44dp"
+                android:maxLines="4"
+                android:inputType="textCapSentences|textMultiLine"
+                android:hint="@string/chat_hint"
+                android:background="@drawable/bubble"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                android:paddingTop="10dp"
+                android:paddingBottom="10dp"
+                android:textColor="@color/text"
+                android:textColorHint="@color/text_dim"
+                android:textSize="15sp"
+                android:importantForAutofill="no" />
 
-        <ImageButton
-            android:id="@+id/sendBtn"
-            android:layout_width="44dp"
-            android:layout_height="44dp"
-            android:layout_marginStart="2dp"
-            android:src="@drawable/ic_send"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@string/send" />
+            <ImageButton
+                android:id="@+id/wakeBtn"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:layout_marginStart="6dp"
+                android:src="@drawable/ic_wake"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/wake_toggle" />
+
+            <ImageButton
+                android:id="@+id/micBtn"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:layout_marginStart="2dp"
+                android:src="@drawable/ic_mic"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/dictate" />
+
+            <ImageButton
+                android:id="@+id/sendBtn"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:layout_marginStart="2dp"
+                android:src="@drawable/ic_send"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/send" />
+        </LinearLayout>
     </LinearLayout>
-</LinearLayout>
+
+    <!-- Hands-free voice orb overlay: shown over the chat while a "Hey Axon"
+         exchange runs (VoiceOverlay / WakeWordService drive it). Tapping it
+         dismisses the visual for the current exchange. -->
+    <LinearLayout
+        android:id="@+id/voiceOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:background="@color/overlay_scrim"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone">
+
+        <com.axon.voice.ui.VoiceOrbView
+            android:id="@+id/voiceOrb"
+            android:layout_width="280dp"
+            android:layout_height="280dp" />
+
+        <TextView
+            android:id="@+id/voiceOverlayStatus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:textAllCaps="true"
+            android:letterSpacing="0.08"
+            android:textColor="@color/text_dim"
+            android:textSize="13sp" />
+    </LinearLayout>
+</FrameLayout>

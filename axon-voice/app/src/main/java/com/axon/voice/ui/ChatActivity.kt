@@ -10,6 +10,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
+import android.view.View
 import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.TextView
@@ -72,8 +73,22 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
     private lateinit var micBtn: ImageButton
     private lateinit var sendBtn: ImageButton
     private lateinit var list: RecyclerView
+    private lateinit var voiceOverlay: View
+    private lateinit var voiceOrb: VoiceOrbView
+    private lateinit var voiceOverlayStatus: TextView
     private val adapter = TranscriptAdapter()
     private val main = Handler(Looper.getMainLooper())
+
+    /** True after the user taps the orb away for the current exchange — keeps
+     *  later phase updates from re-showing it until the exchange ends (IDLE). */
+    private var overlayDismissed = false
+
+    /** Live phase/level from the wake service ([VoiceOverlay]), mirrored onto
+     *  the orb while this page is in the foreground. Invoked from service
+     *  threads, so every touch of a view is marshalled to the main thread. */
+    private val voiceListener = VoiceOverlay.Listener { phase, level ->
+        main.post { applyVoiceState(phase, level) }
+    }
 
     private var state = State.IDLE
     private var recorder: WavRecorder? = null
@@ -138,6 +153,11 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
         list.layoutManager = LinearLayoutManager(this).apply { stackFromEnd = true }
         list.adapter = adapter
 
+        voiceOverlay = findViewById(R.id.voiceOverlay)
+        voiceOrb = findViewById(R.id.voiceOrb)
+        voiceOverlayStatus = findViewById(R.id.voiceOverlayStatus)
+        voiceOverlay.setOnClickListener { dismissOverlay() }
+
         adapter.load(ChatHistory.load(this, prefs.chatSessionId))
         scrollEnd()
         ChatFeed.listener = feedListener
@@ -176,6 +196,12 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
 
     override fun onStart() {
         super.onStart()
+        // Observe the wake service's hands-free phase only while visible — the
+        // orb is a foreground affordance, and animating it off-screen would
+        // just burn battery. Sync to the current phase in case a wake landed
+        // (or is mid-flight) while this page was away.
+        VoiceOverlay.listener = voiceListener
+        applyVoiceState(VoiceOverlay.phase, -1f)
         if (!prefs.configured) {
             startActivity(Intent(this, SettingsActivity::class.java))
             return
@@ -192,11 +218,14 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
     }
 
     override fun onStop() {
+        if (VoiceOverlay.listener === voiceListener) VoiceOverlay.listener = null
+        voiceOrb.setPhase(VoiceOrbView.Phase.IDLE) // stop the animation loop
         ChatHistory.save(this, prefs.chatSessionId, adapter.snapshot())
         super.onStop()
     }
 
     override fun onDestroy() {
+        if (VoiceOverlay.listener === voiceListener) VoiceOverlay.listener = null
         if (ChatFeed.listener === feedListener) ChatFeed.listener = null
         if (state == State.RECORDING) {
             recorder?.let { runCatching { it.stop() } }
@@ -238,6 +267,47 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
         wakeBtn.setColorFilter(
             ContextCompat.getColor(this, if (active) R.color.accent else R.color.text_dim)
         )
+    }
+
+    // ── Hands-free orb overlay ──────────────────────────────────────────────
+
+    /** Reflect the wake service's current phase onto the orb. IDLE hides the
+     *  overlay and ends one exchange (clearing any dismissal); every other
+     *  phase shows it (unless the user tapped it away for this exchange) and
+     *  feeds the reactive listening level. */
+    private fun applyVoiceState(phase: VoiceOverlay.Phase, level: Float) {
+        if (phase == VoiceOverlay.Phase.IDLE) {
+            overlayDismissed = false
+            voiceOverlay.visibility = View.GONE
+            voiceOrb.setPhase(VoiceOrbView.Phase.IDLE)
+            return
+        }
+        if (overlayDismissed) return
+        voiceOverlay.visibility = View.VISIBLE
+        voiceOrb.setPhase(
+            when (phase) {
+                VoiceOverlay.Phase.LISTENING -> VoiceOrbView.Phase.LISTENING
+                VoiceOverlay.Phase.THINKING -> VoiceOrbView.Phase.THINKING
+                else -> VoiceOrbView.Phase.SPEAKING
+            }
+        )
+        voiceOverlayStatus.setText(
+            when (phase) {
+                VoiceOverlay.Phase.LISTENING -> R.string.status_recording
+                VoiceOverlay.Phase.THINKING -> R.string.status_thinking
+                else -> R.string.status_speaking
+            }
+        )
+        if (level >= 0f) voiceOrb.setLevel(level)
+    }
+
+    /** Tap-to-dismiss: hide the orb for the rest of this exchange without
+     *  cancelling it — the wake service keeps running in the background, the
+     *  reply is still spoken and saved, just without the full-screen visual. */
+    private fun dismissOverlay() {
+        overlayDismissed = true
+        voiceOverlay.visibility = View.GONE
+        voiceOrb.setPhase(VoiceOrbView.Phase.IDLE)
     }
 
     // ── Dictation ───────────────────────────────────────────────────────────

@@ -9,4 +9,7 @@
     <color name="user_bubble">#1E2E29</color>
     <color name="error">#E4A1A1</color>
     <color name="launcher_bg">#0E1513</color>
+    <!-- Hands-free voice orb (VoiceOrbView) + its full-screen scrim. -->
+    <color name="orb_glow">#57E6D2</color>
+    <color name="overlay_scrim">#E60E1513</color>
 </resources>

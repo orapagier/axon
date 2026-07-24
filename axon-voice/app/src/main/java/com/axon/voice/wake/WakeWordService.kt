@@ -27,6 +27,7 @@ import com.axon.voice.audio.VoicePrompts
 import com.axon.voice.audio.WavRecorder
 import com.axon.voice.ui.ChatFeed
 import com.axon.voice.ui.ChatActivity
+import com.axon.voice.ui.VoiceOverlay
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -150,6 +151,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
     override fun onDestroy() {
         alive = false
         running = false
+        VoiceOverlay.setPhase(VoiceOverlay.Phase.IDLE)
         chat?.close()
         chat = null
         player?.release()
@@ -285,6 +287,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
         var lastReply = ""
         while (alive && !micHold) {
             notify(getString(R.string.status_recording))
+            VoiceOverlay.setPhase(VoiceOverlay.Phase.LISTENING)
             // A wake is answered out loud; the follow-up window opens on its
             // soft chime alone — no spoken prompt. Sound.chime is asynchronous,
             // so hold here for the note (plus the settle below) and let the
@@ -314,6 +317,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
             if (!watcher.hadSpeech) break
 
             notify(getString(R.string.status_thinking))
+            VoiceOverlay.setPhase(VoiceOverlay.Phase.THINKING)
             val text = runCatching { client.transcribe(wav) }.getOrNull()
             if (text.isNullOrBlank()) break
             // A capture that is just our own voice bounced back (ack phrase or
@@ -362,6 +366,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
         previousTurns.clear()
         previousTurns.addAll(turns.takeLast(2))
         notify(getString(R.string.notif_listening))
+        VoiceOverlay.setPhase(VoiceOverlay.Phase.IDLE)
     }
 
     /** An optional, deliberately non-authoritative reminder of the previous
@@ -417,7 +422,9 @@ class WakeWordService : Service(), ChatSocket.Listener {
                 acc += s * s
             }
             out.write(bytes.array(), 0, n * 2)
-            if (watcher.tick(sqrt(acc / n))) break
+            val rms = sqrt(acc / n)
+            VoiceOverlay.level(rms.toFloat())
+            if (watcher.tick(rms)) break
         }
         return WavRecorder.wavBytes(out.toByteArray())
     }
@@ -467,6 +474,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
         while (!c.connected && waits++ < 10 && alive) Thread.sleep(500)
 
         notify(getString(R.string.status_speaking))
+        VoiceOverlay.setPhase(VoiceOverlay.Phase.SPEAKING)
         val latch = CountDownLatch(1)
         val bargedIn = java.util.concurrent.atomic.AtomicBoolean(false)
         val stream = StreamingTts(
