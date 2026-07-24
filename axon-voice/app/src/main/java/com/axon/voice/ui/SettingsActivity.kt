@@ -299,7 +299,7 @@ class SettingsActivity : AppCompatActivity() {
         // finishEnrollment), so the stored voiceprint spans the natural
         // pitch/tone range across a few deliveries rather than pinning
         // verification to whatever one clip happened to sound like.
-        const val ENROLL_TAKES = 3
+        const val ENROLL_TAKES = 5
         const val ENROLL_TAKE_GAP_MS = 400L
     }
 

@@ -70,6 +70,14 @@ class WakeWordService : Service(), ChatSocket.Listener {
          *  reply tail out of the follow-up capture. */
         private const val AUDIO_SETTLE_MS = 250L
 
+        /** How much raw mic audio [runLoop] keeps buffered purely so a wake
+         *  hit has something to run [SpeakerEmbedder] against — rustpotter's
+         *  own scoring window (it fires once "Hey Axon" already matched) isn't
+         *  exposed to us, so this is captured independently, frame by frame,
+         *  rather than reusing whatever internal buffer rustpotter has. ~1.6s
+         *  comfortably covers the two-word phrase plus a little lead-in. */
+        private const val WAKE_PREROLL_SAMPLES = WavRecorder.SAMPLE_RATE * 8 / 5
+
         @Volatile
         var running = false
             private set
@@ -131,10 +139,11 @@ class WakeWordService : Service(), ChatSocket.Listener {
 
     /** Loaded once, lazily, only if a voiceprint is enrolled — a
      *  [SpeakerEmbedder] loads ~28MB of model weights, not worth paying for
-     *  on a device where barge-in speaker verification was never set up
-     *  (Settings > Voice ID). Null [voiceprint] means [speakerVerifier]
-     *  returns null too, and barge-in falls back to energy-only, same as
-     *  before this existed. */
+     *  on a device where speaker verification was never set up (Settings >
+     *  Voice ID). Gates both the wake word itself (see [passesSpeakerCheck])
+     *  and a mid-reply barge-in (see [awaitStreamBlocking]'s [BargeMonitor]).
+     *  Null [voiceprint] means [speakerVerifier] returns null too, and both
+     *  fall back to keyword/energy-only, same as before this existed. */
     private var speakerEmbedder: SpeakerEmbedder? = null
     private var voiceprint: FloatArray? = null
 
@@ -224,6 +233,11 @@ class WakeWordService : Service(), ChatSocket.Listener {
         thread(name = "axon-prompt-prefetch") { prefetchPrompts() }
 
         var record: AudioRecord? = null
+        // Rolling raw-PCM ring buffer of the last ~WAKE_PREROLL_SAMPLES, so a
+        // detection has recent audio to verify against — see the constant's
+        // doc and passesSpeakerCheck.
+        val wakePreroll = ArrayDeque<ShortArray>()
+        var wakePrerollSamples = 0
         try {
             val frame = ShortArray(detector.samplesPerFrame)
             while (alive) {
@@ -243,16 +257,43 @@ class WakeWordService : Service(), ChatSocket.Listener {
                     record = rec
                 }
                 if (!fillFrame(rec, frame)) continue
+                wakePreroll.addLast(frame.copyOf())
+                wakePrerollSamples += frame.size
+                while (wakePrerollSamples > WAKE_PREROLL_SAMPLES && wakePreroll.size > 1) {
+                    wakePrerollSamples -= wakePreroll.removeFirst().size
+                }
                 val score = detector.process(frame)
                 if (score >= 0f) {
-                    interact(rec, detector)
-                    drain(rec)
+                    if (passesSpeakerCheck(wakePreroll)) {
+                        interact(rec, detector)
+                        drain(rec)
+                    }
+                    wakePreroll.clear()
+                    wakePrerollSamples = 0
                 }
             }
         } finally {
             record?.release()
             detector.close()
         }
+    }
+
+    /** True if nothing is enrolled (same energy/keyword-only fallback
+     *  [BargeMonitor.verifySpeaker] uses), or if the enrolled voice matches
+     *  [preroll] — the ~1.6s of raw mic audio leading up to and including the
+     *  phrase that just triggered rustpotter. Rejecting here means a "Hey
+     *  Axon" said by someone else (or a TV/radio) never even reaches the ack
+     *  + capture flow, the same gate the mid-reply barge-in already applies
+     *  via [awaitStreamBlocking]. */
+    private fun passesSpeakerCheck(preroll: ArrayDeque<ShortArray>): Boolean {
+        val verify = speakerVerifier(speakerEmbedder, voiceprint) ?: return true
+        val pcm = ShortArray(preroll.sumOf { it.size })
+        var offset = 0
+        for (chunk in preroll) {
+            chunk.copyInto(pcm, offset)
+            offset += chunk.size
+        }
+        return verify(pcm)
     }
 
     @SuppressLint("MissingPermission")
