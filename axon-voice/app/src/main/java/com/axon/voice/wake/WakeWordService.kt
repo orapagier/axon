@@ -123,7 +123,9 @@ class WakeWordService : Service(), ChatSocket.Listener {
         super.onCreate()
         prefs = Prefs(this)
         client = AxonClient(prefs)
-        player = TtsPlayer(this)
+        // The reply-audio RMS drives the SPEAKING orb in realtime; speakLevel
+        // ignores it outside the speaking phase, so ack playback won't leak in.
+        player = TtsPlayer(this).apply { onLevel = { rms -> VoiceOverlay.speakLevel(rms) } }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {

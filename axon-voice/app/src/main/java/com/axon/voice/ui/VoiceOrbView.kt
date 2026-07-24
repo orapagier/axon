@@ -24,11 +24,12 @@ import kotlin.math.sin
  * animation timebase (postOnAnimation) rather than any data binding, since it
  * needs a fresh frame every vsync regardless of whether state changed.
  *
- * [setPhase] drives what it shows. During LISTENING it reacts to the real mic
- * level fed by [setLevel] (the wake service's capture RMS). THINKING and
- * SPEAKING have no metered signal — a synthetic envelope keeps the orb alive,
- * matching the web, which likewise stopped tapping TTS playback because
- * routing it through an audio graph could mute the reply.
+ * [setPhase] drives what it shows. LISTENING reacts to the real mic level and
+ * SPEAKING to the real reply-audio level, both fed by [setLevel] on the same
+ * 0..1 RMS scale (the wake service's capture RMS, and [PcmPlayback]'s
+ * DAC-aligned playback RMS respectively). THINKING has no metered signal, and
+ * so do the brief gaps between spoken sentences — a synthetic envelope keeps
+ * the orb alive there.
  */
 class VoiceOrbView @JvmOverloads constructor(
     context: Context,
@@ -37,6 +38,14 @@ class VoiceOrbView @JvmOverloads constructor(
 ) : View(context, attrs, defStyle) {
 
     enum class Phase { IDLE, LISTENING, THINKING, SPEAKING }
+
+    companion object {
+        // Metered RMS is small; these lift it into a lively 0..1 orb range. Mic
+        // capture is quiet (speech ~0.02–0.08) so it needs more gain than the
+        // cleaner, louder reply audio. Both empirical — tune on a real device.
+        private const val MIC_GAIN = 9f
+        private const val SPEAK_GAIN = 4f
+    }
 
     private val accent = ContextCompat.getColor(context, R.color.accent)
     private val glow = ContextCompat.getColor(context, R.color.orb_glow)
@@ -135,7 +144,13 @@ class VoiceOrbView @JvmOverloads constructor(
     override fun onDraw(canvas: Canvas) {
         if (phase == Phase.IDLE || baseR == 0f) return
         val t = (System.nanoTime() - startNanos) / 1_000_000_000f
-        val raw = if (phase == Phase.LISTENING && level >= 0f) min(1f, level * 9f) else synth(t)
+        // Real metered level for LISTENING (mic) and SPEAKING (reply audio);
+        // synth for THINKING and any un-metered gap between spoken sentences.
+        val raw = when {
+            phase == Phase.LISTENING && level >= 0f -> min(1f, level * MIC_GAIN)
+            phase == Phase.SPEAKING && level >= 0f -> min(1f, level * SPEAK_GAIN)
+            else -> synth(t)
+        }
         // Snap up fast (speech onset feels immediate), decay slower (a gap
         // between words shouldn't collapse the orb to nothing).
         smoothed += (raw - smoothed) * (if (raw > smoothed) 0.5f else 0.12f)

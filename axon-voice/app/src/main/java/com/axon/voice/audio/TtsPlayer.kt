@@ -2,7 +2,6 @@ package com.axon.voice.audio
 
 import android.content.Context
 import android.media.AudioAttributes
-import android.media.MediaPlayer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import java.io.File
@@ -21,9 +20,20 @@ import java.util.ArrayDeque
  *                           whole reply is downloaded.
  */
 class TtsPlayer(ctx: Context) {
-    private var mp: MediaPlayer? = null
+    private var current: PcmPlayback? = null
     private var fallback: TextToSpeech? = null
     private var fallbackReady = false
+
+    /** Live 0..1 RMS of whatever is playing (-1 when it stops), forwarded from
+     *  [PcmPlayback]. The wake service points this at the voice orb so the
+     *  SPEAKING orb reacts to the real reply; unset elsewhere (a cheap no-op). */
+    @Volatile
+    var onLevel: ((Float) -> Unit)? = null
+
+    private val speechAttrs = AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_ASSISTANT)
+        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+        .build()
 
     init {
         fallback = TextToSpeech(ctx.applicationContext) { status ->
@@ -32,7 +42,7 @@ class TtsPlayer(ctx: Context) {
     }
 
     val playing: Boolean
-        get() = mp?.isPlaying == true
+        get() = current?.playing == true
 
     fun play(file: File, onDone: () -> Unit) {
         stop()
@@ -40,31 +50,27 @@ class TtsPlayer(ctx: Context) {
     }
 
     private fun startFile(file: File, onDone: () -> Unit) {
-        val player = MediaPlayer()
-        mp = player
         try {
-            player.setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_ASSISTANT)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build()
-            )
-            player.setDataSource(file.absolutePath)
-            player.setOnCompletionListener {
-                cleanup(player)
-                onDone()
-            }
-            player.setOnErrorListener { _, _, _ ->
-                cleanup(player)
-                onDone()
-                true
-            }
-            player.prepare()
-            player.start()
+            val pb = newPlayback(file) { onDone() }
+            current = pb
+            pb.start()
         } catch (_: Exception) {
-            cleanup(player)
             onDone()
         }
+    }
+
+    /** A [PcmPlayback] that retires itself as the sink on completion, then runs
+     *  [after] — the direct analogue of the old MediaPlayer completion/error
+     *  path (both of which did cleanup + onDone). A decode failure lands here
+     *  too, so a bad file advances the queue just like a finished one. */
+    private fun newPlayback(file: File, after: () -> Unit): PcmPlayback {
+        var pb: PcmPlayback? = null
+        val p = PcmPlayback(file, speechAttrs, { l -> onLevel?.invoke(l) }) {
+            pb?.let { cleanup(it) }
+            after()
+        }
+        pb = p
+        return p
     }
 
     // ── Streaming reply playback ────────────────────────────────────────────
@@ -142,29 +148,11 @@ class TtsPlayer(ctx: Context) {
         // Anything still coming out of the speaker — an ack tail, a read-aloud
         // in progress — yields now that the reply can actually speak.
         stopPlayback()
-        val player = MediaPlayer()
-        mp = player
         try {
-            player.setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_ASSISTANT)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build()
-            )
-            player.setDataSource(file.absolutePath)
-            player.setOnCompletionListener {
-                cleanup(player)
-                onStreamFileDone(s)
-            }
-            player.setOnErrorListener { _, _, _ ->
-                cleanup(player)
-                onStreamFileDone(s)
-                true
-            }
-            player.prepare()
-            player.start()
+            val pb = newPlayback(file) { onStreamFileDone(s) }
+            current = pb
+            pb.start()
         } catch (_: Exception) {
-            cleanup(player)
             onStreamFileDone(s)
         }
     }
@@ -213,20 +201,17 @@ class TtsPlayer(ctx: Context) {
 
     /** Silence the speaker without touching stream bookkeeping. */
     private fun stopPlayback() {
-        mp?.let {
-            runCatching { it.stop() }
-            it.release()
-        }
-        mp = null
+        current?.stop() // cancels playback and releases its AudioTrack; no onEnd
+        current = null
         runCatching { fallback?.stop() }
     }
 
-    /** Retire [player] — but only drop it as the sink if it still is the sink.
-     *  A one-shot that finishes after the reply took the speaker must not null
-     *  out (or release) the reply's player. */
-    private fun cleanup(player: MediaPlayer) {
-        runCatching { player.release() }
-        if (mp === player) mp = null
+    /** Retire [pb] — but only drop it as the sink if it still is the sink. A
+     *  one-shot that finishes after the reply took the speaker must not null out
+     *  the reply's playback. [PcmPlayback] frees its own AudioTrack on the way
+     *  out, so there is nothing else to release here. */
+    private fun cleanup(pb: PcmPlayback) {
+        if (current === pb) current = null
     }
 
     fun release() {

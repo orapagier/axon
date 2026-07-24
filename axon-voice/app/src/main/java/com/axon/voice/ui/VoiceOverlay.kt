@@ -39,4 +39,11 @@ object VoiceOverlay {
     fun level(rms: Float) {
         if (phase == Phase.LISTENING) listener?.onState(Phase.LISTENING, rms)
     }
+
+    /** Feed a reply-audio RMS sample for the reactive speaking orb (from the TTS
+     *  player). Ignored outside the speaking phase, so ack playback and other
+     *  sounds don't drive the orb — only the reply the user is hearing does. */
+    fun speakLevel(rms: Float) {
+        if (phase == Phase.SPEAKING) listener?.onState(Phase.SPEAKING, rms)
+    }
 }
