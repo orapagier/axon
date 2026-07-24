@@ -7,7 +7,7 @@ import { addNotification } from '../lib/notifications.js'
 import { confirmDialog } from '../lib/confirm.js'
 import { renderMarkdown } from '../lib/markdown.js'
 import { createWakeWord, wakeWordSupported, FOLLOWUP_CAPTURE } from '../lib/wakeword.js'
-import { createBargeDetector, BargeEvent } from '../lib/bargein.js'
+import { createBargeDetector, BargeEvent, looksLikeSpeech } from '../lib/bargein.js'
 import {
   prefetchPrompts,
   playPrompt,
@@ -15,7 +15,7 @@ import {
   randomWakeAck,
   WAKE_ACKS,
 } from '../lib/voiceprompts.js'
-import { buildTtsEnvelope, readLevel } from '../lib/audioLevel.js'
+import { buildTtsEnvelope, readLevel, readSpectralFlatness, readZeroCrossingRate } from '../lib/audioLevel.js'
 import SearchInput from '../components/SearchInput.vue'
 import VoiceOrb from '../components/VoiceOrb.vue'
 
@@ -1106,10 +1106,19 @@ function wholeBlobSpokenSoFar() {
 }
 
 function bargeTick() {
-  const micRms = readLevel(wake?.analyser)
+  const analyser = wake?.analyser
+  const micRms = readLevel(analyser)
   const playRms = speakSample() // null when nothing decodable is playing (speechSynthesis)
+  // Cheap spectral gate (see bargein.js's looksLikeSpeech) so a loud tick only
+  // advances the onset when it's shaped like voiced speech — otherwise a
+  // cough or a mic pop is just as "loud" as a real interruption and would
+  // confirm on energy alone.
+  const speechShaped = looksLikeSpeech({
+    flatness: readSpectralFlatness(analyser),
+    zcr: readZeroCrossingRate(analyser),
+  })
   barge.feedPlayback(playRms == null ? -1 : playRms)
-  const event = barge.feedMic(micRms)
+  const event = barge.feedMic(micRms, speechShaped)
   if (event === BargeEvent.TENTATIVE) {
     duckSpeakingVolume()
   } else if (event === BargeEvent.FALSE_ALARM) {

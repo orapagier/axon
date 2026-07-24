@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { createBargeDetector, BargeEvent } from '../src/lib/bargein.js'
+import { createBargeDetector, BargeEvent, looksLikeSpeech } from '../src/lib/bargein.js'
 
 // Drives `micTicks` through the detector, re-sampling a fixed playback level
 // before every mic tick (the common case: one sentence mid-playback at a
@@ -88,5 +88,81 @@ describe('BargeDetector', () => {
     // instantly — a genuine short gap mid-reply shouldn't misread as one.
     const events = drive(detector, -1, Array(10).fill(0.05))
     expect(events).toContain(BargeEvent.TENTATIVE)
+  })
+
+  describe('speech-shape gate', () => {
+    // Drives micTicks through feedMic with an explicit per-tick speechShaped
+    // array, re-sampling a fixed playback level before every tick (mirrors
+    // drive() above, but for the shape-aware path).
+    function driveShaped(detector, playbackRms, micTicks, shapedTicks) {
+      return micTicks.map((mic, i) => {
+        detector.feedPlayback(playbackRms)
+        return detector.feedMic(mic, shapedTicks[i])
+      })
+    }
+
+    it('feedMic defaults speechShaped to true, unchanged from before the gate existed', () => {
+      const detector = createBargeDetector()
+      drive(detector, 0.1, Array(20).fill(0.03))
+      const events = drive(detector, 0.1, [0.2, 0.2, 0.2])
+      expect(events).toEqual([BargeEvent.TENTATIVE, BargeEvent.NONE, BargeEvent.CONFIRMED])
+    })
+
+    it('never goes tentative on a loud burst that is not speech-shaped (a cough)', () => {
+      const detector = createBargeDetector()
+      drive(detector, 0.1, Array(20).fill(0.03))
+      // Loud and sustained for well over MIN_ONSET_TICKS, but never shaped
+      // like speech — a real cough, not a brief blip.
+      const events = driveShaped(detector, 0.1, Array(8).fill(0.2), Array(8).fill(false))
+      expect(events).not.toContain(BargeEvent.TENTATIVE)
+      expect(events).not.toContain(BargeEvent.CONFIRMED)
+      expect(events.every((e) => e === BargeEvent.NONE)).toBe(true)
+    })
+
+    it('a cough mid-reply does not corrupt the learned echo gain', () => {
+      const withCough = createBargeDetector()
+      const clean = createBargeDetector()
+      // Same warm-up on both...
+      drive(withCough, 0.1, Array(20).fill(0.03))
+      drive(clean, 0.1, Array(20).fill(0.03))
+      // ...but withCough also hears one loud, unshaped burst mid-reply.
+      driveShaped(withCough, 0.1, [0.2, 0.2], [false, false])
+      drive(withCough, 0.1, Array(20).fill(0.03))
+      drive(clean, 0.1, Array(20).fill(0.03))
+      // Both should now confirm identically on the same real interruption —
+      // proof the cough never fed learnGain and skewed withCough's threshold.
+      const withCoughEvents = drive(withCough, 0.1, [0.2, 0.2, 0.2])
+      const cleanEvents = drive(clean, 0.1, [0.2, 0.2, 0.2])
+      expect(withCoughEvents).toEqual(cleanEvents)
+    })
+
+    it('tolerates one non-speech-shaped tick inside a real interruption, delayed not dropped', () => {
+      const detector = createBargeDetector()
+      drive(detector, 0.1, Array(20).fill(0.03))
+      // A leading fricative-like tick, then clearly voiced speech holding.
+      const events = driveShaped(detector, 0.1, [0.2, 0.2, 0.2, 0.2], [false, true, true, true])
+      expect(events[0]).toBe(BargeEvent.NONE) // unshaped — doesn't even start tentative
+      expect(events[1]).toBe(BargeEvent.TENTATIVE)
+      expect(events).toContain(BargeEvent.CONFIRMED)
+    })
+  })
+})
+
+describe('looksLikeSpeech', () => {
+  it('accepts low-flatness, low-ZCR ticks (voiced speech)', () => {
+    expect(looksLikeSpeech({ flatness: 0.1, zcr: 0.1 })).toBe(true)
+  })
+
+  it('rejects high-flatness, high-ZCR ticks (broadband bursts)', () => {
+    expect(looksLikeSpeech({ flatness: 0.8, zcr: 0.6 })).toBe(false)
+  })
+
+  it('rejects when only one feature looks noise-like', () => {
+    expect(looksLikeSpeech({ flatness: 0.8, zcr: 0.1 })).toBe(false)
+    expect(looksLikeSpeech({ flatness: 0.1, zcr: 0.6 })).toBe(false)
+  })
+
+  it('respects custom thresholds', () => {
+    expect(looksLikeSpeech({ flatness: 0.4, zcr: 0.1 }, { flatnessMax: 0.5 })).toBe(true)
   })
 })

@@ -6,6 +6,12 @@
 //    passive read of a node that already exists for silence detection, so it
 //    never touches audio playback.
 //
+//  - readZeroCrossingRate(analyser) / readSpectralFlatness(analyser): the same
+//    live mic analyser's time/frequency-domain data, scored for how
+//    speech-shaped (vs. broadband-burst-shaped) the current tick sounds.
+//    Feeds bargein.js's speech-shape gate — not an amplitude source, but
+//    lives here because it reads the same AnalyserNode as readLevel.
+//
 //  - buildTtsEnvelope(blob): a precomputed RMS envelope of a reply's audio for
 //    the 'speaking' phase, which the orb samples by the <audio> element's
 //    currentTime. This deliberately does NOT route the playing element through
@@ -18,6 +24,7 @@
 //    keeps the orb in sync with what is actually audible.
 
 const levelBuf = new Float32Array(2048)
+const freqBuf = new Float32Array(2048)
 
 // RMS of the analyser's current time-domain buffer, roughly 0..1 (speech
 // rarely pushes this much past 0.3 — callers scale up for visual punch).
@@ -29,6 +36,51 @@ export function readLevel(analyser) {
   let acc = 0
   for (let i = 0; i < n; i++) acc += data[i] * data[i]
   return Math.sqrt(acc / n)
+}
+
+// Zero-crossing rate (0..1): the fraction of adjacent-sample sign flips in
+// the analyser's current time-domain buffer. Sustained voiced speech has a
+// low, fairly stable ZCR (dominated by the periodic pitch); broadband
+// impulse bursts — coughs, claps, mic pops — cross zero far more often. Used
+// alongside readSpectralFlatness by bargein.js's speech-shape gate; see
+// looksLikeSpeech there for how the two combine.
+export function readZeroCrossingRate(analyser) {
+  if (!analyser) return 0
+  const n = Math.min(levelBuf.length, analyser.fftSize)
+  const data = levelBuf.subarray(0, n)
+  analyser.getFloatTimeDomainData(data)
+  let crossings = 0
+  for (let i = 1; i < n; i++) {
+    if (data[i] >= 0 !== data[i - 1] >= 0) crossings++
+  }
+  return crossings / (n - 1)
+}
+
+// Spectral flatness (Wiener entropy, 0..1): geometric mean over arithmetic
+// mean of the power spectrum. Near 1 means flat/broadband (noise, impulse
+// bursts); near 0 means peaked/harmonic (voiced speech's formant structure).
+// Bins at the analyser's noise floor (-100dB) are excluded so silence doesn't
+// get scored as artificially "flat".
+export function readSpectralFlatness(analyser) {
+  if (!analyser) return 0
+  const n = analyser.frequencyBinCount
+  const data = freqBuf.subarray(0, Math.min(freqBuf.length, n))
+  analyser.getFloatFrequencyData(data)
+  let logSum = 0
+  let sum = 0
+  let counted = 0
+  for (let i = 0; i < data.length; i++) {
+    const db = data[i]
+    if (!isFinite(db) || db <= -100) continue
+    const power = Math.pow(10, db / 10)
+    logSum += Math.log(power)
+    sum += power
+    counted++
+  }
+  if (counted === 0) return 0
+  const geoMean = Math.exp(logSum / counted)
+  const arithMean = sum / counted
+  return arithMean > 0 ? geoMean / arithMean : 0
 }
 
 // A context used ONLY to decode TTS bytes into an amplitude envelope. It is
