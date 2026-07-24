@@ -281,11 +281,6 @@ class SettingsActivity : AppCompatActivity() {
         // Sensitivity via echo margin (stored ×10): 1.2..3.0×. Lower = more sensitive.
         addSlider(c, R.string.barge_tune_sensitivity, 12, 30, (prefs.bargeMargin * 10).toInt(),
             { p -> "%.1f×".format(p / 10f) }) { p -> prefs.bargeMargin = p / 10f }
-        // Cough/clap filter via speech-shape ceiling (stored ×100): 0.20..0.50. Lower = stricter.
-        addSlider(c, R.string.barge_tune_filter, 20, 50, (prefs.bargeSpeechThreshold * 100).toInt(),
-            { p -> if (p <= 27) "strict" else if (p >= 43) "lenient" else "balanced" }) { p ->
-            prefs.bargeSpeechThreshold = p / 100f
-        }
         // Interrupt hold (onset ticks): 1..8 → 0.1..0.8s.
         addSlider(c, R.string.barge_tune_hold, 1, 8, prefs.bargeOnsetTicks,
             { p -> "%.1fs".format(p / 10f) }) { p -> prefs.bargeOnsetTicks = p }

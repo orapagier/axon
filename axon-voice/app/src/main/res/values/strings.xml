@@ -38,7 +38,6 @@
     <string name="barge_enable_label">Let me interrupt by talking</string>
     <string name="barge_enable_description">Start talking over a spoken reply and Axon stops to listen — handy for cutting off a long answer once you\'ve got the point. It ignores its own voice automatically. Turn this off and Axon won\'t listen while it\'s speaking, so you wait for each reply to finish before speaking again.</string>
     <string name="barge_tune_sensitivity">Interrupt sensitivity (lower = easier)</string>
-    <string name="barge_tune_filter">Cough / clap filter</string>
     <string name="barge_tune_hold">Talk-over hold to confirm</string>
     <string name="barge_tune_followup">Follow-up window after a reply</string>
 </resources>

@@ -55,13 +55,6 @@ class Prefs(ctx: Context) {
         get() = sp.getFloat("barge_margin", 2.0f).coerceIn(1.2f, 3.0f)
         set(v) { sp.edit().putFloat("barge_margin", v).apply() }
 
-    /** Speech-shape gate ceiling (spectral flatness + zero-crossing rate) that
-     *  rejects loud non-speech bursts (coughs, claps, pops). Lower = stricter
-     *  (more is filtered out). Default = BargeDetector.FLATNESS_MAX (0.35). */
-    var bargeSpeechThreshold: Float
-        get() = sp.getFloat("barge_speech_threshold", 0.35f).coerceIn(0.20f, 0.50f)
-        set(v) { sp.edit().putFloat("barge_speech_threshold", v).apply() }
-
     /** Interrupt hold: consecutive ~100ms speech ticks required to confirm a
      *  barge-in. Higher = you must keep talking longer to interrupt. Default =
      *  BargeDetector.MIN_ONSET_TICKS (3 ≈ 300ms). */

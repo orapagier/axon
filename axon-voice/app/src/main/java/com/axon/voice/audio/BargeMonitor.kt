@@ -37,18 +37,6 @@ class BargeMonitor(
     private val onTentative: () -> Unit,
     private val onFalseAlarm: () -> Unit,
     private val onConfirmed: (prerollPcm: ByteArray) -> Unit,
-    /** Optional "is this actually the enrolled user" check, given the
-     *  candidate interruption's buffered preroll PCM — see
-     *  [speakerVerifier]. Null when nothing is enrolled (or the embedder
-     *  failed to load), which falls back to the energy-only confirm exactly
-     *  as before. Runs synchronously on this monitor's own thread right as
-     *  an energy-based confirm fires: one ~tens-of-ms embedding inference on
-     *  audio already sitting in the preroll buffer, not a per-tick cost, so
-     *  it doesn't need its own gate the way [BargeDetector]'s RMS/gain check
-     *  does. A rejection is treated exactly like [BargeDetector.Event.FALSE_ALARM]
-     *  — volume restores and monitoring continues, since [BargeDetector]'s own
-     *  state already reset to idle on the CONFIRMED it just produced. */
-    private val verifySpeaker: ((pcm16: ShortArray) -> Boolean)? = null,
 ) {
     companion object {
         private const val TICK_SAMPLES = WavRecorder.SAMPLE_RATE / 10 // 100ms @ 16kHz
@@ -79,26 +67,13 @@ class BargeMonitor(
             }
             if (tickSamples < TICK_SAMPLES) continue
             val rms = sqrt(tickSumSq / tickSamples)
-            // Spectral shape of this same window, so BargeDetector can reject a
-            // loud broadband burst (cough/clap/pop) that clears the threshold
-            // but isn't voiced speech. Computed from the tick's raw PCM before
-            // flushTick() resets the accumulator.
-            val tickPcm = pcm16(tickBytes.toByteArray())
-            val flatness = SpeechShape.flatness(tickPcm)
-            val zcr = SpeechShape.zcr(tickPcm)
             flushTick()
-            when (detector.feedMic(rms, flatness, zcr)) {
+            when (detector.feedMic(rms)) {
                 BargeDetector.Event.TENTATIVE -> onTentative()
                 BargeDetector.Event.FALSE_ALARM -> onFalseAlarm()
                 BargeDetector.Event.CONFIRMED -> {
-                    val preroll = prerollBytes()
-                    if (verifySpeaker == null || verifySpeaker.invoke(pcm16(preroll))) {
-                        onConfirmed(preroll)
-                        return
-                    }
-                    // Loud and held long enough, but not the enrolled voice —
-                    // treat like a false alarm rather than stopping the reply.
-                    onFalseAlarm()
+                    onConfirmed(prerollBytes())
+                    return
                 }
                 BargeDetector.Event.NONE -> {}
             }
@@ -134,11 +109,5 @@ class BargeMonitor(
         val out = ByteArrayOutputStream()
         for (chunk in preroll) out.write(chunk)
         return out.toByteArray()
-    }
-
-    /** Little-endian PCM16 bytes -> samples, for [verifySpeaker]. */
-    private fun pcm16(bytes: ByteArray): ShortArray {
-        val buf = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
-        return ShortArray(bytes.size / 2) { buf.short }
     }
 }

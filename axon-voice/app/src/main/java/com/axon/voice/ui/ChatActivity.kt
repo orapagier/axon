@@ -32,10 +32,8 @@ import com.axon.voice.api.ChatSocket
 import com.axon.voice.audio.BargeDetector
 import com.axon.voice.audio.BargeMonitor
 import com.axon.voice.audio.SilenceWatcher
-import com.axon.voice.audio.SpeakerEmbedder
 import com.axon.voice.audio.StreamingTts
 import com.axon.voice.audio.TtsPlayer
-import com.axon.voice.audio.VoicePrint
 import com.axon.voice.audio.WavRecorder
 import com.axon.voice.wake.WakeWordService
 import org.json.JSONObject
@@ -120,13 +118,6 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
      *  learned echo gain only gets more accurate over time. */
     private val bargeDetector = BargeDetector()
 
-    /** Loaded once, lazily, only if a voiceprint is enrolled — see the same
-     *  field in [com.axon.voice.wake.WakeWordService] for why. Null
-     *  [voiceprint] means barge-in falls back to energy-only, same as before
-     *  this existed. */
-    private var speakerEmbedder: SpeakerEmbedder? = null
-    private var voiceprint: FloatArray? = null
-
     /** Bumped every time a voice reply's "speaking" ends, whichever way —
      *  played out naturally, or cut off by [stopSpeaking]. The barge monitor
      *  watching a reply captures its own generation at start time and stops
@@ -177,10 +168,6 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
         prefs = Prefs(this)
         client = AxonClient(prefs)
         player = TtsPlayer(this)
-        voiceprint = VoicePrint.load(this)
-        if (voiceprint != null) {
-            speakerEmbedder = runCatching { SpeakerEmbedder(this) }.getOrNull()
-        }
 
         connLabel = findViewById(R.id.connLabel)
         wakeBtn = findViewById(R.id.wakeBtn)
@@ -252,16 +239,6 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
     override fun onResume() {
         super.onResume()
         updateWakeBtn()
-        // Picks up an enrollment (or a clear) done in Settings since this
-        // activity was created — cheap when nothing changed (VoicePrint.load
-        // is a fast file-exists check), and a fresh SpeakerEmbedder is only
-        // built when there's a new voiceprint to actually use.
-        if (voiceprint == null) {
-            voiceprint = VoicePrint.load(this)
-            if (voiceprint != null) {
-                speakerEmbedder = runCatching { SpeakerEmbedder(this) }.getOrNull()
-            }
-        }
     }
 
     override fun onStop() {
@@ -283,8 +260,6 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
         player?.release()
         player = null
         chat?.close()
-        speakerEmbedder?.close()
-        speakerEmbedder = null
         super.onDestroy()
     }
 
@@ -558,9 +533,7 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
      *  reply's [speakGen] snapshot: the monitor stops the instant it no
      *  longer matches, whether that's a natural end or an abort. */
     private fun startBargeMonitor(gen: Int) {
-        bargeDetector.tune(
-            prefs.bargeMargin.toDouble(), prefs.bargeOnsetTicks, prefs.bargeSpeechThreshold.toDouble()
-        )
+        bargeDetector.tune(prefs.bargeMargin.toDouble(), prefs.bargeOnsetTicks)
         bargeDetector.reset()
         WakeWordService.micHold = true
         thread(name = "axon-chat-barge") {
