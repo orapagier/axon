@@ -14,7 +14,6 @@ import {
   randomWakeAck,
   WAKE_ACKS,
 } from '../lib/voiceprompts.js'
-import { ensureAudioCtx, tapElement } from '../lib/audioLevel.js'
 import SearchInput from '../components/SearchInput.vue'
 import VoiceOrb from '../components/VoiceOrb.vue'
 
@@ -723,13 +722,18 @@ let wake = null
 // only the two wake-triggered recording entry points do.
 const handsFreeActive = ref(false)
 const handsFreePhase = ref('listening') // 'listening' | 'thinking' | 'speaking'
-const ttsAnalyser = ref(null) // live AnalyserNode for the TTS <audio> currently playing (hands-free only)
 
-const orbAnalyser = computed(() => {
-  if (handsFreePhase.value === 'listening') return wake?.analyser || null
-  if (handsFreePhase.value === 'speaking') return ttsAnalyser.value
-  return null // 'thinking' has nothing to meter — VoiceOrb fills in ambient motion
-})
+// Only the mic ('listening') feeds a real analyser to the orb, and that
+// analyser is the wake stream's own (wakeword.js) — a passive read, it never
+// touches playback. The 'speaking' phase deliberately does NOT tap the reply
+// <audio>: routing playback through a Web Audio graph (createMediaElementSource
+// or captureStream into an analyser) can silently swallow the sound when the
+// audio context isn't in a confirmed-running state, which is exactly the "orb
+// animates but nothing plays" bug. VoiceOrb's synthetic talking envelope covers
+// the speaking phase instead, so the visualization can never affect audio.
+const orbAnalyser = computed(() =>
+  handsFreePhase.value === 'listening' ? wake?.analyser || null : null
+)
 
 const handsFreeStatusText = computed(
   () =>
@@ -738,7 +742,6 @@ const handsFreeStatusText = computed(
 
 function endHandsFree() {
   handsFreeActive.value = false
-  ttsAnalyser.value = null
 }
 
 // The overlay's close button: bail out of hands-free back to the normal chat
@@ -836,10 +839,6 @@ function setWakeEnabled(on) {
   }
   if (on) {
     startWake()
-    // Warm the shared TTS-tap AudioContext (lib/audioLevel.js) on a real user
-    // gesture now, rather than the first time a hands-free reply plays —
-    // browsers gate AudioContext audio output on prior page interaction.
-    ensureAudioCtx()
   } else {
     wake?.stop()
     endHandsFree()
@@ -969,7 +968,6 @@ function releaseAudio() {
 
 function stopSpeaking() {
   followupEligible = false
-  ttsAnalyser.value = null
   stopPrompt()
   abortStreamingSpeech()
   speakSeq += 1
@@ -989,10 +987,6 @@ function stopSpeaking() {
 // with no live reference can be GC'd mid-sentence, and the queue sometimes
 // comes back from cancel() stuck in the paused state.
 function speakWithSynthesis(idx, text) {
-  // No raw audio access for this path (browser TTS, not the server's) — the
-  // orb falls back to a synthesized "talking" envelope instead of reacting to
-  // a stale analyser left over from a server-TTS chunk.
-  ttsAnalyser.value = null
   if (!ttsSupported) {
     if (speakingIdx.value === idx) speakingIdx.value = -1
     return
@@ -1059,16 +1053,6 @@ async function toggleSpeak(idx) {
         if (seq !== speakSeq) return // stopped while synthesizing
         audioUrl = URL.createObjectURL(blob)
         audioEl = new Audio(audioUrl)
-        // Tap this element's output for the hands-free orb (manual "read
-        // aloud" clicks skip it — no overlay showing, no point spending an
-        // AudioContext node on it).
-        if (handsFreeActive.value) {
-          try {
-            ttsAnalyser.value = tapElement(audioEl)
-          } catch {
-            ttsAnalyser.value = null
-          }
-        }
         // Natural end and failure diverge: only a played-to-the-end reply may
         // open the follow-up window (read the flag before stopSpeaking clears it).
         audioEl.onended = () => {
@@ -1301,15 +1285,6 @@ class StreamingSpeech {
     this.curAudio = el
     this.curUrl = url
     if (speakingIdx.value !== this.idx) speakingIdx.value = this.idx
-    // Re-tapped per chunk (each sentence is its own <audio>) so the orb tracks
-    // whichever element is actually making sound right now.
-    if (handsFreeActive.value) {
-      try {
-        ttsAnalyser.value = tapElement(el)
-      } catch {
-        ttsAnalyser.value = null
-      }
-    }
     let advanced = false
     const advance = () => {
       if (advanced) return
