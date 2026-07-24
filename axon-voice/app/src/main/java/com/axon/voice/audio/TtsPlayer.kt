@@ -21,11 +21,19 @@ import java.util.ArrayDeque
  */
 class TtsPlayer(ctx: Context) {
     companion object {
-        /** Barge-in "tentative" attenuation — quiet enough that the mic can
-         *  hear past the echo, not so quiet the user loses their place if it
-         *  turns out to be a false alarm and playback resumes at full volume. */
-        private const val DUCK_VOLUME = 0.15f
+        /** Default barge-in "tentative" attenuation — quiet enough that the mic
+         *  can hear past the echo, not so quiet the user loses their place if it
+         *  turns out to be a false alarm and playback resumes at full volume.
+         *  User-overridable per reply via [duckLevel] (Settings "Duck level"). */
+        const val DEFAULT_DUCK_VOLUME = 0.15f
     }
+
+    /** How far [duck] attenuates the reply (0..1); defaults to
+     *  [DEFAULT_DUCK_VOLUME] but the barge callers set it from
+     *  [com.axon.voice.Prefs.bargeDuckVolume] at the start of each reply, so
+     *  the Settings slider takes effect on the next reply with no restart. */
+    @Volatile
+    var duckLevel = DEFAULT_DUCK_VOLUME
 
     private var current: PcmPlayback? = null
     private var fallback: TextToSpeech? = null
@@ -110,8 +118,8 @@ class TtsPlayer(ctx: Context) {
      *  detector's threshold already collapses to the absolute floor on its
      *  own for that case. */
     fun duck() {
-        duckedVolume = DUCK_VOLUME
-        current?.setVolume(DUCK_VOLUME)
+        duckedVolume = duckLevel
+        current?.setVolume(duckLevel)
     }
 
     /** Undo [duck] — a tentative onset faded out without confirming. */

@@ -14,6 +14,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
+import android.util.Log
 import android.view.View
 import android.widget.EditText
 import android.widget.ImageButton
@@ -570,6 +571,13 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
      *  longer matches, whether that's a natural end or an abort. */
     private fun startBargeMonitor(gen: Int) {
         bargeDetector.reset()
+        // Live Settings tunables, read fresh so a slider change lands this reply.
+        bargeDetector.tune(
+            prefs.bargeMargin.toDouble(),
+            prefs.bargeEchoBoost.toDouble(),
+            prefs.bargePlayrefDecay.toDouble(),
+        )
+        player?.duckLevel = prefs.bargeDuckVolume
         WakeWordService.micHold = true
         thread(name = "axon-chat-barge") {
             val rec = openBargeRecord()
@@ -588,10 +596,11 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
                 detector = bargeDetector,
                 wakeDetector = null, // no wake-word listener shares this mic — our own reply is playing
                 readFrame = { f -> fillBargeFrame(rec, f, gen) },
-                onTentative = { player?.duck() },
-                onFalseAlarm = { player?.restoreVolume() },
+                onTentative = { player?.duck(); Log.d("BargeDetector", "barge tentative (ducked): ${bargeDetector.diagnostics()}") },
+                onFalseAlarm = { player?.restoreVolume(); Log.d("BargeDetector", "barge false-alarm (restored): ${bargeDetector.diagnostics()}") },
                 verifySpeaker = speakerVerifier(speakerEmbedder, voiceprint, prefs.bargeMatchThreshold),
                 onConfirmed = { preroll ->
+                    Log.d("BargeDetector", "barge CONFIRMED (energy+speaker): ${bargeDetector.diagnostics()}")
                     confirmed = true
                     main.post { onBargeConfirmed(gen, preroll) }
                 },

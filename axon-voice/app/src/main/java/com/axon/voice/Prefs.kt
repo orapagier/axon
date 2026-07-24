@@ -1,7 +1,9 @@
 package com.axon.voice
 
 import android.content.Context
+import com.axon.voice.audio.BargeDetector
 import com.axon.voice.audio.SPEAKER_SIMILARITY_THRESHOLD
+import com.axon.voice.audio.TtsPlayer
 import java.net.URLEncoder
 import java.util.UUID
 
@@ -45,6 +47,68 @@ class Prefs(ctx: Context) {
         set(v) {
             sp.edit().putFloat("barge_match_threshold", v).apply()
         }
+
+    // ── Barge-in energy/echo tuning ───────────────────────────────────────────
+    // The four knobs below feed the energy gate that runs *before* the speaker
+    // match ([bargeMatchThreshold]) — a mid-reply interruption has to clear this
+    // gate first, so if it's mistuned the voice match never even gets consulted.
+    // All read fresh at the start of every reply (BargeDetector.tune /
+    // TtsPlayer.duckLevel), so a slider change lands on the next reply with no
+    // restart. Defaults are the code defaults; [resetBargeTuning] restores them.
+
+    /** How far over the learned echo level the mic must read to count as a real
+     *  interruption rather than the reply bouncing back ([BargeDetector.MARGIN]).
+     *  Lower = easier to interrupt (more sensitive); higher = fewer false
+     *  triggers but a harder barge-in. The primary lever when your own voice
+     *  can't get through on the energy side. */
+    var bargeMargin: Float
+        get() = sp.getFloat("barge_margin", BargeDetector.MARGIN.toFloat())
+        set(v) {
+            sp.edit().putFloat("barge_margin", v).apply()
+        }
+
+    /** How hard a false alarm bumps the learned echo gain to stop the reply's
+     *  volume "pumping" ([BargeDetector.FALSE_ALARM_GAIN_BOOST]). 1.0 turns it
+     *  off. Higher fights pumping harder but raises the barge-in threshold,
+     *  which can start swallowing real interruptions — the direct trade-off
+     *  between the "won't recognize my voice" and "volume pumps" symptoms. */
+    var bargeEchoBoost: Float
+        get() = sp.getFloat("barge_echo_boost", BargeDetector.FALSE_ALARM_GAIN_BOOST.toFloat())
+        set(v) {
+            sp.edit().putFloat("barge_echo_boost", v).apply()
+        }
+
+    /** How far the reply is ducked while checking a tentative interruption
+     *  ([TtsPlayer.DEFAULT_DUCK_VOLUME], 0..1). Lower makes the mic hear past
+     *  the echo more easily (better barge-in detection) but the volume dip is
+     *  more noticeable on a false alarm. */
+    var bargeDuckVolume: Float
+        get() = sp.getFloat("barge_duck_volume", TtsPlayer.DEFAULT_DUCK_VOLUME)
+        set(v) {
+            sp.edit().putFloat("barge_duck_volume", v).apply()
+        }
+
+    /** Per-tick peak-hold decay on the echo reference
+     *  ([BargeDetector.PLAYREF_DECAY], 0..1). Higher holds the reference longer
+     *  across the gaps between streamed sentences (less pumping at sentence
+     *  boundaries); too high and a genuinely finished reply's reference lingers. */
+    var bargePlayrefDecay: Float
+        get() = sp.getFloat("barge_playref_decay", BargeDetector.PLAYREF_DECAY.toFloat())
+        set(v) {
+            sp.edit().putFloat("barge_playref_decay", v).apply()
+        }
+
+    /** Restore every barge-in tuning knob (match + the four energy/echo knobs)
+     *  to its code default — the escape hatch after over-tweaking. */
+    fun resetBargeTuning() {
+        sp.edit()
+            .remove("barge_match_threshold")
+            .remove("barge_margin")
+            .remove("barge_echo_boost")
+            .remove("barge_duck_volume")
+            .remove("barge_playref_decay")
+            .apply()
+    }
 
     /** The chat thread id, shared by the Chat page and the "Hey Axon" wake
      *  service so hands-free exchanges land in the same conversation (history,

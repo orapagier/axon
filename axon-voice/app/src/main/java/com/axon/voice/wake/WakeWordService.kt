@@ -692,8 +692,16 @@ class WakeWordService : Service(), ChatSocket.Listener {
             return BargeOutcome(false)
         }
         // Fresh reply: forget the last one's ducked/tentative state, but keep
-        // the learned echo gain — it's still the same device and room.
+        // the learned echo gain — it's still the same device and room. Then
+        // apply the live Settings tunables (read fresh so a slider change lands
+        // this reply, no restart).
         bargeDetector.reset()
+        bargeDetector.tune(
+            prefs.bargeMargin.toDouble(),
+            prefs.bargeEchoBoost.toDouble(),
+            prefs.bargePlayrefDecay.toDouble(),
+        )
+        p.duckLevel = prefs.bargeDuckVolume
         // Monitor for a barge-in while the reply streams. Only with a live mic
         // — otherwise there's nothing to listen with and we just wait for done.
         val monitor = if (rec != null) {
@@ -702,10 +710,11 @@ class WakeWordService : Service(), ChatSocket.Listener {
                     detector = bargeDetector,
                     wakeDetector = wakeDetector,
                     readFrame = { f -> fillFrame(rec, f) },
-                    onTentative = { p.duck() },
-                    onFalseAlarm = { p.restoreVolume() },
+                    onTentative = { p.duck(); Log.d(LOG_TAG, "barge tentative (ducked): ${bargeDetector.diagnostics()}") },
+                    onFalseAlarm = { p.restoreVolume(); Log.d(LOG_TAG, "barge false-alarm (restored): ${bargeDetector.diagnostics()}") },
                     verifySpeaker = speakerVerifier(speakerEmbedder, voiceprint, prefs.bargeMatchThreshold),
                     onConfirmed = { preroll ->
+                        Log.d(LOG_TAG, "barge CONFIRMED (energy+speaker): ${bargeDetector.diagnostics()}")
                         val spoken = stream.spokenSoFar()
                         stream.abort() // cut the TTS mid-sentence
                         c.cancel(sessionId) // stop generating, not just talking

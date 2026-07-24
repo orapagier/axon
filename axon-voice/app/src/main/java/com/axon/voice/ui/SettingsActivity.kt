@@ -29,6 +29,7 @@ import org.json.JSONObject
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.concurrent.thread
+import kotlin.math.roundToInt
 
 /**
  * Connection settings (server URL + master key, stored on-device) plus the
@@ -62,6 +63,28 @@ class SettingsActivity : AppCompatActivity() {
 
     private lateinit var bargeMatchSlider: SeekBar
     private lateinit var bargeMatchValue: TextView
+
+    /** The four advanced energy/echo sliders, kept so [onResetBargeTuning] can
+     *  refresh every one after clearing the prefs. */
+    private val tuneSliders = mutableListOf<TuneSlider>()
+
+    /** One float-valued [SeekBar] bound to a [Prefs] knob: maps the integer
+     *  progress across [steps] onto [min]..[max], reads/writes via [get]/[set],
+     *  and renders the current value with [format]. */
+    private class TuneSlider(
+        val slider: SeekBar,
+        val label: TextView,
+        val min: Float,
+        val max: Float,
+        val steps: Int,
+        val get: () -> Float,
+        val set: (Float) -> Unit,
+        val format: (Float) -> String,
+    ) {
+        fun toValue(progress: Int): Float = min + (max - min) * progress / steps
+        fun toProgress(value: Float): Int =
+            Math.round((value - min) / (max - min) * steps).coerceIn(0, steps)
+    }
 
     private val micPermLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -97,6 +120,8 @@ class SettingsActivity : AppCompatActivity() {
         bargeMatchSlider = findViewById(R.id.bargeMatchSlider)
         bargeMatchValue = findViewById(R.id.bargeMatchValue)
         setupBargeMatchSlider()
+        setupTuneSliders()
+        findViewById<Button>(R.id.bargeResetBtn).setOnClickListener { onResetBargeTuning() }
 
         serverUrl.setText(prefs.baseUrl)
         masterKey.setText(prefs.masterKey)
@@ -323,6 +348,26 @@ class SettingsActivity : AppCompatActivity() {
         const val BARGE_MATCH_MAX = 0.80f
         // 0.01 per step across the [MIN, MAX] span.
         const val BARGE_MATCH_STEPS = 60
+
+        // Advanced energy/echo slider ranges. Endpoints bracket the code
+        // defaults (margin 2.0, boost 1.5, duck 0.15, decay 0.94) with enough
+        // headroom either way to actually shift behaviour, but not so wide that
+        // a slider can push the detector somewhere nonsensical.
+        const val BARGE_MARGIN_MIN = 1.2f       // more sensitive
+        const val BARGE_MARGIN_MAX = 4.0f       // less sensitive
+        const val BARGE_MARGIN_STEPS = 56       // 0.05 steps
+
+        const val BARGE_ECHO_MIN = 1.0f         // 1.0 = off (no boost)
+        const val BARGE_ECHO_MAX = 2.5f
+        const val BARGE_ECHO_STEPS = 30         // 0.05 steps
+
+        const val BARGE_DUCK_MIN = 0.05f
+        const val BARGE_DUCK_MAX = 0.50f
+        const val BARGE_DUCK_STEPS = 45         // 0.01 steps
+
+        const val BARGE_DECAY_MIN = 0.80f
+        const val BARGE_DECAY_MAX = 0.98f
+        const val BARGE_DECAY_STEPS = 36        // 0.005 steps
     }
 
     /** Barge-in speaker-match strictness. The slider edits
@@ -364,6 +409,103 @@ class SettingsActivity : AppCompatActivity() {
         bargeMatchValue.text = getString(
             R.string.barge_match_value, String.format("%.2f", threshold), getString(descriptor)
         )
+    }
+
+    // ── Advanced energy/echo tuning ────────────────────────────────────────
+
+    /** Binds the four advanced sliders to their [Prefs] knobs. Each writes live
+     *  (the next reply's barge monitor reads the pref fresh, no restart); the
+     *  value label spells out the number plus a plain-language word so the knob
+     *  is usable without knowing what "margin" or "decay" mean. */
+    private fun setupTuneSliders() {
+        bindTuneSlider(
+            R.id.bargeSensitivitySlider, R.id.bargeSensitivityValue,
+            BARGE_MARGIN_MIN, BARGE_MARGIN_MAX, BARGE_MARGIN_STEPS,
+            { prefs.bargeMargin }, { prefs.bargeMargin = it },
+        ) { v ->
+            // Lower margin = easier to interrupt, so the adjective inverts.
+            val word = when {
+                v < 1.8f -> "More sensitive"
+                v <= 2.6f -> "Balanced"
+                else -> "Less sensitive"
+            }
+            "${String.format("%.2f", v)}× echo — $word"
+        }
+        bindTuneSlider(
+            R.id.bargeEchoSlider, R.id.bargeEchoValue,
+            BARGE_ECHO_MIN, BARGE_ECHO_MAX, BARGE_ECHO_STEPS,
+            { prefs.bargeEchoBoost }, { prefs.bargeEchoBoost = it },
+        ) { v ->
+            when {
+                v <= 1.0f -> "Off (no anti-pumping)"
+                v < 1.6f -> "${String.format("%.2f", v)}× — Gentle"
+                else -> "${String.format("%.2f", v)}× — Strong"
+            }
+        }
+        bindTuneSlider(
+            R.id.bargeDuckSlider, R.id.bargeDuckValue,
+            BARGE_DUCK_MIN, BARGE_DUCK_MAX, BARGE_DUCK_STEPS,
+            { prefs.bargeDuckVolume }, { prefs.bargeDuckVolume = it },
+        ) { v ->
+            val word = when {
+                v < 0.15f -> "Deep dip"
+                v <= 0.30f -> "Balanced"
+                else -> "Light dip"
+            }
+            "${(v * 100).roundToInt()}% volume — $word"
+        }
+        bindTuneSlider(
+            R.id.bargeDecaySlider, R.id.bargeDecayValue,
+            BARGE_DECAY_MIN, BARGE_DECAY_MAX, BARGE_DECAY_STEPS,
+            { prefs.bargePlayrefDecay }, { prefs.bargePlayrefDecay = it },
+        ) { v ->
+            val word = when {
+                v < 0.90f -> "Short"
+                v <= 0.95f -> "Balanced"
+                else -> "Long"
+            }
+            "${String.format("%.3f", v)} — $word"
+        }
+    }
+
+    private fun bindTuneSlider(
+        sliderId: Int,
+        labelId: Int,
+        min: Float,
+        max: Float,
+        steps: Int,
+        get: () -> Float,
+        set: (Float) -> Unit,
+        format: (Float) -> String,
+    ) {
+        val ts = TuneSlider(findViewById(sliderId), findViewById(labelId), min, max, steps, get, set, format)
+        ts.slider.max = steps
+        ts.slider.progress = ts.toProgress(get())
+        ts.label.text = format(get())
+        ts.slider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar, progress: Int, fromUser: Boolean) {
+                val v = ts.toValue(progress)
+                if (fromUser) set(v)
+                ts.label.text = format(v)
+            }
+
+            override fun onStartTrackingTouch(sb: SeekBar) {}
+            override fun onStopTrackingTouch(sb: SeekBar) {}
+        })
+        tuneSliders.add(ts)
+    }
+
+    /** Clear every barge-in knob back to its code default and snap all the
+     *  sliders (match + the four advanced) to match. */
+    private fun onResetBargeTuning() {
+        prefs.resetBargeTuning()
+        bargeMatchSlider.progress = thresholdToProgress(prefs.bargeMatchThreshold)
+        updateBargeMatchLabel(prefs.bargeMatchThreshold)
+        for (ts in tuneSliders) {
+            ts.slider.progress = ts.toProgress(ts.get())
+            ts.label.text = ts.format(ts.get())
+        }
+        toastMsg(getString(R.string.barge_tune_reset_done))
     }
 
     private fun updateVoiceIdUi() {

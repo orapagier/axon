@@ -51,4 +51,24 @@
     <string name="barge_match_lenient">Lenient</string>
     <string name="barge_match_balanced">Balanced</string>
     <string name="barge_match_strict">Strict</string>
+
+    <!-- Advanced barge-in energy/echo tuning: the gate that runs before the
+         voice match. See Prefs (bargeMargin / bargeEchoBoost / bargeDuckVolume /
+         bargePlayrefDecay) and BargeDetector.tune. -->
+    <string name="barge_tune_title">Barge-in tuning (advanced)</string>
+    <string name="barge_tune_description">Fine-tune how Axon hears you interrupt a spoken reply, before the voice match even runs. Changes apply on your next reply. To tune from real numbers, run `adb logcat -s BargeDetector SpeakerVerify` while you try to interrupt. If it gets worse, tap Reset.</string>
+    <string name="barge_tune_reset">Reset barge-in tuning</string>
+    <string name="barge_tune_reset_done">Barge-in tuning reset to defaults</string>
+
+    <string name="barge_sensitivity_title">Interrupt sensitivity</string>
+    <string name="barge_sensitivity_description">How much louder than the reply\'s echo your voice must be to break in. Lower = easier to interrupt (raise the sensitivity if Axon ignores you); higher = fewer accidental triggers but a harder barge-in.</string>
+
+    <string name="barge_echo_title">Echo suppression (anti-pumping)</string>
+    <string name="barge_echo_description">How hard Axon corrects its echo estimate when the reply\'s volume pumps up and down. Off never corrects; stronger stops pumping faster but raises the bar for interrupting. Turn it down if it pumps rarely and you want easier barge-in; up if it pumps often.</string>
+
+    <string name="barge_duck_title">Duck level</string>
+    <string name="barge_duck_description">How far the reply\'s volume dips while Axon checks whether you\'re interrupting. Lower makes your voice easier to hear over the echo; the dip is more noticeable on a false alarm.</string>
+
+    <string name="barge_decay_title">Echo reference hold</string>
+    <string name="barge_decay_description">How long Axon holds the reply\'s loudness in memory across the gaps between streamed sentences. Higher reduces volume pumping at sentence boundaries; too high and a finished reply\'s echo lingers.</string>
 </resources>
