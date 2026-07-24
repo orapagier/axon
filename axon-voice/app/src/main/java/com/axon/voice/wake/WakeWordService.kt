@@ -32,7 +32,6 @@ import com.axon.voice.audio.VoicePrint
 import com.axon.voice.audio.VoicePrompts
 import com.axon.voice.audio.WavRecorder
 import com.axon.voice.audio.cosineSimilarity
-import com.axon.voice.audio.speakerVerifier
 import com.axon.voice.ui.ChatFeed
 import com.axon.voice.ui.ChatActivity
 import com.axon.voice.ui.VoiceOverlay
@@ -692,19 +691,14 @@ class WakeWordService : Service(), ChatSocket.Listener {
             return BargeOutcome(false)
         }
         // Fresh reply: forget the last one's ducked/tentative state, but keep
-        // the learned echo gain — it's still the same device and room. Then
-        // apply the live Settings tunables (read fresh so a slider change lands
-        // this reply, no restart).
+        // the self-calibrated echo gain — it's still the same device and room.
         bargeDetector.reset()
-        bargeDetector.tune(
-            prefs.bargeMargin.toDouble(),
-            prefs.bargeEchoBoost.toDouble(),
-            prefs.bargePlayrefDecay.toDouble(),
-        )
-        p.duckLevel = prefs.bargeDuckVolume
-        // Monitor for a barge-in while the reply streams. Only with a live mic
-        // — otherwise there's nothing to listen with and we just wait for done.
-        val monitor = if (rec != null) {
+        // Monitor for a barge-in while the reply streams — only if the user has
+        // barge-in turned on AND there's a live mic to listen with. Off (or
+        // mic-less), and the reply just plays out to completion: the user waits
+        // for it to finish before speaking again, which is the whole point of
+        // the toggle.
+        val monitor = if (rec != null && prefs.bargeInEnabled) {
             thread(name = "axon-barge") {
                 BargeMonitor(
                     detector = bargeDetector,
@@ -712,9 +706,8 @@ class WakeWordService : Service(), ChatSocket.Listener {
                     readFrame = { f -> fillFrame(rec, f) },
                     onTentative = { p.duck(); Log.d(LOG_TAG, "barge tentative (ducked): ${bargeDetector.diagnostics()}") },
                     onFalseAlarm = { p.restoreVolume(); Log.d(LOG_TAG, "barge false-alarm (restored): ${bargeDetector.diagnostics()}") },
-                    verifySpeaker = speakerVerifier(speakerEmbedder, voiceprint, prefs.bargeMatchThreshold),
                     onConfirmed = { preroll ->
-                        Log.d(LOG_TAG, "barge CONFIRMED (energy+speaker): ${bargeDetector.diagnostics()}")
+                        Log.d(LOG_TAG, "barge CONFIRMED: ${bargeDetector.diagnostics()}")
                         val spoken = stream.spokenSoFar()
                         stream.abort() // cut the TTS mid-sentence
                         c.cancel(sessionId) // stop generating, not just talking

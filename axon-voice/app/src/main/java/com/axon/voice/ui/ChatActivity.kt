@@ -37,7 +37,6 @@ import com.axon.voice.audio.StreamingTts
 import com.axon.voice.audio.TtsPlayer
 import com.axon.voice.audio.VoicePrint
 import com.axon.voice.audio.WavRecorder
-import com.axon.voice.audio.speakerVerifier
 import com.axon.voice.wake.WakeWordService
 import org.json.JSONObject
 import java.io.File
@@ -88,10 +87,6 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
     private lateinit var voiceOverlayStatus: TextView
     private val adapter = TranscriptAdapter()
     private val main = Handler(Looper.getMainLooper())
-
-    /** True after the user taps the orb away for the current exchange — keeps
-     *  later phase updates from re-showing it until the exchange ends (IDLE). */
-    private var overlayDismissed = false
 
     /** Live phase/level from the wake service ([VoiceOverlay]), mirrored onto
      *  the orb while this page is in the foreground. Invoked from service
@@ -199,7 +194,6 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
         voiceOverlay = findViewById(R.id.voiceOverlay)
         voiceOrb = findViewById(R.id.voiceOrb)
         voiceOverlayStatus = findViewById(R.id.voiceOverlayStatus)
-        voiceOverlay.setOnClickListener { dismissOverlay() }
 
         adapter.load(ChatHistory.load(this, prefs.chatSessionId))
         scrollEnd()
@@ -327,17 +321,18 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
     // ── Hands-free orb overlay ──────────────────────────────────────────────
 
     /** Reflect the wake service's current phase onto the orb. IDLE hides the
-     *  overlay and ends one exchange (clearing any dismissal); every other
-     *  phase shows it (unless the user tapped it away for this exchange) and
-     *  feeds the reactive listening level. */
+     *  overlay and ends one exchange; every other phase shows it and feeds the
+     *  reactive listening level. The orb stays up for the whole exchange — it is
+     *  no longer tap-dismissible, since a full-screen tap target meant a single
+     *  stray touch during a long hands-free conversation hid it for the rest of
+     *  that conversation (it only came back on IDLE), which read as "the orb
+     *  just disappeared." */
     private fun applyVoiceState(phase: VoiceOverlay.Phase, level: Float) {
         if (phase == VoiceOverlay.Phase.IDLE) {
-            overlayDismissed = false
             voiceOverlay.visibility = View.GONE
             voiceOrb.setPhase(VoiceOrbView.Phase.IDLE)
             return
         }
-        if (overlayDismissed) return
         voiceOverlay.visibility = View.VISIBLE
         voiceOrb.setPhase(
             when (phase) {
@@ -354,15 +349,6 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
             }
         )
         if (level >= 0f) voiceOrb.setLevel(level)
-    }
-
-    /** Tap-to-dismiss: hide the orb for the rest of this exchange without
-     *  cancelling it — the wake service keeps running in the background, the
-     *  reply is still spoken and saved, just without the full-screen visual. */
-    private fun dismissOverlay() {
-        overlayDismissed = true
-        voiceOverlay.visibility = View.GONE
-        voiceOrb.setPhase(VoiceOrbView.Phase.IDLE)
     }
 
     // ── Dictation ───────────────────────────────────────────────────────────
@@ -507,7 +493,9 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
             replyTts = StreamingTts(p, client, cacheDir, "reply_chat") {
                 main.post { speakGen++ }
             }
-            startBargeMonitor(gen)
+            // Watch for a talk-over interruption only if the user has barge-in
+            // on; off, the reply just plays out and they wait for it to finish.
+            if (prefs.bargeInEnabled) startBargeMonitor(gen)
         }
         if (chat?.sendTask(taskPrefix + text, prefs.chatSessionId, voice) != true) {
             adapter.setAt(streamIdx, getString(R.string.status_offline))
@@ -571,13 +559,6 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
      *  longer matches, whether that's a natural end or an abort. */
     private fun startBargeMonitor(gen: Int) {
         bargeDetector.reset()
-        // Live Settings tunables, read fresh so a slider change lands this reply.
-        bargeDetector.tune(
-            prefs.bargeMargin.toDouble(),
-            prefs.bargeEchoBoost.toDouble(),
-            prefs.bargePlayrefDecay.toDouble(),
-        )
-        player?.duckLevel = prefs.bargeDuckVolume
         WakeWordService.micHold = true
         thread(name = "axon-chat-barge") {
             val rec = openBargeRecord()
@@ -598,9 +579,8 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
                 readFrame = { f -> fillBargeFrame(rec, f, gen) },
                 onTentative = { player?.duck(); Log.d("BargeDetector", "barge tentative (ducked): ${bargeDetector.diagnostics()}") },
                 onFalseAlarm = { player?.restoreVolume(); Log.d("BargeDetector", "barge false-alarm (restored): ${bargeDetector.diagnostics()}") },
-                verifySpeaker = speakerVerifier(speakerEmbedder, voiceprint, prefs.bargeMatchThreshold),
                 onConfirmed = { preroll ->
-                    Log.d("BargeDetector", "barge CONFIRMED (energy+speaker): ${bargeDetector.diagnostics()}")
+                    Log.d("BargeDetector", "barge CONFIRMED: ${bargeDetector.diagnostics()}")
                     confirmed = true
                     main.post { onBargeConfirmed(gen, preroll) }
                 },

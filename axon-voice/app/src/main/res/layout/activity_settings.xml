@@ -85,231 +85,46 @@
             android:layout_height="wrap_content"
             android:orientation="vertical" />
 
-        <!-- On-device speaker verification for barge-in (see SpeakerEmbedder /
-             VoicePrint) — entirely local, nothing here talks to the server. -->
+        <!-- Barge-in: talk over a spoken reply to interrupt it. Self-calibrating
+             echo rejection (BargeDetector) means there's nothing to tune — just
+             on or off. Off = the mic isn't watched during a reply, so you wait
+             for it to finish before speaking again. -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
-            android:text="@string/voice_id_title"
+            android:layout_marginTop="28dp"
+            android:text="@string/barge_title"
             android:textColor="@color/accent"
             android:textSize="16sp"
             android:textStyle="bold" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="@string/voice_id_description"
-            android:textColor="@color/text_dim"
-            android:textSize="12sp" />
-
-        <TextView
-            android:id="@+id/voiceIdStatus"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:textColor="@color/text_dim" />
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
+            android:gravity="center_vertical"
             android:layout_marginTop="10dp">
 
-            <Button
-                android:id="@+id/voiceIdEnrollBtn"
-                android:layout_width="wrap_content"
+            <TextView
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:text="@string/voice_id_enroll" />
+                android:layout_weight="1"
+                android:text="@string/barge_enable_label"
+                android:textColor="@color/text"
+                android:textSize="14sp" />
 
-            <Button
-                android:id="@+id/voiceIdClearBtn"
-                style="@style/Widget.Material3.Button.OutlinedButton"
+            <Switch
+                android:id="@+id/bargeEnabledSwitch"
                 android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="12dp"
-                android:text="@string/voice_id_clear" />
+                android:layout_height="wrap_content" />
         </LinearLayout>
 
-        <!-- Barge-in speaker-match strictness. Adjusts the cosine-similarity
-             cutoff in Prefs.bargeMatchThreshold / speakerVerifier — the fix
-             for "it won't recognize my voice when I try to interrupt". -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="22dp"
-            android:text="@string/barge_match_title"
-            android:textColor="@color/text"
-            android:textSize="14sp" />
-
-        <SeekBar
-            android:id="@+id/bargeMatchSlider"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp" />
-
-        <TextView
-            android:id="@+id/bargeMatchValue"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:textColor="@color/text_dim"
-            android:textSize="12sp" />
-
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="@string/barge_match_description"
+            android:text="@string/barge_enable_description"
             android:textColor="@color/text_dim"
             android:textSize="12sp" />
-
-        <!-- Advanced energy/echo tuning: the gate that runs BEFORE the voice
-             match above. See BargeDetector.tune / TtsPlayer.duckLevel; every
-             row here is read fresh per reply from Prefs. -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="28dp"
-            android:text="@string/barge_tune_title"
-            android:textColor="@color/accent"
-            android:textSize="16sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="@string/barge_tune_description"
-            android:textColor="@color/text_dim"
-            android:textSize="12sp" />
-
-        <!-- Interrupt sensitivity (BargeDetector margin) -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="18dp"
-            android:text="@string/barge_sensitivity_title"
-            android:textColor="@color/text"
-            android:textSize="14sp" />
-
-        <SeekBar
-            android:id="@+id/bargeSensitivitySlider"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp" />
-
-        <TextView
-            android:id="@+id/bargeSensitivityValue"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:textColor="@color/text_dim"
-            android:textSize="12sp" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="@string/barge_sensitivity_description"
-            android:textColor="@color/text_dim"
-            android:textSize="12sp" />
-
-        <!-- Echo suppression / anti-pumping (BargeDetector falseAlarmGainBoost) -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="18dp"
-            android:text="@string/barge_echo_title"
-            android:textColor="@color/text"
-            android:textSize="14sp" />
-
-        <SeekBar
-            android:id="@+id/bargeEchoSlider"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp" />
-
-        <TextView
-            android:id="@+id/bargeEchoValue"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:textColor="@color/text_dim"
-            android:textSize="12sp" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="@string/barge_echo_description"
-            android:textColor="@color/text_dim"
-            android:textSize="12sp" />
-
-        <!-- Duck level (TtsPlayer.duckLevel) -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="18dp"
-            android:text="@string/barge_duck_title"
-            android:textColor="@color/text"
-            android:textSize="14sp" />
-
-        <SeekBar
-            android:id="@+id/bargeDuckSlider"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp" />
-
-        <TextView
-            android:id="@+id/bargeDuckValue"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:textColor="@color/text_dim"
-            android:textSize="12sp" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="@string/barge_duck_description"
-            android:textColor="@color/text_dim"
-            android:textSize="12sp" />
-
-        <!-- Echo reference hold (BargeDetector playrefDecay) -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="18dp"
-            android:text="@string/barge_decay_title"
-            android:textColor="@color/text"
-            android:textSize="14sp" />
-
-        <SeekBar
-            android:id="@+id/bargeDecaySlider"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp" />
-
-        <TextView
-            android:id="@+id/bargeDecayValue"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:textColor="@color/text_dim"
-            android:textSize="12sp" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="@string/barge_decay_description"
-            android:textColor="@color/text_dim"
-            android:textSize="12sp" />
-
-        <Button
-            android:id="@+id/bargeResetBtn"
-            style="@style/Widget.Material3.Button.OutlinedButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="18dp"
-            android:text="@string/barge_tune_reset" />
     </LinearLayout>
 </ScrollView>

@@ -111,7 +111,12 @@ const val SPEAKER_SIMILARITY_THRESHOLD = 0.5f
 /** Builds a synchronous [BargeMonitor] speaker check from a loaded
  *  [SpeakerEmbedder] and the enrolled voiceprint, or null if either is
  *  missing — [BargeMonitor] treats null as "skip the check", falling back to
- *  the energy-only confirm. */
+ *  the energy-only confirm.
+ *
+ *  Currently unused: barge-in was made energy-only (no speaker gate) because the
+ *  match threshold proved impractical to tune on a ~1.5s interruption clip. Kept
+ *  for potential reuse (e.g. a future opt-in wake-word speaker gate) alongside
+ *  the enrollment plumbing in [VoicePrint]. */
 fun speakerVerifier(
     embedder: SpeakerEmbedder?,
     voiceprint: FloatArray?,
@@ -122,11 +127,7 @@ fun speakerVerifier(
         val candidate = embedder.embed(pcm) ?: return@verifier false
         val similarity = cosineSimilarity(candidate, voiceprint)
         val pass = similarity >= threshold
-        // Real on-device numbers for tuning the Settings "Barge-in voice match"
-        // slider (Prefs.bargeMatchThreshold): `adb logcat -s SpeakerVerify`
-        // while trying to interrupt shows what your own voice actually scores,
-        // so the cutoff can be set from data instead of guessed.
-        Log.d("SpeakerVerify", "barge-in speaker check: similarity=$similarity threshold=$threshold pass=$pass")
+        Log.d("SpeakerVerify", "speaker check: similarity=$similarity threshold=$threshold pass=$pass")
         pass
     }
 }

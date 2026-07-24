@@ -2,26 +2,41 @@ package com.axon.voice.audio
 
 /**
  * Duck-then-confirm barge-in detector: decides when the user is trying to
- * interrupt an in-progress spoken reply. The hard part is that the mic hears
- * the reply's own echo bouncing off the room/speaker along with any real
- * speech, so a plain "mic got loud" trigger fires on the assistant's own
- * voice. This separates the two by learning how loud that echo is relative to
- * what's actually playing ([gain]) — per device, per volume, per room, with
- * no calibration step — and requires speech to hold up *after* the reply has
- * been ducked down, where a real interruption keeps going and a stray echo or
- * cough does not.
+ * interrupt an in-progress spoken reply by talking over it. The hard part is
+ * that the mic hears the reply's own echo bouncing off the room/speaker along
+ * with any real speech, so a plain "mic got loud" trigger fires on the
+ * assistant's own voice. Two mechanisms tell them apart, and neither needs the
+ * user to tune anything:
  *
- * The energy/gain state machine below is the same shape as
- * axon-ui/src/lib/bargein.js, but the two platforms now diverge: web layers a
- * cheap spectral speech-shape gate directly into `feedMic` (a browser can't
- * afford much more per 100ms tick), while Android layers a heavier, stronger
- * check — [BargeMonitor]'s `verifySpeaker` runs a CAM++ speaker-embedding
- * match ([SpeakerEmbedder]) once, right as an energy-based CONFIRMED fires
- * here, rejecting anyone who isn't the enrolled user ([VoicePrint]) instead of
- * just anyone who isn't speech-shaped. Android also nudges the learned echo
- * [gain] up on a FALSE_ALARM (see [FALSE_ALARM_GAIN_BOOST]) so a low estimate
- * can't leave the reply's volume pumping; web still relies on [learnGain]
- * alone. Same convention as [SilenceWatcher] / wakeword.js:
+ *  1. A **self-calibrating echo estimate** ([gain]): the ratio of mic level to
+ *     what's actually playing is a per-device/room/volume coupling constant, so
+ *     [learnGain] tracks it as a peak-hold with slow decay — it sits at (or just
+ *     above) the loudest recent echo ratio and can't chronically *under*estimate
+ *     the way a plain average could. An underestimate was the old failure mode:
+ *     it let ordinary echo cross the threshold, duck, fall back, and duck again
+ *     — the reply's volume audibly "pumping." A peak-hold estimate makes the
+ *     threshold (`gain*playRef*margin`) ride above the echo, so ordinary
+ *     playback never trips it in the first place.
+ *  2. **Ducking**: once a loud onset does trip, the caller ducks the reply. A
+ *     real interruption keeps going (the user's voice doesn't drop when we lower
+ *     our own output); the reply's echo drops with it and fades out. So a
+ *     tentative onset that keeps holding is real, and one that fades once ducked
+ *     was echo — reported as a FALSE_ALARM, after which a short cooldown blocks
+ *     an immediate re-duck so a single loud transient can't start a pumping bout.
+ *
+ * This is deliberately energy-only: there is no speaker-identity check. An
+ * earlier build gated barge-in on a CAM++ speaker-embedding match, but it was
+ * effectively impossible to tune (a short interruption clip scores an unreliable
+ * similarity against enrollment), so it was removed. The trade-off is that
+ * another person's sustained speech can also interrupt — but the assistant's own
+ * voice is still rejected by the duck-and-fade test above, which is the property
+ * that actually matters. Barge-in as a whole is a user toggle
+ * ([com.axon.voice.Prefs.bargeInEnabled]); when it's off the mic isn't watched
+ * during a reply at all.
+ *
+ * The state machine has the same shape as axon-ui/src/lib/bargein.js (which
+ * still uses a plain learned gain + a spectral speech-shape gate — the two
+ * platforms diverged and only Android self-calibrates this way):
  *
  * ```
  *   idle --[mic over threshold]--> tentative (caller ducks the reply)
@@ -40,31 +55,24 @@ package com.axon.voice.audio
  * [SilenceWatcher] and wakeword.js's `watchSilence` already use — because
  * [MIN_ONSET_TICKS] / [FALSE_ALARM_TICKS] are tick counts, not durations.
  * [feedPlayback] can be called at any rate (Android: ~20ms windows from
- * [PcmPlayback]; web: whatever the sampling loop uses); only the latest value
- * before each [feedMic] tick matters.
+ * [PcmPlayback]); only the latest value before each [feedMic] tick matters.
  */
 class BargeDetector(
     private val absFloor: Double = SilenceWatcher.FOLLOWUP_RMS,
-    margin: Double = MARGIN,
+    private val margin: Double = MARGIN,
     private val minOnsetTicks: Int = MIN_ONSET_TICKS,
     private val falseAlarmTicks: Int = FALSE_ALARM_TICKS,
     private val onsetMissGrace: Int = ONSET_MISS_GRACE,
 ) {
     enum class Event { NONE, TENTATIVE, CONFIRMED, FALSE_ALARM }
 
-    // Live-tunable knobs (see [tune]); start at the constants but every one of
-    // these is now exposed in Settings > barge-in tuning and re-read per reply,
-    // because the right value is device/room/volume-specific and can't be
-    // guessed once. Held as vars, not constructor vals, so the long-lived
-    // detector both WakeWordService and ChatActivity keep can pick up a
-    // slider change on the next reply without being rebuilt.
-    private var margin: Double = margin
-    private var falseAlarmGainBoost: Double = FALSE_ALARM_GAIN_BOOST
-    private var playrefDecay: Double = PLAYREF_DECAY
-
     companion object {
-        /** How far above the learned echo level the mic must read to count as
-         *  real speech rather than the reply bouncing back. */
+        /** How far above the estimated echo level the mic must read to count as
+         *  real speech rather than the reply bouncing back. With the peak-hold
+         *  [gain] sitting at the echo ratio, ordinary echo lands at ~half the
+         *  threshold and a deliberate interruption (louder than the echo) clears
+         *  it. Fixed, not tunable — the room-dependent part is [gain], which
+         *  self-calibrates. */
         const val MARGIN = 2.0
 
         /** ~300ms at the standard 100ms tick cadence — long enough that a
@@ -81,49 +89,31 @@ class BargeDetector(
          *  [feedMic]'s miss-streak tracking. Without this cap, a bursty loud
          *  noise (a door slam, dropped object, a cough) spread over several
          *  ticks with gaps under [FALSE_ALARM_TICKS] could accumulate three
-         *  non-consecutive loud ticks and confirm on energy alone, invoking
-         *  the speaker-embedding check (or, worse, occasionally passing it)
-         *  for noise that was never a sustained interruption to begin with. */
+         *  non-consecutive loud ticks and confirm on energy alone for noise
+         *  that was never a sustained interruption to begin with. */
         const val ONSET_MISS_GRACE = 1
 
-        /** Slow EMA rate for the learned echo gain: learns over several
-         *  seconds of reply audio, not one tick, so one loud consonant can't
-         *  swing it and mistrain the threshold. */
-        const val GAIN_ALPHA = 0.02
+        /** After a FALSE_ALARM, how many ticks to refuse to start a new
+         *  tentative onset (~500ms). The duck-and-fade test already proved that
+         *  onset was echo, not speech; this short refractory window means a
+         *  single loud echo spike (or a stray transient) can't immediately
+         *  re-duck and start the volume oscillating. Learning still runs during
+         *  the cooldown, so [gain] keeps catching up to the echo it just saw and
+         *  the *next* onset check faces a correctly-raised threshold. Bounds the
+         *  worst case to one brief dip per ~1.1s — not perceptible pumping — and
+         *  in practice the peak-hold [gain] prevents even that after one cycle. */
+        const val FALSE_ALARM_COOLDOWN_TICKS = 5
 
         const val GAIN_MIN = 0.05
-
-        /** Ceiling on the learned echo [gain]. Lowered from an original 5.0:
-         *  at 5.0 a few [FALSE_ALARM_GAIN_BOOST] bumps during a pumping episode
-         *  drove the threshold (`gain*playRef*margin`) up to ~10x the digital
-         *  playback level — high enough that a real interruption at a normal
-         *  voice level physically couldn't cross it, so barge-in went dead
-         *  until [learnGain] slowly decayed the gain back down (at which point
-         *  it re-pumped). 2.5 caps the worst-case threshold at ~5x playback:
-         *  still well clear of ordinary echo, but a close, normal-volume voice
-         *  can still get over it. The energy gate is only the first of two —
-         *  the speaker-embedding check still has the final say — so a slightly
-         *  looser cap here doesn't loosen who can actually interrupt. */
         const val GAIN_MAX = 2.5
 
-        /** Multiplicative bump applied to the learned echo [gain] on every
-         *  FALSE_ALARM (the default; user-overridable via [tune] from the
-         *  Settings "Echo suppression" slider — 1.0 disables it). A false alarm
-         *  means the loud tick that made us duck faded out once ducked — it was
-         *  the reply's own echo, not a real interruption, so the echo estimate
-         *  that set the threshold was too low. The slow per-tick [learnGain]
-         *  can't fix that here: it only runs on non-tentative quiet ticks, so
-         *  once the echo is loud enough to keep tripping TENTATIVE the detector
-         *  oscillates duck<->restore (the reply's volume audibly "pumping") and
-         *  never learns its way out. Bumping [gain] geometrically per false
-         *  alarm lifts the threshold back above the echo within a cycle or two;
-         *  the slow [learnGain] then settles it at the true ratio and it holds
-         *  (kept across replies by [reset]). Bounded by [GAIN_MAX] and
-         *  self-limiting, so one loud transient can't slam the gain the way
-         *  learning straight toward its raw ratio would. Lowered from an
-         *  original 2.0 to 1.5: 2.0 overshot hard enough (in tandem with the
-         *  old 5.0 [GAIN_MAX]) to starve real barge-ins between pumping bouts. */
-        const val FALSE_ALARM_GAIN_BOOST = 1.5
+        /** Per-quiet-tick decay of the peak-held echo [gain]. The estimate jumps
+         *  up instantly to any louder echo ratio and relaxes back down at this
+         *  rate (~0.99/tick ≈ 7s half-life), so a one-off loud consonant lifts
+         *  the threshold only briefly instead of desensitizing barge-in for the
+         *  rest of the reply, while a steady echo ratio holds the estimate right
+         *  at its own level. */
+        const val GAIN_DECAY = 0.99
 
         /** Default prior before any learning has happened: a phone's own
          *  speaker-into-own-mic echo is typically well below unity gain. */
@@ -133,14 +123,13 @@ class BargeDetector(
          *  often [feedPlayback] fires — including a genuine gap where it
          *  doesn't fire at all, e.g. [PcmPlayback] tearing down and building a
          *  fresh [android.media.MediaCodec] between two streamed sentences.
-         *  At the original 0.85 (~430ms half-life), that gap decayed the
-         *  reference substantially before the next sentence's own echo
-         *  arrived, so the threshold — computed from the now-artificially-low
-         *  reference — read ordinary continuing playback as loud enough to
-         *  tentatively confirm, duck, then false-alarm back a few hundred ms
-         *  later: the reply's volume visibly pumping at every sentence
-         *  boundary. 0.94 (~1.1s half-life) gives the reference enough runway
-         *  to survive a real pause without depending on decode/codec timing. */
+         *  At 0.85 (~430ms half-life), that gap decayed the reference
+         *  substantially before the next sentence's own echo arrived, so the
+         *  threshold read ordinary continuing playback as loud enough to
+         *  tentatively confirm, duck, then false-alarm back: the reply's volume
+         *  pumping at every sentence boundary. 0.94 (~1.1s half-life) gives the
+         *  reference enough runway to survive a real pause without depending on
+         *  decode/codec timing. */
         const val PLAYREF_DECAY = 0.94
     }
 
@@ -151,55 +140,32 @@ class BargeDetector(
     private var onsetTicks = 0
     private var quietTicks = 0
     private var missStreak = 0 // consecutive non-loud ticks since the last loud one, while tentative
+    private var cooldownTicks = 0 // ticks left refusing a new onset after a false alarm
 
     // Last tick's mic RMS and the threshold it was compared against, kept only
     // so the Android call sites can log "rms=… thr=… gain=…" on each barge
-    // event — the energy gate used to be a black box (only the speaker check
-    // logged), leaving nothing to tune the Settings sliders against on real
-    // hardware. Pure reads; kept off the companion so a JVM test can still
-    // exercise this class with no android.util.Log dependency.
+    // event for on-device sanity-checking. Pure reads; kept off the companion
+    // so a JVM test can still exercise this class with no android.util.Log dep.
     private var lastMicRms = 0.0
     private var lastThreshold = 0.0
 
     /** Snapshot of the diagnostics for a one-line logcat entry (see the
      *  Android barge callbacks): last mic RMS, the threshold it faced, and the
-     *  current learned echo gain. */
+     *  current self-calibrated echo gain. */
     @Synchronized
     fun diagnostics(): String =
-        "rms=%.4f thr=%.4f gain=%.3f playRef=%.4f margin=%.2f".format(
-            lastMicRms, lastThreshold, gain, playRef, margin
+        "rms=%.4f thr=%.4f gain=%.3f playRef=%.4f".format(
+            lastMicRms, lastThreshold, gain, playRef
         )
 
-    /** Apply the live Settings tunables. Called alongside [reset] at the start
-     *  of every reply so a slider change takes effect on the next reply with no
-     *  restart — the detector itself is long-lived (its learned [gain] is worth
-     *  keeping), so the knobs ride in this way rather than through the
-     *  constructor. Leaves the learned [gain] untouched; [reset] handles that.
-     *  Web (`bargein.js`) deliberately does not mirror these — it uses a
-     *  spectral gate, not this speaker-embedding path, and the user only tunes
-     *  Android. */
-    @Synchronized
-    fun tune(margin: Double, falseAlarmGainBoost: Double, playrefDecay: Double) {
-        this.margin = margin
-        this.falseAlarmGainBoost = falseAlarmGainBoost
-        this.playrefDecay = playrefDecay
-    }
-
-    /** Whether the reply was actually playing (playRef above the absolute
-     *  floor) at the tick that opened the current tentative onset. Gates the
-     *  FALSE_ALARM gain bump so a barge attempt during the silent "thinking"
-     *  phase — real speech, no echo reference at all — can never be mistaken
-     *  for an echo overshoot and mistrain the echo gain. */
-    private var onsetHadPlayback = false
-
     /** Feed a playback RMS sample (0..1); a negative value (the convention
-     *  [PcmPlayback.onLevel] and the web envelope both use) means "nothing
-     *  playing right now" — it never raises the peak-hold, but doesn't reset
-     *  it either. [PcmPlayback] emits this between every back-to-back
-     *  sentence file, not just at the reply's true end, so a hard reset here
-     *  would zero the echo reference at every sentence boundary and let a
-     *  room's reverb tail read as a fresh interruption; [PLAYREF_DECAY]
-     *  already governs how fast the reference actually falls.
+     *  [PcmPlayback.onLevel] uses) means "nothing playing right now" — it never
+     *  raises the peak-hold, but doesn't reset it either. [PcmPlayback] emits
+     *  this between every back-to-back sentence file, not just at the reply's
+     *  true end, so a hard reset here would zero the echo reference at every
+     *  sentence boundary and let a room's reverb tail read as a fresh
+     *  interruption; [PLAYREF_DECAY] already governs how fast the reference
+     *  actually falls.
      *
      *  Called from the playback thread while [feedMic] is called from the
      *  barge-monitor thread — every public method here is `@Synchronized` so
@@ -217,16 +183,25 @@ class BargeDetector(
         lastMicRms = rms
         lastThreshold = threshold
         val event = if (!tentative) {
-            if (rms > threshold) {
-                tentative = true
-                onsetTicks = 1
-                quietTicks = 0
-                missStreak = 0
-                onsetHadPlayback = playRef > absFloor
-                Event.TENTATIVE
-            } else {
-                if (playRef > absFloor) learnGain(rms)
-                Event.NONE
+            when {
+                cooldownTicks > 0 -> {
+                    // Refractory window after a false alarm: don't start a new
+                    // onset, but keep calibrating so gain catches the echo up.
+                    cooldownTicks--
+                    if (playRef > absFloor) learnGain(rms)
+                    Event.NONE
+                }
+                rms > threshold -> {
+                    tentative = true
+                    onsetTicks = 1
+                    quietTicks = 0
+                    missStreak = 0
+                    Event.TENTATIVE
+                }
+                else -> {
+                    if (playRef > absFloor) learnGain(rms)
+                    Event.NONE
+                }
             }
         } else {
             if (rms > threshold) {
@@ -253,14 +228,10 @@ class BargeDetector(
                     onsetTicks = 0
                     quietTicks = 0
                     // The loud onset that ducked us faded once ducked — echo,
-                    // not a real interruption. Lift the echo gain so ordinary
-                    // playback stops crossing the threshold; otherwise the
-                    // detector keeps ducking and restoring and the reply's
-                    // volume pumps. Only when the reply was actually playing at
-                    // onset (never off a thinking-phase barge attempt).
-                    if (onsetHadPlayback) {
-                        gain = (gain * falseAlarmGainBoost).coerceAtMost(GAIN_MAX)
-                    }
+                    // not a real interruption. Hold off starting another onset
+                    // for a moment so we can't immediately re-duck on the same
+                    // echo and pump the volume.
+                    cooldownTicks = FALSE_ALARM_COOLDOWN_TICKS
                     Event.FALSE_ALARM
                 } else {
                     Event.NONE
@@ -269,7 +240,7 @@ class BargeDetector(
         }
         // Decay the peak-hold AFTER this tick's threshold/learning used it —
         // the reference for the *next* tick, not this one.
-        playRef *= playrefDecay
+        playRef *= PLAYREF_DECAY
         return event
     }
 
@@ -281,13 +252,15 @@ class BargeDetector(
         onsetTicks = 0
         quietTicks = 0
         missStreak = 0
+        cooldownTicks = 0
         return Event.CONFIRMED
     }
 
-    /** Clears per-turn state (the playback reference, any in-flight
-     *  tentative onset) for a fresh reply. Deliberately keeps the learned
-     *  [gain] — it took several seconds of real playback to learn and stays
-     *  valid across replies on the same device/volume/room. */
+    /** Clears per-turn state (the playback reference, any in-flight tentative
+     *  onset, any cooldown) for a fresh reply. Deliberately keeps the learned
+     *  [gain] — it took several seconds of real playback to calibrate and stays
+     *  valid across replies on the same device/volume/room, so a second reply in
+     *  the same room doesn't dip at all while gain re-converges. */
     @Synchronized
     fun reset() {
         playRef = 0.0
@@ -295,11 +268,18 @@ class BargeDetector(
         onsetTicks = 0
         quietTicks = 0
         missStreak = 0
-        onsetHadPlayback = false
+        cooldownTicks = 0
     }
 
+    /** Peak-hold-with-decay of the observed echo ratio. Jumps up to any louder
+     *  ratio immediately, decays toward it at [GAIN_DECAY] otherwise — so the
+     *  estimate sits at the top of the recent echo envelope and never chronically
+     *  underestimates (which is what let echo keep tripping the threshold and
+     *  pump the volume). The ratio is level-independent (mic echo and [playRef]
+     *  both scale with playback volume), so it settles cleanly at the room's
+     *  coupling constant regardless of how loud the current sentence is. */
     private fun learnGain(micRms: Double) {
         val observed = micRms / playRef
-        gain = (gain + GAIN_ALPHA * (observed - gain)).coerceIn(GAIN_MIN, GAIN_MAX)
+        gain = maxOf(gain * GAIN_DECAY, observed).coerceIn(GAIN_MIN, GAIN_MAX)
     }
 }

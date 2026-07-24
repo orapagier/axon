@@ -1,7 +1,5 @@
 package com.axon.voice.ui
 
-import android.Manifest
-import android.content.pm.PackageManager
 import android.os.Bundle
 import android.text.InputType
 import android.util.TypedValue
@@ -9,27 +7,17 @@ import android.view.Gravity
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
-import android.widget.SeekBar
+import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.axon.voice.Prefs
 import com.axon.voice.R
 import com.axon.voice.api.AxonClient
-import com.axon.voice.audio.Sound
-import com.axon.voice.audio.SpeakerEmbedder
-import com.axon.voice.audio.VoicePrint
-import com.axon.voice.audio.averageEmbeddings
-import com.axon.voice.audio.WavRecorder
-import com.axon.voice.wake.WakeWordService
 import org.json.JSONObject
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import kotlin.concurrent.thread
-import kotlin.math.roundToInt
 
 /**
  * Connection settings (server URL + master key, stored on-device) plus the
@@ -38,6 +26,11 @@ import kotlin.math.roundToInt
  * GET /api/settings and written back per-key via PUT /api/settings/{key}.
  * The model fields offer the same catalogue picker as the web dropdowns
  * (POST /api/audio/models), with free text always allowed.
+ *
+ * Barge-in (interrupting a spoken reply by talking over it) is a single on/off
+ * switch here — no thresholds to tune. The detector self-calibrates its echo
+ * rejection ([com.axon.voice.audio.BargeDetector]); when the switch is off the
+ * mic isn't watched during a reply at all, so you wait for it to finish.
  */
 class SettingsActivity : AppCompatActivity() {
 
@@ -56,41 +49,6 @@ class SettingsActivity : AppCompatActivity() {
     private val voiceRows = mutableListOf<Row>()
     private var voiceLoading = false
 
-    private lateinit var voiceIdStatus: TextView
-    private lateinit var voiceIdEnrollBtn: Button
-    private lateinit var voiceIdClearBtn: Button
-    private var enrolling = false
-
-    private lateinit var bargeMatchSlider: SeekBar
-    private lateinit var bargeMatchValue: TextView
-
-    /** The four advanced energy/echo sliders, kept so [onResetBargeTuning] can
-     *  refresh every one after clearing the prefs. */
-    private val tuneSliders = mutableListOf<TuneSlider>()
-
-    /** One float-valued [SeekBar] bound to a [Prefs] knob: maps the integer
-     *  progress across [steps] onto [min]..[max], reads/writes via [get]/[set],
-     *  and renders the current value with [format]. */
-    private class TuneSlider(
-        val slider: SeekBar,
-        val label: TextView,
-        val min: Float,
-        val max: Float,
-        val steps: Int,
-        val get: () -> Float,
-        val set: (Float) -> Unit,
-        val format: (Float) -> String,
-    ) {
-        fun toValue(progress: Int): Float = min + (max - min) * progress / steps
-        fun toProgress(value: Float): Int =
-            Math.round((value - min) / (max - min) * steps).coerceIn(0, steps)
-    }
-
-    private val micPermLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (granted) startEnrollRecording() else toastMsg(getString(R.string.voice_id_failed))
-        }
-
     /** Show base_url and model above voice/api_key/language, like a setup flow
      *  reads — the API returns rows in key order, which buries base_url. */
     private val fieldOrder = listOf("base_url", "model", "voice", "api_key", "language")
@@ -106,22 +64,10 @@ class SettingsActivity : AppCompatActivity() {
         val testResult = findViewById<TextView>(R.id.testResult)
         voiceStatus = findViewById(R.id.voiceStatus)
         voiceContainer = findViewById(R.id.voiceContainer)
-        voiceIdStatus = findViewById(R.id.voiceIdStatus)
-        voiceIdEnrollBtn = findViewById(R.id.voiceIdEnrollBtn)
-        voiceIdClearBtn = findViewById(R.id.voiceIdClearBtn)
-        updateVoiceIdUi()
-        voiceIdEnrollBtn.setOnClickListener { onEnrollTap() }
-        voiceIdClearBtn.setOnClickListener {
-            VoicePrint.clear(this)
-            updateVoiceIdUi()
-            toastMsg(getString(R.string.voice_id_cleared))
-        }
 
-        bargeMatchSlider = findViewById(R.id.bargeMatchSlider)
-        bargeMatchValue = findViewById(R.id.bargeMatchValue)
-        setupBargeMatchSlider()
-        setupTuneSliders()
-        findViewById<Button>(R.id.bargeResetBtn).setOnClickListener { onResetBargeTuning() }
+        val bargeSwitch = findViewById<Switch>(R.id.bargeEnabledSwitch)
+        bargeSwitch.isChecked = prefs.bargeInEnabled
+        bargeSwitch.setOnCheckedChangeListener { _, checked -> prefs.bargeInEnabled = checked }
 
         serverUrl.setText(prefs.baseUrl)
         masterKey.setText(prefs.masterKey)
@@ -323,288 +269,6 @@ class SettingsActivity : AppCompatActivity() {
                 }
             }
         }
-    }
-
-    // ── Voice ID (on-device speaker-embedding enrollment for barge-in) ─────
-
-    private companion object {
-        const val ENROLL_DURATION_MS = 4000L
-        // Multiple takes, averaged into one centroid embedding (see
-        // finishEnrollment), so the stored voiceprint spans the natural
-        // pitch/tone range across a few deliveries rather than pinning
-        // verification to whatever one clip happened to sound like.
-        const val ENROLL_TAKES = 5
-        // Long enough to clearly separate takes once the chime plays — the
-        // original 400ms gap was inaudible/easy to miss, so five takes felt
-        // like one continuous ~20s recording instead of five distinct ones.
-        const val ENROLL_TAKE_GAP_MS = 900L
-
-        // Range the barge-in voice-match slider spans, in cosine-similarity
-        // units. Below ~0.2 essentially anything matches (the check stops
-        // meaning much); above ~0.8 even the enrolled user rarely clears it,
-        // so those make poor endpoints to expose. The SPEAKER_SIMILARITY_THRESHOLD
-        // default (0.5) sits mid-range.
-        const val BARGE_MATCH_MIN = 0.20f
-        const val BARGE_MATCH_MAX = 0.80f
-        // 0.01 per step across the [MIN, MAX] span.
-        const val BARGE_MATCH_STEPS = 60
-
-        // Advanced energy/echo slider ranges. Endpoints bracket the code
-        // defaults (margin 2.0, boost 1.5, duck 0.15, decay 0.94) with enough
-        // headroom either way to actually shift behaviour, but not so wide that
-        // a slider can push the detector somewhere nonsensical.
-        const val BARGE_MARGIN_MIN = 1.2f       // more sensitive
-        const val BARGE_MARGIN_MAX = 4.0f       // less sensitive
-        const val BARGE_MARGIN_STEPS = 56       // 0.05 steps
-
-        const val BARGE_ECHO_MIN = 1.0f         // 1.0 = off (no boost)
-        const val BARGE_ECHO_MAX = 2.5f
-        const val BARGE_ECHO_STEPS = 30         // 0.05 steps
-
-        const val BARGE_DUCK_MIN = 0.05f
-        const val BARGE_DUCK_MAX = 0.50f
-        const val BARGE_DUCK_STEPS = 45         // 0.01 steps
-
-        const val BARGE_DECAY_MIN = 0.80f
-        const val BARGE_DECAY_MAX = 0.98f
-        const val BARGE_DECAY_STEPS = 36        // 0.005 steps
-    }
-
-    /** Barge-in speaker-match strictness. The slider edits
-     *  [Prefs.bargeMatchThreshold] live (each reply's barge monitor reads it
-     *  fresh, so no restart is needed); the label spells out the raw cutoff
-     *  plus a lenient/balanced/strict word so it's tunable without knowing
-     *  what a cosine similarity is. */
-    private fun setupBargeMatchSlider() {
-        bargeMatchSlider.max = BARGE_MATCH_STEPS
-        bargeMatchSlider.progress = thresholdToProgress(prefs.bargeMatchThreshold)
-        updateBargeMatchLabel(prefs.bargeMatchThreshold)
-        bargeMatchSlider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(sb: SeekBar, progress: Int, fromUser: Boolean) {
-                val threshold = progressToThreshold(progress)
-                if (fromUser) prefs.bargeMatchThreshold = threshold
-                updateBargeMatchLabel(threshold)
-            }
-
-            override fun onStartTrackingTouch(sb: SeekBar) {}
-            override fun onStopTrackingTouch(sb: SeekBar) {}
-        })
-    }
-
-    private fun progressToThreshold(progress: Int): Float =
-        BARGE_MATCH_MIN + (BARGE_MATCH_MAX - BARGE_MATCH_MIN) * progress / BARGE_MATCH_STEPS
-
-    private fun thresholdToProgress(threshold: Float): Int {
-        val span = BARGE_MATCH_MAX - BARGE_MATCH_MIN
-        val p = Math.round((threshold - BARGE_MATCH_MIN) / span * BARGE_MATCH_STEPS)
-        return p.coerceIn(0, BARGE_MATCH_STEPS)
-    }
-
-    private fun updateBargeMatchLabel(threshold: Float) {
-        val descriptor = when {
-            threshold < 0.40f -> R.string.barge_match_lenient
-            threshold <= 0.60f -> R.string.barge_match_balanced
-            else -> R.string.barge_match_strict
-        }
-        bargeMatchValue.text = getString(
-            R.string.barge_match_value, String.format("%.2f", threshold), getString(descriptor)
-        )
-    }
-
-    // ── Advanced energy/echo tuning ────────────────────────────────────────
-
-    /** Binds the four advanced sliders to their [Prefs] knobs. Each writes live
-     *  (the next reply's barge monitor reads the pref fresh, no restart); the
-     *  value label spells out the number plus a plain-language word so the knob
-     *  is usable without knowing what "margin" or "decay" mean. */
-    private fun setupTuneSliders() {
-        bindTuneSlider(
-            R.id.bargeSensitivitySlider, R.id.bargeSensitivityValue,
-            BARGE_MARGIN_MIN, BARGE_MARGIN_MAX, BARGE_MARGIN_STEPS,
-            { prefs.bargeMargin }, { prefs.bargeMargin = it },
-        ) { v ->
-            // Lower margin = easier to interrupt, so the adjective inverts.
-            val word = when {
-                v < 1.8f -> "More sensitive"
-                v <= 2.6f -> "Balanced"
-                else -> "Less sensitive"
-            }
-            "${String.format("%.2f", v)}× echo — $word"
-        }
-        bindTuneSlider(
-            R.id.bargeEchoSlider, R.id.bargeEchoValue,
-            BARGE_ECHO_MIN, BARGE_ECHO_MAX, BARGE_ECHO_STEPS,
-            { prefs.bargeEchoBoost }, { prefs.bargeEchoBoost = it },
-        ) { v ->
-            when {
-                v <= 1.0f -> "Off (no anti-pumping)"
-                v < 1.6f -> "${String.format("%.2f", v)}× — Gentle"
-                else -> "${String.format("%.2f", v)}× — Strong"
-            }
-        }
-        bindTuneSlider(
-            R.id.bargeDuckSlider, R.id.bargeDuckValue,
-            BARGE_DUCK_MIN, BARGE_DUCK_MAX, BARGE_DUCK_STEPS,
-            { prefs.bargeDuckVolume }, { prefs.bargeDuckVolume = it },
-        ) { v ->
-            val word = when {
-                v < 0.15f -> "Deep dip"
-                v <= 0.30f -> "Balanced"
-                else -> "Light dip"
-            }
-            "${(v * 100).roundToInt()}% volume — $word"
-        }
-        bindTuneSlider(
-            R.id.bargeDecaySlider, R.id.bargeDecayValue,
-            BARGE_DECAY_MIN, BARGE_DECAY_MAX, BARGE_DECAY_STEPS,
-            { prefs.bargePlayrefDecay }, { prefs.bargePlayrefDecay = it },
-        ) { v ->
-            val word = when {
-                v < 0.90f -> "Short"
-                v <= 0.95f -> "Balanced"
-                else -> "Long"
-            }
-            "${String.format("%.3f", v)} — $word"
-        }
-    }
-
-    private fun bindTuneSlider(
-        sliderId: Int,
-        labelId: Int,
-        min: Float,
-        max: Float,
-        steps: Int,
-        get: () -> Float,
-        set: (Float) -> Unit,
-        format: (Float) -> String,
-    ) {
-        val ts = TuneSlider(findViewById(sliderId), findViewById(labelId), min, max, steps, get, set, format)
-        ts.slider.max = steps
-        ts.slider.progress = ts.toProgress(get())
-        ts.label.text = format(get())
-        ts.slider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(sb: SeekBar, progress: Int, fromUser: Boolean) {
-                val v = ts.toValue(progress)
-                if (fromUser) set(v)
-                ts.label.text = format(v)
-            }
-
-            override fun onStartTrackingTouch(sb: SeekBar) {}
-            override fun onStopTrackingTouch(sb: SeekBar) {}
-        })
-        tuneSliders.add(ts)
-    }
-
-    /** Clear every barge-in knob back to its code default and snap all the
-     *  sliders (match + the four advanced) to match. */
-    private fun onResetBargeTuning() {
-        prefs.resetBargeTuning()
-        bargeMatchSlider.progress = thresholdToProgress(prefs.bargeMatchThreshold)
-        updateBargeMatchLabel(prefs.bargeMatchThreshold)
-        for (ts in tuneSliders) {
-            ts.slider.progress = ts.toProgress(ts.get())
-            ts.label.text = ts.format(ts.get())
-        }
-        toastMsg(getString(R.string.barge_tune_reset_done))
-    }
-
-    private fun updateVoiceIdUi() {
-        val enrolled = VoicePrint.exists(this)
-        voiceIdStatus.text = getString(
-            if (enrolled) R.string.voice_id_enrolled else R.string.voice_id_not_enrolled
-        )
-        voiceIdEnrollBtn.text = getString(if (enrolled) R.string.voice_id_reenroll else R.string.voice_id_enroll)
-        voiceIdClearBtn.isEnabled = enrolled && !enrolling
-        voiceIdEnrollBtn.isEnabled = !enrolling
-    }
-
-    private fun onEnrollTap() {
-        val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
-            PackageManager.PERMISSION_GRANTED
-        if (!granted) {
-            micPermLauncher.launch(Manifest.permission.RECORD_AUDIO)
-            return
-        }
-        startEnrollRecording()
-    }
-
-    /** Records [ENROLL_TAKES] separate [ENROLL_DURATION_MS] windows back to
-     *  back (no silence-watching — the point is to just capture clean
-     *  samples of the user's voice) and hands all of the raw WAVs to
-     *  [finishEnrollment]. Borrows the wake service's mic the same way
-     *  [ChatActivity.startDictation] does. */
-    private fun startEnrollRecording() {
-        enrolling = true
-        updateVoiceIdUi()
-        val serviceWasListening = WakeWordService.running
-        WakeWordService.micHold = true
-        thread(name = "axon-enroll") {
-            if (serviceWasListening) Thread.sleep(300)
-            try {
-                val takes = mutableListOf<ByteArray>()
-                for (take in 1..ENROLL_TAKES) {
-                    runOnUiThread {
-                        voiceIdStatus.text = getString(R.string.voice_id_recording_take, take, ENROLL_TAKES)
-                    }
-                    val recorder = WavRecorder()
-                    recorder.start { /* fixed duration — ticks unused */ }
-                    Thread.sleep(ENROLL_DURATION_MS)
-                    takes.add(recorder.stop())
-                    if (take < ENROLL_TAKES) {
-                        // Audible break between takes — the status text alone
-                        // was too easy to miss mid-sentence, so five takes felt
-                        // like one long recording. Also nudges the user to
-                        // actually pause/reset before the next take, which is
-                        // the whole point of capturing separate deliveries.
-                        Sound.chime(soft = true)
-                        Thread.sleep(ENROLL_TAKE_GAP_MS)
-                    }
-                }
-                WakeWordService.micHold = false
-                finishEnrollment(takes)
-            } catch (e: Exception) {
-                WakeWordService.micHold = false
-                runOnUiThread {
-                    enrolling = false
-                    toastMsg(e.message ?: "microphone unavailable")
-                    updateVoiceIdUi()
-                }
-            }
-        }
-    }
-
-    /** Off the enrollment thread: loading the ~28MB model and running
-     *  inference is too slow for the main thread. Embeds each take
-     *  separately and averages them into one centroid (see
-     *  [averageEmbeddings]) rather than saving a single take's embedding, so
-     *  the enrolled voiceprint isn't pinned to one narrow pitch/tone. A take
-     *  that fails to embed (e.g. too quiet) is just dropped, not fatal,
-     *  as long as at least one other take succeeds. */
-    private fun finishEnrollment(wavs: List<ByteArray>) {
-        runOnUiThread { voiceIdStatus.text = getString(R.string.voice_id_processing) }
-        val embeddings = runCatching {
-            SpeakerEmbedder(this).use { embedder ->
-                wavs.mapNotNull { embedder.embed(pcm16FromWav(it)) }
-            }
-        }.getOrDefault(emptyList())
-        runOnUiThread {
-            enrolling = false
-            if (embeddings.isNotEmpty()) {
-                VoicePrint.save(this, averageEmbeddings(embeddings))
-                toastMsg(getString(R.string.saved))
-            } else {
-                toastMsg(getString(R.string.voice_id_failed))
-            }
-            updateVoiceIdUi()
-        }
-    }
-
-    /** [WavRecorder.stop] returns a 44-byte-header WAV; strip it back to raw
-     *  little-endian PCM16 samples for [SpeakerEmbedder]. */
-    private fun pcm16FromWav(wav: ByteArray): ShortArray {
-        val n = (wav.size - 44) / 2
-        val buf = ByteBuffer.wrap(wav, 44, n * 2).order(ByteOrder.LITTLE_ENDIAN)
-        return ShortArray(n) { buf.short }
     }
 
     private fun dp(v: Int): Int =
