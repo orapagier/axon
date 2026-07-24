@@ -68,7 +68,9 @@ class BargeMonitor(
             if (tickSamples < TICK_SAMPLES) continue
             val rms = sqrt(tickSumSq / tickSamples)
             flushTick()
-            when (detector.feedMic(rms)) {
+            val ev = detector.feedMic(rms)
+            android.util.Log.d("BargeTick", detector.diagnostics()) // TEMP diagnostic — remove after tuning
+            when (ev) {
                 BargeDetector.Event.TENTATIVE -> onTentative()
                 BargeDetector.Event.FALSE_ALARM -> onFalseAlarm()
                 BargeDetector.Event.CONFIRMED -> {
