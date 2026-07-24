@@ -6,17 +6,26 @@
 // re-renders.
 //
 // [analyser] is the live Web Audio AnalyserNode to react to — the wake mic's
-// during 'listening', a tapped TTS <audio> element's during 'speaking' (see
-// lib/audioLevel.js). It's null during 'thinking' (nothing to meter) and also
-// during 'speaking' when TTS fell back to the browser's speechSynthesis,
-// which exposes no raw audio — synthesizeLevel() fills in a plausible
-// "talking" envelope so the orb stays alive instead of freezing.
+// during 'listening'. During 'speaking', [speakSample] returns the reply
+// audio's RMS at the current playback position (a decoded envelope sampled by
+// the <audio> element's currentTime — see lib/audioLevel.js; no Web Audio graph
+// touches the playing element, so it can't mute the reply). Both are absent
+// during 'thinking', and 'speaking' also has no sample when TTS fell back to
+// the browser's speechSynthesis (no decodable bytes) — synthesizeLevel() fills
+// in a plausible "talking" envelope so the orb stays alive instead of freezing.
 import { onMounted, onUnmounted, ref } from 'vue'
 import { readLevel } from '../lib/audioLevel.js'
+
+// Metered RMS is small; these lift it into a lively 0..1 orb range. The mic is
+// quiet (speech ~0.02–0.08) so it needs more gain than the cleaner, louder
+// reply audio. Both empirical.
+const MIC_GAIN = 9
+const SPEAK_GAIN = 4
 
 const props = defineProps({
   phase: { type: String, default: 'listening' }, // 'listening' | 'thinking' | 'speaking'
   analyser: { type: Object, default: null },
+  speakSample: { type: Function, default: null }, // () => reply RMS 0..1, or null
 })
 
 const canvasEl = ref(null)
@@ -45,7 +54,18 @@ function draw() {
   const cy = h / 2
   t += 1 / 60
 
-  const raw = props.analyser ? Math.min(1, readLevel(props.analyser) * 9) : synthesizeLevel()
+  // Real metered level for 'listening' (mic) and 'speaking' (reply audio);
+  // synth for 'thinking' and any un-metered gap (browser-voice fallback, or
+  // before the first sample of a sentence arrives).
+  let raw
+  if (props.phase === 'speaking' && props.speakSample) {
+    const v = props.speakSample()
+    raw = v == null ? synthesizeLevel() : Math.min(1, v * SPEAK_GAIN)
+  } else if (props.analyser) {
+    raw = Math.min(1, readLevel(props.analyser) * MIC_GAIN)
+  } else {
+    raw = synthesizeLevel()
+  }
   // Snap up fast (speech onset should feel immediate), decay slower (a
   // silence gap between words shouldn't collapse the orb to nothing).
   smoothed += (raw - smoothed) * (raw > smoothed ? 0.5 : 0.12)

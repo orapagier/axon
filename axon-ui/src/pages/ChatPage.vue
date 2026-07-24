@@ -14,6 +14,7 @@ import {
   randomWakeAck,
   WAKE_ACKS,
 } from '../lib/voiceprompts.js'
+import { buildTtsEnvelope } from '../lib/audioLevel.js'
 import SearchInput from '../components/SearchInput.vue'
 import VoiceOrb from '../components/VoiceOrb.vue'
 
@@ -723,14 +724,10 @@ let wake = null
 const handsFreeActive = ref(false)
 const handsFreePhase = ref('listening') // 'listening' | 'thinking' | 'speaking'
 
-// Only the mic ('listening') feeds a real analyser to the orb, and that
-// analyser is the wake stream's own (wakeword.js) — a passive read, it never
-// touches playback. The 'speaking' phase deliberately does NOT tap the reply
-// <audio>: routing playback through a Web Audio graph (createMediaElementSource
-// or captureStream into an analyser) can silently swallow the sound when the
-// audio context isn't in a confirmed-running state, which is exactly the "orb
-// animates but nothing plays" bug. VoiceOrb's synthetic talking envelope covers
-// the speaking phase instead, so the visualization can never affect audio.
+// The mic ('listening') feeds the orb the wake stream's own AnalyserNode
+// (wakeword.js) — a passive read that never touches playback. The 'speaking'
+// phase is handled separately by speakSample() below (a decoded envelope, not
+// an analyser), so orbAnalyser stays mic-only.
 const orbAnalyser = computed(() =>
   handsFreePhase.value === 'listening' ? wake?.analyser || null : null
 )
@@ -927,6 +924,36 @@ let synthUtterance = null // pinned: Chrome goes silent if the utterance is GC'd
 let ttsFailureToasted = false // explain a dead tts.* config once, not per click
 let streamingSpeech = null // active per-sentence streamed read-aloud (voice replies)
 
+// The reply audio the orb reacts to during 'speaking': the <audio> currently
+// making sound and its decoded RMS envelope. speakSample() (passed to VoiceOrb)
+// reads the envelope at the element's live currentTime, so the orb tracks what
+// is audible. Nothing here touches the playback path — the envelope is decoded
+// separately (lib/audioLevel.js) — so it can never mute the reply.
+let speakEl = null
+let speakEnv = null
+
+function speakSample() {
+  if (!speakEnv || !speakEl) return null
+  return speakEnv.level(speakEl.currentTime)
+}
+
+function clearSpeakEnvelope() {
+  speakEl = null
+  speakEnv = null
+}
+
+// Attach the reactive envelope for a reply element: point the orb at it now,
+// then decode in the background and swap the envelope in once ready (so the
+// element never waits on the decode). No-op outside hands-free.
+function attachSpeakEnvelope(el, blob) {
+  if (!handsFreeActive.value) return
+  speakEl = el
+  speakEnv = null
+  buildTtsEnvelope(blob).then((env) => {
+    if (speakEl === el) speakEnv = env // still the current element
+  })
+}
+
 // Hands-free orb phase follows the two state machines it's already wired
 // into rather than being set from every call site by hand: recState covers
 // listening/thinking, speakingIdx covers speaking. Both watchers are no-ops
@@ -938,6 +965,11 @@ watch(recState, (state) => {
 })
 watch(speakingIdx, (idx) => {
   if (handsFreeActive.value && idx >= 0) handsFreePhase.value = 'speaking'
+})
+// Leaving 'speaking' (or the orb going away) retires the reply envelope so a
+// later phase can't sample a stale, finished element.
+watch(handsFreePhase, (phase) => {
+  if (phase !== 'speaking') clearSpeakEnvelope()
 })
 
 // The agent bubble renders markdown; the utterance needs the prose only.
@@ -976,6 +1008,7 @@ function stopSpeaking() {
     speakAbort = null
   }
   releaseAudio()
+  clearSpeakEnvelope()
   if (ttsSupported) window.speechSynthesis.cancel()
   synthUtterance = null
   speakingIdx.value = -1
@@ -987,6 +1020,9 @@ function stopSpeaking() {
 // with no live reference can be GC'd mid-sentence, and the queue sometimes
 // comes back from cancel() stuck in the paused state.
 function speakWithSynthesis(idx, text) {
+  // Browser voice exposes no decodable audio — retire any server-TTS envelope
+  // so the orb uses its synthetic talking pulse instead of a stale element.
+  clearSpeakEnvelope()
   if (!ttsSupported) {
     if (speakingIdx.value === idx) speakingIdx.value = -1
     return
@@ -1053,6 +1089,8 @@ async function toggleSpeak(idx) {
         if (seq !== speakSeq) return // stopped while synthesizing
         audioUrl = URL.createObjectURL(blob)
         audioEl = new Audio(audioUrl)
+        // Drive the hands-free orb from this reply's decoded envelope.
+        attachSpeakEnvelope(audioEl, blob)
         // Natural end and failure diverge: only a played-to-the-end reply may
         // open the follow-up window (read the flag before stopSpeaking clears it).
         audioEl.onended = () => {
@@ -1205,7 +1243,7 @@ class StreamingSpeech {
       this.fetchAbort = null
     }
     this.stopCurrentAudio()
-    for (const url of this.playQueue) URL.revokeObjectURL(url)
+    for (const item of this.playQueue) URL.revokeObjectURL(item.url)
     this.playQueue = []
   }
 
@@ -1242,7 +1280,9 @@ class StreamingSpeech {
           const blob = await res.blob()
           if (this.aborted) return
           this.anyServer = true
-          this.playQueue.push(URL.createObjectURL(blob))
+          // Keep the blob so playback can decode its orb envelope (see
+          // attachSpeakEnvelope); the URL is what the <audio> element plays.
+          this.playQueue.push({ url: URL.createObjectURL(blob), blob })
           this.startPlaybackIfIdle()
           ok = true
         }
@@ -1274,16 +1314,18 @@ class StreamingSpeech {
 
   playNext() {
     if (this.aborted) return
-    const url = this.playQueue.shift()
-    if (url === undefined) {
+    const item = this.playQueue.shift()
+    if (item === undefined) {
       this.playing = false
       this.maybeFinish()
       return
     }
+    const { url, blob } = item
     this.playing = true
     const el = new Audio(url)
     this.curAudio = el
     this.curUrl = url
+    attachSpeakEnvelope(el, blob) // drive the hands-free orb from this sentence
     if (speakingIdx.value !== this.idx) speakingIdx.value = this.idx
     let advanced = false
     const advance = () => {
@@ -1320,7 +1362,7 @@ class StreamingSpeech {
     this.fellBack = true
     this.aborted = true
     this.stopCurrentAudio()
-    for (const url of this.playQueue) URL.revokeObjectURL(url)
+    for (const item of this.playQueue) URL.revokeObjectURL(item.url)
     this.playQueue = []
     this.onFallback(this.full)
   }
@@ -1731,6 +1773,7 @@ watch(disabled, (newVal) => {
         <VoiceOrb
           :phase="handsFreePhase"
           :analyser="orbAnalyser"
+          :speak-sample="speakSample"
         />
         <div class="handsfree-status">
           {{ handsFreeStatusText }}
