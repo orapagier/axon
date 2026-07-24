@@ -135,9 +135,15 @@ class WavRecorder {
 
     val isRecording: Boolean get() = running
 
-    /** Starts capturing; [onTick] fires on the recorder thread every ~100ms. */
+    /** Starts capturing; [onTick] fires on the recorder thread every ~100ms.
+     *  When [preroll] is supplied (a confirmed barge-in handing off to
+     *  dictation), it's written to the front of the recording and its own RMS
+     *  is fed through [onTick] first — the pre-roll covers what the user said
+     *  in the ~300-600ms it took the barge-in to confirm, so a caller-owned
+     *  [SilenceWatcher] behind [onTick] sees it as speech before a single live
+     *  frame is read, exactly as if it had been captured live. */
     @SuppressLint("MissingPermission")
-    fun start(onTick: (Double) -> Unit) {
+    fun start(preroll: ByteArray? = null, onTick: (Double) -> Unit) {
         if (running) return
         val minBuf = AudioRecord.getMinBufferSize(
             SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
@@ -156,9 +162,13 @@ class WavRecorder {
         record = rec
         effects = MicEffects(rec.audioSessionId)
         pcm.reset()
+        if (preroll != null && preroll.isNotEmpty()) {
+            synchronized(pcm) { pcm.write(preroll) }
+        }
         running = true
         rec.startRecording()
         worker = thread(name = "axon-wav-rec") {
+            if (preroll != null && preroll.isNotEmpty()) feedPrerollTicks(preroll, onTick)
             val buf = ShortArray(TICK_SAMPLES)
             while (running) {
                 val n = rec.read(buf, 0, buf.size)
@@ -173,6 +183,26 @@ class WavRecorder {
                 synchronized(pcm) { pcm.write(bytes.array()) }
                 onTick(sqrt(acc / n))
             }
+        }
+    }
+
+    /** Replays [preroll] (raw 16k mono PCM16) as ~100ms RMS ticks through
+     *  [onTick], the same cadence live capture uses. */
+    private fun feedPrerollTicks(preroll: ByteArray, onTick: (Double) -> Unit) {
+        val tickBytes = TICK_SAMPLES * 2 // 100ms of 16-bit mono
+        var off = 0
+        while (off < preroll.size && running) {
+            val pairs = minOf(tickBytes, preroll.size - off) / 2 // whole samples in this tick
+            if (pairs == 0) break
+            var acc = 0.0
+            for (k in 0 until pairs) {
+                val i = off + k * 2
+                val s = ((preroll[i].toInt() and 0xff) or (preroll[i + 1].toInt() shl 8)).toShort()
+                val f = s / 32768.0
+                acc += f * f
+            }
+            onTick(sqrt(acc / pairs))
+            off += pairs * 2
         }
     }
 

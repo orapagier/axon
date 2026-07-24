@@ -95,6 +95,12 @@ class StreamingTts(
      *  detection (wake path) and the transcript bubble (UI path). */
     fun accumulated(): String = synchronized(lock) { full.toString() }
 
+    /** Sentences that have actually finished *playing* so far, in order —
+     *  distinct from [accumulated] (every token *generated*, whether or not
+     *  its audio ever played). Used to tell the agent how much of an
+     *  interrupted reply the user actually heard on a barge-in. */
+    fun spokenSoFar(): String = player.spokenSoFar(stream)
+
     /** True once any reply text has been fed in. Lets the caller tell a real
      *  streamed reply apart from a stream that never received a token frame,
      *  which must fall back to synthesizing `full_text` in one blob rather
@@ -155,7 +161,7 @@ class StreamingTts(
         if (abandoned) { file.delete(); return }
         if (ok && file.length() > 0) {
             anyServerTts = true
-            player.enqueueStreamFile(stream, file)
+            player.enqueueStreamFile(stream, file, text)
             return
         }
         file.delete()

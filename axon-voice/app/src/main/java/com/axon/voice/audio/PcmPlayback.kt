@@ -53,6 +53,11 @@ internal class PcmPlayback(
     @Volatile
     private var track: AudioTrack? = null
 
+    /** Output volume (0..1) applied to [track] as soon as it opens, and live
+     *  via [setVolume] before then — the barge-in duck/restore hook. */
+    @Volatile
+    private var volume = 1f
+
     private val worker = Thread({ run() }, "axon-tts-pcm").apply { isDaemon = true }
 
     fun start() = worker.start()
@@ -65,6 +70,14 @@ internal class PcmPlayback(
     fun stop() {
         cancelled = true
         runCatching { track?.pause() }
+    }
+
+    /** Set the live output volume (0..1); applies to [track] immediately if
+     *  one is already open, and to any track this instance opens after. Safe
+     *  from any thread — the barge-in monitor calls this off its own loop. */
+    fun setVolume(v: Float) {
+        volume = v
+        track?.let { runCatching { it.setVolume(v) } }
     }
 
     private fun run() {
@@ -307,6 +320,7 @@ internal class PcmPlayback(
             .setBufferSizeInBytes(maxOf(minBuf, floor))
             .setTransferMode(AudioTrack.MODE_STREAM)
             .build()
+            .also { runCatching { it.setVolume(volume) } }
     }
 
     private class Mark(val frame: Long, val rms: Float)

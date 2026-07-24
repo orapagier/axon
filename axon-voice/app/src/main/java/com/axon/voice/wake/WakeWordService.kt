@@ -19,6 +19,8 @@ import com.axon.voice.Prefs
 import com.axon.voice.R
 import com.axon.voice.api.AxonClient
 import com.axon.voice.api.ChatSocket
+import com.axon.voice.audio.BargeDetector
+import com.axon.voice.audio.BargeMonitor
 import com.axon.voice.audio.Sound
 import com.axon.voice.audio.SilenceWatcher
 import com.axon.voice.audio.StreamingTts
@@ -117,15 +119,30 @@ class WakeWordService : Service(), ChatSocket.Listener {
      *  thread's interact(), so it needs no lock. */
     private val previousTurns = ArrayList<Pair<String, String>>()
 
+    /** One long-lived barge-in detector for the service's whole lifetime, not
+     *  one per reply: its learned echo gain ([BargeDetector.reset] keeps it)
+     *  only gets more accurate the longer it listens to this device's own
+     *  speaker-into-mic coupling. [awaitStreamBlocking] resets its per-turn
+     *  state at the start of every new reply. */
+    private val bargeDetector = BargeDetector()
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         prefs = Prefs(this)
         client = AxonClient(prefs)
-        // The reply-audio RMS drives the SPEAKING orb in realtime; speakLevel
-        // ignores it outside the speaking phase, so ack playback won't leak in.
-        player = TtsPlayer(this).apply { onLevel = { rms -> VoiceOverlay.speakLevel(rms) } }
+        // The reply-audio RMS drives the SPEAKING orb in realtime, and feeds
+        // the barge-in detector's echo reference — speakLevel ignores it
+        // outside the speaking phase (so ack playback won't leak into the
+        // orb), but the detector needs it unconditionally: it's reset per-turn
+        // in awaitStreamBlocking rather than gated by phase.
+        player = TtsPlayer(this).apply {
+            onLevel = { rms ->
+                VoiceOverlay.speakLevel(rms)
+                bargeDetector.feedPlayback(rms)
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -287,35 +304,59 @@ class WakeWordService : Service(), ChatSocket.Listener {
         var first = true
         var firstTask = true // gates the one-time hint; survives barge-in resets
         var lastReply = ""
+        // Non-null right after a confirmed barge-in: the next iteration skips
+        // the ack/settle/drain (the user is already mid-sentence) and seeds
+        // the capture with this pre-roll instead. Cleared once consumed.
+        var bargedPreroll: ByteArray? = null
+        // Rides onto the next task only — how much of the reply the user
+        // actually heard before they cut it off. Cleared once consumed.
+        var pendingNote = ""
         while (alive && !micHold) {
+            val barging = bargedPreroll != null
             notify(getString(R.string.status_recording))
             VoiceOverlay.setPhase(VoiceOverlay.Phase.LISTENING)
-            // A wake is answered out loud; the follow-up window opens on its
-            // soft chime alone — no spoken prompt. Sound.chime is asynchronous,
-            // so hold here for the note (plus the settle below) and let the
-            // drain clear it rather than have its tail open the capture.
-            val ackPhrase = if (first) VoicePrompts.randomWakeAck() else ""
-            if (first) {
-                playAckBlocking(ackPhrase, promptFiles[ackPhrase])
+            var ackPhrase = ""
+            val watcher: SilenceWatcher
+            val wav: ByteArray
+            if (barging) {
+                // The user was already talking over the reply when the barge
+                // confirmed — replaying an ack, or even the settle+drain
+                // pause, would just talk over them again. Capture picks up
+                // immediately, seeded with what they said before it confirmed,
+                // held to the same strict onset a fresh wake gets (not the
+                // lenient follow-up bar).
+                watcher = SilenceWatcher()
+                wav = capture(rec, watcher, preroll = bargedPreroll)
+                bargedPreroll = null
             } else {
-                Sound.chime(soft = true)
-                Thread.sleep(250)
+                // A wake is answered out loud; the follow-up window opens on
+                // its soft chime alone — no spoken prompt. Sound.chime is
+                // asynchronous, so hold here for the note (plus the settle
+                // below) and let the drain clear it rather than have its tail
+                // open the capture.
+                ackPhrase = if (first) VoicePrompts.randomWakeAck() else ""
+                if (first) {
+                    playAckBlocking(ackPhrase, promptFiles[ackPhrase])
+                } else {
+                    Sound.chime(soft = true)
+                    Thread.sleep(250)
+                }
+                // Let the ack (and any reply tail still in the output pipeline)
+                // finish coming out of the speaker before the drain, so it can't
+                // leak into the capture and be transcribed as a command. Only in
+                // the follow-up window — after a wake the user may already be
+                // mid-command and every drained ms is their speech.
+                if (!first) Thread.sleep(AUDIO_SETTLE_MS)
+                drain(rec)
+                watcher = if (first) {
+                    SilenceWatcher()
+                } else {
+                    // The onset requirement is the shared default now; the
+                    // follow-up window only still raises the level bar.
+                    SilenceWatcher(speechRms = SilenceWatcher.FOLLOWUP_RMS)
+                }
+                wav = capture(rec, watcher)
             }
-            // Let the ack (and any reply tail still in the output pipeline)
-            // finish coming out of the speaker before the drain, so it can't
-            // leak into the capture and be transcribed as a command. Only in
-            // the follow-up window — after a wake the user may already be
-            // mid-command and every drained ms is their speech.
-            if (!first) Thread.sleep(AUDIO_SETTLE_MS)
-            drain(rec)
-            val watcher = if (first) {
-                SilenceWatcher()
-            } else {
-                // The onset requirement is the shared default now; the
-                // follow-up window only still raises the level bar.
-                SilenceWatcher(speechRms = SilenceWatcher.FOLLOWUP_RMS)
-            }
-            val wav = capture(rec, watcher)
             if (!watcher.hadSpeech) break
 
             notify(getString(R.string.status_thinking))
@@ -325,23 +366,28 @@ class WakeWordService : Service(), ChatSocket.Listener {
             // A capture that is just our own voice bounced back (ack phrase or
             // a fragment of the reply we just spoke) must not become the next
             // command — with session history the agent would happily re-answer
-            // the previous question in new words, looping the reply.
-            if (isSelfEcho(text, lastReply, ackPhrase)) break
+            // the previous question in new words, looping the reply. Skipped
+            // entirely on a barge-in: the half-spoken reply the user just cut
+            // off is not a safe reference (they may be quoting it back on
+            // purpose — "wait, you said X").
+            if (!barging && isSelfEcho(text, lastReply, ackPhrase)) break
             // The accepted command is part of THIS wake conversation from here:
             // saved under [sessionId] (its own reviewable thread), and mirrored
             // into the Chat page only if that page is showing this same thread.
             ChatFeed.post(this, sessionId, "user", text)
             // The clean spoken words are what gets saved; the previous-conversation
-            // hint (first task only) rides along to the agent but never into the
-            // saved user message. It is framed as reference-only, so a genuinely
-            // new topic ignores it.
-            val taskForAgent = if (firstTask && hint.isNotEmpty()) hint + text else text
+            // hint (first task only) and any barge-in interruption note ride
+            // along to the agent but never into the saved user message. Both
+            // are framed as reference-only, so a genuinely new topic ignores them.
+            val taskForAgent = (if (firstTask && hint.isNotEmpty()) hint else "") + pendingNote + text
             firstTask = false
+            pendingNote = ""
             // Stream the reply: tokens flow into StreamingTts as they arrive,
             // so the first sentence plays ~1s after the agent starts replying
             // instead of after the whole reply is synthesized. Blocks until
             // playback finishes or a barge-in cuts it off.
-            val barged = awaitStreamBlocking(taskForAgent, sessionId, rec, detector)
+            val outcome = awaitStreamBlocking(taskForAgent, sessionId, rec, detector)
+            val barged = outcome.barged
             val (reply, err) = synchronized(replyLock) { (replyText ?: "") to replyError }
             if (reply.isNotBlank()) {
                 ChatFeed.post(this, sessionId, "assistant", reply)
@@ -350,12 +396,17 @@ class WakeWordService : Service(), ChatSocket.Listener {
             }
             if (reply.isBlank() && !barged) break
             if (barged) {
-                // User said "Hey Axon" mid-reply: the barge monitor already cut
-                // the TTS. Re-listen for the follow-up in the SAME conversation
-                // (sessionId unchanged) — lenient watcher, no self-echo check
-                // against the half-spoken reply we just cut off. This is not a
+                // The user interrupted mid-reply — by talking over it or by
+                // saying "Hey Axon"; the barge monitor already ducked/stopped
+                // the TTS and cancelled the run. Re-listen for the follow-up in
+                // the SAME conversation (sessionId unchanged). This is not a
                 // new conversation, so firstTask stays false (no re-hint).
-                first = true
+                bargedPreroll = outcome.preroll
+                pendingNote = if (outcome.spokenSoFar.isNotBlank()) {
+                    "(Note: I interrupted your previous reply mid-speech; I heard only up to: \"${clip(outcome.spokenSoFar)}\") "
+                } else {
+                    "(Note: I interrupted your previous reply before you said anything.) "
+                }
                 lastReply = ""
                 continue
             }
@@ -410,9 +461,19 @@ class WakeWordService : Service(), ChatSocket.Listener {
         return words.size <= 12 && ref.containsAll(words)
     }
 
-    private fun capture(rec: AudioRecord, watcher: SilenceWatcher): ByteArray {
+    /** Captures a command from [rec], watched by [watcher]. When [preroll] is
+     *  supplied (a confirmed barge-in), it's written to the front of the
+     *  returned clip and its own RMS is fed through [watcher] first — the
+     *  pre-roll covers what the user said in the ~300-600ms it took the
+     *  barge-in to confirm, so [watcher] sees it as speech before a single
+     *  live frame is read, exactly as if it had been captured live. */
+    private fun capture(rec: AudioRecord, watcher: SilenceWatcher, preroll: ByteArray? = null): ByteArray {
         val out = ByteArrayOutputStream()
         val buf = ShortArray(WavRecorder.SAMPLE_RATE / 10)
+        if (preroll != null && preroll.isNotEmpty()) {
+            out.write(preroll)
+            feedPrerollTicks(preroll, watcher)
+        }
         while (alive && !micHold) {
             val n = rec.read(buf, 0, buf.size)
             if (n <= 0) break
@@ -429,6 +490,27 @@ class WakeWordService : Service(), ChatSocket.Listener {
             if (watcher.tick(rms)) break
         }
         return WavRecorder.wavBytes(out.toByteArray())
+    }
+
+    /** Replays [preroll] (raw 16k mono PCM16) through [watcher] in the same
+     *  ~100ms ticks [BargeMonitor] used to produce it, so hadSpeech reflects
+     *  the pre-barge audio too. */
+    private fun feedPrerollTicks(preroll: ByteArray, watcher: SilenceWatcher) {
+        val tickBytes = (WavRecorder.SAMPLE_RATE / 10) * 2 // 100ms of 16-bit mono
+        var off = 0
+        while (off < preroll.size) {
+            val pairs = minOf(tickBytes, preroll.size - off) / 2 // whole samples in this tick
+            if (pairs == 0) break
+            var acc = 0.0
+            for (k in 0 until pairs) {
+                val i = off + k * 2
+                val s = ((preroll[i].toInt() and 0xff) or (preroll[i + 1].toInt() shl 8)).toShort()
+                val f = s / 32768.0
+                acc += f * f
+            }
+            watcher.tick(sqrt(acc / pairs))
+            off += pairs * 2
+        }
     }
 
     // ── Speech in/out helpers ───────────────────────────────────────────────
@@ -452,33 +534,47 @@ class WakeWordService : Service(), ChatSocket.Listener {
         Thread.sleep(400)
     }
 
+    /** Outcome of one streamed reply. [preroll] and [spokenSoFar] are only
+     *  meaningful when [barged] is true: the raw mic audio captured in the
+     *  ~300-600ms it took to confirm the interruption (so a real-time capture
+     *  doesn't lose the user's first words), and how much of the reply they
+     *  actually heard before it was cut off (for the follow-up task's
+     *  interruption note). */
+    private class BargeOutcome(
+        val barged: Boolean,
+        val preroll: ByteArray = ByteArray(0),
+        val spokenSoFar: String = "",
+    )
+
     /**
      * Send [task] and stream the reply: tokens are fed to a [StreamingTts] as
      * they arrive so per-sentence TTS begins with the first sentence, not after
-     * the whole reply is downloaded. Watches the mic for a "Hey Axon" barge-in
-     * the whole time. Returns true if the user interrupted; false if playback
-     * finished on its own.
+     * the whole reply is downloaded. Watches the mic the whole time for a
+     * barge-in — either the wake word, or the user just talking over the
+     * reply (see [BargeDetector], which tells the two apart from the echo) —
+     * and ducks/stops the reply accordingly.
      *
-     * The barge-in detector runs on a throwaway thread that keeps feeding the
-     * same rustpotter [detector] used by runLoop. It's safe because runLoop is
-     * parked inside interact()→awaitStreamBlocking() for the entire playback,
-     * so process(frame) is never called concurrently from two threads.
+     * The [BargeMonitor] runs on a throwaway thread that owns the shared mic
+     * ([rec]) and rustpotter [wakeDetector] for the whole call: it's safe
+     * because runLoop is parked inside interact()→awaitStreamBlocking() for
+     * the entire playback, so neither is ever touched concurrently from two
+     * threads.
      */
     private fun awaitStreamBlocking(
         task: String,
         sessionId: String,
         rec: AudioRecord?,
-        detector: WakeDetector?,
-    ): Boolean {
-        val p = player ?: return false
-        val c = chat ?: return false
+        wakeDetector: WakeDetector?,
+    ): BargeOutcome {
+        val p = player ?: return BargeOutcome(false)
+        val c = chat ?: return BargeOutcome(false)
         var waits = 0
         while (!c.connected && waits++ < 10 && alive) Thread.sleep(500)
 
         notify(getString(R.string.status_speaking))
         VoiceOverlay.setPhase(VoiceOverlay.Phase.SPEAKING)
         val latch = CountDownLatch(1)
-        val bargedIn = java.util.concurrent.atomic.AtomicBoolean(false)
+        val outcome = java.util.concurrent.atomic.AtomicReference(BargeOutcome(false))
         val stream = StreamingTts(
             player = p,
             client = client,
@@ -494,28 +590,36 @@ class WakeWordService : Service(), ChatSocket.Listener {
         if (!c.sendTask(task, sessionId, voice = true)) {
             stream.abort()
             synchronized(replyLock) { replyStream = null }
-            return false
+            return BargeOutcome(false)
         }
-        // Monitor for "Hey Axon" while the reply streams. Only when we have
-        // both a live mic and the detector — otherwise we just wait for done.
-        val monitor = if (rec != null && detector != null) {
+        // Fresh reply: forget the last one's ducked/tentative state, but keep
+        // the learned echo gain — it's still the same device and room.
+        bargeDetector.reset()
+        // Monitor for a barge-in while the reply streams. Only with a live mic
+        // — otherwise there's nothing to listen with and we just wait for done.
+        val monitor = if (rec != null) {
             thread(name = "axon-barge") {
-                val frame = ShortArray(detector.samplesPerFrame)
-                while (alive && latch.count > 0L) {
-                    if (!fillFrame(rec, frame)) break
-                    if (detector.process(frame) >= 0f) {
-                        bargedIn.set(true)
+                BargeMonitor(
+                    detector = bargeDetector,
+                    wakeDetector = wakeDetector,
+                    readFrame = { f -> fillFrame(rec, f) },
+                    onTentative = { p.duck() },
+                    onFalseAlarm = { p.restoreVolume() },
+                    onConfirmed = { preroll ->
+                        val spoken = stream.spokenSoFar()
                         stream.abort() // cut the TTS mid-sentence
+                        c.cancel(sessionId) // stop generating, not just talking
+                        outcome.set(BargeOutcome(true, preroll, spoken))
                         latch.countDown()
-                        break
-                    }
-                }
+                    },
+                ).run { !alive || latch.count == 0L }
             }
         } else null
         latch.await(310, TimeUnit.SECONDS)
         monitor?.join(500)
-        if (bargedIn.get()) drain(rec!!)
-        return bargedIn.get()
+        val result = outcome.get()
+        if (result.barged) drain(rec!!)
+        return result
     }
 
     private fun prefetchPrompts() {

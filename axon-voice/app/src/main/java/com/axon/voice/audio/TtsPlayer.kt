@@ -20,9 +20,23 @@ import java.util.ArrayDeque
  *                           whole reply is downloaded.
  */
 class TtsPlayer(ctx: Context) {
+    companion object {
+        /** Barge-in "tentative" attenuation — quiet enough that the mic can
+         *  hear past the echo, not so quiet the user loses their place if it
+         *  turns out to be a false alarm and playback resumes at full volume. */
+        private const val DUCK_VOLUME = 0.15f
+    }
+
     private var current: PcmPlayback? = null
     private var fallback: TextToSpeech? = null
     private var fallbackReady = false
+
+    /** Sticky across sentence files within one reply: each new [PcmPlayback]
+     *  (one per streamed sentence) is created fresh and must start at
+     *  whatever duck state the barge-in monitor last set, not back at full
+     *  volume. Reset on [beginStream]. */
+    @Volatile
+    private var duckedVolume = 1f
 
     /** Live 0..1 RMS of whatever is playing (-1 when it stops), forwarded from
      *  [PcmPlayback]. The wake service points this at the voice orb so the
@@ -69,8 +83,29 @@ class TtsPlayer(ctx: Context) {
             pb?.let { cleanup(it) }
             after()
         }
+        p.setVolume(duckedVolume) // carry the current duck state onto every new file
         pb = p
         return p
+    }
+
+    /** Attenuate whatever is currently playing to a background level so the
+     *  barge-in monitor's mic can hear past the echo — the "tentative onset"
+     *  response. Sticky: every subsequent sentence file in this reply starts
+     *  ducked too, until [restoreVolume] undoes it or a new [beginStream]
+     *  resets it. A no-op while the built-in TTS fallback (not a
+     *  [PcmPlayback]) is speaking — it exposes no live volume control, which
+     *  is fine, since it also emits no playback level, so the barge
+     *  detector's threshold already collapses to the absolute floor on its
+     *  own for that case. */
+    fun duck() {
+        duckedVolume = DUCK_VOLUME
+        current?.setVolume(DUCK_VOLUME)
+    }
+
+    /** Undo [duck] — a tentative onset faded out without confirming. */
+    fun restoreVolume() {
+        duckedVolume = 1f
+        current?.setVolume(1f)
     }
 
     // ── Streaming reply playback ────────────────────────────────────────────
@@ -79,15 +114,29 @@ class TtsPlayer(ctx: Context) {
      *  [enqueueStreamFile] play back-to-back; [finalizeStream] flushes the
      *  leftover buffered text and fires [onDone] once everything has played. */
     class Stream(internal val onDone: () -> Unit) {
-        internal val queue = ArrayDeque<File>()
+        internal val queue = ArrayDeque<FileText>()
         internal var closed = false          // finalizeStream called
         @Volatile
         internal var idle = true             // no file currently playing
+
+        /** Sentence text of whatever is currently playing, moved into
+         *  [spoken] only once it finishes naturally (never on abort — a
+         *  barge-in cuts a sentence off mid-way, and the user didn't hear the
+         *  rest of it, so it must not count as "spoken"). */
+        internal var playingText: String? = null
+
+        /** Every sentence that has fully finished playing, in order — see
+         *  [TtsPlayer.spokenSoFar]. Mutated only under the outer stream lock. */
+        internal val spoken = StringBuilder()
 
         /** Used by the wake barge-in detector: true until playback truly ends. */
         val active: Boolean
             get() = !closed || !idle || queue.isNotEmpty()
     }
+
+    /** One synthesized sentence file paired with the text it speaks, so a
+     *  barge-in can report exactly how much of a reply the user actually heard. */
+    class FileText(val file: File, val text: String)
 
     /**
      * Begin a streamed reply. Retires any previous stream but deliberately does
@@ -100,21 +149,29 @@ class TtsPlayer(ctx: Context) {
     fun beginStream(onDone: () -> Unit): Stream {
         synchronized(streamLock) {
             currentStream?.let { it.closed = true; it.queue.clear() }
+            duckedVolume = 1f // a fresh reply always starts at full volume
             val s = Stream(onDone)
             currentStream = s
             return s
         }
     }
 
-    /** Enqueue a synthesized sentence file for back-to-back playback. Safe to
-     *  call from any thread; starts playback immediately if the sink is idle. */
-    fun enqueueStreamFile(s: Stream, file: File) {
+    /** Enqueue a synthesized sentence for back-to-back playback, tagged with
+     *  the [text] it speaks. Safe to call from any thread; starts playback
+     *  immediately if the sink is idle. */
+    fun enqueueStreamFile(s: Stream, file: File, text: String) {
         synchronized(streamLock) {
             if (s.closed || file.length() == 0L) return
-            s.queue.add(file)
+            s.queue.add(FileText(file, text))
             if (s.idle) playNextLocked(s)
         }
     }
+
+    /** Read-only snapshot of every sentence in [s] that has fully finished
+     *  playing so far, in order — how much of an interrupted reply the user
+     *  actually heard. Excludes whatever was playing (or still queued) at the
+     *  moment of a barge-in abort. */
+    fun spokenSoFar(s: Stream): String = synchronized(streamLock) { s.spoken.toString() }
 
     /** Flush the stream — nothing more will be enqueued. If the queue has
      *  drained (or nothing was ever enqueued), [onDone] fires now; otherwise
@@ -143,13 +200,14 @@ class TtsPlayer(ctx: Context) {
     }
 
     private fun playNextLocked(s: Stream) {
-        val file = s.queue.poll() ?: return
+        val item = s.queue.poll() ?: return
         s.idle = false
+        s.playingText = item.text
         // Anything still coming out of the speaker — an ack tail, a read-aloud
         // in progress — yields now that the reply can actually speak.
         stopPlayback()
         try {
-            val pb = newPlayback(file) { onStreamFileDone(s) }
+            val pb = newPlayback(item.file) { onStreamFileDone(s) }
             current = pb
             pb.start()
         } catch (_: Exception) {
@@ -160,6 +218,13 @@ class TtsPlayer(ctx: Context) {
     private fun onStreamFileDone(s: Stream) {
         synchronized(streamLock) {
             s.idle = true
+            // Only a file that finished on its own gets credited as heard —
+            // this never runs on an abort (see abortStream).
+            s.playingText?.let {
+                if (s.spoken.isNotEmpty()) s.spoken.append(' ')
+                s.spoken.append(it)
+            }
+            s.playingText = null
             if (s.queue.isNotEmpty()) {
                 playNextLocked(s)
             } else if (s.closed) {

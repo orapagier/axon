@@ -7,6 +7,7 @@ import { addNotification } from '../lib/notifications.js'
 import { confirmDialog } from '../lib/confirm.js'
 import { renderMarkdown } from '../lib/markdown.js'
 import { createWakeWord, wakeWordSupported, FOLLOWUP_CAPTURE } from '../lib/wakeword.js'
+import { createBargeDetector, BargeEvent } from '../lib/bargein.js'
 import {
   prefetchPrompts,
   playPrompt,
@@ -14,7 +15,7 @@ import {
   randomWakeAck,
   WAKE_ACKS,
 } from '../lib/voiceprompts.js'
-import { buildTtsEnvelope } from '../lib/audioLevel.js'
+import { buildTtsEnvelope, readLevel } from '../lib/audioLevel.js'
 import SearchInput from '../components/SearchInput.vue'
 import VoiceOrb from '../components/VoiceOrb.vue'
 
@@ -442,7 +443,9 @@ async function send() {
 // placeholders, and ship the task. Voice sends (push-to-talk and the wake
 // word) call this directly with voice=true — spoken text never routes through
 // the composer, and the reply is read aloud when the run completes.
-async function sendMessage(msg, voice) {
+// [taskPrefix] rides onto the task sent to the agent only — e.g. a barge-in's
+// interruption note — never into the displayed/saved bubble.
+async function sendMessage(msg, voice, taskPrefix = '') {
   if (!msg || disabled.value) return
   // A new turn takes over the speaker: retire any reply still being read aloud
   // so its tail can't play over — or fire a follow-up during — the new run.
@@ -473,7 +476,7 @@ async function sendMessage(msg, voice) {
   await scrollBottom()
   // `voice` tells the agent the reply will be read aloud, so it answers with a
   // short spoken summary instead of a raw dump (see the server SPOKEN REPLY hint).
-  const sent = wsSend({ task: msg, session_id: currentSessionId.value, voice })
+  const sent = wsSend({ task: taskPrefix + msg, session_id: currentSessionId.value, voice })
   if (!sent) {
     // Socket is down — undo the placeholders and give the message back
     // instead of dropping it silently and locking the input forever. A spoken
@@ -498,25 +501,36 @@ function flushPendingVoice() {
   sendMessage(msg, true)
 }
 
-// Abort the in-flight run: tell the backend to cancel it and unlock the input
-// immediately. Late token/done events are ignored because agentIdx is reset to
-// -1 (every message mutation in handleWsEvent is guarded by agentIdx >= 0).
-function stop() {
-  if (!disabled.value) return
-  wsSend({ type: 'cancel', session_id: currentSessionId.value })
-  if (agentIdx >= 0) {
-    const m = messages.value[agentIdx]
-    m.thinking = false
-    m.status = ''
-    if (!m.text) m.text = 'Stopped.'
-    m.meta = m.meta ? `${m.meta} · stopped` : 'stopped'
+// Cancels the in-flight run (if any) and stops any reply audio. The run-cancel
+// part is a no-op when nothing is streaming — safe to call unconditionally,
+// which a barge-in does (it may fire after the run already finished but while
+// the reply is still being read aloud). Shared by the manual "stop" button and
+// a confirmed barge-in; the caller decides whether to also end hands-free /
+// flush queued voice text (stop() does, a barge-in doesn't — it's about to
+// start a fresh capture in the same session).
+function cancelRun() {
+  if (disabled.value) {
+    wsSend({ type: 'cancel', session_id: currentSessionId.value })
+    if (agentIdx >= 0) {
+      const m = messages.value[agentIdx]
+      m.thinking = false
+      m.status = ''
+      if (!m.text) m.text = 'Stopped.'
+      m.meta = m.meta ? `${m.meta} · stopped` : 'stopped'
+    }
+    collapseTrace()
+    resetRunTrackers()
+    disabled.value = false
   }
   speakReplyOnDone = false
   abortStreamingSpeech()
   stopPrompt()
-  collapseTrace()
-  resetRunTrackers()
-  disabled.value = false
+}
+
+// Late token/done events after a stop are ignored because agentIdx is reset to
+// -1 (every message mutation in handleWsEvent is guarded by agentIdx >= 0).
+function stop() {
+  cancelRun()
   endHandsFree()
   flushPendingVoice()
 }
@@ -544,6 +558,11 @@ let pendingVoiceText = null // transcript waiting out a streaming run
 // A voice-initiated run has its reply read aloud on 'done'; typed sends never
 // do. One run at a time (disabled gate), so a single flag is enough.
 let speakReplyOnDone = false
+// Interruption note for the very next voice send after a barge-in — set by
+// onBargeConfirmed, consumed and cleared by transcribe(). Empty when nothing
+// is pending (the common case): rides onto the agent task only, never the
+// displayed/saved bubble.
+let pendingBargeNote = ''
 
 // Browser echoCancellation is unreliable on the always-open wake mic, so the
 // spoken ack ("Yes?") and the read-aloud reply can still bleed into the
@@ -639,6 +658,9 @@ async function startRecording(sharedStream = null) {
     if (recCancelled || blob.size < 1024) {
       recState.value = 'idle'
       recSeconds.value = 0
+      // An abandoned capture must not let a barge-in's interruption note
+      // survive to ride along on some unrelated future send.
+      pendingBargeNote = ''
       return
     }
     transcribe(blob)
@@ -666,6 +688,10 @@ async function transcribe(blob) {
   const ext = blob.type.includes('mp4') ? 'mp4' : blob.type.includes('ogg') ? 'ogg' : 'webm'
   const fd = new FormData()
   fd.append('file', blob, `recording.${ext}`)
+  // Captured up front and always cleared below: a barge-in's interruption
+  // note rides onto this capture's send only, whichever branch it takes.
+  const bargePrefix = pendingBargeNote
+  pendingBargeNote = ''
   try {
     const res = await postForm('/audio/transcribe', fd)
     const text = (res.text || '').trim()
@@ -685,7 +711,7 @@ async function transcribe(blob) {
       // transcript; the done/error/stop handlers flush it as its own message.
       pendingVoiceText = pendingVoiceText ? `${pendingVoiceText} ${text}` : text
     } else {
-      sendMessage(text, true)
+      sendMessage(text, true, bargePrefix)
     }
     // The self-echo reference only applies to the capture that just ended; once
     // we've applied the check, the spoken reply is stale for the next capture.
@@ -739,7 +765,20 @@ const handsFreeStatusText = computed(
 
 function endHandsFree() {
   handsFreeActive.value = false
+  // A barge-in's interruption note must not survive to ride along on some
+  // unrelated future send if the capture meant to consume it never landed.
+  pendingBargeNote = ''
 }
+
+// The barge-in mic watcher only makes sense while a hands-free exchange is
+// both active and actually speaking — watched as a pair (not folded into the
+// existing handsFreePhase watcher below) so hands-free ending mid-reply
+// (dismissHandsFree, an error) reliably stops it even if handsFreePhase
+// itself never changes again afterward.
+watch([handsFreePhase, handsFreeActive], ([phase, active]) => {
+  if (phase === 'speaking' && active) startBargeWatch()
+  else stopBargeWatch()
+})
 
 // The overlay's close button: bail out of hands-free back to the normal chat
 // view without turning "Hey Axon" off — cancels whatever turn is in flight
@@ -753,10 +792,21 @@ function dismissHandsFree() {
 }
 
 async function onWakeDetected() {
-  // A streaming run, an active recording/transcription, or read-aloud playback
-  // disqualifies a trigger — the speaking guard keeps the assistant from
-  // waking itself off its own voice coming out of the speakers.
-  if (disabled.value || recState.value !== 'idle' || speakingIdx.value >= 0) return
+  // Already capturing something — a stray detection mid-capture is ignored.
+  if (recState.value !== 'idle') return
+  if (disabled.value || speakingIdx.value >= 0) {
+    // The agent is mid-run or mid-reply: "Hey Axon" here means interrupt, not
+    // a fresh wake (which would just double up on the same exchange and,
+    // worse, risk answering the assistant's own voice as if it were a
+    // command). Turns a manual read-aloud into a hands-free exchange too,
+    // the same as a fresh wake does below — the wake word always confirms a
+    // barge-in outright; see bargein.js for why it's immune to the echo that
+    // fooled the old raw-rustpotter-on-raw-mic barge monitor.
+    handsFreeActive.value = true
+    barge.wakeWordHit()
+    await onBargeConfirmed()
+    return
+  }
   handsFreeActive.value = true
   handsFreePhase.value = 'listening'
   // Answer first, then open the mic — the same order the Android client uses
@@ -1014,6 +1064,98 @@ function stopSpeaking() {
   speakingIdx.value = -1
 }
 
+// ── Barge-in (interrupt a spoken reply mid-speech) ───────────────────────────
+// Duck-then-confirm: mic RMS is compared against a threshold learned from the
+// echo of the reply's own playback (see lib/bargein.js for the state machine
+// and why a plain "mic got loud" trigger would fire on the assistant's own
+// voice). On a tentative onset the reply ducks to a background volume; if the
+// level holds for ~300ms (or "Hey Axon" fires while ducked — no longer
+// fooled by the echo once it's quiet) the reply stops and a capture opens
+// immediately, seeded with nothing lost — the user was mid-sentence already.
+// One long-lived detector for the page's lifetime so its learned echo gain
+// only gets more accurate the longer it listens to this device's speakers.
+const barge = createBargeDetector()
+let bargeTimer = null
+
+// Whichever mechanism is currently reading a reply aloud, ducked/restored
+// uniformly. speechSynthesis (the last-resort browser voice) is deliberately
+// excluded — changing its volume mid-utterance has no effect in most
+// browsers, matching the "no duck, absolute-floor + wake-word confirm only"
+// behavior that naturally falls out of it having no decodable playback level
+// for feedPlayback() either (see bargeTick).
+function duckSpeakingVolume() {
+  if (streamingSpeech) streamingSpeech.duck()
+  else if (audioEl) audioEl.volume = 0.15
+}
+function restoreSpeakingVolume() {
+  if (streamingSpeech) streamingSpeech.restoreVolume()
+  else if (audioEl) audioEl.volume = 1
+}
+
+// The whole-blob read-aloud path (toggleSpeak) has no per-sentence boundary
+// to credit, so "how much did the user hear" is estimated proportionally by
+// playback position, cut at a word boundary. lastSpokenText is already the
+// exact text this path is reading (set in toggleSpeak) — reused rather than
+// duplicated. Must be read before stopSpeaking() clears audioEl.
+function wholeBlobSpokenSoFar() {
+  if (!audioEl || !lastSpokenText || !isFinite(audioEl.duration) || audioEl.duration <= 0) return ''
+  const frac = Math.min(1, Math.max(0, audioEl.currentTime / audioEl.duration))
+  const cut = Math.floor(lastSpokenText.length * frac)
+  const spaceIdx = lastSpokenText.lastIndexOf(' ', cut)
+  return lastSpokenText.slice(0, spaceIdx > 0 ? spaceIdx : cut).trim()
+}
+
+function bargeTick() {
+  const micRms = readLevel(wake?.analyser)
+  const playRms = speakSample() // null when nothing decodable is playing (speechSynthesis)
+  barge.feedPlayback(playRms == null ? -1 : playRms)
+  const event = barge.feedMic(micRms)
+  if (event === BargeEvent.TENTATIVE) {
+    duckSpeakingVolume()
+  } else if (event === BargeEvent.FALSE_ALARM) {
+    restoreSpeakingVolume()
+  } else if (event === BargeEvent.CONFIRMED) {
+    stopBargeWatch()
+    if (handsFreeActive.value) onBargeConfirmed()
+  }
+}
+
+function startBargeWatch() {
+  if (bargeTimer) return
+  barge.reset()
+  bargeTimer = setInterval(bargeTick, 100)
+}
+
+function stopBargeWatch() {
+  clearInterval(bargeTimer)
+  bargeTimer = null
+  restoreSpeakingVolume() // idempotent — harmless if it wasn't ducked
+}
+
+// A confirmed barge-in (mic-RMS onset, or "Hey Axon" said while ducked/mid-
+// reply/mid-run — see onWakeDetected): cut the reply off, cancel the run if
+// it's still generating, and roll straight into a capture — no ack, no
+// settle, the user is already mid-sentence.
+async function onBargeConfirmed() {
+  const spoken = streamingSpeech ? streamingSpeech.spokenSoFar() : wholeBlobSpokenSoFar()
+  abortStreamingSpeech()
+  stopSpeaking()
+  cancelRun() // a no-op if the run already finished
+  pendingBargeNote = spoken
+    ? `(Note: I interrupted your previous reply mid-speech; I heard only up to: "${spoken}") `
+    : '(Note: I interrupted your previous reply before you said anything.) '
+  handsFreePhase.value = 'listening'
+  await startRecording(wake.stream)
+  if (recState.value === 'recording') {
+    wake.watchSilence((hadSpeech) => {
+      stopRecording(!hadSpeech)
+      if (!hadSpeech) endHandsFree()
+    })
+  } else {
+    endHandsFree() // also clears pendingBargeNote — nothing to consume it now
+  }
+}
+
 // Today's zero-config path, now the fallback: the browser's built-in voice.
 // Chrome needs three workarounds to actually make sound: speak() issued in the
 // same tick as cancel() is silently dropped (hence the delay), an utterance
@@ -1196,6 +1338,28 @@ class StreamingSpeech {
     this.curAudio = null
     this.curUrl = null
     this.fetchAbort = null
+    this.spoken = [] // sentences that finished playing naturally, in order
+    this.volume = 1 // sticky duck/restore level applied to every new Audio element
+  }
+
+  // Attenuates the currently playing sentence and every one after it (until
+  // restoreVolume) — the barge-in "tentative onset" response.
+  duck() {
+    this.volume = 0.15
+    if (this.curAudio) this.curAudio.volume = this.volume
+  }
+
+  // Undoes duck() — a tentative onset faded out without confirming.
+  restoreVolume() {
+    this.volume = 1
+    if (this.curAudio) this.curAudio.volume = this.volume
+  }
+
+  // Every sentence that has fully finished playing so far, in order — how
+  // much of an interrupted reply the user actually heard. Excludes whatever
+  // was playing (or still queued) at the moment of a barge-in abort.
+  spokenSoFar() {
+    return this.spoken.join(' ')
   }
 
   hasContent() {
@@ -1282,7 +1446,8 @@ class StreamingSpeech {
           this.anyServer = true
           // Keep the blob so playback can decode its orb envelope (see
           // attachSpeakEnvelope); the URL is what the <audio> element plays.
-          this.playQueue.push({ url: URL.createObjectURL(blob), blob })
+          // text rides along so a completed play can be credited in spoken().
+          this.playQueue.push({ url: URL.createObjectURL(blob), blob, text: sentence })
           this.startPlaybackIfIdle()
           ok = true
         }
@@ -1320,9 +1485,10 @@ class StreamingSpeech {
       this.maybeFinish()
       return
     }
-    const { url, blob } = item
+    const { url, blob, text } = item
     this.playing = true
     const el = new Audio(url)
+    el.volume = this.volume // carries a barge-in duck across the sentence boundary
     this.curAudio = el
     this.curUrl = url
     attachSpeakEnvelope(el, blob) // drive the hands-free orb from this sentence
@@ -1331,6 +1497,9 @@ class StreamingSpeech {
     const advance = () => {
       if (advanced) return
       advanced = true
+      // Only a sentence whose turn actually finished counts as heard — never
+      // on an abort (see abort(), which clears playQueue before this can run).
+      this.spoken.push(text)
       if (this.curUrl === url) {
         URL.revokeObjectURL(url)
         this.curUrl = null
