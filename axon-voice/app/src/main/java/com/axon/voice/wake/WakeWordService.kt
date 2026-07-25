@@ -181,7 +181,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
     override fun onDestroy() {
         alive = false
         running = false
-        VoiceOverlay.setPhase(VoiceOverlay.Phase.IDLE)
+        setPhase(VoiceOverlay.Phase.IDLE)
         chat?.close()
         chat = null
         player?.release()
@@ -338,7 +338,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
                 ChatFeed.post(this, sessionId, "user", text)
             } else {
                 notify(getString(R.string.status_recording))
-                VoiceOverlay.setPhase(VoiceOverlay.Phase.LISTENING)
+                setPhase(VoiceOverlay.Phase.LISTENING)
                 // A wake is answered out loud; the follow-up window opens on
                 // its soft chime alone — no spoken prompt. Sound.chime is
                 // asynchronous, so hold here for the note (plus the settle
@@ -374,7 +374,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
                 if (!watcher.hadSpeech) break
 
                 notify(getString(R.string.status_thinking))
-                VoiceOverlay.setPhase(VoiceOverlay.Phase.THINKING)
+                setPhase(VoiceOverlay.Phase.THINKING)
                 val heard = runCatching { client.transcribe(wav) }.getOrNull()
                 if (heard.isNullOrBlank()) break
                 // A capture that is just our own voice bounced back (ack phrase
@@ -399,7 +399,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
             // which skipped the capture branch that would have set it). The flip
             // to SPEAKING happens in onReplyLevel at the first audible frame.
             notify(getString(R.string.status_thinking))
-            VoiceOverlay.setPhase(VoiceOverlay.Phase.THINKING)
+            setPhase(VoiceOverlay.Phase.THINKING)
             // Stream the reply: tokens flow into StreamingTts as they arrive, so
             // the first sentence plays ~1s after the agent starts replying
             // instead of after the whole reply is synthesized. Blocks until
@@ -434,7 +434,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
         previousTurns.clear()
         previousTurns.addAll(turns.takeLast(2))
         notify(getString(R.string.notif_listening))
-        VoiceOverlay.setPhase(VoiceOverlay.Phase.IDLE)
+        setPhase(VoiceOverlay.Phase.IDLE)
     }
 
     /** An optional, deliberately non-authoritative reminder of the previous
@@ -510,9 +510,18 @@ class WakeWordService : Service(), ChatSocket.Listener {
     private fun onReplyLevel(rms: Float) {
         if (rms >= 0f && VoiceOverlay.phase == VoiceOverlay.Phase.THINKING) {
             notify(getString(R.string.status_speaking))
-            VoiceOverlay.setPhase(VoiceOverlay.Phase.SPEAKING)
+            setPhase(VoiceOverlay.Phase.SPEAKING)
         }
         VoiceOverlay.speakLevel(rms)
+    }
+
+    /** Set the hands-free phase AND drive the THINKING "still here" shimmer, so
+     *  every phase change keeps the cue in step: it plays only while THINKING —
+     *  filling the silent think + first-synth gap — and stops the instant the
+     *  reply starts speaking or the turn ends. */
+    private fun setPhase(p: VoiceOverlay.Phase) {
+        if (p == VoiceOverlay.Phase.THINKING) Sound.startThinking() else Sound.stopThinking()
+        VoiceOverlay.setPhase(p)
     }
 
     /** Speak [phrase] using the same 3-tier "never silent" chain as a reply:

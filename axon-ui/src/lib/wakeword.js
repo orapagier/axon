@@ -73,6 +73,8 @@ export function createWakeWord({ onDetection, onState }) {
   let analyser = null
   let running = false
   let silenceTimer = null
+  let thinkingTimer = null
+  let thinkingAlt = false
 
   function ensureCtx() {
     if (!ctx) {
@@ -136,8 +138,48 @@ export function createWakeWord({ onDetection, onState }) {
   }
 
   async function stop() {
+    stopThinking()
     await teardown()
     onState('off')
+  }
+
+  // A soft, sparse "still here" shimmer for the THINKING phase, so a hands-free
+  // user knows the agent is working and not dead during the silent think +
+  // first-synth gap. A quiet two-note tingle (E6/G6) every ~1.3s, well under the
+  // wake chime's level so it never competes with speech. Reuses the same
+  // unlocked AudioContext as chime().
+  function thinkTick() {
+    try {
+      const c = ensureCtx()
+      const t = c.currentTime
+      const osc = c.createOscillator()
+      const gain = c.createGain()
+      osc.type = 'sine'
+      osc.frequency.setValueAtTime(thinkingAlt ? 1568 : 1319, t)
+      thinkingAlt = !thinkingAlt
+      const peak = 0.04
+      const dur = 0.16
+      gain.gain.setValueAtTime(0.0001, t)
+      gain.gain.exponentialRampToValueAtTime(peak, t + 0.015)
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + dur)
+      osc.connect(gain)
+      gain.connect(c.destination)
+      osc.start(t)
+      osc.stop(t + dur + 0.02)
+    } catch {
+      // no audio — the orb's THINKING animation still conveys state
+    }
+  }
+
+  function startThinking() {
+    if (thinkingTimer) return
+    thinkTick() // first tick now, so the gap right after the label isn't silent
+    thinkingTimer = setInterval(thinkTick, 1300)
+  }
+
+  function stopThinking() {
+    clearInterval(thinkingTimer)
+    thinkingTimer = null
   }
 
   // Two rising sine notes, ~0.3s — "I'm listening" without shipping assets.
@@ -215,6 +257,8 @@ export function createWakeWord({ onDetection, onState }) {
     start,
     stop,
     chime,
+    startThinking,
+    stopThinking,
     watchSilence,
     cancelSilenceWatch,
     get stream() {

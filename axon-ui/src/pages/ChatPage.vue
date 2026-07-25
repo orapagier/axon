@@ -798,6 +798,7 @@ const handsFreeStatusText = computed(
 
 function endHandsFree() {
   handsFreeActive.value = false
+  wake?.stopThinking()
 }
 
 // The overlay's close button: bail out of hands-free back to the normal chat
@@ -1052,13 +1053,22 @@ watch(recState, (state) => {
   if (state === 'recording') handsFreePhase.value = 'listening'
   else if (state === 'transcribing') handsFreePhase.value = 'thinking'
 })
-watch(speakingIdx, (idx) => {
-  if (handsFreeActive.value && idx >= 0) handsFreePhase.value = 'speaking'
-})
+// The 'speaking' phase is NOT driven from speakingIdx (which is set the moment a
+// reply is QUEUED — before the synth round-trip and any sound — which made the
+// label lead the voice). It's flipped from the actual audio-start events below
+// via markSpeaking(), so the label lands with the first word, matching the
+// Android client.
+function markSpeaking(idx) {
+  if (handsFreeActive.value && speakingIdx.value === idx) handsFreePhase.value = 'speaking'
+}
 // Leaving 'speaking' (or the orb going away) retires the reply envelope so a
-// later phase can't sample a stale, finished element.
+// later phase can't sample a stale, finished element. The THINKING "still here"
+// shimmer (wakeword.js) runs for exactly the thinking phase of an active
+// exchange, so a hands-free user isn't left waiting on silence.
 watch(handsFreePhase, (phase) => {
   if (phase !== 'speaking') clearSpeakEnvelope()
+  if (phase === 'thinking' && handsFreeActive.value) wake?.startThinking()
+  else wake?.stopThinking()
 })
 
 // The agent bubble renders markdown; the utterance needs the prose only.
@@ -1133,6 +1143,9 @@ function speakWithSynthesis(idx, text) {
   synth.cancel()
   const u = new SpeechSynthesisUtterance(text)
   synthUtterance = u
+  // Browser voice: the label flips to SPEAKING when the utterance actually
+  // starts, same as the server-audio path.
+  u.onstart = () => markSpeaking(idx)
   // Split handlers for the same reason as the audio element: only a natural
   // end may open the follow-up window, never an error or a user stop.
   u.onend = () => {
@@ -1193,6 +1206,7 @@ async function toggleSpeak(idx) {
         audioEl = new Audio(audioUrl)
         // Drive the hands-free orb from this reply's decoded envelope.
         attachSpeakEnvelope(audioEl, blob)
+        audioEl.onplaying = () => markSpeaking(idx)
         // Natural end and failure diverge: only a played-to-the-end reply may
         // open the follow-up window (read the flag before stopSpeaking clears it).
         audioEl.onended = () => {
@@ -1440,6 +1454,9 @@ class StreamingSpeech {
       if (this.curAudio === el) this.curAudio = null
       this.playNext()
     }
+    // Flip the label to SPEAKING when sound actually starts, not when the
+    // element is queued — the reply stays in THINKING until this fires.
+    el.onplaying = () => markSpeaking(this.idx)
     el.onended = advance
     el.onerror = advance
     // Autoplay is permitted here — playback only starts for a reply the user

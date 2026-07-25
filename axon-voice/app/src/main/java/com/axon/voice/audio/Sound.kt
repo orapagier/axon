@@ -17,6 +17,82 @@ import kotlin.math.sin
 object Sound {
     private const val SR = 22050
 
+    @Volatile
+    private var thinking = false
+
+    /** A soft, sparse "still here" shimmer for the THINKING phase, so a
+     *  hands-free user knows the agent is working and not dead during the silent
+     *  think + first-synth gap. A quiet two-note tingle (E6/G6) every ~1.3s —
+     *  well under the wake chime's level so it never competes with speech. Its
+     *  own AudioTrack, separate from the TTS player, so it doesn't register as
+     *  reply audio (no orb/barge side effects). Idempotent; [stopThinking] ends it. */
+    fun startThinking() {
+        if (thinking) return
+        thinking = true
+        thread(name = "axon-thinking") {
+            var alt = false
+            while (thinking) {
+                ting(if (alt) 1568.0 else 1319.0)
+                alt = !alt
+                // Slice the wait so stopThinking() takes effect within ~50ms.
+                var waited = 0
+                while (thinking && waited < 1300) {
+                    Thread.sleep(50)
+                    waited += 50
+                }
+            }
+        }
+    }
+
+    fun stopThinking() {
+        thinking = false
+    }
+
+    /** One soft ping of the thinking shimmer. */
+    private fun ting(freq: Double) {
+        val dur = 0.16
+        val peak = 0.04
+        val attack = 0.012
+        val n = (SR * (dur + 0.02)).toInt()
+        val buf = ShortArray(n)
+        val decayK = ln(0.0001 / peak) / (dur - attack)
+        for (i in 0 until n) {
+            val t = i.toDouble() / SR
+            val env = when {
+                t < attack -> peak * (t / attack)
+                t < dur -> peak * exp(decayK * (t - attack))
+                else -> 0.0
+            }
+            buf[i] = (sin(2 * PI * freq * t) * env * 32767).toInt().toShort()
+        }
+        val track = AudioTrack.Builder()
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ASSISTANT)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+            )
+            .setAudioFormat(
+                AudioFormat.Builder()
+                    .setSampleRate(SR)
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                    .build()
+            )
+            .setTransferMode(AudioTrack.MODE_STATIC)
+            .setBufferSizeInBytes(n * 2)
+            .build()
+        try {
+            track.write(buf, 0, n)
+            track.play()
+            Thread.sleep(((dur + 0.05) * 1000).toLong())
+        } catch (_: Exception) {
+            // no audio out — the orb's THINKING animation still conveys state
+        } finally {
+            track.release()
+        }
+    }
+
     fun chime(soft: Boolean = false) {
         thread(name = "axon-chime") {
             val dur = if (soft) 0.18 else 0.3
