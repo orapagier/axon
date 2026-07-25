@@ -73,10 +73,24 @@ class BargeDetector(
          *  it's written off as a false alarm and volume is restored. */
         const val FALSE_ALARM_TICKS = 6
 
-        /** Slow EMA rate for the learned echo gain: learns over several seconds
-         *  of reply audio, not one tick, so one loud consonant can't swing it
-         *  and mistrain the threshold. */
+        /** Slow EMA rate for learning the echo gain UPWARD (observed echo louder
+         *  than the current estimate). Slow on purpose: a loud consonant — or
+         *  the user's own voice leaking in below the trip threshold — must not
+         *  swing the estimate up and raise the bar against a real interruption. */
         const val GAIN_ALPHA = 0.02
+
+        /** Fast rate for learning the echo gain DOWNWARD (observed echo QUIETER
+         *  than the current estimate). Asymmetric with [GAIN_ALPHA] by design and
+         *  measured on-device: when the user is on a Bluetooth headset the reply
+         *  plays in the headset, so almost nothing couples back into the mic
+         *  (true ratio ~0.01) — yet a stale estimate learned earlier at speaker
+         *  volume, or the 0.3 prior, left the gain near 0.25, putting the
+         *  threshold (gain*playRef*margin ≈ 0.10) at 2-3x the user's own voice
+         *  (~0.04). The old slow-only EMA took ~5s to unwind that, longer than a
+         *  reply, so a headset barge-in was impossible. Adapting down fast drops
+         *  the bar to the real (near-zero) echo within ~half a second, while the
+         *  slow upward rate still keeps the threshold above genuine speaker echo. */
+        const val GAIN_ALPHA_DOWN = 0.25
 
         /** Faster gain adaptation used when a tentative onset turns out to be
          *  echo (a FALSE_ALARM): the mic has just demonstrated how loud echo
@@ -86,7 +100,11 @@ class BargeDetector(
          *  the reply (the audible volume pumping). */
         const val FALSE_ALARM_GAIN_ALPHA = 0.3
 
-        const val GAIN_MIN = 0.05
+        /** Floor low enough that a near-silent echo path (Bluetooth headset:
+         *  ratio ~0.01) collapses the echo term (gain*playRef*margin) well under
+         *  [absFloor] across the whole playRef range, so the threshold rests at
+         *  the absolute floor and an ordinary-volume interruption clears it. */
+        const val GAIN_MIN = 0.02
         const val GAIN_MAX = 5.0
 
         /** Default prior before any learning has happened: a phone's own
@@ -229,11 +247,20 @@ class BargeDetector(
         tentPeakRatio = 0.0
     }
 
-    /** Fold an observed mic/playback ratio into the learned echo [gain]. Slow by
-     *  default (one loud consonant shouldn't swing the threshold); a confirmed
-     *  false alarm passes [FALSE_ALARM_GAIN_ALPHA] to adapt faster, since it has
-     *  just proven echo genuinely reaches that level. */
-    private fun learnGain(observedRatio: Double, alpha: Double = GAIN_ALPHA) {
-        gain = (gain + alpha * (observedRatio - gain)).coerceIn(GAIN_MIN, GAIN_MAX)
+    /** Fold an observed mic/playback ratio into the learned echo [gain].
+     *  Asymmetric when no explicit [alpha] is given: adapt DOWN fast
+     *  ([GAIN_ALPHA_DOWN]) when the echo turns out quieter than the estimate, so
+     *  a stale-high gain (e.g. after switching to a Bluetooth headset) can't keep
+     *  the threshold above the user's own voice; adapt UP slow ([GAIN_ALPHA]) so
+     *  a loud consonant or below-threshold voice leak can't raise the bar. A
+     *  confirmed false alarm passes [FALSE_ALARM_GAIN_ALPHA] explicitly to climb
+     *  fast, since it has just proven echo genuinely reaches that level. */
+    private fun learnGain(observedRatio: Double, alpha: Double = -1.0) {
+        val a = when {
+            alpha >= 0.0 -> alpha
+            observedRatio < gain -> GAIN_ALPHA_DOWN
+            else -> GAIN_ALPHA
+        }
+        gain = (gain + a * (observedRatio - gain)).coerceIn(GAIN_MIN, GAIN_MAX)
     }
 }
