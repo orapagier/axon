@@ -31,6 +31,7 @@ import com.axon.voice.api.AxonClient
 import com.axon.voice.api.ChatSocket
 import com.axon.voice.audio.BargeDetector
 import com.axon.voice.audio.BargeMonitor
+import com.axon.voice.audio.MicEffects
 import com.axon.voice.audio.SilenceWatcher
 import com.axon.voice.audio.StreamingTts
 import com.axon.voice.audio.TtsPlayer
@@ -136,6 +137,12 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
      *  playing). One long-lived detector for the activity's lifetime so its
      *  learned echo gain only gets more accurate over time. */
     private val bargeDetector = BargeDetector()
+
+    /** Hardware echo canceller + noise suppressor bound to the barge mic's audio
+     *  session, so the phone speaker's own reply is cancelled out of the mic and
+     *  a talk-over interruption isn't buried under (or falsely triggered by) the
+     *  reply's echo. Created in [openBargeRecord], released with that mic. */
+    private var bargeEffects: MicEffects? = null
 
     /** Bumped every time a voice reply's "speaking" ends, whichever way —
      *  played out naturally, or cut off by [stopSpeaking]. The barge monitor
@@ -618,6 +625,8 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
                     main.post { onBargeConfirmed(gen, preroll) }
                 },
             ).run { gen != speakGen }
+            bargeEffects?.release()
+            bargeEffects = null
             rec.release()
             if (!confirmed) WakeWordService.micHold = false
         }
@@ -628,9 +637,17 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
         val minBuf = AudioRecord.getMinBufferSize(
             WavRecorder.SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
         )
+        // VOICE_COMMUNICATION (not VOICE_RECOGNITION) is the source Android
+        // routes through the platform echo canceller — it's tuned for full-duplex
+        // (VoIP) capture where the far end is playing at the same time, which is
+        // exactly the barge-in case: our own reply is coming out of the speaker
+        // while we listen for the user talking over it. VOICE_RECOGNITION
+        // deliberately leaves the signal "clean" (no AEC), which is right for the
+        // always-on wake mic but wrong here — it's why the reply's own echo
+        // pumped the detector on-device.
         val rec = try {
             AudioRecord(
-                MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                MediaRecorder.AudioSource.VOICE_COMMUNICATION,
                 WavRecorder.SAMPLE_RATE,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
@@ -654,6 +671,10 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
             rec.release()
             return null
         }
+        // Belt-and-suspenders on top of the VOICE_COMMUNICATION source: bind an
+        // explicit AcousticEchoCanceler + NoiseSuppressor to this session so the
+        // reply's echo is actively cancelled from the capture.
+        bargeEffects = MicEffects(rec.audioSessionId)
         return rec
     }
 
