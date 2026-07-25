@@ -33,8 +33,8 @@ import kotlin.math.sqrt
  *
  * One instance plays one file. [start] runs decode+playback on its own daemon
  * thread; [onEnd] fires exactly once on natural completion or a decode failure,
- * and never after [stop] (a barge-in / takeover). Mirrors the old MediaPlayer
- * completion/error → onDone contract [TtsPlayer] relies on.
+ * and never after [stop] (a cancelled reply / takeover). Mirrors the old
+ * MediaPlayer completion/error → onDone contract [TtsPlayer] relies on.
  */
 internal class PcmPlayback(
     private val file: File,
@@ -53,11 +53,6 @@ internal class PcmPlayback(
     @Volatile
     private var track: AudioTrack? = null
 
-    /** Output volume (0..1) applied to [track] as soon as it opens, and live
-     *  via [setVolume] before then — the barge-in duck/restore hook. */
-    @Volatile
-    private var volume = 1f
-
     private val worker = Thread({ run() }, "axon-tts-pcm").apply { isDaemon = true }
 
     fun start() = worker.start()
@@ -70,14 +65,6 @@ internal class PcmPlayback(
     fun stop() {
         cancelled = true
         runCatching { track?.pause() }
-    }
-
-    /** Set the live output volume (0..1); applies to [track] immediately if
-     *  one is already open, and to any track this instance opens after. Safe
-     *  from any thread — the barge-in monitor calls this off its own loop. */
-    fun setVolume(v: Float) {
-        volume = v
-        track?.let { runCatching { it.setVolume(v) } }
     }
 
     private fun run() {
@@ -256,12 +243,12 @@ internal class PcmPlayback(
                 val end = off + n
                 var w = off
                 while (w < end && !cancelled) {
-                    // Non-blocking so a barge-in (stop -> pause + cancelled) can
-                    // never wedge the worker waiting on a full buffer. When the
-                    // buffer is full, let the DAC drain a little — which also
-                    // paces decoding to realtime. A negative return is a track
-                    // error: bail so onEnd fires (never-silent fallback), like
-                    // the old MediaPlayer onError path.
+                    // Non-blocking so a cancellation (stop -> pause + cancelled)
+                    // can never wedge the worker waiting on a full buffer. When
+                    // the buffer is full, let the DAC drain a little — which
+                    // also paces decoding to realtime. A negative return is a
+                    // track error: bail so onEnd fires (never-silent fallback),
+                    // like the old MediaPlayer onError path.
                     val wrote = out.write(pcm, w, end - w, AudioTrack.WRITE_NON_BLOCKING)
                     if (wrote < 0) throw IllegalStateException("AudioTrack.write $wrote")
                     if (wrote == 0) {
@@ -320,7 +307,6 @@ internal class PcmPlayback(
             .setBufferSizeInBytes(maxOf(minBuf, floor))
             .setTransferMode(AudioTrack.MODE_STREAM)
             .build()
-            .also { runCatching { it.setVolume(volume) } }
     }
 
     private class Mark(val frame: Long, val rms: Float)

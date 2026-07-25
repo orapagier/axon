@@ -123,15 +123,6 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
      *  appended below it mid-stream via [ChatFeed]. */
     private var streamIdx = -1
 
-    /** Bumped every time a voice reply's "speaking" ends, whichever way —
-     *  played out naturally, or cut off by [stopSpeaking]. The barge monitor
-     *  watching a reply captures its own generation at start time and stops
-     *  (releasing the mic back to the wake service) the moment this no longer
-     *  matches. Touched from both the main thread and the barge monitor's own
-     *  background thread, hence [Volatile]. */
-    @Volatile
-    private var speakGen = 0
-
     /** Live inserts from the wake service — its exchange is already persisted
      *  by [ChatFeed.post]; this only mirrors it into the open list. */
     private val feedListener = ChatFeed.Listener { sessionId, role, text ->
@@ -166,10 +157,8 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
 
         prefs = Prefs(this)
         client = AxonClient(prefs)
-        // Push-to-talk replies play out to completion — no barge-in here; that
-        // belongs to the hands-free "Hey Axon" path only (WakeWordService). The
-        // user interrupts a push-to-talk reply with Stop, or by reaching for the
-        // mic (which stops playback first).
+        // Push-to-talk replies play out to completion; the user interrupts one
+        // with Stop, or by reaching for the mic (which stops playback first).
         player = TtsPlayer(this)
 
         connLabel = findViewById(R.id.connLabel)
@@ -468,10 +457,7 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
         if (voice && p != null) {
             // Distinct file prefix: the wake service synthesizes into the same
             // cache dir and must not collide with this stream.
-            ++speakGen
-            replyTts = StreamingTts(p, client, cacheDir, "reply_chat") {
-                main.post { speakGen++ }
-            }
+            replyTts = StreamingTts(p, client, cacheDir, "reply_chat") {}
         }
         if (chat?.sendTask(text, prefs.chatSessionId, voice) != true) {
             adapter.setAt(streamIdx, getString(R.string.status_offline))
@@ -484,7 +470,6 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
     /** Silence a reply being read aloud — a new send, stop, new conversation,
      *  or the user reaching for the mic all take the speaker back. */
     private fun stopSpeaking() {
-        speakGen++ // invalidate any barge monitor still watching this reply
         replyTts?.abort()
         replyTts = null
         player?.stop()
@@ -501,25 +486,20 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
         val s = replyTts ?: return
         replyTts = null
         if (s.hasContent) {
-            // s's own onDone (wired in sendMessage) closes out speakGen once
-            // this drains — the barge monitor keeps watching until then.
             s.finish()
             return
         }
         s.abort() // does not fire onDone — this path speaks separately, below
         val p = player
-        if (full.isBlank() || p == null) {
-            speakGen++ // nothing to play — this reply's "speaking" is already over
-            return
-        }
+        if (full.isBlank() || p == null) return
         thread(name = "axon-chat-tts") {
             val f = File(cacheDir, "reply_chat_full.audio")
             val ok = runCatching { client.speech(full, f) }.getOrDefault(false)
             main.post {
                 if (ok && f.length() > 0) {
-                    p.play(f) { main.post { speakGen++ } }
+                    p.play(f) {}
                 } else {
-                    p.speakFallback(full) { main.post { speakGen++ } }
+                    p.speakFallback(full) {}
                 }
             }
         }

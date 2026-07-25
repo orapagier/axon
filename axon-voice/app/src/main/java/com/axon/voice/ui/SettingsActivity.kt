@@ -8,7 +8,6 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.SeekBar
-import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
@@ -27,12 +26,6 @@ import kotlin.concurrent.thread
  * GET /api/settings and written back per-key via PUT /api/settings/{key}.
  * The model fields offer the same catalogue picker as the web dropdowns
  * (POST /api/audio/models), with free text always allowed.
- *
- * Barge-in (interrupting a spoken reply) is a single on/off switch here — no
- * thresholds to tune. It's keyword spotting: while a reply plays you interrupt
- * by saying the wake word or a short barge word ("okay"/"wait"). When the switch
- * is off the mic isn't watched during a reply at all, so you wait for it to
- * finish.
  */
 class SettingsActivity : AppCompatActivity() {
 
@@ -67,13 +60,7 @@ class SettingsActivity : AppCompatActivity() {
         voiceStatus = findViewById(R.id.voiceStatus)
         voiceContainer = findViewById(R.id.voiceContainer)
 
-        val bargeSwitch = findViewById<Switch>(R.id.bargeEnabledSwitch)
-        bargeSwitch.isChecked = prefs.bargeInEnabled
-        bargeSwitch.setOnCheckedChangeListener { _, checked -> prefs.bargeInEnabled = checked }
-        val bargeAecSwitch = findViewById<Switch>(R.id.bargeAecSwitch)
-        bargeAecSwitch.isChecked = prefs.bargeAecEnabled
-        bargeAecSwitch.setOnCheckedChangeListener { _, checked -> prefs.bargeAecEnabled = checked }
-        buildBargeTuners()
+        buildFollowupTuner()
 
         serverUrl.setText(prefs.baseUrl)
         masterKey.setText(prefs.masterKey)
@@ -278,13 +265,12 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     // ── Follow-up window slider ─────────────────────────────────────────────
-    // Persist on change (read fresh per reply, no save button needed). Barge-in
-    // itself has no thresholds to tune — it's keyword spotting now — so the only
-    // slider left is how long to keep listening for the user's next turn.
-    private fun buildBargeTuners() {
-        val c = findViewById<LinearLayout>(R.id.bargeTuneContainer)
+    // Persist on change (read fresh per reply, no save button needed) — how
+    // long to keep listening for the user's next turn after a spoken reply.
+    private fun buildFollowupTuner() {
+        val c = findViewById<LinearLayout>(R.id.followupTuneContainer)
         // Follow-up window (ticks): 30..150 → 3..15s.
-        addSlider(c, R.string.barge_tune_followup, 30, 150, prefs.followupWindowTicks,
+        addSlider(c, R.string.followup_tune_label, 30, 150, prefs.followupWindowTicks,
             { p -> "${p / 10}s" }) { p -> prefs.followupWindowTicks = p }
     }
 

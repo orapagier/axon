@@ -32,10 +32,9 @@ pub extern "system" fn Java_com_axon_voice_wake_RustpotterNative_create(
     config.fmt.channels = 1;
     config.detector.threshold = threshold;
     // Averaged-score gate: the detection window's mean score must also clear
-    // this, on top of the single-frame `threshold`. Off (0.0) for the far-field
-    // "hey axon" wake word; a short barge word ("okay"/"wait") turns it on as a
-    // precision filter so transient/partial matches on ordinary speech don't
-    // fire (the false-triggering seen on-device with it off).
+    // this, on top of the single-frame `threshold`. Off (0.0) for the
+    // far-field "hey axon" wake word (the false-triggering seen on-device
+    // with a positive value).
     config.detector.avg_threshold = avg_threshold;
     config.detector.score_ref = score_ref;
     config.detector.band_size = 5;

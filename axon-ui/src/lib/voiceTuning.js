@@ -1,26 +1,18 @@
-// Per-device barge-in / hands-free tuning for the Chat page's voice mode.
-// Deliberately localStorage-backed, NOT server settings: these are acoustic and
-// room/device-dependent (echo coupling, mic distance), so they belong to the
-// browser they run in, not a value shared across every client. Mirrors the
-// Android Prefs barge tunables; defaults equal bargein.js's own constants, so an
-// untouched install behaves exactly as before.
-import { MARGIN, MIN_ONSET_TICKS, FLATNESS_MAX } from './bargein.js'
+// Per-device hands-free tuning for the Chat page's voice mode. Deliberately
+// localStorage-backed, NOT server settings: these are acoustic and
+// room/device-dependent, so they belong to the browser they run in, not a
+// value shared across every client. Mirrors the Android Prefs follow-up
+// tunable.
 import { FOLLOWUP_CAPTURE } from './wakeword.js'
 
 const KEY = 'axon-voice-tuning'
 
 export const VOICE_TUNING_DEFAULTS = Object.freeze({
-  margin: MARGIN, // echo rejection: lower = easier to interrupt
-  speechThreshold: FLATNESS_MAX, // cough/clap filter (both flatness + ZCR ceilings)
-  onsetTicks: MIN_ONSET_TICKS, // interrupt hold (×100ms)
   followupTicks: FOLLOWUP_CAPTURE.noSpeechTicks, // follow-up window length (×100ms)
 })
 
-// [min, max] clamps, matching the Android sliders.
+// [min, max] clamps, matching the Android slider.
 export const VOICE_TUNING_RANGES = Object.freeze({
-  margin: [1.2, 3.0],
-  speechThreshold: [0.2, 0.5],
-  onsetTicks: [1, 8],
   followupTicks: [30, 150],
 })
 

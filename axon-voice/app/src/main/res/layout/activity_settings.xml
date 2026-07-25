@@ -41,82 +41,21 @@
             android:textColorHint="@color/text_dim"
             android:importantForAutofill="no" />
 
-        <!-- Barge-in: talk over a spoken reply to interrupt it. Grouped with the
-             connection fields at the top of the page. Off = the mic isn't watched
-             during a reply, so you wait for it to finish before speaking again;
-             the tuning sliders adjust its echo-rejection sensitivity and hold. -->
+        <!-- Follow-up window: how long the mic stays open for a next turn
+             after a spoken reply. Slider built programmatically in
+             SettingsActivity.buildFollowupTuner(); persists on change and
+             takes effect on the next reply. -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="28dp"
-            android:text="@string/barge_title"
+            android:text="@string/followup_title"
             android:textColor="@color/accent"
             android:textSize="16sp"
             android:textStyle="bold" />
 
         <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:layout_marginTop="10dp">
-
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="@string/barge_enable_label"
-                android:textColor="@color/text"
-                android:textSize="14sp" />
-
-            <Switch
-                android:id="@+id/bargeEnabledSwitch"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content" />
-        </LinearLayout>
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="@string/barge_enable_description"
-            android:textColor="@color/text_dim"
-            android:textSize="12sp" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:layout_marginTop="10dp">
-
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="@string/barge_aec_label"
-                android:textColor="@color/text"
-                android:textSize="14sp" />
-
-            <Switch
-                android:id="@+id/bargeAecSwitch"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content" />
-        </LinearLayout>
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="@string/barge_aec_description"
-            android:textColor="@color/text_dim"
-            android:textSize="12sp" />
-
-        <!-- Optional barge-in tuning sliders, built programmatically in
-             SettingsActivity.buildBargeTuners(). Each persists on change and
-             takes effect on the next reply. -->
-        <LinearLayout
-            android:id="@+id/bargeTuneContainer"
+            android:id="@+id/followupTuneContainer"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"

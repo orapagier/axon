@@ -29,39 +29,7 @@ class Prefs(ctx: Context) {
             sp.edit().putBoolean("wake_enabled", v).apply()
         }
 
-    /** Whether the user can interrupt a spoken reply (barge-in). On by default.
-     *  Barge-in is keyword spotting — say the wake word or a short barge word
-     *  ("okay"/"wait"). When false, the mic isn't watched during a reply at
-     *  all: playback runs to completion and the user waits for it to finish (or
-     *  taps Stop) before speaking again. Read fresh each reply, so a change
-     *  takes effect on the next reply with no restart. */
-    var bargeInEnabled: Boolean
-        get() = sp.getBoolean("barge_in_enabled", true)
-        set(v) {
-            sp.edit().putBoolean("barge_in_enabled", v).apply()
-        }
-
-    /** Echo-cancel the barge mic (default on). While a reply plays at speaker
-     *  volume, the mic hears the user's phrase MIXED with the reply's own loud
-     *  echo, and the keyword match fails on the mixture — barge phrases only
-     *  landed in the silence between sentences. On: the barge mic opens as a
-     *  VOICE_COMMUNICATION capture with the platform echo canceler subtracting
-     *  the phone's own playback (AGC/NS explicitly disabled — AGC is what sank
-     *  the earlier VOICE_COMMUNICATION attempt). Off: the previous clean
-     *  VOICE_RECOGNITION capture, kept as the on-device fallback should a ROM's
-     *  AEC misbehave. Read fresh each reply; no restart needed. The idle wake
-     *  mic is unaffected either way. */
-    var bargeAecEnabled: Boolean
-        get() = sp.getBoolean("barge_aec_enabled", true)
-        set(v) {
-            sp.edit().putBoolean("barge_aec_enabled", v).apply()
-        }
-
-    // ── Barge-in / follow-up ─────────────────────────────────────────────────
-    // Barge-in is keyword spotting (the wake word plus an "okay"/"wait" model) —
-    // no per-device thresholds to tune. The only knob left is the follow-up
-    // window, read fresh at the start of each reply's monitor (no restart) and
-    // clamped to a safe range.
+    // ── Follow-up window ─────────────────────────────────────────────────────
 
     /** Follow-up window: ~100ms ticks the mic stays open after a spoken reply
      *  before the hands-free exchange ends. Higher = longer to start answering.
@@ -94,8 +62,8 @@ class Prefs(ctx: Context) {
      *  shared session: every wake starts its own conversation — saved on its
      *  own (server thread + local [com.axon.voice.ui.ChatHistory] file) and
      *  reviewable in the dashboard chat history — and the next wake starts
-     *  another. Follow-ups and a mid-reply "Hey Axon" barge-in stay inside the
-     *  same id (the wake service mints it once per interaction, not per turn). */
+     *  another. Follow-up turns stay inside the same id (the wake service
+     *  mints it once per interaction, not per turn). */
     fun newWakeConversationId(): String = "wake-" + UUID.randomUUID().toString().take(8)
 
     val configured: Boolean

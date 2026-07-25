@@ -34,12 +34,9 @@ internal object RustpotterNative {
 
 /**
  * @param threshold single-frame detection cutoff. Default 0.47 is the "Hey Axon"
- *   value; a short barge word ("okay"/"wait") wants it a bit higher so the
- *   reply's own speech and ordinary chatter don't trip it.
+ *   value.
  * @param avgThreshold averaged-score gate: the detection window's mean score
- *   must also clear this. 0.0 (off) for the far-field wake word; a small
- *   positive value for a barge word acts as a precision filter against transient
- *   false matches on non-keyword speech.
+ *   must also clear this. 0.0 (off) for the far-field wake word.
  * @param name label for diagnostics only (which detector fired), not used by
  *   the engine.
  */
