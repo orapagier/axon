@@ -152,7 +152,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
         // ignores it outside the speaking phase so ack playback won't leak into
         // the orb.
         player = TtsPlayer(this).apply {
-            onLevel = { rms -> VoiceOverlay.speakLevel(rms) }
+            onLevel = { rms -> onReplyLevel(rms) }
         }
     }
 
@@ -395,6 +395,11 @@ class WakeWordService : Service(), ChatSocket.Listener {
             // topic ignores it.
             val taskForAgent = (if (firstTask && hint.isNotEmpty()) hint else "") + text
             firstTask = false
+            // Thinking until the reply is audible (covers the barge/pending turn,
+            // which skipped the capture branch that would have set it). The flip
+            // to SPEAKING happens in onReplyLevel at the first audible frame.
+            notify(getString(R.string.status_thinking))
+            VoiceOverlay.setPhase(VoiceOverlay.Phase.THINKING)
             // Stream the reply: tokens flow into StreamingTts as they arrive, so
             // the first sentence plays ~1s after the agent starts replying
             // instead of after the whole reply is synthesized. Blocks until
@@ -495,6 +500,21 @@ class WakeWordService : Service(), ChatSocket.Listener {
 
     // ── Speech in/out helpers ───────────────────────────────────────────────
 
+    /** Reply-audio level from the TTS player. The first audible frame — a real
+     *  (non-negative) RMS arriving while we're still in THINKING — is the true
+     *  start of SPEAKING, so the phase flips HERE, at the DAC, not when the task
+     *  was sent. Between sending the task and the first sound sit an agent-think
+     *  and a first-sentence synth round-trip; flipping up front made the label
+     *  lead the voice by that whole gap. Inter-sentence gaps (a lone -1) don't
+     *  revert it — the reply stays SPEAKING until it truly ends. */
+    private fun onReplyLevel(rms: Float) {
+        if (rms >= 0f && VoiceOverlay.phase == VoiceOverlay.Phase.THINKING) {
+            notify(getString(R.string.status_speaking))
+            VoiceOverlay.setPhase(VoiceOverlay.Phase.SPEAKING)
+        }
+        VoiceOverlay.speakLevel(rms)
+    }
+
     /** Speak [phrase] using the same 3-tier "never silent" chain as a reply:
      *  prefetched server TTS -> built-in Android TTS -> synthesized chime.
      *  Mirrors voiceprompts.js playPrompt, which always resolves to sound. */
@@ -535,8 +555,12 @@ class WakeWordService : Service(), ChatSocket.Listener {
         var waits = 0
         while (!c.connected && waits++ < 10 && alive) Thread.sleep(500)
 
-        notify(getString(R.string.status_speaking))
-        VoiceOverlay.setPhase(VoiceOverlay.Phase.SPEAKING)
+        // Deliberately DON'T flip to SPEAKING here: the reply is still an
+        // agent-think plus a first-sentence synth round-trip away from any
+        // sound. [onReplyLevel] moves to SPEAKING when the first frame is
+        // actually audible (at the DAC), so the label tracks the voice instead
+        // of leading it. The caller left us in THINKING, which is accurate until
+        // then.
         val latch = CountDownLatch(1)
         val stream = StreamingTts(
             player = p,
