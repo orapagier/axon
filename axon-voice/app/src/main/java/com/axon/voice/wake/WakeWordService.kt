@@ -108,6 +108,19 @@ class WakeWordService : Service(), ChatSocket.Listener {
          *  combined model from all phrases' recordings and replace barge.rpw. */
         private val BARGE_MODELS = listOf("barge.rpw")
 
+        /** Genuine silence [TtsPlayer.interChunkGapMs] holds between queued
+         *  reply chunks during a barge-monitored reply — the ACTUAL fix (see
+         *  the long comment in [awaitStreamBlocking]): offline measurement
+         *  showed keyword recall is 18/18 in true silence and floors out the
+         *  instant any reply audio overlaps a phrase at all, so the win comes
+         *  from manufacturing frequent, real silent windows (paired with
+         *  [StreamingTts.fineChunking]'s clause-level splitting), not from
+         *  threshold tuning or echo cancellation alone. 800ms comfortably
+         *  covers the ~0.5-1.2s of actual speech inside these phrases'
+         *  ~1.5-2s recordings (measured from the offline test-kit wavs) while
+         *  still reading as a natural conversational pause, not a stutter. */
+        private const val BARGE_INTER_CHUNK_GAP_MS = 800
+
         @Volatile
         var running = false
             private set
@@ -747,6 +760,13 @@ class WakeWordService : Service(), ChatSocket.Listener {
 
         notify(getString(R.string.status_speaking))
         VoiceOverlay.setPhase(VoiceOverlay.Phase.SPEAKING)
+        // Whether this reply will actually be barge-monitored — decided up
+        // front (before the stream/task even exist) because it drives THREE
+        // things that all have to be in place before the first sentence
+        // plays: fine-grained TTS chunking, the inter-chunk silence gap, and
+        // the echo-cancel route. See the long comment below for why.
+        val monitorDetectors = listOfNotNull(wakeDetector) + bargeWakes
+        val wantMonitor = rec != null && prefs.bargeInEnabled && monitorDetectors.isNotEmpty()
         val latch = CountDownLatch(1)
         val outcome = java.util.concurrent.atomic.AtomicReference(BargeOutcome(false))
         val stream = StreamingTts(
@@ -754,6 +774,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
             client = client,
             cacheDir = cacheDir,
             filePrefix = "reply_wake",
+            fineChunking = wantMonitor,
         ) { latch.countDown() }
         synchronized(replyLock) {
             replyLatch = latch
@@ -770,24 +791,38 @@ class WakeWordService : Service(), ChatSocket.Listener {
         // threshold — so it can't be fooled by the reply's own voice at full
         // volume, and nothing ducks or pumps.
         //
-        // Decided BEFORE the task is sent because the echo-cancel path must set
-        // up the voice-communication ROUTE before the first sentence starts
-        // playing: the HAL echo canceler only references the voice-comm
-        // downlink as its far-end signal, so a reply left on USAGE_ASSISTANT
-        // plays outside the AEC's world and the barge mic hears its echo
-        // UNCANCELLED — the user's phrase then only matched in the silence
-        // between sentences (the on-device failure). [enterCommRoute] moves
-        // playback onto USAGE_VOICE_COMMUNICATION + MODE_IN_COMMUNICATION +
-        // speakerphone for this reply so the AEC has the reference to subtract.
-        val monitorDetectors = listOfNotNull(wakeDetector) + bargeWakes
-        val wantMonitor = rec != null && prefs.bargeInEnabled && monitorDetectors.isNotEmpty()
+        // MEASURED OFFLINE (mixing real barge-phrase recordings into real reply
+        // audio and re-running the shipped detector, since no adb-reachable
+        // device exists for this project): keyword recall is 18/18 in genuine
+        // silence and collapses to a near-permanent floor (~6/18) the instant
+        // ANY reply audio overlaps the phrase, even at a small fraction of the
+        // phrase recording's own level — this is not a threshold/SNR problem,
+        // rustpotter's matching just doesn't tolerate full-duplex audio at all.
+        // So the ONLY thing that reliably restores recall is a genuinely silent
+        // window — which is exactly why the user could only ever land a barge-in
+        // by timing a sentence pause: that pause was the one moment the mic
+        // heard silence, and it was luck-of-the-draw because it was just
+        // whatever gap synth network jitter happened to leave, not a deliberate
+        // one. `stream.fineChunking` (set above) turns "one gap per sentence"
+        // into "one gap per clause" by also splitting TTS synthesis at clause
+        // commas; `p.interChunkGapMs` below makes each of those gaps an actual
+        // guaranteed silence instead of an accidental leftover one.
+        //
+        // [enterCommRoute] (VOICE_COMMUNICATION playback + AEC capture) is kept
+        // as a secondary layer that might claw back a little more recall DURING
+        // active speech on devices whose AEC genuinely engages — but the
+        // measurement above shows it can't be the whole fix: even a fairly good
+        // real-world echo canceller's residual is nowhere near quiet enough to
+        // clear the cliff this detector has.
         val wantAec = wantMonitor && prefs.bargeAecEnabled
         var prevAudioMode: Int? = null
         if (wantAec) prevAudioMode = enterCommRoute(p)
+        if (wantMonitor) p.interChunkGapMs = BARGE_INTER_CHUNK_GAP_MS
         if (!c.sendTask(task, sessionId, voice = true)) {
             stream.abort()
             synchronized(replyLock) { replyStream = null }
             prevAudioMode?.let { exitCommRoute(p, it) }
+            p.interChunkGapMs = 0
             return BargeOutcome(false)
         }
         // Open a FRESH capture for the reply's duration rather than reusing the
@@ -853,6 +888,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
         // barge mic (and its AEC session effects) and hand the microphone back
         // to the always-on wake mic.
         prevAudioMode?.let { exitCommRoute(p, it) }
+        p.interChunkGapMs = 0
         if (bargeRec != null || bargeMic != null) {
             bargeRec?.release()
             bargeMic?.release()

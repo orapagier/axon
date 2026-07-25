@@ -80,6 +80,22 @@ class TtsPlayer(ctx: Context) {
     @Volatile
     var commAudio = false
 
+    /** Milliseconds of genuine silence [onStreamFileDone] holds before
+     *  starting the NEXT queued chunk — 0 (default) plays back-to-back with no
+     *  gap, the original behavior. Set by the barge-in caller for the
+     *  duration of a monitored reply: measured offline (see StreamingTts's
+     *  [fineChunking] doc) that keyword recall is ~18/18 in genuine silence
+     *  and collapses to a near-permanent floor the instant ANY reply audio
+     *  overlaps it, however quiet — so this gap, paired with
+     *  [StreamingTts.fineChunking]'s finer splitting, is what actually gives a
+     *  barge-in monitor a clean window to hear the user in, instead of
+     *  depending on an unreliable leftover synth-network gap only at full
+     *  sentence ends. Reset to 0 by the caller once the reply's barge window
+     *  ends — never left set for ordinary (non-monitored) playback, which
+     *  would just add pointless silence to every reply. */
+    @Volatile
+    var interChunkGapMs = 0
+
     init {
         fallback = TextToSpeech(ctx.applicationContext) { status ->
             fallbackReady = status == TextToSpeech.SUCCESS
@@ -256,6 +272,7 @@ class TtsPlayer(ctx: Context) {
     }
 
     private fun onStreamFileDone(s: Stream) {
+        var doGap = false
         synchronized(streamLock) {
             s.idle = true
             // Only a file that finished on its own gets credited as heard —
@@ -265,6 +282,25 @@ class TtsPlayer(ctx: Context) {
                 s.spoken.append(it)
             }
             s.playingText = null
+            doGap = interChunkGapMs > 0 && s.queue.isNotEmpty()
+        }
+        // Deliberately OUTSIDE the lock: this is the genuine-silence window a
+        // barge-in monitor needs (see interChunkGapMs's doc) — by the time
+        // this runs, the just-finished PcmPlayback has already stopped,
+        // drained, and released its AudioTrack (see PcmPlayback.Sink.finish),
+        // so the speaker really is silent for the gap's duration, not just
+        // about to be. Held OUTSIDE streamLock so a same-moment barge-in's
+        // abortStream (which also locks streamLock) isn't blocked behind this
+        // sleep — it can cut in immediately, and since nothing is playing yet
+        // there is nothing for it to stop.
+        if (doGap) Thread.sleep(interChunkGapMs.toLong())
+        synchronized(streamLock) {
+            // Re-read state fresh: an abort during the unlocked sleep above
+            // may have closed this stream and cleared its queue. currentStream
+            // still pointing at `s` is what distinguishes "finished normally,
+            // proceed" from "taken over mid-gap, say nothing" — abortStream
+            // (and a fresh beginStream) both null it out or repoint it.
+            if (currentStream !== s) return@synchronized
             if (s.queue.isNotEmpty()) {
                 playNextLocked(s)
             } else if (s.closed) {

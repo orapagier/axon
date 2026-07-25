@@ -19,6 +19,10 @@ import java.util.concurrent.atomic.AtomicInteger
  * bail to Android's built-in TTS on the whole accumulated text so we're never
  * silent — same "never silent" rule as the single-blob path.
  *
+ * [fineChunking] additionally splits on clause commas, not just sentence ends —
+ * see its doc for why (barge-in only gets a chance to hear the user between
+ * chunks, so more chunks = more chances).
+ *
  * All synth runs on a single-thread executor, so:
  *  - the caller thread (WS listener / main) is never blocked by network I/O,
  *  - sentence files are synthesized and enqueued in order (back-to-back play),
@@ -31,8 +35,33 @@ class StreamingTts(
     cacheDir: File,
     /** Distinct filename prefix so concurrent wake/UI streams don't collide. */
     private val filePrefix: String,
+    /** Also split at clause commas (min [MIN_CLAUSE_CHARS] in), not just
+     *  sentence ends — measured offline (mixing real barge-phrase recordings
+     *  into real reply audio and re-running the shipped detector) that ANY
+     *  concurrent reply audio, even at a small fraction of the phrase
+     *  recording's own level, collapses keyword recall from 18/18 to near a
+     *  hard floor — this isn't an SNR-tunable threshold problem, keyword
+     *  spotting just doesn't tolerate full-duplex audio. The ONLY condition
+     *  that measured back at 18/18 was genuine silence. So barge-in's real
+     *  chance to hear the user is confined to the gaps between playback
+     *  chunks — currently one gap per full sentence (and an unreliable one:
+     *  whatever's left over from synth network jitter, not a deliberate
+     *  pause), which is why it only ever caught the user "at the pause" and
+     *  by luck. Splitting on commas too turns one gap per sentence into one
+     *  gap per clause — every few seconds instead of only at full stops.
+     *  false (default) for callers with no barge monitor (chat/push-to-talk
+     *  currently doesn't run one) — no reason to pay the extra TTS round
+     *  trips and choppier prosody where nothing is listening for a gap. */
+    private val fineChunking: Boolean = false,
     private val onDone: () -> Unit,
 ) {
+    companion object {
+        /** Below this many characters since the last boundary, a comma is NOT
+         *  treated as a split point even with [fineChunking] on — otherwise
+         *  short clauses ("Well," "So,") would each become their own TTS
+         *  round trip for no real pause benefit. */
+        private const val MIN_CLAUSE_CHARS = 24
+    }
     private val buf = StringBuilder()
 
     /** Every token ever appended. Separate from [buf], which is drained as
@@ -141,7 +170,8 @@ class StreamingTts(
         return out
     }
 
-    /** Index just past the first sentence boundary, or -1 if none yet. */
+    /** Index just past the first sentence (or, with [fineChunking], clause)
+     *  boundary, or -1 if none yet. */
     private fun nextBoundary(s: StringBuilder): Int {
         var i = 0
         val n = s.length
@@ -158,6 +188,10 @@ class StreamingTts(
                 }
                 if (j < n && s[j].isWhitespace()) return j + 1
                 if (j >= n) return -1 // boundary at EOF — let caller flush via finish()
+            }
+            if (fineChunking && c == ',' && i >= MIN_CLAUSE_CHARS) {
+                if (i + 1 < n && s[i + 1].isWhitespace()) return i + 2
+                if (i + 1 >= n) return -1 // boundary at EOF — let caller flush via finish()
             }
             i++
         }
