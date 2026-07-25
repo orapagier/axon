@@ -69,7 +69,8 @@ class BargeMonitor(
             val rms = sqrt(tickSumSq / tickSamples)
             flushTick()
             val ev = detector.feedMic(rms)
-            android.util.Log.d("BargeTick", detector.diagnostics()) // TEMP diagnostic — remove after tuning
+            // TEMP diagnostic at WARN level — HiOS suppresses Log.d globally (log.tag=I).
+            android.util.Log.w("BargeTick", "ev=$ev ${detector.diagnostics()}")
             when (ev) {
                 BargeDetector.Event.TENTATIVE -> onTentative()
                 BargeDetector.Event.FALSE_ALARM -> onFalseAlarm()
