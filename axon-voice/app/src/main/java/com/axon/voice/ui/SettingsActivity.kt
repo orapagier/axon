@@ -276,11 +276,12 @@ class SettingsActivity : AppCompatActivity() {
             { p -> "${p / 10}s" }) { p -> prefs.followupWindowTicks = p }
     }
 
-    // ── Barge-in toggle + trigger level ─────────────────────────────────────
-    // Both persist on change (read fresh per reply). The trigger level is the
-    // low-band RMS the mic must exceed to interrupt a reply: tune it against the
-    // live `band=` value the notification shows while a reply plays — set it
-    // just above the idle/echo level so the reply's own voice never trips it.
+    // ── Barge-in toggle + trigger loudness ──────────────────────────────────
+    // Both persist on change (read fresh per reply). HEADSET ONLY — with the
+    // built-in speaker the reply plays to completion. The trigger loudness is
+    // the broadband RMS the mic must exceed to interrupt: tune it against the
+    // live `mic=` value the notification shows while a reply plays — raise it
+    // until distant/quiet voices no longer trip it but you do.
     private fun buildBargeTuner() {
         val c = findViewById<LinearLayout>(R.id.bargeTuneContainer)
         @Suppress("UseSwitchCompatOrMaterialCode")
@@ -291,9 +292,9 @@ class SettingsActivity : AppCompatActivity() {
             setPadding(0, dp(8), 0, dp(4))
             setOnCheckedChangeListener { _, v -> prefs.bargeInEnabled = v }
         })
-        // Trigger level stored as RMS×10000 (10..1000 → 0.0010..0.1000).
-        addSlider(c, R.string.barge_threshold_label, 10, 1000, prefs.bargeBandThreshold,
-            { p -> String.format("%.4f", p / 10000.0) }) { p -> prefs.bargeBandThreshold = p }
+        // Trigger loudness stored as RMS×10000 (100..3000 → 0.0100..0.3000).
+        addSlider(c, R.string.barge_threshold_label, 100, 3000, prefs.bargeOnsetLevel,
+            { p -> String.format("%.4f", p / 10000.0) }) { p -> prefs.bargeOnsetLevel = p }
     }
 
     private fun addSlider(

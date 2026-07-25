@@ -20,7 +20,6 @@ import com.axon.voice.Prefs
 import com.axon.voice.R
 import com.axon.voice.api.AxonClient
 import com.axon.voice.api.ChatSocket
-import com.axon.voice.audio.BandGate
 import com.axon.voice.audio.Sound
 import com.axon.voice.audio.SilenceWatcher
 import com.axon.voice.audio.StreamingTts
@@ -68,6 +67,11 @@ class WakeWordService : Service(), ChatSocket.Listener {
          *  Waiting this long before the pre-capture drain keeps our own ack /
          *  reply tail out of the follow-up capture. */
         private const val AUDIO_SETTLE_MS = 250L
+
+        /** Consecutive loud ~30ms frames the barge monitor needs before it
+         *  pauses the reply — ~120ms, long enough to ignore a click/knock,
+         *  short enough to catch a word onset. */
+        private const val BARGE_ONSET_FRAMES = 4
 
         @Volatile
         var running = false
@@ -552,8 +556,14 @@ class WakeWordService : Service(), ChatSocket.Listener {
             return null
         }
 
+        // Barge-in only runs with a headset: the reply then plays into the
+        // earpiece, not the loudspeaker, so there is NO echo path back into the
+        // mic and a plain loudness trigger is safe. On the built-in speaker the
+        // echo swamps the mic and no single-mic trigger can separate it from the
+        // user (proven on-device — see [[barge-in-speaker-verification]]), so the
+        // reply just plays to completion there.
         val slot = BargeSlot()
-        val monitor = if (prefs.bargeInEnabled && rec != null) {
+        val monitor = if (prefs.bargeInEnabled && rec != null && hasHeadsetOutput()) {
             bargeMonitorAlive = true
             thread(name = "axon-barge") { monitorBarge(rec, stream, sessionId, latch, slot) }
         } else {
@@ -568,18 +578,20 @@ class WakeWordService : Service(), ChatSocket.Listener {
     }
 
     /**
-     * Watch [rec]'s low band while a reply plays and act on a barge-in. Runs on
-     * its own thread for the reply's duration.
+     * Watch the mic for a barge-in while a reply plays. Runs on its own thread
+     * for the reply's duration, and ONLY when a headset is connected (gated by
+     * the caller), so the reply is in the earpiece and never reaches the mic —
+     * no echo to fight.
      *
-     * The [BandGate] fires on sustained energy in the ~90-160 Hz band that the
-     * (higher-pitched) TTS voice doesn't occupy, so the reply's own echo doesn't
-     * trip it but the user's voice does. On a trigger the reply is PAUSED and
-     * the clip (a short pre-roll of what triggered it, plus live audio until the
-     * user stops) is transcribed with the speaker silent — echo-free, so the
-     * transcript is clean. An empty transcript means a cough/clap/echo blip: the
-     * reply resumes from the interrupted sentence. Real words mean a genuine
-     * barge: the server run is cancelled, the reply aborted, and the words handed
-     * back via [slot] to run as the next turn.
+     * With no echo, a plain loudness onset is a safe trigger: the reply can't
+     * trip it, and a raised bar keeps distant/quiet voices out. On a sustained
+     * loud onset the reply is PAUSED and the clip (a short pre-roll of what
+     * triggered it, plus live audio until the user stops) is checked. A clip
+     * with no sustained near speech (a clap, a knock) is dropped without even a
+     * transcription; a cough that reaches STT comes back empty (the server's
+     * silence filter) — either way the reply RESUMES from the interrupted
+     * sentence. Real words are a genuine barge: the server run is cancelled, the
+     * reply aborted, and the words handed back via [slot] to run as the next turn.
      */
     private fun monitorBarge(
         rec: AudioRecord,
@@ -588,41 +600,52 @@ class WakeWordService : Service(), ChatSocket.Listener {
         latch: CountDownLatch,
         slot: BargeSlot,
     ) {
-        val threshold = prefs.bargeBandThreshold / 10000.0
-        val gate = BandGate(WavRecorder.SAMPLE_RATE, threshold)
+        val onset = prefs.bargeOnsetLevel / 10000.0
         val frameSamples = WavRecorder.SAMPLE_RATE * 30 / 1000 // ~30ms frames
         val frame = ShortArray(frameSamples)
         // ~480ms of recent audio so a fired trigger's clip includes the speech
         // onset that the sustain requirement needed a moment to confirm.
         val preRollFrames = 16
         val preRoll = ArrayDeque<ByteArray>()
-        // The reply's own tail is already in the mic buffer; drop it so the gate
-        // starts on fresh audio rather than stale, pre-playback frames.
+        // Drop whatever was buffered before the monitor started.
         drain(rec)
+        var loud = 0
+        // Don't fire until the reply is actually audible: a slow first-sentence
+        // synth leaves the mic open while the speaker is still silent, and firing
+        // then would abort the reply before it said anything. Sticky once set, so
+        // the pause/resume below doesn't disarm it.
+        var armed = false
         var lastDiag = 0L
         while (bargeMonitorAlive && alive && !micHold) {
             if (!fillFrame(rec, frame)) continue
             preRoll.addLast(frameBytes(frame, frameSamples))
             while (preRoll.size > preRollFrames) preRoll.pollFirst()
+            if (!armed && player?.playing == true) armed = true
 
+            val rms = frameRms(frame, frameSamples)
             val now = System.currentTimeMillis()
             if (now - lastDiag > 250) {
                 lastDiag = now
-                notify("barge: band=%.4f thr=%.4f".format(gate.level, threshold))
+                val tag = if (armed) "" else " (waiting for play)"
+                notify("barge: mic=%.4f thr=%.4f%s".format(rms, onset, tag))
             }
 
-            if (!gate.process(frame, frameSamples)) continue
+            if (!armed) {
+                loud = 0
+                continue
+            }
+            if (rms > onset) loud++ else loud = 0
+            if (loud < BARGE_ONSET_FRAMES) continue
+            loud = 0
 
-            // Probable barge — pause the reply and capture the utterance with the
-            // speaker silent, so its transcription isn't fighting the echo.
+            // Probable barge — pause the reply and capture the utterance.
             stream.pause()
             notify(getString(R.string.status_recording))
-            val wav = captureBarge(rec, preRoll, frameSamples)
-            val text = runCatching { client.transcribe(wav) }.getOrNull()
+            val wav = captureBarge(rec, preRoll)
+            // No sustained near speech (a clap/knock/blip) — captureBarge returns
+            // null; don't transcribe it. A cough reaches STT but comes back empty.
+            val text = if (wav != null) runCatching { client.transcribe(wav) }.getOrNull() else null
             if (text.isNullOrBlank()) {
-                // Cough / clap / echo blip — no words. Resume the reply from the
-                // interrupted sentence and keep listening.
-                gate.reset()
                 preRoll.clear()
                 drain(rec)
                 stream.resume()
@@ -647,18 +670,22 @@ class WakeWordService : Service(), ChatSocket.Listener {
 
     /** Build a WAV clip for a barge check: the [preRoll] frames (the audio that
      *  tripped the gate) followed by live capture from [rec] until the user
-     *  stops. A short no-speech budget bails quickly when the trigger was just a
-     *  cough (mostly silence after the blip). */
+     *  stops. Returns null when the clip holds no sustained near speech — a
+     *  clap, a knock, a lone loud blip — so a near-silent clip is never sent to
+     *  the transcriber (which would hallucinate a phrase out of it). A raised
+     *  speech bar also rejects distant talkers; a short no-speech budget bails
+     *  fast on a cough. */
     private fun captureBarge(
         rec: AudioRecord,
         preRoll: ArrayDeque<ByteArray>,
-        frameSamples: Int,
-    ): ByteArray {
+    ): ByteArray? {
         val out = ByteArrayOutputStream()
         for (b in preRoll) out.write(b, 0, b.size)
-        // Fast bail on a cough (~1.2s of quiet ends it); a real interruption
-        // holds the level and runs to the trailing-quiet stop like any capture.
-        val watcher = SilenceWatcher(noSpeechTicks = 12, quietTicks = 12)
+        val watcher = SilenceWatcher(
+            speechRms = SilenceWatcher.FOLLOWUP_RMS,
+            noSpeechTicks = 12,
+            quietTicks = 12,
+        )
         val buf = ShortArray(WavRecorder.SAMPLE_RATE / 10) // ~100ms ticks
         while (alive && !micHold && bargeMonitorAlive) {
             val n = rec.read(buf, 0, buf.size)
@@ -673,6 +700,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
             out.write(bytes.array(), 0, n * 2)
             if (watcher.tick(sqrt(acc / n))) break
         }
+        if (!watcher.hadSpeech) return null
         return WavRecorder.wavBytes(out.toByteArray())
     }
 
@@ -681,6 +709,36 @@ class WakeWordService : Service(), ChatSocket.Listener {
         val bytes = ByteBuffer.allocate(len * 2).order(ByteOrder.LITTLE_ENDIAN)
         for (i in 0 until len) bytes.putShort(frame[i])
         return bytes.array()
+    }
+
+    /** Broadband RMS (0..1) of one PCM16 frame — the barge loudness trigger. */
+    private fun frameRms(frame: ShortArray, len: Int): Double {
+        var acc = 0.0
+        for (i in 0 until len) {
+            val s = frame[i] / 32768.0
+            acc += s * s
+        }
+        return if (len > 0) sqrt(acc / len) else 0.0
+    }
+
+    /** True when the reply's audio is going somewhere other than the phone's own
+     *  loudspeaker — a wired / USB / Bluetooth headset — so there is no acoustic
+     *  path from the speaker back into the mic. Barge-in only runs in this case;
+     *  on the built-in speaker the reply's echo swamps the mic and no single-mic
+     *  trigger can tell it apart from the user. */
+    private fun hasHeadsetOutput(): Boolean {
+        val am = getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager ?: return false
+        return am.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS).any {
+            when (it.type) {
+                android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET,
+                android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+                android.media.AudioDeviceInfo.TYPE_USB_HEADSET,
+                android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+                android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+                -> true
+                else -> false
+            }
+        }
     }
 
     private fun prefetchPrompts() {

@@ -36,7 +36,7 @@
     <string name="delete_conversation_confirm">Delete this conversation? This can\'t be undone.</string>
     <string name="followup_title">Follow-up window</string>
     <string name="followup_tune_label">Follow-up window after a reply</string>
-    <string name="barge_title">Barge-in (talk over a reply)</string>
-    <string name="barge_toggle">Let me interrupt a reply by speaking</string>
-    <string name="barge_threshold_label">Trigger level (lower = more sensitive)</string>
+    <string name="barge_title">Barge-in (talk over a reply — headset only)</string>
+    <string name="barge_toggle">Let me interrupt a reply by speaking (needs a headset)</string>
+    <string name="barge_threshold_label">Trigger loudness (higher = speak louder/closer)</string>
 </resources>

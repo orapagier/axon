@@ -41,23 +41,23 @@ class Prefs(ctx: Context) {
     // ── Barge-in (talk over a reply) ─────────────────────────────────────────
 
     /** Whether the reply listens for a spoken interruption while it plays. Off
-     *  by default: the reply plays to completion and the user waits or taps
-     *  Stop. On, a low-band [com.axon.voice.audio.BandGate] watches for the
-     *  user's voice under the (higher-pitched) TTS voice and, on a real spoken
-     *  interruption, cuts the reply short and treats the words as the next turn.
-     *  See [[barge-in-speaker-verification]] for why this is band-based, not AEC. */
+     *  by default. Only takes effect with a HEADSET connected: the reply then
+     *  plays into the earpiece, not the loudspeaker, so there's no echo path
+     *  back into the mic and a plain loudness trigger is safe. On the built-in
+     *  speaker the reply plays to completion regardless (the echo can't be
+     *  separated from the user's voice — see [[barge-in-speaker-verification]]). */
     var bargeInEnabled: Boolean
         get() = sp.getBoolean("barge_in_enabled", false)
         set(v) { sp.edit().putBoolean("barge_in_enabled", v).apply() }
 
-    /** Barge trigger level, stored as RMS×10000 so it reads as an integer on a
-     *  slider. The filtered low-band RMS must exceed this for the gate to fire.
-     *  Tuned on-device against the live `band=` value in the notification: set
-     *  it just above the idle/echo level so the reply's own voice never trips
-     *  it but yours does. Default 150 (0.0150). */
-    var bargeBandThreshold: Int
-        get() = sp.getInt("barge_band_threshold", 150).coerceIn(10, 1000)
-        set(v) { sp.edit().putInt("barge_band_threshold", v).apply() }
+    /** Barge trigger loudness, stored as RMS×10000 so it reads as an integer on
+     *  a slider. The mic's broadband RMS must exceed this for a few frames to
+     *  interrupt a reply — a raised bar so only near, deliberate speech triggers
+     *  and distant/quiet voices don't. Tuned on-device against the live `mic=`
+     *  value in the notification. Default 600 (0.0600). */
+    var bargeOnsetLevel: Int
+        get() = sp.getInt("barge_onset_level", 600).coerceIn(100, 3000)
+        set(v) { sp.edit().putInt("barge_onset_level", v).apply() }
 
     /** The chat thread id, shared by the Chat page and the "Hey Axon" wake
      *  service so hands-free exchanges land in the same conversation (history,
