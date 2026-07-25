@@ -17,6 +17,7 @@ internal object RustpotterNative {
     external fun create(
         model: ByteArray,
         threshold: Float,
+        avgThreshold: Float,
         scoreRef: Float,
         minScores: Int,
         eager: Boolean,
@@ -32,15 +33,20 @@ internal object RustpotterNative {
 }
 
 /**
- * @param threshold detection cutoff baked into this detector. Default 0.47 is
- *   the "Hey Axon" value; a short barge word ("okay"/"wait") wants it higher
- *   (~0.5) so the reply's own speech and ordinary chatter don't trip it.
+ * @param threshold single-frame detection cutoff. Default 0.47 is the "Hey Axon"
+ *   value; a short barge word ("okay"/"wait") wants it a bit higher so the
+ *   reply's own speech and ordinary chatter don't trip it.
+ * @param avgThreshold averaged-score gate: the detection window's mean score
+ *   must also clear this. 0.0 (off) for the far-field wake word; a small
+ *   positive value for a barge word acts as a precision filter against transient
+ *   false matches on non-keyword speech.
  * @param name label for diagnostics only (which detector fired), not used by
  *   the engine.
  */
 class WakeDetector(
     modelBytes: ByteArray,
     threshold: Float = 0.47f,
+    avgThreshold: Float = 0.0f,
     val name: String = "wake",
 ) : AutoCloseable {
     companion object {
@@ -50,6 +56,7 @@ class WakeDetector(
     private var handle: Long = RustpotterNative.create(
         modelBytes,
         threshold = threshold,
+        avgThreshold = avgThreshold,
         scoreRef = 0.22f,
         minScores = 10,
         eager = true,
