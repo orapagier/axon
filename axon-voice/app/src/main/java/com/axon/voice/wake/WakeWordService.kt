@@ -74,17 +74,17 @@ class WakeWordService : Service(), ChatSocket.Listener {
          *  word while dropping to zero false-fires on both the reply's own voice
          *  and ordinary non-keyword speech. On-device echo lowers real scores,
          *  so if genuine "okay"/"wait" misses, lower this (watch logcat tag
-         *  BargeKeyword for live scores). Set a touch below the wake word's 0.47
-         *  while we confirm detection works on-device at all. */
-        private const val BARGE_THRESHOLD = 0.45f
+         *  BargeKeyword for live scores). */
+        private const val BARGE_THRESHOLD = 0.5f
 
         /** Averaged-score gate for the barge keyword ([WakeDetector.avgThreshold]).
-         *  A precision filter (the window's mean score must also clear this) that
-         *  suppresses transient false matches on non-keyword speech. Held at 0.0
-         *  (off) for now: the immediate problem is detection firing AT ALL, so
-         *  this must not be a variable — raise it to ~0.2 to tighten precision
-         *  once the BargeKeyword log confirms real keywords fire. */
-        private const val BARGE_AVG_THRESHOLD = 0.0f
+         *  A precision filter (the detection window's mean score must also clear
+         *  this) that suppresses transient partial matches — including the reply's
+         *  own loud speech on the AEC-free mic tripping the detector and making it
+         *  interrupt itself. Offline sweeps gave 0 reply false-fires at 0.2 with
+         *  full keyword recall. Raise toward 0.3 if the reply still self-triggers;
+         *  lower toward 0.1 if real keywords miss too often. */
+        private const val BARGE_AVG_THRESHOLD = 0.2f
 
         @Volatile
         var running = false
@@ -334,10 +334,16 @@ class WakeWordService : Service(), ChatSocket.Listener {
         var first = true
         var firstTask = true // gates the one-time hint; survives barge-in resets
         var lastReply = ""
-        // Non-null right after a confirmed barge-in: the next iteration skips
-        // the ack/settle/drain (the user is already mid-sentence) and seeds
-        // the capture with this pre-roll instead. Cleared once consumed.
+        // Non-null right after a confirmed barge-in: signals the next iteration
+        // to skip the ack and capture the user's post-keyword command instead.
+        // Cleared once consumed. (Its bytes — the pre-keyword pre-roll — are NOT
+        // used as capture seed: at the barge moment the reply was still playing,
+        // so that audio is the reply's own echo.)
         var bargedPreroll: ByteArray? = null
+        // What the interrupted reply had spoken so far — used only as the
+        // self-echo reference for the barge capture (so the reply bouncing back
+        // is rejected instead of looped). Cleared once consumed.
+        var bargedSpoken = ""
         // Rides onto the next task only — how much of the reply the user
         // actually heard before they cut it off. Cleared once consumed.
         var pendingNote = ""
@@ -351,12 +357,18 @@ class WakeWordService : Service(), ChatSocket.Listener {
             if (barging) {
                 // The user was already talking over the reply when the barge
                 // confirmed — replaying an ack, or even the settle+drain
-                // pause, would just talk over them again. Capture picks up
-                // immediately, seeded with what they said before it confirmed,
-                // held to the same strict onset a fresh wake gets (not the
-                // lenient follow-up bar).
+                // pause, would just talk over them again — but do NOT seed the
+                // capture with the pre-keyword pre-roll: at the barge moment the
+                // reply was still playing, so that audio is the reply's own echo,
+                // which was being transcribed back as the user's turn (the
+                // self-summarizing / apology loop). Let the aborted reply's echo
+                // tail drain out of the speaker + mic buffer, then capture only
+                // what the user actually says next (their command follows the
+                // "okay"/"wait" keyword), held to the strict fresh-wake onset.
+                Thread.sleep(AUDIO_SETTLE_MS)
+                drain(rec)
                 watcher = SilenceWatcher()
-                wav = capture(rec, watcher, preroll = bargedPreroll)
+                wav = capture(rec, watcher)
                 bargedPreroll = null
             } else {
                 // A wake is answered out loud; the follow-up window opens on
@@ -398,14 +410,17 @@ class WakeWordService : Service(), ChatSocket.Listener {
             VoiceOverlay.setPhase(VoiceOverlay.Phase.THINKING)
             val text = runCatching { client.transcribe(wav) }.getOrNull()
             if (text.isNullOrBlank()) break
-            // A capture that is just our own voice bounced back (ack phrase or
-            // a fragment of the reply we just spoke) must not become the next
-            // command — with session history the agent would happily re-answer
-            // the previous question in new words, looping the reply. Skipped
-            // entirely on a barge-in: the half-spoken reply the user just cut
-            // off is not a safe reference (they may be quoting it back on
-            // purpose — "wait, you said X").
-            if (!barging && isSelfEcho(text, lastReply, ackPhrase)) break
+            // A capture that is just our own voice bounced back (ack phrase, the
+            // last full reply, or — on a barge — the reply we were mid-way
+            // through when interrupted) must not become the next command: with
+            // session history the agent would re-answer its own words, looping
+            // the reply. This is the safety net for the barge self-echo loop —
+            // if the capture is only the interrupted reply's words (no real new
+            // command), drop it so the exchange ends instead of feeding the
+            // assistant its own voice. A genuine interrupt command ("wait, how
+            // about Judges?") is not a subset of the reply, so it passes.
+            val echoRef = if (barging) bargedSpoken else lastReply
+            if (isSelfEcho(text, echoRef, ackPhrase)) break
             // The accepted command is part of THIS wake conversation from here:
             // saved under [sessionId] (its own reviewable thread), and mirrored
             // into the Chat page only if that page is showing this same thread.
@@ -437,11 +452,16 @@ class WakeWordService : Service(), ChatSocket.Listener {
                 // the SAME conversation (sessionId unchanged). This is not a
                 // new conversation, so firstTask stays false (no re-hint).
                 bargedPreroll = outcome.preroll
-                pendingNote = if (outcome.spokenSoFar.isNotBlank()) {
-                    "(Note: I interrupted your previous reply mid-speech; I heard only up to: \"${clip(outcome.spokenSoFar)}\") "
-                } else {
-                    "(Note: I interrupted your previous reply before you said anything.) "
-                }
+                bargedSpoken = outcome.spokenSoFar
+                // The user deliberately interrupted to say something new. Tell
+                // the agent to just answer it — NOT to apologize for the
+                // interruption or recap the cut-off reply. That apology-and-recap
+                // (compounding with any echo in the capture) was what drove the
+                // reply to keep talking over itself.
+                pendingNote = "(The user interrupted your previous reply to say " +
+                    "something new. Answer their next message directly; do not " +
+                    "apologize for the interruption or repeat the interrupted " +
+                    "reply unless they ask.) "
                 lastReply = ""
                 continue
             }
