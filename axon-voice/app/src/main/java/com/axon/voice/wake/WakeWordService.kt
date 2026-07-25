@@ -13,9 +13,12 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 import android.util.Log
+import android.widget.Toast
 import com.axon.voice.Prefs
 import com.axon.voice.R
 import com.axon.voice.api.AxonClient
@@ -93,6 +96,19 @@ class WakeWordService : Service(), ChatSocket.Listener {
          *  own specificity; a stray fire is harmless (the barge just ends the turn
          *  cleanly, no loop). */
         private const val BARGE_AVG_THRESHOLD = 0.0f
+
+        /** Barge-phrase model assets, loaded explicitly (see [loadBargeModels] —
+         *  do NOT rely on assets.list). To add a phrase: record it, build a
+         *  `barge_<name>.rpw`, drop it in assets/, and add its filename here. */
+        private val BARGE_MODELS = listOf(
+            "barge_okaywait.rpw",
+            "barge_excuseme.rpw",
+            "barge_holdon.rpw",
+            "barge_tekalang.rpw",
+            "barge_sandali.rpw",
+            "barge_hangon.rpw",
+            "barge_tekamuna.rpw",
+        )
 
         @Volatile
         var running = false
@@ -262,30 +278,41 @@ class WakeWordService : Service(), ChatSocket.Listener {
         }
     }
 
-    /** Load a [WakeDetector] for every `barge*.rpw` asset — one interrupt phrase
+    /** Load a [WakeDetector] for each barge-phrase asset — one interrupt phrase
      *  each. Skips (and closes) any whose frame size doesn't match the wake
-     *  model's; a missing/empty set just means barge-in falls back to the wake
-     *  word alone. */
+     *  model's; an empty set just means barge-in falls back to the wake word.
+     *
+     *  Discovery is by an EXPLICIT filename list ([BARGE_MODELS]) opened the same
+     *  proven way the wake model is (`assets.open(name)`), NOT `assets.list("")`:
+     *  that enumeration API returns an empty array on some devices/build setups,
+     *  which silently loaded zero barge models (every phrase then missed while
+     *  "hey axon" still worked — the exact on-device symptom). `assets.list` is
+     *  still consulted as a secondary source so a dropped-in `barge*.rpw` is
+     *  picked up without a code change, but the app never DEPENDS on it. */
     private fun loadBargeModels(frameSamples: Int): List<WakeDetector> {
-        val files = runCatching {
+        val discovered = runCatching {
             assets.list("")?.filter { it.startsWith("barge") && it.endsWith(".rpw") }
         }.getOrNull().orEmpty()
+        val names = (BARGE_MODELS + discovered).distinct()
         val out = ArrayList<WakeDetector>()
-        for (file in files) {
+        for (file in names) {
+            val bytes = runCatching { assets.open(file).readBytes() }.getOrNull() ?: continue
             val det = runCatching {
-                WakeDetector(
-                    assets.open(file).readBytes(),
-                    threshold = BARGE_THRESHOLD,
-                    avgThreshold = BARGE_AVG_THRESHOLD,
-                    name = file.removeSuffix(".rpw"),
-                )
+                WakeDetector(bytes, threshold = BARGE_THRESHOLD, avgThreshold = BARGE_AVG_THRESHOLD, name = file.removeSuffix(".rpw"))
             }.getOrNull() ?: continue
             if (det.samplesPerFrame == frameSamples) out.add(det) else det.close()
         }
         // WARN so it survives HiOS's Log.d suppression: the FIRST thing to check
-        // on-device — if this isn't the 7 expected phrases, barge-in falls back
-        // to "hey axon" only and no threshold change would help.
+        // on-device — if this isn't the expected phrases, barge-in fell back to
+        // "hey axon" only and no threshold change would help.
         Log.w(LOG_TAG, "barge models loaded: ${out.size} [${out.joinToString { it.name }}]")
+        // Visible confirmation without adb: since the device can't be logcat'd,
+        // a one-time toast tells the user whether the barge phrases actually
+        // loaded (the count should be the full BARGE_MODELS set). TEMP — remove
+        // once barge-in is confirmed working on-device.
+        Handler(Looper.getMainLooper()).post {
+            Toast.makeText(this, "Barge phrases ready: ${out.size}", Toast.LENGTH_LONG).show()
+        }
         return out
     }
 
