@@ -38,6 +38,27 @@ class Prefs(ctx: Context) {
         get() = sp.getInt("followup_window_ticks", 50).coerceIn(30, 150)
         set(v) { sp.edit().putInt("followup_window_ticks", v).apply() }
 
+    // ── Barge-in (talk over a reply) ─────────────────────────────────────────
+
+    /** Whether the reply listens for a spoken interruption while it plays. Off
+     *  by default: the reply plays to completion and the user waits or taps
+     *  Stop. On, a low-band [com.axon.voice.audio.BandGate] watches for the
+     *  user's voice under the (higher-pitched) TTS voice and, on a real spoken
+     *  interruption, cuts the reply short and treats the words as the next turn.
+     *  See [[barge-in-speaker-verification]] for why this is band-based, not AEC. */
+    var bargeInEnabled: Boolean
+        get() = sp.getBoolean("barge_in_enabled", false)
+        set(v) { sp.edit().putBoolean("barge_in_enabled", v).apply() }
+
+    /** Barge trigger level, stored as RMS×10000 so it reads as an integer on a
+     *  slider. The filtered low-band RMS must exceed this for the gate to fire.
+     *  Tuned on-device against the live `band=` value in the notification: set
+     *  it just above the idle/echo level so the reply's own voice never trips
+     *  it but yours does. Default 150 (0.0150). */
+    var bargeBandThreshold: Int
+        get() = sp.getInt("barge_band_threshold", 150).coerceIn(10, 1000)
+        set(v) { sp.edit().putInt("barge_band_threshold", v).apply() }
+
     /** The chat thread id, shared by the Chat page and the "Hey Axon" wake
      *  service so hands-free exchanges land in the same conversation (history,
      *  agent context, dashboard thread) as typed and push-to-talk messages.

@@ -112,6 +112,14 @@ class StreamingTts(
      *  detection (wake path) and the transcript bubble (UI path). */
     fun accumulated(): String = synchronized(lock) { full.toString() }
 
+    /** Barge hold: silence the speaker at the current sentence while a spoken
+     *  interruption is checked. Incoming tokens keep synthesizing behind the
+     *  pause; [resume] replays the interrupted sentence and continues. */
+    fun pause() = player.pauseStream(stream)
+
+    /** Undo [pause] — resume back-to-back playback from where it was held. */
+    fun resume() = player.resumeStream(stream)
+
     /** True once any reply text has been fed in. Lets the caller tell a real
      *  streamed reply apart from a stream that never received a token frame,
      *  which must fall back to synthesizing `full_text` in one blob rather

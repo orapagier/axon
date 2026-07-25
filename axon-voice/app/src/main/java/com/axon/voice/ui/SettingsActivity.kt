@@ -8,6 +8,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.SeekBar
+import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
@@ -61,6 +62,7 @@ class SettingsActivity : AppCompatActivity() {
         voiceContainer = findViewById(R.id.voiceContainer)
 
         buildFollowupTuner()
+        buildBargeTuner()
 
         serverUrl.setText(prefs.baseUrl)
         masterKey.setText(prefs.masterKey)
@@ -272,6 +274,26 @@ class SettingsActivity : AppCompatActivity() {
         // Follow-up window (ticks): 30..150 → 3..15s.
         addSlider(c, R.string.followup_tune_label, 30, 150, prefs.followupWindowTicks,
             { p -> "${p / 10}s" }) { p -> prefs.followupWindowTicks = p }
+    }
+
+    // ── Barge-in toggle + trigger level ─────────────────────────────────────
+    // Both persist on change (read fresh per reply). The trigger level is the
+    // low-band RMS the mic must exceed to interrupt a reply: tune it against the
+    // live `band=` value the notification shows while a reply plays — set it
+    // just above the idle/echo level so the reply's own voice never trips it.
+    private fun buildBargeTuner() {
+        val c = findViewById<LinearLayout>(R.id.bargeTuneContainer)
+        @Suppress("UseSwitchCompatOrMaterialCode")
+        c.addView(Switch(this).apply {
+            text = getString(R.string.barge_toggle)
+            setTextColor(ContextCompat.getColor(context, R.color.text))
+            isChecked = prefs.bargeInEnabled
+            setPadding(0, dp(8), 0, dp(4))
+            setOnCheckedChangeListener { _, v -> prefs.bargeInEnabled = v }
+        })
+        // Trigger level stored as RMS×10000 (10..1000 → 0.0010..0.1000).
+        addSlider(c, R.string.barge_threshold_label, 10, 1000, prefs.bargeBandThreshold,
+            { p -> String.format("%.4f", p / 10000.0) }) { p -> prefs.bargeBandThreshold = p }
     }
 
     private fun addSlider(

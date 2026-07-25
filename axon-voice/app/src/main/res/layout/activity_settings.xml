@@ -61,6 +61,25 @@
             android:orientation="vertical"
             android:layout_marginTop="8dp" />
 
+        <!-- Barge-in: talk over a reply to interrupt it. Toggle + trigger-level
+             slider built programmatically in SettingsActivity.buildBargeTuner();
+             persist on change and take effect on the next reply. -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="28dp"
+            android:text="@string/barge_title"
+            android:textColor="@color/accent"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:id="@+id/bargeTuneContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginTop="8dp" />
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

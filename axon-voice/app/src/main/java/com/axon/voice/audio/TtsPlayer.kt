@@ -95,6 +95,13 @@ class TtsPlayer(ctx: Context) {
         internal var closed = false          // finalizeStream called
         @Volatile
         internal var idle = true             // no file currently playing
+        @Volatile
+        internal var paused = false          // barge hold — no new file starts
+        /** The file [playNextLocked] most recently started, so a pause can push
+         *  it back to the head of the queue and replay that whole sentence on
+         *  resume (per-sentence is the finest resume unit — [PcmPlayback] has no
+         *  mid-file resume). Null while nothing is playing. */
+        internal var currentFile: File? = null
     }
 
     /**
@@ -121,7 +128,41 @@ class TtsPlayer(ctx: Context) {
         synchronized(streamLock) {
             if (s.closed || file.length() == 0L) return
             s.queue.add(file)
-            if (s.idle) playNextLocked(s)
+            if (s.idle && !s.paused) playNextLocked(s)
+        }
+    }
+
+    /** Pause a streamed reply at the current sentence for a barge check: silence
+     *  the speaker now, and push the interrupted sentence back to the head of
+     *  the queue so [resumeStream] replays it whole. Newly-synthesized sentences
+     *  keep queuing behind it while paused. No-op unless [s] is the live stream
+     *  and not already paused. onDone does NOT fire — the reply isn't finished. */
+    fun pauseStream(s: Stream) {
+        synchronized(streamLock) {
+            if (currentStream !== s || s.paused) return
+            s.paused = true
+            // stopPlayback cancels the current PcmPlayback WITHOUT firing its
+            // onEnd, so onStreamFileDone won't run for the interrupted sentence
+            // — we re-queue it and mark idle by hand.
+            s.currentFile?.let { s.queue.addFirst(it) }
+            s.currentFile = null
+            stopPlayback()
+            s.idle = true
+        }
+    }
+
+    /** Undo [pauseStream]: resume back-to-back playback from the head of the
+     *  queue (the replayed sentence first). If the reply had already finished
+     *  streaming and its queue drained while paused, fire onDone now. */
+    fun resumeStream(s: Stream) {
+        synchronized(streamLock) {
+            if (currentStream !== s || !s.paused) return
+            s.paused = false
+            onLevel?.invoke(lastLevel) // orb back to "speaking" immediately
+            if (s.idle) {
+                if (s.queue.isNotEmpty()) playNextLocked(s)
+                else if (s.closed) finishLocked(s)
+            }
         }
     }
 
@@ -132,7 +173,9 @@ class TtsPlayer(ctx: Context) {
         synchronized(streamLock) {
             if (s.closed) return
             s.closed = true
-            if (s.idle && s.queue.isEmpty()) finishLocked(s)
+            // While paused for a barge check, the queue holds the replayed
+            // sentence — don't fire onDone; resumeStream will when it drains.
+            if (s.idle && !s.paused && s.queue.isEmpty()) finishLocked(s)
         }
     }
 
@@ -153,7 +196,9 @@ class TtsPlayer(ctx: Context) {
     }
 
     private fun playNextLocked(s: Stream) {
+        if (s.paused) return
         val file = s.queue.poll() ?: return
+        s.currentFile = file
         s.idle = false
         // Anything still coming out of the speaker — an ack tail, a read-aloud
         // in progress — yields now that the reply can actually speak.
@@ -177,7 +222,9 @@ class TtsPlayer(ctx: Context) {
     private fun onStreamFileDone(s: Stream) {
         synchronized(streamLock) {
             s.idle = true
+            s.currentFile = null // this sentence finished naturally; nothing to replay
             if (currentStream !== s) return@synchronized
+            if (s.paused) return@synchronized // resumeStream will pick the queue back up
             if (s.queue.isNotEmpty()) {
                 playNextLocked(s)
             } else if (s.closed) {
