@@ -74,21 +74,25 @@ class WakeWordService : Service(), ChatSocket.Listener {
          *  word while dropping to zero false-fires on both the reply's own voice
          *  and ordinary non-keyword speech. On-device echo lowers real scores,
          *  so if genuine "okay"/"wait" misses, lower this (watch logcat tag
-         *  BargeKeyword for live scores). 0.50 is the swept sweet spot across the
-         *  seven distinct barge phrases ("okay wait", "excuse me", "hold on",
-         *  "teka lang", "sandali lang", "hang on", "teka muna"): ~53/54 recall on
-         *  clean takes while cutting spurious fires on ordinary non-phrase speech
-         *  ~85% vs 0.42. Below this it fires on general talking; at 0.55 recall
-         *  collapses. Lower if genuine phrases miss on-device, raise if replies
-         *  self-trigger. */
-        private const val BARGE_THRESHOLD = 0.5f
+         *  BargeKeyword for live scores). 0.42: on-device, the reply playing
+         *  around the phrase lowers real scores, so the clean-recording sweet
+         *  spot (0.50) missed everything; the one round that actually fired
+         *  on-device used ~0.45, and 0.42 gives margin for a phrase spoken
+         *  mid-sentence (masked by the reply). reply_synth self-interrupt stays 0
+         *  at this level (the reply is a different voice, can't match the user's
+         *  templates). Lower toward 0.38 if phrases still miss on-device. */
+        private const val BARGE_THRESHOLD = 0.42f
 
-        /** Averaged-score gate for the barge keyword ([WakeDetector.avgThreshold]).
-         *  A precision filter (the detection window's mean score must also clear
-         *  this) that suppresses transient partial matches. Paired with the 0.50
-         *  threshold above from the same sweep. Raise toward 0.25 if replies
-         *  self-trigger, lower toward 0.1 if genuine phrases miss. */
-        private const val BARGE_AVG_THRESHOLD = 0.2f
+        /** Averaged-score gate ([WakeDetector.avgThreshold]). MUST stay 0 (off):
+         *  it requires the detection window's MEAN score to clear it, but
+         *  on-device the window is polluted by the reply audio around the phrase,
+         *  which drags the mean down and SUPPRESSED all detection — recall fell
+         *  monotonically as this rose (0.0 fired, 0.1 "need to pause", 0.2 never).
+         *  The clean-offline sweep couldn't see this (no reply in the takes).
+         *  Precision instead comes from the single-frame threshold + the phrases'
+         *  own specificity; a stray fire is harmless (the barge just ends the turn
+         *  cleanly, no loop). */
+        private const val BARGE_AVG_THRESHOLD = 0.0f
 
         @Volatile
         var running = false
@@ -278,6 +282,10 @@ class WakeWordService : Service(), ChatSocket.Listener {
             }.getOrNull() ?: continue
             if (det.samplesPerFrame == frameSamples) out.add(det) else det.close()
         }
+        // WARN so it survives HiOS's Log.d suppression: the FIRST thing to check
+        // on-device — if this isn't the 7 expected phrases, barge-in falls back
+        // to "hey axon" only and no threshold change would help.
+        Log.w(LOG_TAG, "barge models loaded: ${out.size} [${out.joinToString { it.name }}]")
         return out
     }
 
