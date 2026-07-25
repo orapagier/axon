@@ -28,10 +28,11 @@ import kotlin.concurrent.thread
  * The model fields offer the same catalogue picker as the web dropdowns
  * (POST /api/audio/models), with free text always allowed.
  *
- * Barge-in (interrupting a spoken reply by talking over it) is a single on/off
- * switch here — no thresholds to tune. The detector self-calibrates its echo
- * rejection ([com.axon.voice.audio.BargeDetector]); when the switch is off the
- * mic isn't watched during a reply at all, so you wait for it to finish.
+ * Barge-in (interrupting a spoken reply) is a single on/off switch here — no
+ * thresholds to tune. It's keyword spotting: while a reply plays you interrupt
+ * by saying the wake word or a short barge word ("okay"/"wait"). When the switch
+ * is off the mic isn't watched during a reply at all, so you wait for it to
+ * finish.
  */
 class SettingsActivity : AppCompatActivity() {
 
@@ -273,17 +274,12 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
-    // ── Barge-in tuning sliders ─────────────────────────────────────────────
-    // Persist on change (read fresh per reply, no save button needed). Values
-    // are stored raw in Prefs; the SeekBars use scaled integers.
+    // ── Follow-up window slider ─────────────────────────────────────────────
+    // Persist on change (read fresh per reply, no save button needed). Barge-in
+    // itself has no thresholds to tune — it's keyword spotting now — so the only
+    // slider left is how long to keep listening for the user's next turn.
     private fun buildBargeTuners() {
         val c = findViewById<LinearLayout>(R.id.bargeTuneContainer)
-        // Sensitivity via echo margin (stored ×10): 1.2..3.0×. Lower = more sensitive.
-        addSlider(c, R.string.barge_tune_sensitivity, 12, 30, (prefs.bargeMargin * 10).toInt(),
-            { p -> "%.1f×".format(p / 10f) }) { p -> prefs.bargeMargin = p / 10f }
-        // Interrupt hold (onset ticks): 1..8 → 0.1..0.8s.
-        addSlider(c, R.string.barge_tune_hold, 1, 8, prefs.bargeOnsetTicks,
-            { p -> "%.1fs".format(p / 10f) }) { p -> prefs.bargeOnsetTicks = p }
         // Follow-up window (ticks): 30..150 → 3..15s.
         addSlider(c, R.string.barge_tune_followup, 30, 150, prefs.followupWindowTicks,
             { p -> "${p / 10}s" }) { p -> prefs.followupWindowTicks = p }

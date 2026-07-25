@@ -31,14 +31,25 @@ internal object RustpotterNative {
     external fun destroy(handle: Long)
 }
 
-class WakeDetector(modelBytes: ByteArray) : AutoCloseable {
+/**
+ * @param threshold detection cutoff baked into this detector. Default 0.47 is
+ *   the "Hey Axon" value; a short barge word ("okay"/"wait") wants it higher
+ *   (~0.5) so the reply's own speech and ordinary chatter don't trip it.
+ * @param name label for diagnostics only (which detector fired), not used by
+ *   the engine.
+ */
+class WakeDetector(
+    modelBytes: ByteArray,
+    threshold: Float = 0.47f,
+    val name: String = "wake",
+) : AutoCloseable {
     companion object {
         val available: Boolean get() = RustpotterNative.available
     }
 
     private var handle: Long = RustpotterNative.create(
         modelBytes,
-        threshold = 0.47f,
+        threshold = threshold,
         scoreRef = 0.22f,
         minScores = 10,
         eager = true,

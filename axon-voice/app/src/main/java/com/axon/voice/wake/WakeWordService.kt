@@ -20,7 +20,6 @@ import com.axon.voice.Prefs
 import com.axon.voice.R
 import com.axon.voice.api.AxonClient
 import com.axon.voice.api.ChatSocket
-import com.axon.voice.audio.BargeDetector
 import com.axon.voice.audio.BargeMonitor
 import com.axon.voice.audio.MicEffects
 import com.axon.voice.audio.Sound
@@ -69,6 +68,15 @@ class WakeWordService : Service(), ChatSocket.Listener {
          *  Waiting this long before the pre-capture drain keeps our own ack /
          *  reply tail out of the follow-up capture. */
         private const val AUDIO_SETTLE_MS = 250L
+
+        /** Detection cutoff for the barge keyword model ("okay"/"wait", built
+         *  from the user's own recordings). Higher than the wake word's 0.47:
+         *  offline sweeps showed ~0.5 keeps 100% recall on the user saying the
+         *  word while dropping to zero false-fires on both the reply's own voice
+         *  and ordinary non-keyword speech. On-device echo lowers real scores,
+         *  so if genuine "okay"/"wait" misses, lower this (watch logcat tag
+         *  BargeKeyword for live scores). */
+        private const val BARGE_THRESHOLD = 0.5f
 
         @Volatile
         var running = false
@@ -122,29 +130,18 @@ class WakeWordService : Service(), ChatSocket.Listener {
      *  thread's interact(), so it needs no lock. */
     private val previousTurns = ArrayList<Pair<String, String>>()
 
-    /** One long-lived barge-in detector for the service's whole lifetime, not
-     *  one per reply: its learned echo gain ([BargeDetector.reset] keeps it)
-     *  only gets more accurate the longer it listens to this device's own
-     *  speaker-into-mic coupling. [awaitStreamBlocking] resets its per-turn
-     *  state at the start of every new reply. */
-    private val bargeDetector = BargeDetector()
-
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         prefs = Prefs(this)
         client = AxonClient(prefs)
-        // The reply-audio RMS drives the SPEAKING orb in realtime, and feeds
-        // the barge-in detector's echo reference — speakLevel ignores it
-        // outside the speaking phase (so ack playback won't leak into the
-        // orb), but the detector needs it unconditionally: it's reset per-turn
-        // in awaitStreamBlocking rather than gated by phase.
+        // The reply-audio RMS drives the SPEAKING orb in realtime; speakLevel
+        // ignores it outside the speaking phase so ack playback won't leak into
+        // the orb. Barge-in no longer needs a playback reference — it's keyword
+        // spotting now, not an echo/energy threshold.
         player = TtsPlayer(this).apply {
-            onLevel = { rms ->
-                VoiceOverlay.speakLevel(rms)
-                bargeDetector.feedPlayback(rms)
-            }
+            onLevel = { rms -> VoiceOverlay.speakLevel(rms) }
         }
     }
 
@@ -204,6 +201,17 @@ class WakeWordService : Service(), ChatSocket.Listener {
             fail(e.message ?: "Wake model rejected")
             return
         }
+        // The barge keyword model ("okay"/"wait", built from the user's own
+        // voice) — run alongside the wake word only while a reply is speaking so
+        // the user can interrupt by saying it. Optional: if the asset is missing
+        // or its frame size doesn't match the wake model's (it does when built
+        // with the same rustpotter config), barge-in just falls back to the wake
+        // word alone. Long-lived like the wake detector; closed in finally.
+        val bargeWake: WakeDetector? = runCatching {
+            WakeDetector(assets.open("barge.rpw").readBytes(), threshold = BARGE_THRESHOLD, name = "barge")
+        }.getOrNull()?.let { bw ->
+            if (bw.samplesPerFrame == detector.samplesPerFrame) bw else { bw.close(); null }
+        }
         // Off the wake thread: each miss burns a network timeout, and "Hey
         // Axon" must be listening immediately, not after a run of slow fetches.
         thread(name = "axon-prompt-prefetch") { prefetchPrompts() }
@@ -230,13 +238,14 @@ class WakeWordService : Service(), ChatSocket.Listener {
                 if (!fillFrame(rec, frame)) continue
                 val score = detector.process(frame)
                 if (score >= 0f) {
-                    interact(rec, detector)
+                    interact(rec, detector, bargeWake)
                     drain(rec)
                 }
             }
         } finally {
             record?.release()
             detector.close()
+            bargeWake?.close()
         }
     }
 
@@ -341,7 +350,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
 
     // ── One wake interaction (command + follow-ups) ─────────────────────────
 
-    private fun interact(rec: AudioRecord, detector: WakeDetector) {
+    private fun interact(rec: AudioRecord, detector: WakeDetector, bargeWake: WakeDetector?) {
         // One "Hey Axon" starts one conversation. The id is minted here, once,
         // and reused for every turn — follow-ups AND a mid-reply barge-in — so
         // the whole interaction is saved as a single, separately reviewable
@@ -443,7 +452,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
             // so the first sentence plays ~1s after the agent starts replying
             // instead of after the whole reply is synthesized. Blocks until
             // playback finishes or a barge-in cuts it off.
-            val outcome = awaitStreamBlocking(taskForAgent, sessionId, rec, detector)
+            val outcome = awaitStreamBlocking(taskForAgent, sessionId, rec, detector, bargeWake)
             val barged = outcome.barged
             val (reply, err) = synchronized(replyLock) { (replyText ?: "") to replyError }
             if (reply.isNotBlank()) {
@@ -607,9 +616,9 @@ class WakeWordService : Service(), ChatSocket.Listener {
      * Send [task] and stream the reply: tokens are fed to a [StreamingTts] as
      * they arrive so per-sentence TTS begins with the first sentence, not after
      * the whole reply is downloaded. Watches the mic the whole time for a
-     * barge-in — either the wake word, or the user just talking over the
-     * reply (see [BargeDetector], which tells the two apart from the echo) —
-     * and ducks/stops the reply accordingly.
+     * barge-in — the user saying the wake word or a short barge word
+     * ("okay"/"wait"), each a rustpotter keyword (see [BargeMonitor]) — and
+     * stops the reply when one fires.
      *
      * The [BargeMonitor] runs on a throwaway thread that owns the shared mic
      * ([rec]) and rustpotter [wakeDetector] for the whole call: it's safe
@@ -622,6 +631,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
         sessionId: String,
         rec: AudioRecord?,
         wakeDetector: WakeDetector?,
+        bargeWake: WakeDetector?,
     ): BargeOutcome {
         val p = player ?: return BargeOutcome(false)
         val c = chat ?: return BargeOutcome(false)
@@ -649,45 +659,41 @@ class WakeWordService : Service(), ChatSocket.Listener {
             synchronized(replyLock) { replyStream = null }
             return BargeOutcome(false)
         }
-        // Fresh reply: apply the user's current tuning, then forget the last
-        // one's ducked/tentative state (keeping the self-calibrated echo gain —
-        // it's still the same device and room).
-        bargeDetector.tune(prefs.bargeMargin.toDouble(), prefs.bargeOnsetTicks)
-        bargeDetector.reset()
         // Monitor for a barge-in while the reply streams — only if the user has
-        // barge-in turned on AND there's a live mic to listen with. Off (or
-        // mic-less), and the reply just plays out to completion: the user waits
-        // for it to finish before speaking again, which is the whole point of
-        // the toggle.
+        // barge-in turned on AND there's a live mic AND at least one keyword
+        // engine to listen with. Off (or mic-less), and the reply just plays out
+        // to completion: the user waits for it to finish before speaking again,
+        // which is the whole point of the toggle. Barge-in is now keyword
+        // spotting (the wake word plus the "okay"/"wait" barge model), not an
+        // energy/echo threshold — so it can't be fooled by the reply's own voice
+        // at full volume, and nothing ducks or pumps.
         //
         // For the duration of the reply, swap the always-on VOICE_RECOGNITION
-        // wake mic for a dedicated echo-cancelled VOICE_COMMUNICATION mic
-        // ([openBargeMic]) so the phone speaker's own reply is cancelled out of
-        // the capture — the real fix for talk-over barge-in. Only one mic can
-        // capture at a time, so the wake mic is stopped first and restarted
-        // afterwards for the follow-up capture / idle listening. If the AEC mic
-        // can't be opened, fall back to the wake mic (no cancellation).
+        // wake mic for an echo-cancelled VOICE_COMMUNICATION mic ([openBargeMic])
+        // so the user's keyword is heard as cleanly as possible past the reply's
+        // echo. Only one mic can capture at a time, so the wake mic is stopped
+        // first and restarted afterwards for the follow-up capture / idle
+        // listening. If the AEC mic can't be opened, fall back to the wake mic.
+        val monitorDetectors = listOfNotNull(wakeDetector, bargeWake)
         var bargeMic: Pair<AudioRecord, MicEffects>? = null
-        val monitorRec: AudioRecord? = if (rec != null && prefs.bargeInEnabled) {
-            runCatching { rec.stop() }
-            bargeMic = openBargeMic()
-            if (bargeMic != null) {
-                bargeMic!!.first
-            } else {
-                runCatching { rec.startRecording() } // AEC mic unavailable — reuse the wake mic
-                rec
-            }
-        } else null
-        val monitor = if (monitorRec != null && prefs.bargeInEnabled) {
+        val monitorRec: AudioRecord? =
+            if (rec != null && prefs.bargeInEnabled && monitorDetectors.isNotEmpty()) {
+                runCatching { rec.stop() }
+                bargeMic = openBargeMic()
+                if (bargeMic != null) {
+                    bargeMic!!.first
+                } else {
+                    runCatching { rec.startRecording() } // AEC mic unavailable — reuse the wake mic
+                    rec
+                }
+            } else null
+        val monitor = if (monitorRec != null) {
             thread(name = "axon-barge") {
                 BargeMonitor(
-                    detector = bargeDetector,
-                    wakeDetector = wakeDetector,
+                    wakeDetectors = monitorDetectors,
                     readFrame = { f -> fillFrame(monitorRec, f) },
-                    onTentative = { p.duck(); Log.d(LOG_TAG, "barge tentative (ducked): ${bargeDetector.diagnostics()}") },
-                    onFalseAlarm = { p.restoreVolume(); Log.d(LOG_TAG, "barge false-alarm (restored): ${bargeDetector.diagnostics()}") },
                     onConfirmed = { preroll ->
-                        Log.d(LOG_TAG, "barge CONFIRMED: ${bargeDetector.diagnostics()}")
+                        Log.d(LOG_TAG, "barge CONFIRMED (keyword)")
                         val spoken = stream.spokenSoFar()
                         stream.abort() // cut the TTS mid-sentence
                         c.cancel(sessionId) // stop generating, not just talking

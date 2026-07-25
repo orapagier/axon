@@ -29,38 +29,24 @@ class Prefs(ctx: Context) {
             sp.edit().putBoolean("wake_enabled", v).apply()
         }
 
-    /** Whether talking over a spoken reply interrupts it (barge-in). On by
-     *  default. The detector self-calibrates its echo rejection
-     *  ([com.axon.voice.audio.BargeDetector]) so there's nothing to tune — this
-     *  is the only barge-in control. When false, the mic isn't watched during a
-     *  reply at all: playback runs to completion and the user waits for it to
-     *  finish (or taps Stop / says "Hey Axon") before speaking again. Read fresh
-     *  each reply, so a change takes effect on the next reply with no restart. */
+    /** Whether the user can interrupt a spoken reply (barge-in). On by default.
+     *  Barge-in is keyword spotting — say the wake word or a short barge word
+     *  ("okay"/"wait") — so there's nothing to tune; this is the only barge-in
+     *  control. When false, the mic isn't watched during a reply at all:
+     *  playback runs to completion and the user waits for it to finish (or taps
+     *  Stop) before speaking again. Read fresh each reply, so a change takes
+     *  effect on the next reply with no restart. */
     var bargeInEnabled: Boolean
         get() = sp.getBoolean("barge_in_enabled", true)
         set(v) {
             sp.edit().putBoolean("barge_in_enabled", v).apply()
         }
 
-    // ── Barge-in tuning ──────────────────────────────────────────────────────
-    // Optional per-device/room adjustments layered on the self-calibrating
-    // detector. Defaults equal BargeDetector's own constants, so an untouched
-    // install behaves exactly as before. All are read fresh at the start of each
-    // reply's barge monitor (no restart needed) and clamped to safe ranges.
-
-    /** Echo-rejection margin: how far over the learned echo the mic must read to
-     *  start ducking. Lower = more sensitive (easier to interrupt), higher =
-     *  stricter. Default = BargeDetector.MARGIN (2.0). */
-    var bargeMargin: Float
-        get() = sp.getFloat("barge_margin", 2.0f).coerceIn(1.2f, 3.0f)
-        set(v) { sp.edit().putFloat("barge_margin", v).apply() }
-
-    /** Interrupt hold: consecutive ~100ms speech ticks required to confirm a
-     *  barge-in. Higher = you must keep talking longer to interrupt. Default =
-     *  BargeDetector.MIN_ONSET_TICKS (3 ≈ 300ms). */
-    var bargeOnsetTicks: Int
-        get() = sp.getInt("barge_onset_ticks", 3).coerceIn(1, 8)
-        set(v) { sp.edit().putInt("barge_onset_ticks", v).apply() }
+    // ── Barge-in / follow-up ─────────────────────────────────────────────────
+    // Barge-in is keyword spotting (the wake word plus an "okay"/"wait" model) —
+    // no per-device thresholds to tune. The only knob left is the follow-up
+    // window, read fresh at the start of each reply's monitor (no restart) and
+    // clamped to a safe range.
 
     /** Follow-up window: ~100ms ticks the mic stays open after a spoken reply
      *  before the hands-free exchange ends. Higher = longer to start answering.
