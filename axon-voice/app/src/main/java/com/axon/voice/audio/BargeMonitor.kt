@@ -46,6 +46,10 @@ class BargeMonitor(
      *  lose the user's first words, spoken before the keyword fired. */
     prerollTicks: Int = PREROLL_TICKS,
     private val onConfirmed: (prerollPcm: ByteArray) -> Unit,
+    /** TEMP diagnostic — called ~once/sec with the mic RMS and best keyword
+     *  score seen, so a device with no adb can still show the numbers on-screen.
+     *  null = no reporting. */
+    private val onDiag: ((rms: Float, maxScore: Float) -> Unit)? = null,
 ) {
     companion object {
         private const val TICK_SAMPLES = WavRecorder.SAMPLE_RATE / 10 // 100ms @ 16kHz
@@ -93,10 +97,9 @@ class BargeMonitor(
                 }
             }
             if (logCount >= WavRecorder.SAMPLE_RATE) {
-                android.util.Log.w(
-                    "BargeKeyword",
-                    "listening rms=%.4f maxScore=%.3f".format(sqrt(logSumSq / logCount), logMaxScore),
-                )
+                val rms = sqrt(logSumSq / logCount).toFloat()
+                android.util.Log.w("BargeKeyword", "listening rms=%.4f maxScore=%.3f".format(rms, logMaxScore))
+                onDiag?.invoke(rms, logMaxScore)
                 logSumSq = 0.0
                 logCount = 0
                 logMaxScore = -1f

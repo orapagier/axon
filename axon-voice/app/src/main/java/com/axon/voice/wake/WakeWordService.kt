@@ -97,18 +97,16 @@ class WakeWordService : Service(), ChatSocket.Listener {
          *  cleanly, no loop). */
         private const val BARGE_AVG_THRESHOLD = 0.0f
 
-        /** Barge-phrase model assets, loaded explicitly (see [loadBargeModels] —
-         *  do NOT rely on assets.list). To add a phrase: record it, build a
-         *  `barge_<name>.rpw`, drop it in assets/, and add its filename here. */
-        private val BARGE_MODELS = listOf(
-            "barge_okaywait.rpw",
-            "barge_excuseme.rpw",
-            "barge_holdon.rpw",
-            "barge_tekalang.rpw",
-            "barge_sandali.rpw",
-            "barge_hangon.rpw",
-            "barge_tekamuna.rpw",
-        )
+        /** Barge-phrase model asset(s), loaded explicitly (see [loadBargeModels]
+         *  — do NOT rely on assets.list). ALL phrases live in ONE model file
+         *  ([barge.rpw], built from every phrase's recordings) so a SINGLE
+         *  rustpotter engine extracts audio features once per frame and matches
+         *  them against all phrase templates — the topology that worked on-device.
+         *  Seven SEPARATE per-phrase engines (one recomputing features each) both
+         *  wasted CPU and stopped detecting anything on-device; a combined model
+         *  fires on any phrase far more cheaply. To add a phrase: rebuild the
+         *  combined model from all phrases' recordings and replace barge.rpw. */
+        private val BARGE_MODELS = listOf("barge.rpw")
 
         @Volatile
         var running = false
@@ -746,6 +744,12 @@ class WakeWordService : Service(), ChatSocket.Listener {
                         c.cancel(sessionId) // stop generating, not just talking
                         outcome.set(BargeOutcome(true, preroll, spoken))
                         latch.countDown()
+                    },
+                    // TEMP: surface the live mic level + best keyword score in the
+                    // notification so a device with no adb can still read them.
+                    // Say a phrase during a reply and watch these numbers.
+                    onDiag = { rms, maxScore ->
+                        notify("barge: mic=%.3f score=%.2f".format(rms, maxScore))
                     },
                 ).run { !alive || latch.count == 0L }
             }
