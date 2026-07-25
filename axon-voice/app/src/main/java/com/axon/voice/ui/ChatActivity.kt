@@ -1,12 +1,8 @@
 package com.axon.voice.ui
 
 import android.Manifest
-import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.media.AudioFormat
-import android.media.AudioRecord
-import android.media.MediaRecorder
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -14,7 +10,6 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
-import android.util.Log
 import android.view.View
 import android.widget.EditText
 import android.widget.ImageButton
@@ -29,9 +24,6 @@ import com.axon.voice.Prefs
 import com.axon.voice.R
 import com.axon.voice.api.AxonClient
 import com.axon.voice.api.ChatSocket
-import com.axon.voice.audio.BargeDetector
-import com.axon.voice.audio.BargeMonitor
-import com.axon.voice.audio.MicEffects
 import com.axon.voice.audio.SilenceWatcher
 import com.axon.voice.audio.StreamingTts
 import com.axon.voice.audio.TtsPlayer
@@ -131,19 +123,6 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
      *  appended below it mid-stream via [ChatFeed]. */
     private var streamIdx = -1
 
-    /** Barge-in for push-to-talk replies: mirrors the hands-free engine in
-     *  [WakeWordService], minus its rustpotter listener (this activity has no
-     *  wake word of its own to also feed — its own reply is the only thing
-     *  playing). One long-lived detector for the activity's lifetime so its
-     *  learned echo gain only gets more accurate over time. */
-    private val bargeDetector = BargeDetector()
-
-    /** Hardware echo canceller + noise suppressor bound to the barge mic's audio
-     *  session, so the phone speaker's own reply is cancelled out of the mic and
-     *  a talk-over interruption isn't buried under (or falsely triggered by) the
-     *  reply's echo. Created in [openBargeRecord], released with that mic. */
-    private var bargeEffects: MicEffects? = null
-
     /** Bumped every time a voice reply's "speaking" ends, whichever way —
      *  played out naturally, or cut off by [stopSpeaking]. The barge monitor
      *  watching a reply captures its own generation at start time and stops
@@ -152,22 +131,6 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
      *  background thread, hence [Volatile]. */
     @Volatile
     private var speakGen = 0
-
-    /** Current output attenuation applied to the reply for barge ducking (1.0
-     *  = full, [TtsPlayer.DUCK_VOLUME] while ducked). The playback level handed
-     *  to [bargeDetector] is scaled by this so its echo reference tracks what's
-     *  actually leaving the speaker — otherwise, once ducked, the threshold
-     *  stays pinned to the full-volume echo and real speech can't hold above
-     *  it. Touched from the barge monitor thread (duck/restore) and read on the
-     *  playback thread ([TtsPlayer.onLevel]), hence [Volatile]. */
-    @Volatile
-    private var bargeOutputGain = 1f
-
-    /** Interruption note for the very next voice send after a barge-in — set
-     *  by [onBargeConfirmed], consumed and cleared by [resetInputRow]/
-     *  [stopDictation]. Empty when nothing is pending (the common case): it
-     *  rides onto the agent task only, never the displayed/saved bubble. */
-    private var pendingBargeNote = ""
 
     /** Live inserts from the wake service — its exchange is already persisted
      *  by [ChatFeed.post]; this only mirrors it into the open list. */
@@ -203,17 +166,11 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
 
         prefs = Prefs(this)
         client = AxonClient(prefs)
-        // Feed the reply's live playback level into the barge-in detector as its
-        // echo reference — the ONE thing that lets it tell the user's voice from
-        // the reply bouncing back into the mic. Without this the detector runs
-        // on a flat floor threshold: it ducks on its own echo (audible volume
-        // pumping) and can't confirm a real barge-in. Mirrors WakeWordService's
-        // wiring; scaled by bargeOutputGain so the reference drops with the reply
-        // when ducked. (This activity doesn't drive the shared voice orb from
-        // here — that's WakeWordService's job — so onLevel feeds only the detector.)
-        player = TtsPlayer(this).apply {
-            onLevel = { rms -> bargeDetector.feedPlayback(rms * bargeOutputGain) }
-        }
+        // Push-to-talk replies play out to completion — no barge-in here; that
+        // belongs to the hands-free "Hey Axon" path only (WakeWordService). The
+        // user interrupts a push-to-talk reply with Stop, or by reaching for the
+        // mic (which stops playback first).
+        player = TtsPlayer(this)
 
         connLabel = findViewById(R.id.connLabel)
         wakeBtn = findViewById(R.id.wakeBtn)
@@ -461,25 +418,18 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
             main.post {
                 // Speak-and-go: the transcript sends as its own chat message,
                 // never through the composer — a typed draft stays untouched.
-                // Captured before resetInputRow (which clears it) so a
-                // barge-in's interruption note rides onto this send only.
-                val bargePrefix = pendingBargeNote
                 resetInputRow()
-                if (text.isNotBlank()) sendMessage(text, voice = true, taskPrefix = bargePrefix)
+                if (text.isNotBlank()) sendMessage(text, voice = true)
             }
         }
     }
 
-    /** Back to the composable state after dictation ends, however it ended.
-     *  Also drops any pending barge-in interruption note: whether this
-     *  capture succeeds or is abandoned (no speech, an error), the note must
-     *  not survive to ride along on some unrelated future send. */
+    /** Back to the composable state after dictation ends, however it ended. */
     private fun resetInputRow() {
         if (state == State.RECORDING || state == State.TRANSCRIBING) state = State.IDLE
         micBtn.clearColorFilter()
         micBtn.alpha = 1f
         input.hint = getString(R.string.chat_hint)
-        pendingBargeNote = ""
     }
 
     // ── Sending & streaming replies ─────────────────────────────────────────
@@ -503,10 +453,8 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
 
     /** The one path into a run for typed and push-to-talk messages alike: show
      *  the user bubble, open a streaming assistant bubble, ship the task.
-     *  [voice] marks a push-to-talk send, whose reply is also read aloud.
-     *  [taskPrefix] rides onto the task sent to the agent only — e.g. a
-     *  barge-in's interruption note — never into the displayed/saved bubble. */
-    private fun sendMessage(text: String, voice: Boolean = false, taskPrefix: String = "") {
+     *  [voice] marks a push-to-talk send, whose reply is also read aloud. */
+    private fun sendMessage(text: String, voice: Boolean = false) {
         if (state != State.IDLE) return
         adapter.add("user", text)
         adapter.add("assistant", "")
@@ -520,15 +468,12 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
         if (voice && p != null) {
             // Distinct file prefix: the wake service synthesizes into the same
             // cache dir and must not collide with this stream.
-            val gen = ++speakGen
+            ++speakGen
             replyTts = StreamingTts(p, client, cacheDir, "reply_chat") {
                 main.post { speakGen++ }
             }
-            // Watch for a talk-over interruption only if the user has barge-in
-            // on; off, the reply just plays out and they wait for it to finish.
-            if (prefs.bargeInEnabled) startBargeMonitor(gen)
         }
-        if (chat?.sendTask(taskPrefix + text, prefs.chatSessionId, voice) != true) {
+        if (chat?.sendTask(text, prefs.chatSessionId, voice) != true) {
             adapter.setAt(streamIdx, getString(R.string.status_offline))
             streamIdx = -1
             state = State.IDLE
@@ -575,187 +520,6 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
                     p.play(f) { main.post { speakGen++ } }
                 } else {
                     p.speakFallback(full) { main.post { speakGen++ } }
-                }
-            }
-        }
-    }
-
-    // ── Barge-in (interrupt a voice reply while it's speaking) ──────────────
-
-    /** Starts watching the mic for a barge-in while a voice reply plays.
-     *  Borrows the wake service's mic ([WakeWordService.micHold]) since only
-     *  one [AudioRecord] can capture reliably at a time — mirrors how
-     *  [startDictation] already does this for push-to-talk. [gen] is this
-     *  reply's [speakGen] snapshot: the monitor stops the instant it no
-     *  longer matches, whether that's a natural end or an abort. */
-    private fun startBargeMonitor(gen: Int) {
-        bargeDetector.tune(prefs.bargeMargin.toDouble(), prefs.bargeOnsetTicks)
-        bargeDetector.reset()
-        bargeOutputGain = 1f // reply starts at full volume
-        val serviceWasListening = WakeWordService.running
-        WakeWordService.micHold = true
-        thread(name = "axon-chat-barge") {
-            // Give the wake service a beat to release the shared microphone —
-            // the same race startDictation() guards against. Skipping this let
-            // openBargeRecord() race the service's still-open AudioRecord: it
-            // could fail to open at all (barge-in silently not engaging that
-            // reply) or throw out of startRecording().
-            if (serviceWasListening) Thread.sleep(300)
-            val rec = openBargeRecord()
-            if (rec == null) {
-                WakeWordService.micHold = false
-                return@thread
-            }
-            // Only released here on a natural end / plain stop. A confirmed
-            // barge-in hands straight off to dictation, which needs the mic
-            // held continuously — releasing it in the gap before
-            // onBargeConfirmed runs on the main thread would let the wake
-            // service race back in and reclaim it. stopDictation() (or its
-            // own error path) is what finally releases it in that case.
-            var confirmed = false
-            BargeMonitor(
-                detector = bargeDetector,
-                wakeDetector = null, // no wake-word listener shares this mic — our own reply is playing
-                readFrame = { f -> fillBargeFrame(rec, f, gen) },
-                onTentative = { bargeOutputGain = TtsPlayer.DUCK_VOLUME; player?.duck(); Log.d("BargeDetector", "barge tentative (ducked): ${bargeDetector.diagnostics()}") },
-                onFalseAlarm = { bargeOutputGain = 1f; player?.restoreVolume(); Log.d("BargeDetector", "barge false-alarm (restored): ${bargeDetector.diagnostics()}") },
-                onConfirmed = { preroll ->
-                    Log.d("BargeDetector", "barge CONFIRMED: ${bargeDetector.diagnostics()}")
-                    confirmed = true
-                    main.post { onBargeConfirmed(gen, preroll) }
-                },
-            ).run { gen != speakGen }
-            bargeEffects?.release()
-            bargeEffects = null
-            rec.release()
-            if (!confirmed) WakeWordService.micHold = false
-        }
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun openBargeRecord(): AudioRecord? {
-        val minBuf = AudioRecord.getMinBufferSize(
-            WavRecorder.SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
-        )
-        // VOICE_COMMUNICATION (not VOICE_RECOGNITION) is the source Android
-        // routes through the platform echo canceller — it's tuned for full-duplex
-        // (VoIP) capture where the far end is playing at the same time, which is
-        // exactly the barge-in case: our own reply is coming out of the speaker
-        // while we listen for the user talking over it. VOICE_RECOGNITION
-        // deliberately leaves the signal "clean" (no AEC), which is right for the
-        // always-on wake mic but wrong here — it's why the reply's own echo
-        // pumped the detector on-device.
-        val rec = try {
-            AudioRecord(
-                MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-                WavRecorder.SAMPLE_RATE,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-                maxOf(minBuf * 2, WavRecorder.SAMPLE_RATE * 2)
-            )
-        } catch (_: Exception) {
-            return null
-        }
-        if (rec.state != AudioRecord.STATE_INITIALIZED) {
-            rec.release()
-            return null
-        }
-        // A mic that's still busy (the wake service's own AudioRecord hasn't
-        // let go yet) can make startRecording() throw rather than just fail to
-        // initialize. Uncaught, that's an IllegalStateException on a
-        // background thread — which crashes the whole app, not just this
-        // reply's barge monitor.
-        try {
-            rec.startRecording()
-        } catch (_: Exception) {
-            rec.release()
-            return null
-        }
-        // Belt-and-suspenders on top of the VOICE_COMMUNICATION source: bind an
-        // explicit AcousticEchoCanceler + NoiseSuppressor to this session so the
-        // reply's echo is actively cancelled from the capture.
-        bargeEffects = MicEffects(rec.audioSessionId)
-        return rec
-    }
-
-    /** Blocking-fill one frame; false once [gen] is stale (this session ended,
-     *  one way or another) or the read dies. */
-    private fun fillBargeFrame(rec: AudioRecord, frame: ShortArray, gen: Int): Boolean {
-        var off = 0
-        while (off < frame.size && gen == speakGen) {
-            val n = rec.read(frame, off, frame.size - off)
-            if (n <= 0) return false
-            off += n
-        }
-        return off == frame.size
-    }
-
-    /** A confirmed barge-in: cut the reply off, cancel the run if it's still
-     *  generating, and roll straight into a capture seeded with [preroll] —
-     *  no ack, no settle, the user is already mid-sentence. Runs on the main
-     *  thread (posted by [startBargeMonitor]). */
-    private fun onBargeConfirmed(gen: Int, preroll: ByteArray) {
-        if (gen != speakGen) {
-            // Stale — something else (a new send, a manual stop) already ran
-            // on the main thread before this posted callback got its turn.
-            // The barge thread deliberately left the mic held for us to hand
-            // off to dictation; since we're not taking it, release it here
-            // instead of leaking it held forever.
-            WakeWordService.micHold = false
-            return
-        }
-        // Read before stopSpeaking() aborts the stream — abort doesn't erase
-        // what already finished playing, but grab it first for clarity.
-        val spoken = replyTts?.spokenSoFar().orEmpty()
-        stopSpeaking()
-        if (state == State.WAITING) {
-            // Mirrors onSendTap's manual stop: cancel now rather than wait for
-            // a server event, so the composer unblocks immediately.
-            chat?.cancel(prefs.chatSessionId)
-            state = State.IDLE
-            streamIdx = -1
-            ChatHistory.save(this, prefs.chatSessionId, adapter.snapshot())
-        }
-        pendingBargeNote = if (spoken.isNotBlank()) {
-            "(Note: I interrupted your previous reply mid-speech; I heard only up to: \"${clip(spoken)}\") "
-        } else {
-            "(Note: I interrupted your previous reply before you said anything.) "
-        }
-        startBargedDictation(preroll)
-    }
-
-    /** One-line, length-capped copy of the spoken-so-far text for the
-     *  interruption note. */
-    private fun clip(s: String, max: Int = 200): String {
-        val t = s.trim().replace(Regex("\\s+"), " ")
-        return if (t.length <= max) t else t.take(max).trimEnd() + "…"
-    }
-
-    /** Like [startDictation], but for a confirmed barge-in: the mic is
-     *  already held (this activity's own barge monitor had it, and
-     *  [WakeWordService.micHold] stays true through this handoff), so there's
-     *  no wake service to wait out and no permission/configuration checks to
-     *  repeat mid-conversation. Captures immediately, seeded with what the
-     *  user said in the time it took the barge-in to confirm. */
-    private fun startBargedDictation(preroll: ByteArray) {
-        state = State.RECORDING
-        micBtn.setColorFilter(ContextCompat.getColor(this, R.color.error))
-        input.hint = getString(R.string.chat_hint_listening)
-
-        val w = SilenceWatcher()
-        watcher = w
-        val r = WavRecorder()
-        recorder = r
-        thread(name = "axon-dictate-start") {
-            try {
-                r.start(preroll = preroll) { rms ->
-                    if (w.tick(rms)) main.post { stopDictation() }
-                }
-            } catch (e: Exception) {
-                WakeWordService.micHold = false
-                main.post {
-                    toastMsg(e.message ?: "microphone unavailable")
-                    resetInputRow()
                 }
             }
         }

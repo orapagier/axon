@@ -22,6 +22,7 @@ import com.axon.voice.api.AxonClient
 import com.axon.voice.api.ChatSocket
 import com.axon.voice.audio.BargeDetector
 import com.axon.voice.audio.BargeMonitor
+import com.axon.voice.audio.MicEffects
 import com.axon.voice.audio.Sound
 import com.axon.voice.audio.SilenceWatcher
 import com.axon.voice.audio.StreamingTts
@@ -272,6 +273,50 @@ class WakeWordService : Service(), ChatSocket.Listener {
             return null
         }
         return rec
+    }
+
+    /**
+     * A DIFFERENT mic than [openRecord]'s, opened only while a reply is being
+     * spoken so the user can be heard talking over it. Uses the
+     * VOICE_COMMUNICATION source — the one Android routes through the platform
+     * echo canceller, tuned for full-duplex (VoIP) where the far end plays at
+     * the same time — plus an explicit [AcousticEchoCanceler] + NoiseSuppressor
+     * ([MicEffects]). This is the real fix for talk-over barge-in: the phone
+     * speaker's own reply is cancelled out of the capture, so what's left is the
+     * user's voice, instead of the reply's echo swamping (and false-triggering)
+     * a bare loudness threshold. The always-on wake mic ([openRecord]) keeps its
+     * clean, AEC-free VOICE_RECOGNITION path — right for the quiet far-field
+     * "Hey Axon", wrong here — so the two never fight over one configuration.
+     * Returns the record paired with its effects (both released by the caller),
+     * or null if the mic couldn't be opened (caller falls back to the wake mic).
+     */
+    @SuppressLint("MissingPermission")
+    private fun openBargeMic(): Pair<AudioRecord, MicEffects>? {
+        val minBuf = AudioRecord.getMinBufferSize(
+            WavRecorder.SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
+        )
+        val rec = try {
+            AudioRecord(
+                MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+                WavRecorder.SAMPLE_RATE,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+                maxOf(minBuf * 2, WavRecorder.SAMPLE_RATE * 2)
+            )
+        } catch (_: Exception) {
+            return null
+        }
+        if (rec.state != AudioRecord.STATE_INITIALIZED) {
+            rec.release()
+            return null
+        }
+        try {
+            rec.startRecording()
+        } catch (_: Exception) {
+            rec.release()
+            return null
+        }
+        return rec to MicEffects(rec.audioSessionId)
     }
 
     /** Blocking-fill one exact detector frame; false on a dead read. */
@@ -614,12 +659,31 @@ class WakeWordService : Service(), ChatSocket.Listener {
         // mic-less), and the reply just plays out to completion: the user waits
         // for it to finish before speaking again, which is the whole point of
         // the toggle.
-        val monitor = if (rec != null && prefs.bargeInEnabled) {
+        //
+        // For the duration of the reply, swap the always-on VOICE_RECOGNITION
+        // wake mic for a dedicated echo-cancelled VOICE_COMMUNICATION mic
+        // ([openBargeMic]) so the phone speaker's own reply is cancelled out of
+        // the capture — the real fix for talk-over barge-in. Only one mic can
+        // capture at a time, so the wake mic is stopped first and restarted
+        // afterwards for the follow-up capture / idle listening. If the AEC mic
+        // can't be opened, fall back to the wake mic (no cancellation).
+        var bargeMic: Pair<AudioRecord, MicEffects>? = null
+        val monitorRec: AudioRecord? = if (rec != null && prefs.bargeInEnabled) {
+            runCatching { rec.stop() }
+            bargeMic = openBargeMic()
+            if (bargeMic != null) {
+                bargeMic!!.first
+            } else {
+                runCatching { rec.startRecording() } // AEC mic unavailable — reuse the wake mic
+                rec
+            }
+        } else null
+        val monitor = if (monitorRec != null && prefs.bargeInEnabled) {
             thread(name = "axon-barge") {
                 BargeMonitor(
                     detector = bargeDetector,
                     wakeDetector = wakeDetector,
-                    readFrame = { f -> fillFrame(rec, f) },
+                    readFrame = { f -> fillFrame(monitorRec, f) },
                     onTentative = { p.duck(); Log.d(LOG_TAG, "barge tentative (ducked): ${bargeDetector.diagnostics()}") },
                     onFalseAlarm = { p.restoreVolume(); Log.d(LOG_TAG, "barge false-alarm (restored): ${bargeDetector.diagnostics()}") },
                     onConfirmed = { preroll ->
@@ -635,6 +699,13 @@ class WakeWordService : Service(), ChatSocket.Listener {
         } else null
         latch.await(310, TimeUnit.SECONDS)
         monitor?.join(500)
+        // Release the dedicated AEC mic and hand the microphone back to the
+        // always-on wake mic for the follow-up capture / idle listening.
+        bargeMic?.let {
+            it.second.release()
+            it.first.release()
+            runCatching { rec?.startRecording() }
+        }
         val result = outcome.get()
         if (result.barged) drain(rec!!)
         return result
