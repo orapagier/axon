@@ -74,20 +74,21 @@ class WakeWordService : Service(), ChatSocket.Listener {
          *  word while dropping to zero false-fires on both the reply's own voice
          *  and ordinary non-keyword speech. On-device echo lowers real scores,
          *  so if genuine "okay"/"wait" misses, lower this (watch logcat tag
-         *  BargeKeyword for live scores). Lowered to 0.42 for recall: short
-         *  barge words score marginally on-device and dip under a higher bar the
-         *  moment any reply audio overlaps them, so the user had to wait for a
-         *  between-sentence pause. Now that the self-echo loop is fixed, a false
-         *  trigger just ends the turn cleanly (no loop), so erring sensitive is
-         *  safe. Raise back toward 0.5 if the reply starts interrupting itself. */
-        private const val BARGE_THRESHOLD = 0.42f
+         *  BargeKeyword for live scores). 0.50 is the swept sweet spot across the
+         *  seven distinct barge phrases ("okay wait", "excuse me", "hold on",
+         *  "teka lang", "sandali lang", "hang on", "teka muna"): ~53/54 recall on
+         *  clean takes while cutting spurious fires on ordinary non-phrase speech
+         *  ~85% vs 0.42. Below this it fires on general talking; at 0.55 recall
+         *  collapses. Lower if genuine phrases miss on-device, raise if replies
+         *  self-trigger. */
+        private const val BARGE_THRESHOLD = 0.5f
 
         /** Averaged-score gate for the barge keyword ([WakeDetector.avgThreshold]).
          *  A precision filter (the detection window's mean score must also clear
-         *  this) that suppresses transient partial matches. Lowered with the
-         *  threshold above to favour recall; raise toward 0.2–0.3 if the reply
-         *  self-triggers, lower toward 0.0 if real keywords still miss. */
-        private const val BARGE_AVG_THRESHOLD = 0.1f
+         *  this) that suppresses transient partial matches. Paired with the 0.50
+         *  threshold above from the same sweep. Raise toward 0.25 if replies
+         *  self-trigger, lower toward 0.1 if genuine phrases miss. */
+        private const val BARGE_AVG_THRESHOLD = 0.2f
 
         @Volatile
         var running = false
