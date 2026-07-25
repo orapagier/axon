@@ -74,17 +74,20 @@ class WakeWordService : Service(), ChatSocket.Listener {
          *  word while dropping to zero false-fires on both the reply's own voice
          *  and ordinary non-keyword speech. On-device echo lowers real scores,
          *  so if genuine "okay"/"wait" misses, lower this (watch logcat tag
-         *  BargeKeyword for live scores). */
-        private const val BARGE_THRESHOLD = 0.5f
+         *  BargeKeyword for live scores). Lowered to 0.42 for recall: short
+         *  barge words score marginally on-device and dip under a higher bar the
+         *  moment any reply audio overlaps them, so the user had to wait for a
+         *  between-sentence pause. Now that the self-echo loop is fixed, a false
+         *  trigger just ends the turn cleanly (no loop), so erring sensitive is
+         *  safe. Raise back toward 0.5 if the reply starts interrupting itself. */
+        private const val BARGE_THRESHOLD = 0.42f
 
         /** Averaged-score gate for the barge keyword ([WakeDetector.avgThreshold]).
          *  A precision filter (the detection window's mean score must also clear
-         *  this) that suppresses transient partial matches — including the reply's
-         *  own loud speech on the AEC-free mic tripping the detector and making it
-         *  interrupt itself. Offline sweeps gave 0 reply false-fires at 0.2 with
-         *  full keyword recall. Raise toward 0.3 if the reply still self-triggers;
-         *  lower toward 0.1 if real keywords miss too often. */
-        private const val BARGE_AVG_THRESHOLD = 0.2f
+         *  this) that suppresses transient partial matches. Lowered with the
+         *  threshold above to favour recall; raise toward 0.2–0.3 if the reply
+         *  self-triggers, lower toward 0.0 if real keywords still miss. */
+        private const val BARGE_AVG_THRESHOLD = 0.1f
 
         @Volatile
         var running = false
@@ -209,22 +212,14 @@ class WakeWordService : Service(), ChatSocket.Listener {
             fail(e.message ?: "Wake model rejected")
             return
         }
-        // The barge keyword model ("okay"/"wait", built from the user's own
-        // voice) — run alongside the wake word only while a reply is speaking so
-        // the user can interrupt by saying it. Optional: if the asset is missing
-        // or its frame size doesn't match the wake model's (it does when built
-        // with the same rustpotter config), barge-in just falls back to the wake
-        // word alone. Long-lived like the wake detector; closed in finally.
-        val bargeWake: WakeDetector? = runCatching {
-            WakeDetector(
-                assets.open("barge.rpw").readBytes(),
-                threshold = BARGE_THRESHOLD,
-                avgThreshold = BARGE_AVG_THRESHOLD,
-                name = "barge",
-            )
-        }.getOrNull()?.let { bw ->
-            if (bw.samplesPerFrame == detector.samplesPerFrame) bw else { bw.close(); null }
-        }
+        // Barge keyword models — every `barge*.rpw` asset, one detector each,
+        // each built from the user's own voice for a distinct interrupt phrase
+        // ("okay wait", "excuse me", "teka lang", …). Run alongside the wake word
+        // only while a reply is speaking; a hit on ANY confirms the barge-in.
+        // More distinct phrases = more chances to catch a real interrupt. The
+        // wake word ("hey axon") already doubles as an interrupt phrase for free.
+        // Long-lived like the wake detector; all closed in finally.
+        val bargeWakes: List<WakeDetector> = loadBargeModels(detector.samplesPerFrame)
         // Off the wake thread: each miss burns a network timeout, and "Hey
         // Axon" must be listening immediately, not after a run of slow fetches.
         thread(name = "axon-prompt-prefetch") { prefetchPrompts() }
@@ -251,15 +246,38 @@ class WakeWordService : Service(), ChatSocket.Listener {
                 if (!fillFrame(rec, frame)) continue
                 val score = detector.process(frame)
                 if (score >= 0f) {
-                    interact(rec, detector, bargeWake)
+                    interact(rec, detector, bargeWakes)
                     drain(rec)
                 }
             }
         } finally {
             record?.release()
             detector.close()
-            bargeWake?.close()
+            bargeWakes.forEach { it.close() }
         }
+    }
+
+    /** Load a [WakeDetector] for every `barge*.rpw` asset — one interrupt phrase
+     *  each. Skips (and closes) any whose frame size doesn't match the wake
+     *  model's; a missing/empty set just means barge-in falls back to the wake
+     *  word alone. */
+    private fun loadBargeModels(frameSamples: Int): List<WakeDetector> {
+        val files = runCatching {
+            assets.list("")?.filter { it.startsWith("barge") && it.endsWith(".rpw") }
+        }.getOrNull().orEmpty()
+        val out = ArrayList<WakeDetector>()
+        for (file in files) {
+            val det = runCatching {
+                WakeDetector(
+                    assets.open(file).readBytes(),
+                    threshold = BARGE_THRESHOLD,
+                    avgThreshold = BARGE_AVG_THRESHOLD,
+                    name = file.removeSuffix(".rpw"),
+                )
+            }.getOrNull() ?: continue
+            if (det.samplesPerFrame == frameSamples) out.add(det) else det.close()
+        }
+        return out
     }
 
     @SuppressLint("MissingPermission")
@@ -319,7 +337,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
 
     // ── One wake interaction (command + follow-ups) ─────────────────────────
 
-    private fun interact(rec: AudioRecord, detector: WakeDetector, bargeWake: WakeDetector?) {
+    private fun interact(rec: AudioRecord, detector: WakeDetector, bargeWakes: List<WakeDetector>) {
         // One "Hey Axon" starts one conversation. The id is minted here, once,
         // and reused for every turn — follow-ups AND a mid-reply barge-in — so
         // the whole interaction is saved as a single, separately reviewable
@@ -436,7 +454,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
             // so the first sentence plays ~1s after the agent starts replying
             // instead of after the whole reply is synthesized. Blocks until
             // playback finishes or a barge-in cuts it off.
-            val outcome = awaitStreamBlocking(taskForAgent, sessionId, rec, detector, bargeWake)
+            val outcome = awaitStreamBlocking(taskForAgent, sessionId, rec, detector, bargeWakes)
             val barged = outcome.barged
             val (reply, err) = synchronized(replyLock) { (replyText ?: "") to replyError }
             if (reply.isNotBlank()) {
@@ -620,7 +638,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
         sessionId: String,
         rec: AudioRecord?,
         wakeDetector: WakeDetector?,
-        bargeWake: WakeDetector?,
+        bargeWakes: List<WakeDetector>,
     ): BargeOutcome {
         val p = player ?: return BargeOutcome(false)
         val c = chat ?: return BargeOutcome(false)
@@ -669,7 +687,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
         // time, so the wake mic is stopped first and restarted afterwards for the
         // follow-up capture / idle listening. If the fresh mic won't open, fall
         // back to the wake mic.
-        val monitorDetectors = listOfNotNull(wakeDetector, bargeWake)
+        val monitorDetectors = listOfNotNull(wakeDetector) + bargeWakes
         var bargeMic: AudioRecord? = null
         val monitorRec: AudioRecord? =
             if (rec != null && prefs.bargeInEnabled && monitorDetectors.isNotEmpty()) {
