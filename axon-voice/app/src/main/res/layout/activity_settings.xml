@@ -83,6 +83,35 @@
             android:textColor="@color/text_dim"
             android:textSize="12sp" />
 
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginTop="10dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/barge_aec_label"
+                android:textColor="@color/text"
+                android:textSize="14sp" />
+
+            <Switch
+                android:id="@+id/bargeAecSwitch"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/barge_aec_description"
+            android:textColor="@color/text_dim"
+            android:textSize="12sp" />
+
         <!-- Optional barge-in tuning sliders, built programmatically in
              SettingsActivity.buildBargeTuners(). Each persists on change and
              takes effect on the next reply. -->

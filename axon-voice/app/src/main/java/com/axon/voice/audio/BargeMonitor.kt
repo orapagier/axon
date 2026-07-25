@@ -23,6 +23,13 @@ import kotlin.math.sqrt
  * model. The trade-off the user accepted: you interrupt by saying the word, not
  * by just talking over the reply.
  *
+ * Echo can't FALSE-trigger a keyword, but it can MASK one: with a clean
+ * (no-AEC) capture, the user's phrase reaches rustpotter mixed with the loud
+ * reply echo and the mixture misses the templates too — on-device, phrases only
+ * landed in the silence between sentences. Detection quality therefore depends
+ * on the mic this monitor is fed from being echo-cancelled while the reply
+ * plays (see WakeWordService.openBargeRecord); this class just consumes frames.
+ *
  * Keeps a rolling pre-roll of raw PCM so a confirmed barge-in doesn't lose
  * whatever the user was already saying before the keyword fired.
  *

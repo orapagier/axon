@@ -70,6 +70,9 @@ class SettingsActivity : AppCompatActivity() {
         val bargeSwitch = findViewById<Switch>(R.id.bargeEnabledSwitch)
         bargeSwitch.isChecked = prefs.bargeInEnabled
         bargeSwitch.setOnCheckedChangeListener { _, checked -> prefs.bargeInEnabled = checked }
+        val bargeAecSwitch = findViewById<Switch>(R.id.bargeAecSwitch)
+        bargeAecSwitch.isChecked = prefs.bargeAecEnabled
+        bargeAecSwitch.setOnCheckedChangeListener { _, checked -> prefs.bargeAecEnabled = checked }
         buildBargeTuners()
 
         serverUrl.setText(prefs.baseUrl)

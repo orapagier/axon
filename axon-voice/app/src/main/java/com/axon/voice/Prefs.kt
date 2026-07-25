@@ -31,15 +31,30 @@ class Prefs(ctx: Context) {
 
     /** Whether the user can interrupt a spoken reply (barge-in). On by default.
      *  Barge-in is keyword spotting — say the wake word or a short barge word
-     *  ("okay"/"wait") — so there's nothing to tune; this is the only barge-in
-     *  control. When false, the mic isn't watched during a reply at all:
-     *  playback runs to completion and the user waits for it to finish (or taps
-     *  Stop) before speaking again. Read fresh each reply, so a change takes
-     *  effect on the next reply with no restart. */
+     *  ("okay"/"wait"). When false, the mic isn't watched during a reply at
+     *  all: playback runs to completion and the user waits for it to finish (or
+     *  taps Stop) before speaking again. Read fresh each reply, so a change
+     *  takes effect on the next reply with no restart. */
     var bargeInEnabled: Boolean
         get() = sp.getBoolean("barge_in_enabled", true)
         set(v) {
             sp.edit().putBoolean("barge_in_enabled", v).apply()
+        }
+
+    /** Echo-cancel the barge mic (default on). While a reply plays at speaker
+     *  volume, the mic hears the user's phrase MIXED with the reply's own loud
+     *  echo, and the keyword match fails on the mixture — barge phrases only
+     *  landed in the silence between sentences. On: the barge mic opens as a
+     *  VOICE_COMMUNICATION capture with the platform echo canceler subtracting
+     *  the phone's own playback (AGC/NS explicitly disabled — AGC is what sank
+     *  the earlier VOICE_COMMUNICATION attempt). Off: the previous clean
+     *  VOICE_RECOGNITION capture, kept as the on-device fallback should a ROM's
+     *  AEC misbehave. Read fresh each reply; no restart needed. The idle wake
+     *  mic is unaffected either way. */
+    var bargeAecEnabled: Boolean
+        get() = sp.getBoolean("barge_aec_enabled", true)
+        set(v) {
+            sp.edit().putBoolean("barge_aec_enabled", v).apply()
         }
 
     // ── Barge-in / follow-up ─────────────────────────────────────────────────

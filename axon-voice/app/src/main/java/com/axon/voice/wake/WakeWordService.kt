@@ -315,13 +315,15 @@ class WakeWordService : Service(), ChatSocket.Listener {
     }
 
     @SuppressLint("MissingPermission")
-    private fun openRecord(): AudioRecord? {
+    private fun openRecord(
+        source: Int = MediaRecorder.AudioSource.VOICE_RECOGNITION,
+    ): AudioRecord? {
         val minBuf = AudioRecord.getMinBufferSize(
             WavRecorder.SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
         )
         val rec = try {
             AudioRecord(
-                MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                source,
                 WavRecorder.SAMPLE_RATE,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
@@ -334,12 +336,15 @@ class WakeWordService : Service(), ChatSocket.Listener {
             rec.release()
             return null
         }
-        // Intentionally NO AcousticEchoCanceler / NoiseSuppressor on this mic.
-        // This AudioRecord feeds the always-on rustpotter detector, and the
-        // VOICE_RECOGNITION source is already the clean signal the wake model
-        // was trained on — NS/AEC strip the quiet, far-field wake word right
-        // out (regression from fe4e1fe). Follow-up self-echo is handled by the
-        // settle + drain + 3-tick gate below, not by mangling the capture.
+        // Intentionally NO AcousticEchoCanceler / NoiseSuppressor on the default
+        // VOICE_RECOGNITION mic. That AudioRecord feeds the always-on rustpotter
+        // detector, and the VOICE_RECOGNITION source is already the clean signal
+        // the wake model was trained on — NS/AEC strip the quiet, far-field wake
+        // word right out (regression from fe4e1fe). Follow-up self-echo is
+        // handled by the settle + drain + 3-tick gate below, not by mangling the
+        // capture. The BARGE mic is the opposite case — loud self-playback the
+        // whole time it exists — and opens with VOICE_COMMUNICATION + AEC via
+        // [openBargeRecord] instead.
         try {
             rec.startRecording()
         } catch (_: Exception) {
@@ -347,6 +352,67 @@ class WakeWordService : Service(), ChatSocket.Listener {
             return null
         }
         return rec
+    }
+
+    /** The echo-cancelled capture for barge-in monitoring, plus the audio
+     *  effects that must be released with it. */
+    private class BargeRecord(
+        val rec: AudioRecord,
+        private val fx: List<android.media.audiofx.AudioEffect>,
+        /** Whether the AEC effect reports enabled — for the on-screen diag. */
+        val aecOn: Boolean,
+    ) {
+        fun release() {
+            rec.release()
+            fx.forEach { runCatching { it.release() } }
+        }
+    }
+
+    /** Open the mic that watches for barge phrases WHILE a reply is playing.
+     *
+     *  Unlike the idle wake mic, this capture's whole lifetime is spent next to
+     *  a speaker blasting the reply: the frames rustpotter sees are the user's
+     *  phrase MIXED with the reply's echo, and the mixture matches nobody's
+     *  templates — on-device, barge phrases only landed in the silence between
+     *  sentences. No threshold fixes a drowned signal; the echo must come OUT of
+     *  the capture. So: VOICE_COMMUNICATION source, whose HAL echo canceler
+     *  subtracts the phone's own playback (it has the reference signal — this is
+     *  exactly its job), leaving the user's voice for the keyword match.
+     *
+     *  The earlier VOICE_COMMUNICATION attempt was abandoned for its AGC, not
+     *  its AEC (clamped capture at full volume, boosted at moderate volume) —
+     *  so AGC and NS are explicitly disabled on the session, keeping only the
+     *  echo canceler. Where a ROM ignores the disable, the user can fall back
+     *  to the old clean VOICE_RECOGNITION capture via the settings toggle
+     *  ([Prefs.bargeAecEnabled] off) — no rebuild needed to A/B the two. */
+    @SuppressLint("MissingPermission")
+    private fun openBargeRecord(): BargeRecord? {
+        val rec = openRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION) ?: return null
+        val fx = ArrayList<android.media.audiofx.AudioEffect>()
+        var aecOn = false
+        runCatching {
+            android.media.audiofx.AcousticEchoCanceler.create(rec.audioSessionId)?.let {
+                it.enabled = true
+                aecOn = it.enabled
+                fx.add(it)
+            }
+        }
+        runCatching {
+            android.media.audiofx.AutomaticGainControl.create(rec.audioSessionId)?.let {
+                it.enabled = false
+                fx.add(it)
+            }
+        }
+        runCatching {
+            android.media.audiofx.NoiseSuppressor.create(rec.audioSessionId)?.let {
+                it.enabled = false
+                fx.add(it)
+            }
+        }
+        // WARN so it survives HiOS's Log.d suppression — whether the AEC effect
+        // actually attached is the first thing to check when barge still misses.
+        Log.w(LOG_TAG, "barge mic: VOICE_COMMUNICATION aec=$aecOn fx=${fx.size}")
+        return BargeRecord(rec, fx, aecOn)
     }
 
     /** Blocking-fill one exact detector frame; false on a dead read. */
@@ -695,40 +761,63 @@ class WakeWordService : Service(), ChatSocket.Listener {
             replyError = null
             replyStream = stream
         }
-        if (!c.sendTask(task, sessionId, voice = true)) {
-            stream.abort()
-            synchronized(replyLock) { replyStream = null }
-            return BargeOutcome(false)
-        }
         // Monitor for a barge-in while the reply streams — only if the user has
         // barge-in turned on AND there's a live mic AND at least one keyword
         // engine to listen with. Off (or mic-less), and the reply just plays out
         // to completion: the user waits for it to finish before speaking again,
         // which is the whole point of the toggle. Barge-in is keyword spotting
-        // (the wake word plus the "okay"/"wait" barge model), not an energy/echo
+        // (the wake word plus the barge-phrase model), not an energy/echo
         // threshold — so it can't be fooled by the reply's own voice at full
         // volume, and nothing ducks or pumps.
         //
-        // Open a FRESH VOICE_RECOGNITION capture for the reply's duration rather
-        // than reusing the pre-existing wake mic. A fresh AudioRecord binds to
-        // the audio route as it is once assistant playback has started; the
-        // pre-existing wake mic (opened before playback) goes silent on some ROMs
-        // when the output route takes over — which made barge-in detect nothing
-        // at all during a reply. Same clean, AGC-free source as the wake mic (via
-        // [openRecord]); NOT VOICE_COMMUNICATION, whose platform AGC clamped the
-        // capture at full volume (missed keywords) and boosted it at moderate
-        // volume (false-triggered on any speech). Only one mic captures at a
-        // time, so the wake mic is stopped first and restarted afterwards for the
-        // follow-up capture / idle listening. If the fresh mic won't open, fall
-        // back to the wake mic.
+        // Decided BEFORE the task is sent because the echo-cancel path must set
+        // up the voice-communication ROUTE before the first sentence starts
+        // playing: the HAL echo canceler only references the voice-comm
+        // downlink as its far-end signal, so a reply left on USAGE_ASSISTANT
+        // plays outside the AEC's world and the barge mic hears its echo
+        // UNCANCELLED — the user's phrase then only matched in the silence
+        // between sentences (the on-device failure). [enterCommRoute] moves
+        // playback onto USAGE_VOICE_COMMUNICATION + MODE_IN_COMMUNICATION +
+        // speakerphone for this reply so the AEC has the reference to subtract.
         val monitorDetectors = listOfNotNull(wakeDetector) + bargeWakes
+        val wantMonitor = rec != null && prefs.bargeInEnabled && monitorDetectors.isNotEmpty()
+        val wantAec = wantMonitor && prefs.bargeAecEnabled
+        var prevAudioMode: Int? = null
+        if (wantAec) prevAudioMode = enterCommRoute(p)
+        if (!c.sendTask(task, sessionId, voice = true)) {
+            stream.abort()
+            synchronized(replyLock) { replyStream = null }
+            prevAudioMode?.let { exitCommRoute(p, it) }
+            return BargeOutcome(false)
+        }
+        // Open a FRESH capture for the reply's duration rather than reusing the
+        // pre-existing wake mic. A fresh AudioRecord binds to the audio route as
+        // it is once assistant playback has started; the pre-existing wake mic
+        // (opened before playback) goes silent on some ROMs when the output
+        // route takes over — which made barge-in detect nothing at all during a
+        // reply. The fresh mic is ECHO-CANCELLED by default (VOICE_COMMUNICATION
+        // + AEC, see [openBargeRecord]) to pair with the comm-routed playback
+        // above. [Prefs.bargeAecEnabled] off falls back to the old clean
+        // VOICE_RECOGNITION capture on the normal playback route. Only one mic
+        // captures at a time, so the wake mic is stopped first and restarted
+        // afterwards for the follow-up capture / idle listening. If the fresh
+        // mic won't open, fall back to the wake mic.
         var bargeMic: AudioRecord? = null
+        var bargeRec: BargeRecord? = null
+        var micTag = "wake" // which capture the monitor ended up on — for diag
         val monitorRec: AudioRecord? =
-            if (rec != null && prefs.bargeInEnabled && monitorDetectors.isNotEmpty()) {
-                runCatching { rec.stop() }
-                bargeMic = openRecord()
-                bargeMic ?: run {
-                    runCatching { rec.startRecording() } // fresh mic unavailable — reuse the wake mic
+            if (wantMonitor) {
+                runCatching { rec!!.stop() }
+                if (wantAec) {
+                    bargeRec = openBargeRecord()
+                    micTag = if (bargeRec?.aecOn == true) "ec" else "vc"
+                } else {
+                    bargeMic = openRecord()
+                    micTag = "vr"
+                }
+                bargeRec?.rec ?: bargeMic ?: run {
+                    runCatching { rec!!.startRecording() } // fresh mic unavailable — reuse the wake mic
+                    micTag = "wake"
                     rec
                 }
             } else null
@@ -747,24 +836,75 @@ class WakeWordService : Service(), ChatSocket.Listener {
                     },
                     // TEMP: surface the live mic level + best keyword score in the
                     // notification so a device with no adb can still read them.
-                    // Say a phrase during a reply and watch these numbers.
+                    // Say a phrase during a reply and watch these numbers. The tag
+                    // names the capture in use: ec = echo-cancelled (AEC active),
+                    // vc = VOICE_COMMUNICATION but AEC effect didn't attach,
+                    // vr = clean VOICE_RECOGNITION (toggle off), wake = fallback.
                     onDiag = { rms, maxScore ->
-                        notify("barge: mic=%.3f score=%.2f".format(rms, maxScore))
+                        notify("barge[%s]: mic=%.3f score=%.2f".format(micTag, rms, maxScore))
                     },
                 ).run { !alive || latch.count == 0L }
             }
         } else null
         latch.await(310, TimeUnit.SECONDS)
         monitor?.join(500)
-        // Release the fresh barge mic and hand the microphone back to the
-        // always-on wake mic for the follow-up capture / idle listening.
-        bargeMic?.let {
-            it.release()
+        // Undo the voice-comm routing FIRST so the follow-up capture and idle
+        // wake listening rebind on the normal route, then release the fresh
+        // barge mic (and its AEC session effects) and hand the microphone back
+        // to the always-on wake mic.
+        prevAudioMode?.let { exitCommRoute(p, it) }
+        if (bargeRec != null || bargeMic != null) {
+            bargeRec?.release()
+            bargeMic?.release()
             runCatching { rec?.startRecording() }
         }
         val result = outcome.get()
         if (result.barged) drain(rec!!)
         return result
+    }
+
+    /** Move this reply's playback onto the voice-communication path —
+     *  MODE_IN_COMMUNICATION, speakerphone, and [TtsPlayer.commAudio] — so the
+     *  platform echo canceler on the barge mic actually references the reply
+     *  as its far-end signal and cancels it out of the capture. Returns the
+     *  previous audio mode for [exitCommRoute], or null if routing failed
+     *  (playback then stays on the normal path; barge-in degrades to the old
+     *  pause-only behavior rather than breaking playback).
+     *
+     *  Trade-off: while routed, playback level follows the CALL volume, not
+     *  media volume. */
+    private fun enterCommRoute(p: TtsPlayer): Int? = runCatching {
+        val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+        val prev = am.mode
+        am.mode = android.media.AudioManager.MODE_IN_COMMUNICATION
+        if (Build.VERSION.SDK_INT >= 31) {
+            am.availableCommunicationDevices
+                .firstOrNull { it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+                ?.let { am.setCommunicationDevice(it) }
+        } else {
+            @Suppress("DEPRECATION")
+            am.isSpeakerphoneOn = true
+        }
+        p.commAudio = true
+        Log.w(LOG_TAG, "barge comm route ON (prev mode=$prev)")
+        prev
+    }.getOrNull()
+
+    /** Undo [enterCommRoute]: normal playback attrs, communication device
+     *  cleared, audio mode restored. */
+    private fun exitCommRoute(p: TtsPlayer, prevMode: Int) {
+        p.commAudio = false
+        runCatching {
+            val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+            if (Build.VERSION.SDK_INT >= 31) {
+                am.clearCommunicationDevice()
+            } else {
+                @Suppress("DEPRECATION")
+                am.isSpeakerphoneOn = false
+            }
+            am.mode = prevMode
+        }
+        Log.w(LOG_TAG, "barge comm route OFF")
     }
 
     private fun prefetchPrompts() {

@@ -63,6 +63,23 @@ class TtsPlayer(ctx: Context) {
         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
         .build()
 
+    /** Voice-call flavored attributes for [commAudio] replies. */
+    private val commAttrs = AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+        .build()
+
+    /** When true, reply playback rides USAGE_VOICE_COMMUNICATION instead of
+     *  USAGE_ASSISTANT. Set (with MODE_IN_COMMUNICATION + speakerphone, see
+     *  WakeWordService's comm routing) for barge-monitored replies so the
+     *  platform echo canceler actually REFERENCES the reply as its far-end
+     *  signal — OEM AECs cancel the voice-comm downlink, not the assistant/
+     *  media stream, which is why a plain AEC-effect barge mic heard the echo
+     *  uncancelled. Applies per [PcmPlayback] file as it opens; playback level
+     *  then follows the CALL volume, not media volume. */
+    @Volatile
+    var commAudio = false
+
     init {
         fallback = TextToSpeech(ctx.applicationContext) { status ->
             fallbackReady = status == TextToSpeech.SUCCESS
@@ -93,7 +110,8 @@ class TtsPlayer(ctx: Context) {
      *  too, so a bad file advances the queue just like a finished one. */
     private fun newPlayback(file: File, after: () -> Unit): PcmPlayback {
         var pb: PcmPlayback? = null
-        val p = PcmPlayback(file, speechAttrs, { l -> if (l >= 0f) lastLevel = l; onLevel?.invoke(l) }) {
+        val attrs = if (commAudio) commAttrs else speechAttrs
+        val p = PcmPlayback(file, attrs, { l -> if (l >= 0f) lastLevel = l; onLevel?.invoke(l) }) {
             pb?.let { cleanup(it) }
             after()
         }
