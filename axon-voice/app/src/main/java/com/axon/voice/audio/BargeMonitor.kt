@@ -4,6 +4,7 @@ import com.axon.voice.wake.WakeDetector
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import kotlin.math.sqrt
 
 /**
  * The mic-side half of barge-in: reads live mic audio while a reply is being
@@ -65,20 +66,40 @@ class BargeMonitor(
      *  monitoring the instant the reply finishes naturally, racing against the
      *  stream's own completion. */
     fun run(isDone: () -> Boolean) {
+        // TEMP diagnostics at WARN level (HiOS suppresses Log.d globally). Once
+        // per ~1s log the mic RMS the barge thread is actually reading — a near
+        // -zero RMS means the mic is delivering silence (routing/mic problem, not
+        // a threshold problem); a healthy RMS means audio is flowing and the
+        // issue is detection/threshold. maxScore shows the best keyword score
+        // that fired in the window (−1 if none reached its threshold).
+        var logSumSq = 0.0
+        var logCount = 0
+        var logMaxScore = -1f
         while (!isDone()) {
             if (!readFrame(frame)) return
             appendTick(frame)
+            for (s in frame) {
+                val f = s / 32768.0
+                logSumSq += f * f
+            }
+            logCount += frame.size
             for (d in wakeDetectors) {
                 val score = d.process(frame)
+                if (score > logMaxScore) logMaxScore = score
                 if (score >= 0f) {
-                    // TEMP diagnostic at WARN level — HiOS suppresses Log.d
-                    // globally (log.tag=I). Shows which keyword fired at what
-                    // score, so the barge threshold can be dialed from real
-                    // on-device numbers.
-                    android.util.Log.w("BargeKeyword", "fired name=${d.name} score=$score")
+                    android.util.Log.w("BargeKeyword", "FIRED name=${d.name} score=$score")
                     onConfirmed(prerollBytes())
                     return
                 }
+            }
+            if (logCount >= WavRecorder.SAMPLE_RATE) {
+                android.util.Log.w(
+                    "BargeKeyword",
+                    "listening rms=%.4f maxScore=%.3f".format(sqrt(logSumSq / logCount), logMaxScore),
+                )
+                logSumSq = 0.0
+                logCount = 0
+                logMaxScore = -1f
             }
             if (tickSamples >= TICK_SAMPLES) flushTick()
         }

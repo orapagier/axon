@@ -74,15 +74,17 @@ class WakeWordService : Service(), ChatSocket.Listener {
          *  word while dropping to zero false-fires on both the reply's own voice
          *  and ordinary non-keyword speech. On-device echo lowers real scores,
          *  so if genuine "okay"/"wait" misses, lower this (watch logcat tag
-         *  BargeKeyword for live scores). */
-        private const val BARGE_THRESHOLD = 0.5f
+         *  BargeKeyword for live scores). Set a touch below the wake word's 0.47
+         *  while we confirm detection works on-device at all. */
+        private const val BARGE_THRESHOLD = 0.45f
 
         /** Averaged-score gate for the barge keyword ([WakeDetector.avgThreshold]).
-         *  On (unlike the wake word's 0.0) as a precision filter: the detection
-         *  window's mean score must also clear this, so a transient partial match
-         *  on ordinary speech doesn't fire. This is the fix for the on-device
-         *  false-triggering on non-keyword words at moderate volume. */
-        private const val BARGE_AVG_THRESHOLD = 0.2f
+         *  A precision filter (the window's mean score must also clear this) that
+         *  suppresses transient false matches on non-keyword speech. Held at 0.0
+         *  (off) for now: the immediate problem is detection firing AT ALL, so
+         *  this must not be a variable — raise it to ~0.2 to tighten precision
+         *  once the BargeKeyword log confirms real keywords fire. */
+        private const val BARGE_AVG_THRESHOLD = 0.0f
 
         @Volatile
         var running = false
@@ -635,20 +637,34 @@ class WakeWordService : Service(), ChatSocket.Listener {
         // threshold — so it can't be fooled by the reply's own voice at full
         // volume, and nothing ducks or pumps.
         //
-        // Runs on the SAME clean VOICE_RECOGNITION wake mic ([rec]) that already
-        // detects "Hey Axon" reliably — NOT a VOICE_COMMUNICATION/AEC mic. That
-        // mic's platform AGC was the on-device failure: it clamped the input at
-        // full volume (so real "okay"/"wait" was attenuated below threshold and
-        // missed) and boosted quiet input at moderate volume (so any speech, not
-        // just the keyword, false-triggered). Keyword models are also built from
-        // clean recordings, so they match this mic's signal far better. No mic
-        // swap now — the barge monitor just reads [rec] directly.
+        // Open a FRESH VOICE_RECOGNITION capture for the reply's duration rather
+        // than reusing the pre-existing wake mic. A fresh AudioRecord binds to
+        // the audio route as it is once assistant playback has started; the
+        // pre-existing wake mic (opened before playback) goes silent on some ROMs
+        // when the output route takes over — which made barge-in detect nothing
+        // at all during a reply. Same clean, AGC-free source as the wake mic (via
+        // [openRecord]); NOT VOICE_COMMUNICATION, whose platform AGC clamped the
+        // capture at full volume (missed keywords) and boosted it at moderate
+        // volume (false-triggered on any speech). Only one mic captures at a
+        // time, so the wake mic is stopped first and restarted afterwards for the
+        // follow-up capture / idle listening. If the fresh mic won't open, fall
+        // back to the wake mic.
         val monitorDetectors = listOfNotNull(wakeDetector, bargeWake)
-        val monitor = if (rec != null && prefs.bargeInEnabled && monitorDetectors.isNotEmpty()) {
+        var bargeMic: AudioRecord? = null
+        val monitorRec: AudioRecord? =
+            if (rec != null && prefs.bargeInEnabled && monitorDetectors.isNotEmpty()) {
+                runCatching { rec.stop() }
+                bargeMic = openRecord()
+                bargeMic ?: run {
+                    runCatching { rec.startRecording() } // fresh mic unavailable — reuse the wake mic
+                    rec
+                }
+            } else null
+        val monitor = if (monitorRec != null) {
             thread(name = "axon-barge") {
                 BargeMonitor(
                     wakeDetectors = monitorDetectors,
-                    readFrame = { f -> fillFrame(rec, f) },
+                    readFrame = { f -> fillFrame(monitorRec, f) },
                     onConfirmed = { preroll ->
                         Log.d(LOG_TAG, "barge CONFIRMED (keyword)")
                         val spoken = stream.spokenSoFar()
@@ -662,6 +678,12 @@ class WakeWordService : Service(), ChatSocket.Listener {
         } else null
         latch.await(310, TimeUnit.SECONDS)
         monitor?.join(500)
+        // Release the fresh barge mic and hand the microphone back to the
+        // always-on wake mic for the follow-up capture / idle listening.
+        bargeMic?.let {
+            it.release()
+            runCatching { rec?.startRecording() }
+        }
         val result = outcome.get()
         if (result.barged) drain(rec!!)
         return result
