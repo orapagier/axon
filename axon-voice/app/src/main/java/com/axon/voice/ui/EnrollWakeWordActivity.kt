@@ -12,7 +12,6 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.axon.voice.Prefs
 import com.axon.voice.R
-import com.axon.voice.audio.SilenceWatcher
 import com.axon.voice.audio.WavRecorder
 import com.axon.voice.wake.WakeDetector
 import com.axon.voice.wake.WakeModelBuilder
@@ -47,7 +46,6 @@ class EnrollWakeWordActivity : AppCompatActivity() {
 
     private val takes = mutableListOf<ByteArray>()
     private var recorder: WavRecorder? = null
-    private var watcher: SilenceWatcher? = null
     private var recording = false
     private var built = false
 
@@ -78,7 +76,9 @@ class EnrollWakeWordActivity : AppCompatActivity() {
         }
 
         recordBtn.setOnClickListener {
-            if (!hasMicPermission()) {
+            if (recording) {
+                stopTake()
+            } else if (!hasMicPermission()) {
                 permLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO))
             } else {
                 startTake()
@@ -99,14 +99,18 @@ class EnrollWakeWordActivity : AppCompatActivity() {
     private fun startTake() {
         if (recording || built || takes.size >= TAKE_COUNT) return
         recording = true
+        // Manual start/stop, like the dashboard's enrollment: the take runs
+        // until the user taps Stop, so the clip stays tight instead of picking
+        // up the trailing quiet an auto-stop would leave. The Stop tap is only
+        // armed once capture has actually begun (below), so it can't race the
+        // recorder's mic-handover delay.
+        recordBtn.text = getString(R.string.enroll_stop)
         recordBtn.isEnabled = false
         rerecordBtn.isEnabled = false
         buildBtn.isEnabled = false
         statusText.text =
             getString(R.string.enroll_recording_status, takes.size + 1, TAKE_COUNT, phrase())
 
-        val w = SilenceWatcher()
-        watcher = w
         val r = WavRecorder(cleanSignal = true)
         recorder = r
         val serviceWasListening = WakeWordService.running
@@ -117,8 +121,8 @@ class EnrollWakeWordActivity : AppCompatActivity() {
             try {
                 r.start { rms ->
                     runOnUiThread { levelBar.progress = (rms * 400).toInt().coerceIn(0, 100) }
-                    if (w.tick(rms)) runOnUiThread { stopTake() }
                 }
+                runOnUiThread { if (recording) recordBtn.isEnabled = true }
             } catch (e: Exception) {
                 WakeWordService.micHold = false
                 runOnUiThread {
@@ -134,20 +138,20 @@ class EnrollWakeWordActivity : AppCompatActivity() {
         if (!recording) return
         recording = false
         val r = recorder
-        val w = watcher
         recorder = null
-        watcher = null
         levelBar.progress = 0
+        recordBtn.isEnabled = false
         thread(name = "axon-enroll-stop") {
             val wav = r?.stop()
             WakeWordService.micHold = false
+            // Trim to just the spoken phrase before keeping the take — a padded,
+            // silence-heavy clip degrades rustpotter's few-shot template, and a
+            // clip with no speech at all comes back null and is rejected.
+            val trimmed = wav?.let { WavRecorder.trimToSpeech(it) }
             runOnUiThread {
-                if (wav != null && w?.hadSpeech == true) {
-                    takes.add(wav)
-                } else {
-                    statusText.text = getString(R.string.enroll_no_speech)
-                }
+                if (trimmed != null) takes.add(trimmed)
                 renderTakes()
+                if (trimmed == null) statusText.text = getString(R.string.enroll_no_speech)
             }
         }
     }
@@ -161,9 +165,12 @@ class EnrollWakeWordActivity : AppCompatActivity() {
         if (!recording) {
             statusText.text = getString(R.string.enroll_takes_status, takes.size, TAKE_COUNT)
         }
-        recordBtn.isEnabled = !recording && !built && takes.size < TAKE_COUNT
-        recordBtn.text =
-            getString(if (takes.isEmpty()) R.string.enroll_record else R.string.enroll_record_next)
+        recordBtn.isEnabled = !built && (recording || takes.size < TAKE_COUNT)
+        recordBtn.text = when {
+            recording -> getString(R.string.enroll_stop)
+            takes.isEmpty() -> getString(R.string.enroll_record)
+            else -> getString(R.string.enroll_record_next)
+        }
         rerecordBtn.isEnabled = !recording && !built && takes.isNotEmpty()
         buildBtn.isEnabled = !recording && !built && takes.size >= MIN_TAKES
     }

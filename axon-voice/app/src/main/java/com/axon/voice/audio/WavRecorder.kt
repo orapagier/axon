@@ -138,6 +138,51 @@ class WavRecorder(private val cleanSignal: Boolean = false) {
                 .asShortBuffer().get(samples)
             return samples
         }
+
+        /**
+         * Trim a WAV this class produced down to just its spoken region — from
+         * the first ~10ms window whose RMS clears [speechRms] to the last, padded
+         * by [padMs] either side. An enrollment take otherwise carries the
+         * recorder's reaction-time lead-in and a stretch of trailing quiet;
+         * rustpotter's few-shot "reference" builder bakes whatever silence is in
+         * a clip straight into the MFCC template and never trims it, so those
+         * padded, variable-offset clips make the on-device model far pickier to
+         * trigger than the dashboard's tight manual-stop takes. Returns null when
+         * nothing clears the bar (a clip of pure silence) so the caller can
+         * reject the take.
+         */
+        fun trimToSpeech(
+            wav: ByteArray,
+            speechRms: Double = SilenceWatcher.RMS_SPEECH,
+            padMs: Int = 150,
+        ): ByteArray? {
+            val pcm = pcmFromWav(wav)
+            if (pcm.isEmpty()) return null
+            val win = SAMPLE_RATE / 100 // ~10ms windows
+            var firstLoud = -1
+            var lastLoud = -1
+            var i = 0
+            while (i < pcm.size) {
+                val end = minOf(i + win, pcm.size)
+                var acc = 0.0
+                for (j in i until end) {
+                    val s = pcm[j] / 32768.0
+                    acc += s * s
+                }
+                if (sqrt(acc / (end - i)) > speechRms) {
+                    if (firstLoud < 0) firstLoud = i
+                    lastLoud = end
+                }
+                i += win
+            }
+            if (firstLoud < 0) return null
+            val pad = SAMPLE_RATE * padMs / 1000
+            val start = maxOf(0, firstLoud - pad)
+            val stop = minOf(pcm.size, lastLoud + pad)
+            val out = ByteBuffer.allocate((stop - start) * 2).order(ByteOrder.LITTLE_ENDIAN)
+            for (k in start until stop) out.putShort(pcm[k])
+            return wavBytes(out.array())
+        }
     }
 
     private var record: AudioRecord? = null

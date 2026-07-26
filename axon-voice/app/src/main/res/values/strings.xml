@@ -44,6 +44,7 @@
     <string name="enroll_phrase_hint">Wake phrase</string>
     <string name="enroll_record">Record</string>
     <string name="enroll_record_next">Record next take</string>
+    <string name="enroll_stop">Stop</string>
     <string name="enroll_rerecord_btn">Re-record last take</string>
     <string name="enroll_build_btn">Build wake word</string>
     <string name="enroll_build_failed">Couldn\'t build a model from those takes — try re-recording a bit louder and clearer.</string>
@@ -52,7 +53,7 @@
     <string name="enroll_done">Done</string>
     <string name="enroll_engine_missing">Wake engine missing from this build</string>
     <string name="enroll_no_speech">Didn\'t catch that — try again</string>
-    <string name="enroll_recording_status">Recording take %1$d of %2$d — say “%3$s”</string>
+    <string name="enroll_recording_status">Recording take %1$d of %2$d — say “%3$s”, then tap Stop</string>
     <string name="enroll_takes_status">%1$d of %2$d takes recorded</string>
     <string name="settings_wake_title">Wake word</string>
     <string name="settings_wake_retrain">Re-train wake word</string>
