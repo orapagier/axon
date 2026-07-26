@@ -119,6 +119,12 @@ const isAuthenticated = ref(!!localStorage.getItem('AXON_MASTER_KEY'))
 
 const activeNav = computed(() => NAV.find((item) => item.id === activePage.value) || NAV[0])
 
+// Settings lives pinned at the bottom of the sidebar (its own footer slot),
+// not in the scrollable nav list — same pattern as VS Code / Slack / Notion.
+// It's still a normal NAV entry so #page-settings and the mobile drawer work.
+const primaryNav = computed(() => NAV.filter((item) => item.id !== 'settings'))
+const settingsNav = computed(() => NAV.find((item) => item.id === 'settings'))
+
 // Mobile bottom tab bar (style.css shows it under 768px): the four primary
 // destinations get a thumb-reach tab; every other page lives behind More,
 // which opens the nav drawer. Change this list to re-pick the tabs.
@@ -331,7 +337,7 @@ async function logout() {
 
         <nav class="sidebar-nav">
           <button
-            v-for="item in NAV"
+            v-for="item in primaryNav"
             :key="item.id"
             class="nav-item"
             :class="{ active: activePage === item.id }"
@@ -352,24 +358,23 @@ async function logout() {
         </nav>
 
         <div class="sidebar-footer">
-          <div
-            class="sidebar-status"
-            :title="isSidebarCollapsed ? wsLabel : ''"
+          <button
+            class="nav-item"
+            :class="{ active: activePage === 'settings' }"
+            :style="{ '--nav-tint': settingsNav.tint }"
+            :title="isSidebarCollapsed ? settingsNav.label : ''"
+            type="button"
+            @click="navigate('settings')"
           >
-            <div class="sidebar-status-heading">
-              <span
-                class="ws-dot"
-                :class="wsDotClass"
-              />
-              <span v-if="!isSidebarCollapsed">{{ wsLabel }}</span>
-            </div>
-            <p
+            <span
+              class="nav-icon"
+              v-html="settingsNav.icon"
+            />
+            <span
               v-if="!isSidebarCollapsed"
-              class="sidebar-status-copy"
-            >
-              Realtime link to the agent runtime
-            </p>
-          </div>
+              class="nav-label"
+            >{{ settingsNav.label }}</span>
+          </button>
         </div>
       </div>
     </aside>

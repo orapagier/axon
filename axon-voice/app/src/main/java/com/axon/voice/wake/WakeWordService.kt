@@ -685,18 +685,25 @@ class WakeWordService : Service(), ChatSocket.Listener {
             if (loud < BARGE_ONSET_FRAMES) continue
             loud = 0
 
-            // Probable barge — pause the reply and capture the utterance.
+            // Probable barge — pause the reply and capture the utterance. Flip
+            // the orb to LISTENING so it reflects "listening to you now", not a
+            // frozen SPEAKING, for the duration of the capture.
             stream.pause()
             notify(getString(R.string.status_recording))
+            setPhase(VoiceOverlay.Phase.LISTENING)
             val wav = captureBarge(rec, preRoll)
             // No sustained near speech (a clap/knock/blip) — captureBarge returns
             // null; don't transcribe it. A cough reaches STT but comes back empty.
             val text = if (wav != null) runCatching { client.transcribe(wav) }.getOrNull() else null
             if (text.isNullOrBlank()) {
+                // Not a real interruption — resume the reply. Back to SPEAKING
+                // explicitly: onReplyLevel only flips THINKING->SPEAKING, so the
+                // resumed audio wouldn't move the orb off LISTENING on its own.
                 preRoll.clear()
                 drain(rec)
                 stream.resume()
                 notify(getString(R.string.status_speaking))
+                setPhase(VoiceOverlay.Phase.SPEAKING)
                 continue
             }
             // Genuine interruption. Abandon the interrupted run by id so its
@@ -750,7 +757,9 @@ class WakeWordService : Service(), ChatSocket.Listener {
                 acc += s * s
             }
             out.write(bytes.array(), 0, n * 2)
-            if (watcher.tick(sqrt(acc / n))) break
+            val rms = sqrt(acc / n)
+            VoiceOverlay.level(rms.toFloat()) // drive the LISTENING orb while capturing
+            if (watcher.tick(rms)) break
         }
         if (!watcher.hadSpeech) return null
         return WavRecorder.wavBytes(out.toByteArray())

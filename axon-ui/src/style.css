@@ -108,10 +108,10 @@
     --font-body: 'Instrument Sans', -apple-system, 'Segoe UI', sans-serif;
     --font-mono: 'IBM Plex Mono', Consolas, 'SFMono-Regular', monospace;
 
-    /* Radius scale — softly rounded, never pill */
-    --r-sm: 8px;
-    --r-md: 12px;
-    --r-lg: 16px;
+    /* Radius scale — crisp, barely-rounded corners; never pill */
+    --r-sm: 6px;
+    --r-md: 8px;
+    --r-lg: 10px;
 
     /* Button sizing — single source of truth. Every button derives from these.
        HEIGHT IS UNIFORM across base / -sm / -xs by design. */
@@ -424,8 +424,9 @@ textarea {
     overflow-y: auto;
 }
 
-/* ── Nav items: bold tinted glyphs, ink labels, inset rule when active ────── */
+/* ── Nav items: bold tinted glyphs, ink labels, dot when active ───────────── */
 .nav-item {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 12px;
@@ -450,7 +451,18 @@ textarea {
 .nav-item.active {
     background: color-mix(in srgb, var(--nav-tint) 9%, transparent);
     color: var(--text);
-    box-shadow: inset 3px 0 0 var(--nav-tint);
+}
+
+.nav-item.active::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    right: 10px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--nav-tint);
+    transform: translateY(-50%);
 }
 
 .nav-icon {
@@ -478,47 +490,7 @@ textarea {
 .sidebar-footer {
     margin-top: auto;
     padding-top: 10px;
-}
-
-.sidebar-status,
-.sidebar-status-card {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    padding: 13px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    background: color-mix(in srgb, var(--text) 4%, transparent);
-}
-
-.sidebar-status-heading {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-weight: 600;
-    color: var(--text);
-}
-
-.sidebar-status-text {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-
-.sidebar-status-text strong {
-    font-size: 0.84rem;
-    font-weight: 600;
-}
-
-.sidebar-status-copy {
-    margin: 0;
-    color: var(--muted);
-    font-size: 0.74rem;
-    line-height: 1.45;
-}
-
-.sidebar-quick-action {
-    width: 100%;
+    border-top: 1px solid var(--border);
 }
 
 .sidebar-overlay {
@@ -562,18 +534,10 @@ textarea {
         justify-content: center;
     }
 
-    .sidebar.collapsed .nav-item.active {
-        box-shadow: none;
-    }
-
-    .sidebar.collapsed .sidebar-status,
-    .sidebar.collapsed .sidebar-status-card {
-        align-items: center;
-        padding: 10px;
-    }
-
-    .sidebar.collapsed .sidebar-status-heading {
-        justify-content: center;
+    .sidebar.collapsed .nav-item.active::after {
+        top: 6px;
+        right: 6px;
+        transform: none;
     }
 }
 
