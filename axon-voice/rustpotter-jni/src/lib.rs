@@ -5,10 +5,14 @@
 //!
 //! Build: cargo ndk -t arm64-v8a -o ../app/src/main/jniLibs build --release
 
-use jni::objects::{JByteArray, JClass, JShortArray};
-use jni::sys::{jboolean, jfloat, jint, jlong};
+use jni::objects::{JByteArray, JClass, JObjectArray, JShortArray, JString};
+use jni::sys::{jboolean, jbyteArray, jfloat, jint, jlong};
 use jni::JNIEnv;
-use rustpotter::{Rustpotter, RustpotterConfig, SampleFormat, ScoreMode};
+use rustpotter::{
+    Rustpotter, RustpotterConfig, SampleFormat, ScoreMode, WakewordRef, WakewordRefBuildFromBuffers,
+    WakewordSave,
+};
+use std::collections::HashMap;
 
 #[no_mangle]
 pub extern "system" fn Java_com_axon_voice_wake_RustpotterNative_create(
@@ -57,6 +61,66 @@ pub extern "system" fn Java_com_axon_voice_wake_RustpotterNative_create(
         return 0;
     }
     Box::into_raw(Box::new(rustpotter)) as jlong
+}
+
+/// Builds a personal wakeword model from a handful of WAV takes — the same
+/// "reference" builder `rustpotter-cli build` runs — for on-device enrollment.
+/// Returns the serialized `.rpw` bytes, or null on failure (bad audio, or
+/// fewer than 3 usable samples).
+#[no_mangle]
+pub extern "system" fn Java_com_axon_voice_wake_RustpotterNative_build(
+    mut env: JNIEnv,
+    _class: JClass,
+    name: JString,
+    samples: JObjectArray,
+    threshold: jfloat,
+    avg_threshold: jfloat,
+    mfcc_size: jint,
+) -> jbyteArray {
+    let name: String = match env.get_string(&name) {
+        Ok(s) => s.into(),
+        Err(_) => return std::ptr::null_mut(),
+    };
+
+    let len = match env.get_array_length(&samples) {
+        Ok(l) => l,
+        Err(_) => return std::ptr::null_mut(),
+    };
+
+    let mut sample_map: HashMap<String, Vec<u8>> = HashMap::new();
+    for i in 0..len {
+        let element = match env.get_object_array_element(&samples, i) {
+            Ok(e) => e,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        let bytes = match env.convert_byte_array(&JByteArray::from(element)) {
+            Ok(b) => b,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        sample_map.insert(format!("take{i}"), bytes);
+    }
+    if sample_map.len() < 3 {
+        return std::ptr::null_mut();
+    }
+
+    let wakeword = match WakewordRef::new_from_sample_buffers(
+        name,
+        Some(threshold),
+        Some(avg_threshold),
+        sample_map,
+        mfcc_size as u16,
+    ) {
+        Ok(w) => w,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let bytes = match wakeword.save_to_buffer() {
+        Ok(b) => b,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    match env.byte_array_from_slice(&bytes) {
+        Ok(arr) => arr.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
 }
 
 #[no_mangle]

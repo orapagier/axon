@@ -215,6 +215,11 @@ pub fn build_router(state: AppState) -> Router {
             "/api/audio/models",
             axum::routing::post(api::get_audio_models),
         )
+        .route(
+            "/api/wakeword/build",
+            axum::routing::post(api::build_wakeword),
+        )
+        .route("/api/wakeword/model", get(api::get_wakeword_model))
         .route("/api/slack/events", axum::routing::post(api::slack_events))
         .route(
             "/api/watchers",

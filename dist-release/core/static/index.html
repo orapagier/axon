@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <!--
+    viewport-fit=cover lets the app draw edge-to-edge on notched phones (the
+    CSS safe-area env() insets then keep content out of the cutouts);
+    interactive-widget=resizes-content makes Chrome/Android shrink the layout
+    when the keyboard opens so the chat composer stays visible above it.
+  -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
+  <!--
+    Narrows the blast radius of an XSS: the dashboard stores its master key in
+    localStorage (lib/api.js), so without a CSP a successful injection could
+    freely exfiltrate it to any origin. script-src stays strict ('self' only);
+    style-src allows 'unsafe-inline' because Vue's :style bindings (canvas node
+    positioning, etc.) render as inline style attributes — a real requirement,
+    not laziness, and a far smaller XSS vector than inline script. connect-src
+    covers same-origin fetch/XHR plus the dashboard's WebSocket chat (ws:/wss:).
+    media-src adds blob: on top of 'self' — spoken replies (ChatPage
+    toggleSpeak) play synthesized audio from a blob: URL built with
+    URL.createObjectURL, which default-src's 'self' does not cover; without
+    this the <audio> element silently fails and every reply falls back to the
+    browser's speechSynthesis regardless of tts.* config.
+    frame-ancestors is deliberately omitted: browsers ignore it when set via
+    <meta> (silently, or as a console warning) — it only takes effect as a
+    real HTTP response header, which a reverse proxy (see deploy/Caddyfile.example)
+    would need to add.
+  -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self';" />
+  <title>Axon Agent</title>
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <!--
+    PWA install (Chrome/Edge "Add to Home screen"): the manifest + 192/512 icons
+    are the whole installability contract on current Chrome — no service worker,
+    so no cache-staleness risk for the dashboard. Requires HTTPS (or localhost);
+    the reverse proxy provides it in production.
+  -->
+  <link rel="manifest" href="/manifest.json" />
+  <meta name="theme-color" content="#0d1017" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <!--
+    iOS "Add to Home Screen" standalone mode (Safari predates manifest display
+    support; these apple metas are the working equivalent). black-translucent
+    draws the app under the status bar; the topbar's safe-area-inset-top
+    padding keeps the heading clear of it.
+  -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <script type="module" crossorigin src="/assets/index-CWW7mOcw.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-bC3uKc6K.css">
+</head>
+<body>
+  <div id="app"></div>
+</body>
+</html>

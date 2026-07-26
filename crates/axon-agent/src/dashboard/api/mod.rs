@@ -36,6 +36,7 @@ mod oauth;
 mod runs;
 mod settings;
 mod tools_router;
+mod wakeword;
 mod watchers;
 mod workflows;
 
@@ -54,5 +55,6 @@ pub use oauth::*;
 pub use runs::*;
 pub use settings::*;
 pub use tools_router::*;
+pub use wakeword::*;
 pub use watchers::*;
 pub use workflows::*;

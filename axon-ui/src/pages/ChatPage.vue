@@ -18,6 +18,7 @@ import { buildTtsEnvelope, readLevel } from '../lib/audioLevel.js'
 import { loadVoiceTuning, saveVoiceTuning, VOICE_TUNING_RANGES, VOICE_TUNING_DEFAULTS } from '../lib/voiceTuning.js'
 import SearchInput from '../components/SearchInput.vue'
 import VoiceOrb from '../components/VoiceOrb.vue'
+import EnrollWakeWord from '../components/EnrollWakeWord.vue'
 
 // Each message: { role:'user'|'agent'|'trace', text, meta?, trace:[], thinking?:boolean }
 const messages = ref([])
@@ -782,6 +783,28 @@ const wakeEnabled = ref(wakeSupported && localStorage.getItem('axon-wake-word') 
 const wakeState = ref('off') // 'off' | 'starting' | 'listening'
 let wake = null
 
+// Local hint only — the enrolled model itself lives server-side
+// (/api/wakeword/model). First time wake-word is turned on with no hint set,
+// EnrollWakeWord.vue opens instead of starting the detector immediately; the
+// shared bundled model still works either way (see lib/wakeword.js's fallback).
+const showEnrollWake = ref(false)
+function hasEnrolledWake() {
+  try {
+    return localStorage.getItem('axon-wake-enrolled') === '1'
+  } catch {
+    return false
+  }
+}
+function onWakeEnrolled() {
+  try {
+    localStorage.setItem('axon-wake-enrolled', '1')
+  } catch {
+    // storage unavailable — the toggle still proceeds for this session
+  }
+  showEnrollWake.value = false
+  setWakeEnabled(true)
+}
+
 // ── Hands-free overlay (JARVIS-style orb) ────────────────────────────────────
 // While a "Hey Axon" exchange is actively in progress — recording, waiting on
 // the agent, or reading the reply aloud — the chat log and composer are
@@ -917,6 +940,10 @@ function setWakeEnabled(on) {
 }
 
 function toggleWake() {
+  if (!wakeEnabled.value && !hasEnrolledWake()) {
+    showEnrollWake.value = true
+    return
+  }
   setWakeEnabled(!wakeEnabled.value)
 }
 
@@ -2538,6 +2565,11 @@ watch(disabled, (newVal) => {
         </div>
       </div>
     </div>
+
+    <EnrollWakeWord
+      v-model="showEnrollWake"
+      @enrolled="onWakeEnrolled"
+    />
   </div>
 </template>
 

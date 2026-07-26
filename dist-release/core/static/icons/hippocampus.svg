@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+ <g transform="translate(-14 -6) translate(256 256) scale(1.1) translate(-256 -256)">
+  <!-- dorsal fin: a connected base with scalloped bumps hugging the upper-mid back -->
+  <g fill="#4FA3F7">
+    <path d="M384 214 L398 266 L402 314 L390 360"
+          fill="none" stroke="#4FA3F7" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="392" cy="220" r="20"/>
+    <circle cx="406" cy="266" r="23"/>
+    <circle cx="410" cy="314" r="23"/>
+    <circle cx="396" cy="358" r="20"/>
+  </g>
+  <!-- body: upright S -->
+  <path d="M300 208
+           C 366 238 376 314 326 356
+           C 294 383 284 417 306 440"
+        fill="none" stroke="#FFA836" stroke-width="72" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- curled tail (thinner spiral) -->
+  <path d="M306 440
+           C 350 466 380 428 350 402
+           C 326 381 296 398 312 424
+           C 320 438 338 432 336 418"
+        fill="none" stroke="#FFA836" stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- belly plate lines -->
+  <g stroke="#F5921E" stroke-width="9" stroke-linecap="round">
+    <line x1="268" y1="262" x2="318" y2="250"/>
+    <line x1="258" y1="300" x2="308" y2="292"/>
+    <line x1="262" y1="338" x2="310" y2="336"/>
+  </g>
+  <!-- head -->
+  <circle cx="300" cy="162" r="60" fill="#FFA836"/>
+  <!-- snout -->
+  <path d="M292 176 L166 196" fill="none" stroke="#FFA836" stroke-width="42" stroke-linecap="round"/>
+  <path d="M186 194 L150 200" fill="none" stroke="#FFB74D" stroke-width="28" stroke-linecap="round"/>
+  <!-- coronet spikes -->
+  <path d="M260 118 L248 72 L286 106 L300 64 L316 108 L352 76 L340 120 Z" fill="#FF9D2E"/>
+  <!-- cheek -->
+  <circle cx="284" cy="178" r="17" fill="#FF3D8B" opacity="0.85"/>
+  <!-- eye -->
+  <circle cx="292" cy="150" r="15" fill="#2B2B45"/>
+  <circle cx="298" cy="145" r="5" fill="#FFFFFF"/>
+ </g>
+</svg>

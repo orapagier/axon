@@ -151,6 +151,11 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
             }
         }
 
+    private val enrollLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode == RESULT_OK) setWakeEnabled(true) else updateWakeBtn()
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_chat)
@@ -270,6 +275,13 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
             if (!hasMicPermission()) {
                 pendingWake = true
                 requestPerms()
+                return
+            }
+            // First time on with nothing enrolled: build a personal model
+            // before ever starting the service — resumes here via
+            // enrollLauncher on success.
+            if (!prefs.wakeEnrolled) {
+                enrollLauncher.launch(Intent(this, EnrollWakeWordActivity::class.java))
                 return
             }
             prefs.wakeEnabled = true

@@ -176,7 +176,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
             return START_NOT_STICKY
         }
         createChannel()
-        startForeground(NOTIF_ID, notif(getString(R.string.notif_listening)))
+        startForeground(NOTIF_ID, notif(getString(R.string.notif_listening, wakeLabel())))
         if (!alive) {
             alive = true
             running = true
@@ -209,13 +209,22 @@ class WakeWordService : Service(), ChatSocket.Listener {
 
     // ── Detection loop ──────────────────────────────────────────────────────
 
+    /** The enrolled wake phrase, or the bundled default's label before
+     *  enrollment ([Prefs.wakeEnrolled] is false — see [runLoop]'s model
+     *  fallback below). */
+    private fun wakeLabel(): String = prefs.wakePhrase.ifEmpty { "Hey Axon" }
+
     private fun runLoop() {
         if (!WakeDetector.available) {
             fail("Wake engine missing from this build")
             return
         }
         val model = try {
-            assets.open("heyaxon.rpw").readBytes()
+            if (prefs.wakeEnrolled) {
+                File(prefs.wakeModelPath).readBytes()
+            } else {
+                assets.open("heyaxon.rpw").readBytes()
+            }
         } catch (_: Exception) {
             fail("Wake model asset missing")
             return
@@ -448,7 +457,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
         // wake's optional hint.
         previousTurns.clear()
         previousTurns.addAll(turns.takeLast(2))
-        notify(getString(R.string.notif_listening))
+        notify(getString(R.string.notif_listening, wakeLabel()))
         setPhase(VoiceOverlay.Phase.IDLE)
     }
 

@@ -10,6 +10,8 @@
 #     ./core/memory            (schema only, no *.db)
 #     ./core/.env.example
 #     ./core/credentials.example.json
+#     ./core/bin/wake-model-builder   (wake-word enrollment companion binary,
+#                                       if the build succeeded — optional)
 #     ./qdrant/*               (Qdrant setup scripts)
 #     ./run.sh                 (systemd service manager)
 #
@@ -134,6 +136,26 @@ fi
 [ -f "$BIN" ] || { echo "Build did not produce $BIN"; exit 1; }
 log "Binary: $BIN"
 
+# ── 2b. Build wake-model-builder (wake-word enrollment companion binary) ─────
+# Standalone crate with its own workspace — see wake-model-builder/Cargo.toml
+# for why (rustpotter's candle-core dependency pin conflicts with axon-agent's
+# own tree, so axon-agent shells out to this binary instead of linking
+# rustpotter directly). Built natively (not cross/musl) for simplicity; if
+# this step fails the release still succeeds — /api/wakeword/build just
+# reports "not found" until an admin builds and drops the binary in bin/.
+step "Building wake-model-builder (wake-word enrollment)"
+WAKE_BUILDER_BIN=""
+if (cd "$ROOT_DIR/wake-model-builder" && cargo build --release); then
+    candidate="$ROOT_DIR/wake-model-builder/target/release/wake-model-builder"
+    [ -f "$candidate" ] && WAKE_BUILDER_BIN="$candidate"
+fi
+if [ -n "$WAKE_BUILDER_BIN" ]; then
+    log "wake-model-builder built: $WAKE_BUILDER_BIN"
+else
+    warn "wake-model-builder build failed or skipped — the dashboard's wake-word"
+    warn "  enrollment endpoint will report 'not found' until it's built separately."
+fi
+
 # ── 3. Assemble the sanitized bundle ─────────────────────────────────────────
 step "Assembling bundle"
 rm -rf "$DIST"; mkdir -p "$DIST/core"
@@ -150,6 +172,10 @@ if [ -d crates/axon-agent/memory ]; then
         -exec cp {} "$DIST/core/memory/" \; 2>/dev/null || true
 fi
 cp crates/axon-agent/.env.example "$DIST/core/.env.example"
+if [ -n "$WAKE_BUILDER_BIN" ]; then
+    mkdir -p "$DIST/core/bin"
+    cp "$WAKE_BUILDER_BIN" "$DIST/core/bin/wake-model-builder"
+fi
 
 # A safe stub so users know the credentials.json shape (real one is a secret).
 cat > "$DIST/core/credentials.example.json" <<'JSON'

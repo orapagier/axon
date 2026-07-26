@@ -1,5 +1,6 @@
 package com.axon.voice.ui
 
+import android.content.Intent
 import android.os.Bundle
 import android.text.InputType
 import android.util.TypedValue
@@ -42,6 +43,7 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var client: AxonClient
     private lateinit var voiceStatus: TextView
     private lateinit var voiceContainer: LinearLayout
+    private lateinit var wakePhraseStatus: TextView
     private val voiceRows = mutableListOf<Row>()
     private var voiceLoading = false
 
@@ -63,6 +65,10 @@ class SettingsActivity : AppCompatActivity() {
 
         buildFollowupTuner()
         buildBargeTuner()
+        wakePhraseStatus = findViewById(R.id.wakePhraseStatus)
+        findViewById<Button>(R.id.wakeRetrainBtn).setOnClickListener {
+            startActivity(Intent(this, EnrollWakeWordActivity::class.java))
+        }
 
         serverUrl.setText(prefs.baseUrl)
         masterKey.setText(prefs.masterKey)
@@ -93,6 +99,22 @@ class SettingsActivity : AppCompatActivity() {
 
         if (prefs.configured) loadVoiceSettings()
         else voiceStatus.text = getString(R.string.voice_settings_unavailable)
+        renderWakeStatus()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Reflects a re-enrollment done via wakeRetrainBtn while this activity
+        // was paused underneath EnrollWakeWordActivity.
+        renderWakeStatus()
+    }
+
+    private fun renderWakeStatus() {
+        wakePhraseStatus.text = if (prefs.wakeEnrolled) {
+            getString(R.string.settings_wake_enrolled_fmt, prefs.wakePhrase)
+        } else {
+            getString(R.string.settings_wake_not_enrolled)
+        }
     }
 
     // ── Server-side voice settings ──────────────────────────────────────────

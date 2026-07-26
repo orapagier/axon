@@ -98,8 +98,14 @@ class MicEffects(sessionId: Int) {
  * Records 16kHz mono PCM16 off its own thread, reporting an RMS level
  * (0..1 float scale, same as the web AnalyserNode) every ~100ms.
  * stop() returns a complete in-memory WAV ready for /api/audio/transcribe.
+ *
+ * @param cleanSignal skip [MicEffects] (AEC/NS) — set for wake-word enrollment
+ *   captures, which must match the untouched signal [WakeWordService][com.axon.voice.wake.WakeWordService]
+ *   feeds the detector at runtime; those effects strip the quiet signal a
+ *   wake model gets matched against. Dictation/push-to-talk capture leaves
+ *   this off (the default) since echo cancellation helps there instead.
  */
-class WavRecorder {
+class WavRecorder(private val cleanSignal: Boolean = false) {
     companion object {
         const val SAMPLE_RATE = 16000
         private const val TICK_SAMPLES = SAMPLE_RATE / 10
@@ -122,6 +128,15 @@ class WavRecorder {
             header.put("data".toByteArray())
             header.putInt(pcm.size)
             return header.array() + pcm
+        }
+
+        /** The inverse of [wavBytes]: raw PCM16 samples from a WAV this class
+         *  produced (44-byte header, no extra chunks). */
+        fun pcmFromWav(wav: ByteArray): ShortArray {
+            val samples = ShortArray((wav.size - 44) / 2)
+            ByteBuffer.wrap(wav, 44, wav.size - 44).order(ByteOrder.LITTLE_ENDIAN)
+                .asShortBuffer().get(samples)
+            return samples
         }
     }
 
@@ -154,7 +169,7 @@ class WavRecorder {
             throw IllegalStateException("microphone unavailable")
         }
         record = rec
-        effects = MicEffects(rec.audioSessionId)
+        effects = if (cleanSignal) null else MicEffects(rec.audioSessionId)
         pcm.reset()
         running = true
         rec.startRecording()

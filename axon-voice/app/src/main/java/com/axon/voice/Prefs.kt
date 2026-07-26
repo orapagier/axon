@@ -1,6 +1,7 @@
 package com.axon.voice
 
 import android.content.Context
+import java.io.File
 import java.net.URLEncoder
 import java.util.UUID
 
@@ -28,6 +29,26 @@ class Prefs(ctx: Context) {
         set(v) {
             sp.edit().putBoolean("wake_enabled", v).apply()
         }
+
+    // ── Wake-word enrollment ─────────────────────────────────────────────────
+
+    /** The phrase the user enrolled during onboarding (e.g. "Hey Axon", or
+     *  whatever they chose). Empty until enrollment completes; UI/prompts
+     *  should fall back to the "Hey Axon" default label when empty. */
+    var wakePhrase: String
+        get() = sp.getString("wake_phrase", "") ?: ""
+        set(v) { sp.edit().putString("wake_phrase", v.trim()).apply() }
+
+    /** Absolute path to the on-device-built personal .rpw model
+     *  (filesDir/wake_model.rpw), or empty if the user hasn't enrolled yet —
+     *  [WakeWordService] falls back to the bundled `heyaxon.rpw` asset then. */
+    var wakeModelPath: String
+        get() = sp.getString("wake_model_path", "") ?: ""
+        set(v) { sp.edit().putString("wake_model_path", v).apply() }
+
+    /** True once a personal model has been built and its file still exists. */
+    val wakeEnrolled: Boolean
+        get() = wakeModelPath.isNotEmpty() && File(wakeModelPath).exists()
 
     // ── Follow-up window ─────────────────────────────────────────────────────
 

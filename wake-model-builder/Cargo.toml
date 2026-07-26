@@ -1,0 +1,36 @@
+[package]
+name = "wake-model-builder"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Standalone crate — deliberately outside the repo's root cargo workspace
+# (same reason as axon-voice/rustpotter-jni): rustpotter's unconditional
+# candle-core/candle-nn dependency (its neural training backend, pulled in
+# even though this binary only uses the simple few-shot "reference" builder)
+# pins an old rand/rand_distr/half combo that conflicts with axon-agent's own
+# dependency tree. Keeping this crate — and its own separately-resolved
+# Cargo.lock — out of that workspace avoids the conflict entirely; axon-agent
+# shells out to the built binary instead of linking rustpotter in-process.
+[workspace]
+
+[[bin]]
+name = "wake-model-builder"
+path = "src/main.rs"
+
+[dependencies]
+rustpotter = "3.0"
+
+# candle-core 0.2.2 (rustpotter's neural-training backend — pulled in
+# unconditionally even though this binary only uses the non-neural "reference"
+# builder) depends on rand_distr "0.4", but `half` moved its own optional
+# rand_distr impl to 0.5 (-> rand 0.9) as of 2.5.0, breaking candle-core's
+# `StandardNormal: Distribution<f16>` bound. 2.4.1 is the last `half` release
+# still on rand_distr 0.4 — an explicit exact pin here forces the whole graph
+# to that one version (nothing else demands a different `half`), so this
+# standalone crate's own (separately-resolved) dependency graph compiles.
+half = "=2.4.1"
+
+[profile.release]
+lto = true
+strip = true

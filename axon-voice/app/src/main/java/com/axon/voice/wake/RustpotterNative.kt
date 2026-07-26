@@ -30,6 +30,39 @@ internal object RustpotterNative {
     external fun process(handle: Long, samples: ShortArray): Float
 
     external fun destroy(handle: Long)
+
+    /**
+     * Builds a personal wake-word model from a handful of 16k mono PCM16 WAV
+     * takes — the same "reference" builder `rustpotter-cli build` runs, just
+     * called from the app for on-device enrollment. Returns the serialized
+     * `.rpw` bytes, or null if the engine rejects the samples (fewer than 3
+     * usable takes, or unreadable audio).
+     */
+    external fun build(
+        name: String,
+        samples: Array<ByteArray>,
+        threshold: Float,
+        avgThreshold: Float,
+        mfccSize: Int,
+    ): ByteArray?
+}
+
+/**
+ * On-device wake-word enrollment. Call [build] with 3-8 WAV takes (16k mono
+ * PCM16, e.g. from [com.axon.voice.audio.WavRecorder.wavBytes]) of the phrase
+ * the user wants to enroll; the defaults mirror the tuning that shipped with
+ * the bundled "Hey Axon" model.
+ */
+object WakeModelBuilder {
+    val available: Boolean get() = RustpotterNative.available
+
+    fun build(
+        phrase: String,
+        takes: List<ByteArray>,
+        threshold: Float = 0.47f,
+        avgThreshold: Float = 0.0f,
+        mfccSize: Int = 16,
+    ): ByteArray? = RustpotterNative.build(phrase, takes.toTypedArray(), threshold, avgThreshold, mfccSize)
 }
 
 /**

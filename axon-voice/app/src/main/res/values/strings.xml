@@ -21,7 +21,7 @@
     <string name="voice_models_none">Nothing listable at that base URL — type a model ID</string>
     <string name="voice_models_need_base_url">Set the base_url first</string>
     <string name="notif_channel_wake">Axon voice</string>
-    <string name="notif_listening">Listening for “Hey Axon”</string>
+    <string name="notif_listening">Listening for “%1$s”</string>
     <string name="chat_hint">Message Axon…</string>
     <string name="chat_hint_listening">Listening… tap mic to stop</string>
     <string name="transcribing">Transcribing…</string>
@@ -39,4 +39,23 @@
     <string name="barge_title">Barge-in (talk over a reply — headset only)</string>
     <string name="barge_toggle">Let me interrupt a reply by speaking (needs a headset)</string>
     <string name="barge_threshold_label">Trigger loudness (higher = speak louder/closer)</string>
+    <string name="enroll_title">Set up your wake word</string>
+    <string name="enroll_intro">Choose a phrase and record yourself saying it a few times — this builds a wake-word model tuned to your voice, right on this device. Nothing is uploaded.</string>
+    <string name="enroll_phrase_hint">Wake phrase</string>
+    <string name="enroll_record">Record</string>
+    <string name="enroll_record_next">Record next take</string>
+    <string name="enroll_rerecord_btn">Re-record last take</string>
+    <string name="enroll_build_btn">Build wake word</string>
+    <string name="enroll_build_failed">Couldn\'t build a model from those takes — try re-recording a bit louder and clearer.</string>
+    <string name="enroll_build_ok">Done — your wake word is ready, and it recognized your own voice in a quick test.</string>
+    <string name="enroll_build_ok_no_selftest">Saved — though it didn\'t fire on a quick self-test. If it misses often, come back and re-record.</string>
+    <string name="enroll_done">Done</string>
+    <string name="enroll_engine_missing">Wake engine missing from this build</string>
+    <string name="enroll_no_speech">Didn\'t catch that — try again</string>
+    <string name="enroll_recording_status">Recording take %1$d of %2$d — say “%3$s”</string>
+    <string name="enroll_takes_status">%1$d of %2$d takes recorded</string>
+    <string name="settings_wake_title">Wake word</string>
+    <string name="settings_wake_retrain">Re-train wake word</string>
+    <string name="settings_wake_enrolled_fmt">Enrolled: “%1$s”</string>
+    <string name="settings_wake_not_enrolled">Not set up yet — using the shared default wake word</string>
 </resources>

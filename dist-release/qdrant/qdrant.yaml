@@ -1,0 +1,32 @@
+# =============================================================================
+# Qdrant configuration — optimised for Oracle E2 Micro (1GB RAM)
+# /etc/qdrant/config.yaml
+# =============================================================================
+
+storage:
+  # Where data lives on disk
+  storage_path: /var/lib/qdrant/storage
+
+  # Snapshots directory
+  snapshots_path: /var/lib/qdrant/snapshots
+
+  # Store payload (metadata) on disk, not RAM
+  on_disk_payload: true
+
+service:
+  # Listen on localhost only — never expose to internet without auth
+  host: 127.0.0.1
+  http_port: 6333
+  grpc_port: 6334
+
+  # Max request body (keep small — you're not uploading files)
+  max_request_size_mb: 4
+
+  # Connection limits
+  max_workers: 2
+
+  # Enable CORS only if needed (disable for agent-only use)
+  enable_cors: false
+
+# Logging — WARN reduces log I/O on constrained server
+log_level: WARN

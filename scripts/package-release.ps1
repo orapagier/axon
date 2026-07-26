@@ -11,6 +11,8 @@
         memory\                      (schema only, no *.db)
         .env.example
         credentials.example.json
+        bin\wake-model-builder.exe   (wake-word enrollment companion binary,
+                                      if the build succeeded — optional)
 
     Ships NO real .env, NO credentials.json, and NO SSH keys - safe to publish.
     axon.exe needs these sibling folders on disk, which is why the Windows
@@ -55,6 +57,29 @@ $exe = Join-Path $Root 'target\release\axon.exe'
 if (-not (Test-Path $exe)) { throw "axon.exe not found at $exe" }
 Ok "Binary built: $exe"
 
+# ── 2b. Build wake-model-builder (wake-word enrollment companion binary) ─────
+# Standalone crate with its own workspace — see wake-model-builder\Cargo.toml
+# for why (rustpotter's candle-core dependency pin conflicts with axon-agent's
+# own tree, so axon-agent shells out to this binary instead of linking
+# rustpotter directly). Built natively; if this step fails the release still
+# succeeds — /api/wakeword/build just reports "not found" until an admin
+# builds and drops the binary in bin\ manually.
+Step "Building wake-model-builder (wake-word enrollment)"
+$wakeBuilderExe = $null
+Push-Location (Join-Path $Root 'wake-model-builder')
+cargo build --release
+$wakeBuilderOk = ($LASTEXITCODE -eq 0)
+Pop-Location
+if ($wakeBuilderOk) {
+    $candidate = Join-Path $Root 'wake-model-builder\target\release\wake-model-builder.exe'
+    if (Test-Path $candidate) { $wakeBuilderExe = $candidate }
+}
+if ($wakeBuilderExe) {
+    Ok "wake-model-builder built: $wakeBuilderExe"
+} else {
+    Write-Host "[!] wake-model-builder build failed or skipped - the dashboard's wake-word enrollment endpoint will report 'not found' until it's built separately." -ForegroundColor Yellow
+}
+
 # ── 3. Assemble the sanitized bundle ─────────────────────────────────────────
 Step "Assembling bundle"
 if (Test-Path $Dist) { Remove-Item $Dist -Recurse -Force }
@@ -76,6 +101,10 @@ if (Test-Path $memSrc) {
         ForEach-Object { Copy-Item $_.FullName (Join-Path $Dist 'memory') -Force }
 }
 Copy-Item (Join-Path $Root 'crates\axon-agent\.env.example') (Join-Path $Dist '.env.example') -Force
+if ($wakeBuilderExe) {
+    New-Item -ItemType Directory -Path (Join-Path $Dist 'bin') -Force | Out-Null
+    Copy-Item $wakeBuilderExe (Join-Path $Dist 'bin\wake-model-builder.exe') -Force
+}
 
 @'
 {

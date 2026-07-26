@@ -11,7 +11,12 @@ const ASSETS = {
   workerPath: '/rustpotter/rustpotter-worker.min.js',
   wasmPath: '/rustpotter/rustpotter_wasm_bg.wasm',
 }
+// The bundled shared default; a personal model built via EnrollWakeWord.vue
+// (served from /api/wakeword/model, auth-gated like the rest of /api/*) is
+// tried first — see start() below — falling back to this when nothing's
+// enrolled yet.
 const MODEL_URL = '/rustpotter/heyaxon.rpw'
+const PERSONAL_MODEL_URL = '/api/wakeword/model'
 const MODEL_KEY = 'hey axon'
 
 // Mirrors the CLI flags that passed the live mic test (spot -g -e -t 0.47):
@@ -96,7 +101,10 @@ export function createWakeWord({ onDetection, onState }) {
       service.onDetection((d) => {
         if (running) onDetection(d)
       })
-      const ok = await service.addWakewordByPath(MODEL_KEY, MODEL_URL)
+      const masterKey = localStorage.getItem('AXON_MASTER_KEY')
+      const authHeaders = masterKey ? { Authorization: `Bearer ${masterKey}` } : {}
+      let ok = await service.addWakewordByPath(MODEL_KEY, PERSONAL_MODEL_URL, authHeaders)
+      if (!ok) ok = await service.addWakewordByPath(MODEL_KEY, MODEL_URL)
       if (!ok) throw new Error('wake word model rejected')
       node = await service.getProcessorNode(ctx)
       source = ctx.createMediaStreamSource(stream)
