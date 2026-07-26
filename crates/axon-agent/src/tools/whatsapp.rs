@@ -687,7 +687,10 @@ pub fn verify_whatsapp_webhook(
 
     // Constant-time compare to avoid timing attacks.
     use subtle::ConstantTimeEq;
-    let matches: bool = hub_verify_token.as_bytes().ct_eq(expected.as_bytes()).into();
+    let matches: bool = hub_verify_token
+        .as_bytes()
+        .ct_eq(expected.as_bytes())
+        .into();
     if !matches {
         return WebhookVerifyResult::Forbidden {
             reason: "Invalid verify_token".into(),

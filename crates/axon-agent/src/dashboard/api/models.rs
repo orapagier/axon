@@ -385,16 +385,27 @@ mod tests {
     #[test]
     fn health_check_auto_disable_records_the_failure_category() {
         let conn = test_db();
-        apply_add_model(&conn, &json!({"name": "m1", "provider": "groq", "api_key": "k"})).unwrap();
+        apply_add_model(
+            &conn,
+            &json!({"name": "m1", "provider": "groq", "api_key": "k"}),
+        )
+        .unwrap();
 
         apply_disable_model(&conn, "m1", "payment_required").unwrap();
-        assert_eq!(disabled_reason(&conn, "m1").as_deref(), Some("payment_required"));
+        assert_eq!(
+            disabled_reason(&conn, "m1").as_deref(),
+            Some("payment_required")
+        );
     }
 
     #[test]
     fn manual_toggle_records_manual_and_clears_on_re_enable() {
         let conn = test_db();
-        apply_add_model(&conn, &json!({"name": "m1", "provider": "groq", "api_key": "k"})).unwrap();
+        apply_add_model(
+            &conn,
+            &json!({"name": "m1", "provider": "groq", "api_key": "k"}),
+        )
+        .unwrap();
 
         apply_update_model(&conn, "m1", &json!({"enabled": false})).unwrap();
         assert_eq!(disabled_reason(&conn, "m1").as_deref(), Some("manual"));
@@ -409,7 +420,11 @@ mod tests {
         // via the dashboard, should read as "manual" — the more recent, more
         // specific human action — not the stale auto-disable category.
         let conn = test_db();
-        apply_add_model(&conn, &json!({"name": "m1", "provider": "groq", "api_key": "k"})).unwrap();
+        apply_add_model(
+            &conn,
+            &json!({"name": "m1", "provider": "groq", "api_key": "k"}),
+        )
+        .unwrap();
         apply_disable_model(&conn, "m1", "timeout").unwrap();
         apply_update_model(&conn, "m1", &json!({"enabled": true})).unwrap();
         apply_update_model(&conn, "m1", &json!({"enabled": false})).unwrap();

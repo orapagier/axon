@@ -41,5 +41,8 @@ pub fn verify_meta_signature(
     mac.update(body);
     let computed_hex = hex::encode(mac.finalize().into_bytes());
 
-    computed_hex.as_bytes().ct_eq(expected_hex.as_bytes()).into()
+    computed_hex
+        .as_bytes()
+        .ct_eq(expected_hex.as_bytes())
+        .into()
 }

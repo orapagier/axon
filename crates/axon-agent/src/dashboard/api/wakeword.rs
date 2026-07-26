@@ -50,7 +50,10 @@ fn builder_bin_path() -> PathBuf {
     PathBuf::from("bin").join(exe)
 }
 
-pub async fn build_wakeword(State(state): State<AppState>, mut multipart: Multipart) -> Json<Value> {
+pub async fn build_wakeword(
+    State(state): State<AppState>,
+    mut multipart: Multipart,
+) -> Json<Value> {
     // The bin.is_file() check below intentionally runs AFTER the multipart
     // loop, not before: axum's Multipart extractor streams the request body
     // rather than buffering it up front, so returning early — before the
@@ -161,7 +164,9 @@ pub async fn get_wakeword_model(State(state): State<AppState>) -> Response {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
     let row: rusqlite::Result<Vec<u8>> =
-        conn.query_row("SELECT model FROM wake_model WHERE id = 1", [], |r| r.get(0));
+        conn.query_row("SELECT model FROM wake_model WHERE id = 1", [], |r| {
+            r.get(0)
+        });
     match row {
         Ok(bytes) => (
             [

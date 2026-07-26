@@ -635,14 +635,23 @@ mod to_items_tests {
     fn no_path_wraps_bare_value_as_single_item() {
         assert_eq!(to_items(&json!({"a": 1}), None), vec![json!({"a": 1})]);
         assert_eq!(to_items(&json!([1, 2]), None), vec![json!(1), json!(2)]);
-        assert_eq!(to_items(&json!(null), None), Vec::<serde_json::Value>::new());
+        assert_eq!(
+            to_items(&json!(null), None),
+            Vec::<serde_json::Value>::new()
+        );
     }
 
     #[test]
     fn path_missing_or_wrong_type_yields_empty() {
         let input = json!({"items": "not an array"});
-        assert_eq!(to_items(&input, Some("/items")), Vec::<serde_json::Value>::new());
-        assert_eq!(to_items(&input, Some("/missing")), Vec::<serde_json::Value>::new());
+        assert_eq!(
+            to_items(&input, Some("/items")),
+            Vec::<serde_json::Value>::new()
+        );
+        assert_eq!(
+            to_items(&input, Some("/missing")),
+            Vec::<serde_json::Value>::new()
+        );
     }
 }
 
