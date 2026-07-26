@@ -70,6 +70,13 @@ class SettingsActivity : AppCompatActivity() {
             startActivity(Intent(this, EnrollWakeWordActivity::class.java))
         }
 
+        // Device-control HTTP API (SMS/calls/files/shell/etc, reached by axon-agent
+        // through a Cloudflare tunnel) — its own status/setup screen, separate from
+        // this activity's "remote Axon server" configuration above.
+        findViewById<Button>(R.id.deviceApiBtn).setOnClickListener {
+            startActivity(Intent(this, com.agentapi.android.DeviceApiActivity::class.java))
+        }
+
         serverUrl.setText(prefs.baseUrl)
         masterKey.setText(prefs.masterKey)
 

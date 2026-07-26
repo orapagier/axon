@@ -60,4 +60,6 @@
     <string name="settings_wake_retrain">Re-train wake word</string>
     <string name="settings_wake_enrolled_fmt">Enrolled: “%1$s”</string>
     <string name="settings_wake_not_enrolled">Not set up yet — using the shared default wake word</string>
+    <string name="device_api_title">Device control</string>
+    <string name="device_api_open">Open device control settings</string>
 </resources>

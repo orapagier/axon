@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    res/layout/activity_alarm_dismiss.xml
+    Full-screen alarm dismiss UI shown over the lock screen.
+-->
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:background="#CC000000"
+    android:padding="32dp">
+
+    <!-- Clock icon -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="⏰"
+        android:textSize="72sp"
+        android:layout_marginBottom="24dp" />
+
+    <!-- "Alarm" heading -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Alarm"
+        android:textColor="#FFFFFF"
+        android:textSize="22sp"
+        android:textStyle="bold"
+        android:letterSpacing="0.15"
+        android:layout_marginBottom="12dp" />
+
+    <!-- Dynamic label from the alarm (e.g. "Take medicine", "Wake up") -->
+    <TextView
+        android:id="@+id/tv_alarm_label"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text=""
+        android:textColor="#BBFFFFFF"
+        android:textSize="18sp"
+        android:gravity="center"
+        android:layout_marginBottom="64dp" />
+
+    <!-- Dismiss button -->
+    <Button
+        android:id="@+id/btn_dismiss"
+        android:layout_width="220dp"
+        android:layout_height="56dp"
+        android:text="Dismiss"
+        android:textSize="18sp"
+        android:textColor="#000000"
+        android:backgroundTint="#FFFFFF"
+        android:textStyle="bold" />
+
+</LinearLayout>

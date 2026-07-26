@@ -14,14 +14,34 @@ val keystoreProps = Properties().apply {
 
 android {
     namespace = "com.axon.voice"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.axon.voice"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
+    }
+
+    buildFeatures {
+        viewBinding = true
+    }
+
+    packagingOptions {
+        resources {
+            excludes += listOf(
+                "META-INF/INDEX.LIST",
+                "META-INF/io.netty.versions.properties",
+                "META-INF/DEPENDENCIES",
+            )
+        }
+        // The embedded cloudflared binary (app/src/main/jniLibs/<abi>/libcloudflared.so) needs to be
+        // extracted to a real, executable file on disk so CloudflaredManager can run it as a subprocess.
+        // Legacy packaging restores the old "extract to nativeLibraryDir" behavior this depends on.
+        jniLibs {
+            useLegacyPackaging = true
+        }
     }
 
     signingConfigs {
@@ -55,6 +75,8 @@ android {
     }
 }
 
+val ktorVersion = "2.3.12"
+
 dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
@@ -62,6 +84,24 @@ dependencies {
     implementation("androidx.recyclerview:recyclerview:1.3.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // AgentAPI: Ktor server — Netty engine (local device-control HTTP API)
+    implementation("io.ktor:ktor-server-core-jvm:$ktorVersion")
+    implementation("io.ktor:ktor-server-netty-jvm:$ktorVersion")
+    implementation("io.ktor:ktor-server-content-negotiation-jvm:$ktorVersion")
+    implementation("io.ktor:ktor-serialization-gson-jvm:$ktorVersion")
+    implementation("io.ktor:ktor-server-status-pages-jvm:$ktorVersion")
+    implementation("io.ktor:ktor-server-auth-jvm:$ktorVersion")
+
+    // AgentAPI: Ktor client — pushes proactive events (sms/call/location/battery) to axon-agent
+    implementation("io.ktor:ktor-client-core-jvm:$ktorVersion")
+    implementation("io.ktor:ktor-client-okhttp-jvm:$ktorVersion")
+    implementation("io.ktor:ktor-client-content-negotiation-jvm:$ktorVersion")
+
+    // AgentAPI: WorkManager watchdog + Play Services location + Gson
+    implementation("androidx.work:work-runtime-ktx:2.11.1")
+    implementation("com.google.android.gms:play-services-location:21.3.0")
+    implementation("com.google.code.gson:gson:2.11.0")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20231013") // parses the fbank test fixture; org.json isn't on the host JVM classpath outside Android

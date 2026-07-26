@@ -106,6 +106,25 @@
             android:layout_marginTop="8dp"
             android:text="@string/settings_wake_retrain" />
 
+        <!-- Device control: local HTTP API + Cloudflare tunnel exposing SMS/calls/
+             files/shell/etc to axon-agent. Status and setup live in DeviceApiActivity. -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="28dp"
+            android:text="@string/device_api_title"
+            android:textColor="@color/accent"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/deviceApiBtn"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/device_api_open" />
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

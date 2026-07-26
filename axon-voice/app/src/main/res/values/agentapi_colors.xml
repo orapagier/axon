@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="status_running">#4CAF50</color>
+    <color name="status_stopped">#F44336</color>
+    <color name="colorPrimary">#1976D2</color>
+    <color name="colorPrimaryDark">#1565C0</color>
+    <color name="colorAccent">#82B1FF</color>
+    <color name="colorSurface">#1E1E2E</color>
+    <color name="colorBackground">#13131F</color>
+    <color name="colorOnSurface">#E0E0E0</color>
+    <color name="colorSecondary">#BB86FC</color>
+</resources>

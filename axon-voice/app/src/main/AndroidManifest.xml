@@ -1,19 +1,131 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- Network -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
+    <!-- Voice / wake-word -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+
+    <!-- Telephony -->
+    <uses-permission android:name="android.permission.SEND_SMS" />
+    <uses-permission android:name="android.permission.READ_SMS" />
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    <uses-permission android:name="android.permission.WRITE_CALL_LOG" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+
+    <!-- Contacts -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <uses-permission android:name="android.permission.WRITE_CONTACTS" />
+
+    <!-- Location -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+
+    <!-- Camera -->
+    <uses-permission android:name="android.permission.CAMERA" />
+
+    <!-- Storage (Android 12 and below) -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+    <!-- Storage (Android 13+) -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+
+    <!-- System -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!--
+        USE_EXACT_ALARM   : auto-granted on API 33+, no user action needed
+        SCHEDULE_EXACT_ALARM: required on API 31-32 (Android 12), user must grant in
+                              Settings → Apps → Special app access → Alarms & reminders
+        Both declared so the app works across all Android 12+ devices.
+    -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+
+    <!-- Device control (AgentAPI routes) -->
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+    <uses-permission android:name="android.permission.SET_WALLPAPER" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.FLASHLIGHT" />
+
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
+
+    <!--
+        MANAGE_EXTERNAL_STORAGE — required on Android 11+ (API 30+) to read/write files
+        in shared storage paths like /sdcard/Download/ via direct File I/O.
+        Without this, FileInputStream on /sdcard paths throws EACCES (Permission denied)
+        regardless of READ_EXTERNAL_STORAGE being granted. Scoped storage is enforced at
+        the kernel/SELinux level — FileInputStream does NOT bypass it.
+
+        The user MUST grant this manually:
+          Settings → Apps → Axon → Permissions → All Files Access → Enable
+        OR the app will redirect them via ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION.
+
+        Note: Play Store restricts this permission. For sideloaded/internal apps it is fine.
+    -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+
+    <!--
+        SYSTEM_ALERT_WINDOW — "Draw over other apps".
+        Required on Android 10+ to allow the background foreground-service to start
+        Activities (launch.url, launch.app). Without it Android silently drops
+        startActivity() calls from background contexts even with FLAG_ACTIVITY_NEW_TASK.
+        User grants via: Settings → Apps → Axon → Display over other apps → Enable
+    -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <!--
+        QUERY_ALL_PACKAGES — required on Android 11+ for PackageManager to see all
+        installed apps. Without it, getLaunchIntentForPackage() returns null for any
+        app not explicitly listed in <queries>, causing launch.app to always fail.
+        Not allowed on Play Store but fine for sideloaded personal tools.
+    -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+
+    <!--
+        Required to send commands to Termux via the RUN_COMMAND intent.
+        The user must ALSO enable: Termux app → ⋮ → Settings → Allow External Apps → ON
+    -->
+    <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
+
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+
+    <!--
+        Required on Android 11+ (API 30+) for PackageManager to see com.termux.
+        Without this, getPackageInfo("com.termux") throws NameNotFoundException even
+        when Termux is installed, causing termux_available to incorrectly return false.
+    -->
+    <queries>
+        <package android:name="com.termux" />
+    </queries>
 
     <application
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="false"
         android:usesCleartextTraffic="true"
+        android:extractNativeLibs="true"
         android:theme="@style/Theme.AxonVoice">
 
         <activity
@@ -84,5 +196,102 @@
                 android:name="android.speech"
                 android:resource="@xml/recognition_service" />
         </service>
+
+        <!-- ── AgentAPI: device-control HTTP API + Cloudflare tunnel ─────────────── -->
+
+        <receiver
+            android:name="com.agentapi.android.AlarmRingerReceiver"
+            android:exported="false" />
+
+        <!-- Handles the Approve/Deny taps on ApprovalManager's notifications. -->
+        <receiver
+            android:name="com.agentapi.android.ApprovalReceiver"
+            android:exported="false" />
+
+        <!--
+            AlarmDismissActivity: launched by AlarmRingerReceiver via fullScreenIntent.
+            showOnLockScreen + turnScreenOn let it appear over the lock screen.
+            noHistory prevents it from lingering in the back stack after dismiss.
+            excludeFromRecents keeps it off the Recents screen.
+        -->
+        <activity
+            android:name="com.agentapi.android.AlarmDismissActivity"
+            android:exported="false"
+            android:showOnLockScreen="true"
+            android:turnScreenOn="true"
+            android:noHistory="true"
+            android:excludeFromRecents="true"
+            android:launchMode="singleInstance"
+            android:theme="@style/Theme.AgentAPI" />
+
+        <!-- Device-control status/setup screen — reached from Settings, not a launcher. -->
+        <activity
+            android:name="com.agentapi.android.DeviceApiActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:screenOrientation="portrait" />
+
+        <!--
+            stopWithTask="false"  keeps the service alive when the user swipes the app away.
+            Both dataSync (HTTP server) + location (GPS updates) types declared for API 29+.
+        -->
+        <service
+            android:name="com.agentapi.android.ApiService"
+            android:enabled="true"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="dataSync|location" />
+
+        <!--
+            AccessibilityService for auto-answer.
+            The user MUST enable this manually in:
+            Settings → Accessibility → AgentAPI Auto Answer
+        -->
+        <service
+            android:name="com.agentapi.android.AutoAnswerAccessibilityService"
+            android:exported="true"
+            android:label="AgentAPI Auto Answer"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
+
+        <receiver
+            android:name="com.agentapi.android.BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter android:priority="999">
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Incoming SMS → push to axon-agent's webhook immediately -->
+        <receiver
+            android:name="com.agentapi.android.SmsReceiver"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_SMS">
+            <intent-filter android:priority="999">
+                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Call state changes → push missed/incoming calls to axon-agent -->
+        <receiver
+            android:name="com.agentapi.android.CallStateReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter android:priority="999">
+                <action android:name="android.intent.action.PHONE_STATE" />
+            </intent-filter>
+        </receiver>
+
     </application>
 </manifest>
