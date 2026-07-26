@@ -9,10 +9,13 @@ import android.graphics.Paint
 import android.graphics.RadialGradient
 import android.graphics.Shader
 import android.util.AttributeSet
+import android.view.GestureDetector
+import android.view.MotionEvent
 import android.view.View
 import androidx.core.content.ContextCompat
 import com.axon.voice.R
 import kotlin.math.abs
+import kotlin.math.hypot
 import kotlin.math.min
 import kotlin.math.sin
 
@@ -74,11 +77,35 @@ class VoiceOrbView @JvmOverloads constructor(
     @Volatile
     private var level = -1f // latest mic level, -1 = none (synthesize)
 
+    @Volatile
+    private var paused = false
+
     private var smoothed = 0f
     private var startNanos = 0L
     private var animating = false
 
     private val frame = Runnable { step() }
+
+    /** Tap on the orb core — toggle the reply/follow-up hold. */
+    var onCenterTap: (() -> Unit)? = null
+
+    /** Tap outside the core — close the exchange. */
+    var onOutsideTap: (() -> Unit)? = null
+
+    // A tap within ~2*baseR of the centre is "the orb" (the glowing core reaches
+    // baseR*1.8); anything past that ring is "outside" and closes.
+    private val tapDetector = GestureDetector(
+        context,
+        object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent): Boolean = true
+            override fun onSingleTapUp(e: MotionEvent): Boolean {
+                if (baseR <= 0f) return false
+                val r = hypot(e.x - cx, e.y - cy)
+                if (r <= baseR * 2f) onCenterTap?.invoke() else onOutsideTap?.invoke()
+                return true
+            }
+        },
+    )
 
     private fun step() {
         if (!animating) return
@@ -95,6 +122,19 @@ class VoiceOrbView @JvmOverloads constructor(
 
     fun setLevel(l: Float) {
         level = l
+    }
+
+    /** Held state: rest the orb at a dim, steady glow and show a pause glyph, so
+     *  a paused reply/listening window reads as deliberately held, not frozen. */
+    fun setPaused(p: Boolean) {
+        if (p == paused) return
+        paused = p
+        invalidate()
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        tapDetector.onTouchEvent(event)
+        return true // consume: the orb owns its taps, the scrim owns the rest
     }
 
     private fun start() {
@@ -152,7 +192,10 @@ class VoiceOrbView @JvmOverloads constructor(
         val t = (System.nanoTime() - startNanos) / 1_000_000_000f
         // Real metered level for LISTENING (mic) and SPEAKING (reply audio);
         // synth for THINKING and any un-metered gap between spoken sentences.
+        // Paused rests at a low steady glow, whatever the phase, so the hold
+        // reads as deliberate rather than a stalled animation.
         val raw = when {
+            paused -> 0.05f
             phase == Phase.LISTENING && level >= 0f -> min(1f, level * MIC_GAIN)
             phase == Phase.SPEAKING && level >= 0f -> min(1f, level * SPEAK_GAIN)
             else -> synth(t)
@@ -213,5 +256,22 @@ class VoiceOrbView @JvmOverloads constructor(
         bgPaint.color = bg
         bgPaint.alpha = 217
         canvas.drawCircle(cx, cy, coreR * 0.55f, bgPaint)
+
+        // Pause glyph over the resting core while held.
+        if (paused) {
+            val barW = baseR * 0.16f
+            val barH = baseR * 0.66f
+            val gap = baseR * 0.16f
+            corePaint.shader = null
+            corePaint.color = accent
+            corePaint.alpha = 235
+            val top = cy - barH / 2f
+            canvas.drawRoundRect(
+                cx - gap - barW, top, cx - gap, top + barH, barW / 2f, barW / 2f, corePaint,
+            )
+            canvas.drawRoundRect(
+                cx + gap, top, cx + gap + barW, top + barH, barW / 2f, barW / 2f, corePaint,
+            )
+        }
     }
 }

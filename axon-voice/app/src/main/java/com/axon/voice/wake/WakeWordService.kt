@@ -124,6 +124,27 @@ class WakeWordService : Service(), ChatSocket.Listener {
     @Volatile
     private var bargeMonitorAlive = false
 
+    /** Orb-core tap hold. While set: the reply stream is paused (no new sentence
+     *  plays) and the command/follow-up [capture] loop freezes (mic drained but
+     *  not accumulated or timed out), so one toggle holds whichever half of the
+     *  exchange is live. Cleared on resume or [closeExchange]. */
+    @Volatile
+    private var paused = false
+
+    /** Set by [closeExchange] (tap outside the orb) to end the current exchange:
+     *  [interact]'s loops break out and the service falls back to passive wake
+     *  listening. Reset at the top of each [interact]. */
+    @Volatile
+    private var cancelExchange = false
+
+    /** The orb's two gestures, routed here from [ChatActivity] via
+     *  [VoiceOverlay.controller]. The service owns the reply stream and capture
+     *  loop, so it does the actual hold/resume and close. */
+    private val overlayController = object : VoiceOverlay.Controller {
+        override fun onTogglePause() = togglePause()
+        override fun onClose() = closeExchange()
+    }
+
     /** run_id of the reply whose events we're currently accepting (every
      *  AgentEvent carries one). Updated as events arrive; read on a barge to
      *  abandon the interrupted run. */
@@ -168,6 +189,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
         player = TtsPlayer(this).apply {
             onLevel = { rms -> onReplyLevel(rms) }
         }
+        VoiceOverlay.controller = overlayController
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -195,6 +217,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
     override fun onDestroy() {
         alive = false
         running = false
+        if (VoiceOverlay.controller === overlayController) VoiceOverlay.controller = null
         setPhase(VoiceOverlay.Phase.IDLE)
         chat?.close()
         chat = null
@@ -326,9 +349,48 @@ class WakeWordService : Service(), ChatSocket.Listener {
         }
     }
 
+    // ── Orb gestures (pause / close) ────────────────────────────────────────
+
+    /** Orb-core tap: hold or resume whichever half of the exchange is live. A
+     *  playing reply pauses in place (its stream re-queues the current sentence
+     *  for replay on resume); an open [capture] window freezes on its [paused]
+     *  check. Idle phases (thinking with nothing queued yet) just arm the hold
+     *  so the next spoken sentence waits for a resume. */
+    private fun togglePause() {
+        paused = !paused
+        val s = synchronized(replyLock) { replyStream }
+        if (paused) s?.pause() else s?.resume()
+        VoiceOverlay.setPaused(paused)
+    }
+
+    /** Tap outside the orb: end this exchange. Unblocks whatever [interact] is
+     *  waiting on (an in-flight reply's latch, the capture loop) so it breaks
+     *  out and the wake loop returns to passive "Hey Axon" listening. The wake
+     *  service itself keeps running. */
+    private fun closeExchange() {
+        cancelExchange = true
+        bargeMonitorAlive = false
+        if (paused) {
+            paused = false
+            VoiceOverlay.setPaused(false)
+        }
+        synchronized(replyLock) {
+            replyStream?.abort()
+            replyStream = null
+            replyLatch?.countDown()
+            replyLatch = null
+        }
+        player?.stop()
+    }
+
     // ── One wake interaction (command + follow-ups) ─────────────────────────
 
     private fun interact(rec: AudioRecord) {
+        cancelExchange = false
+        if (paused) {
+            paused = false
+            VoiceOverlay.setPaused(false)
+        }
         // One "Hey Axon" starts one conversation. The id is minted here, once,
         // and reused for every follow-up turn — so the whole interaction is
         // saved as a single, separately reviewable conversation. The NEXT wake
@@ -348,7 +410,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
         // next command, so the loop below skips the ack + mic capture and feeds
         // it straight to the agent. Null on a normal turn.
         var pending: String? = null
-        while (alive && !micHold) {
+        while (alive && !micHold && !cancelExchange) {
             val text: String
             val ackPhrase: String
             if (pending != null) {
@@ -500,13 +562,17 @@ class WakeWordService : Service(), ChatSocket.Listener {
         return words.size <= 12 && ref.containsAll(words)
     }
 
-    /** Captures a command from [rec], watched by [watcher]. */
+    /** Captures a command from [rec], watched by [watcher]. A [paused] hold
+     *  freezes the window: the mic is still drained (so a resume doesn't replay
+     *  buffered audio) but nothing is accumulated or ticked, so the watcher
+     *  can't time out and the clip stays paused until resume or [cancelExchange]. */
     private fun capture(rec: AudioRecord, watcher: SilenceWatcher): ByteArray {
         val out = ByteArrayOutputStream()
         val buf = ShortArray(WavRecorder.SAMPLE_RATE / 10)
-        while (alive && !micHold) {
+        while (alive && !micHold && !cancelExchange) {
             val n = rec.read(buf, 0, buf.size)
             if (n <= 0) break
+            if (paused) continue
             val bytes = ByteBuffer.allocate(n * 2).order(ByteOrder.LITTLE_ENDIAN)
             var acc = 0.0
             for (i in 0 until n) {

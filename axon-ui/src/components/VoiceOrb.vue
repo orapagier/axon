@@ -26,6 +26,7 @@ const props = defineProps({
   phase: { type: String, default: 'listening' }, // 'listening' | 'thinking' | 'speaking'
   analyser: { type: Object, default: null },
   speakSample: { type: Function, default: null }, // () => reply RMS 0..1, or null
+  paused: { type: Boolean, default: false }, // held: rest + pause glyph
 })
 
 const canvasEl = ref(null)
@@ -56,9 +57,12 @@ function draw() {
 
   // Real metered level for 'listening' (mic) and 'speaking' (reply audio);
   // synth for 'thinking' and any un-metered gap (browser-voice fallback, or
-  // before the first sample of a sentence arrives).
+  // before the first sample of a sentence arrives). Paused rests at a low
+  // steady glow so the hold reads as deliberate, not a stalled animation.
   let raw
-  if (props.phase === 'speaking' && props.speakSample) {
+  if (props.paused) {
+    raw = 0.05
+  } else if (props.phase === 'speaking' && props.speakSample) {
     const v = props.speakSample()
     raw = v == null ? synthesizeLevel() : Math.min(1, v * SPEAK_GAIN)
   } else if (props.analyser) {
@@ -134,6 +138,23 @@ function draw() {
   ctx2d.beginPath()
   ctx2d.arc(cx, cy, coreR * 0.55, 0, Math.PI * 2)
   ctx2d.fill()
+
+  // Pause glyph over the resting core while held.
+  if (props.paused) {
+    const barW = baseR * 0.16
+    const barH = baseR * 0.66
+    const gap = baseR * 0.16
+    ctx2d.globalAlpha = 0.92
+    ctx2d.fillStyle = colors.accent
+    const top = cy - barH / 2
+    const r = barW / 2
+    for (const x of [cx - gap - barW, cx + gap]) {
+      ctx2d.beginPath()
+      if (ctx2d.roundRect) ctx2d.roundRect(x, top, barW, barH, r)
+      else ctx2d.rect(x, top, barW, barH)
+      ctx2d.fill()
+    }
+  }
 
   raf = requestAnimationFrame(draw)
 }

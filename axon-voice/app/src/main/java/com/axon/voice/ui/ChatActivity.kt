@@ -88,8 +88,14 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
     /** Live phase/level from the wake service ([VoiceOverlay]), mirrored onto
      *  the orb while this page is in the foreground. Invoked from service
      *  threads, so every touch of a view is marshalled to the main thread. */
-    private val voiceListener = VoiceOverlay.Listener { phase, level ->
-        main.post { applyVoiceState(phase, level) }
+    private val voiceListener = object : VoiceOverlay.Listener {
+        override fun onState(phase: VoiceOverlay.Phase, level: Float) {
+            main.post { applyVoiceState(phase, level) }
+        }
+
+        override fun onPaused(paused: Boolean) {
+            main.post { applyPaused(paused) }
+        }
     }
 
     /** The orb phase currently shown, so [applyVoiceState] only touches the orb
@@ -102,6 +108,7 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
     private val hideOrb = Runnable {
         voiceOverlay.visibility = View.GONE
         voiceOrb.setPhase(VoiceOrbView.Phase.IDLE)
+        voiceOrb.setPaused(false)
         shownPhase = null
     }
 
@@ -194,6 +201,13 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
         sendBtn.setOnClickListener { onSendTap() }
         wakeBtn.setOnClickListener { setWakeEnabled(!WakeWordService.running) }
 
+        // Orb gestures: tap the core to hold/resume the reply + follow-up window,
+        // tap anywhere outside it (the orb periphery or the scrim) to close the
+        // exchange. The service does the work via VoiceOverlay.controller.
+        voiceOrb.onCenterTap = { VoiceOverlay.controller?.onTogglePause() }
+        voiceOrb.onOutsideTap = { VoiceOverlay.controller?.onClose() }
+        voiceOverlay.setOnClickListener { VoiceOverlay.controller?.onClose() }
+
         handleIntent(intent)
     }
 
@@ -223,6 +237,7 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
         // (or is mid-flight) while this page was away.
         VoiceOverlay.listener = voiceListener
         applyVoiceState(VoiceOverlay.phase, -1f)
+        applyPaused(VoiceOverlay.paused)
         if (!prefs.configured) {
             startActivity(Intent(this, SettingsActivity::class.java))
             return
@@ -330,14 +345,30 @@ class ChatActivity : AppCompatActivity(), ChatSocket.Listener {
                 }
             )
             voiceOverlayStatus.setText(
-                when (phase) {
-                    VoiceOverlay.Phase.LISTENING -> R.string.status_recording
-                    VoiceOverlay.Phase.THINKING -> R.string.status_thinking
-                    else -> R.string.status_speaking
-                }
+                if (VoiceOverlay.paused) R.string.status_paused else statusRes(phase)
             )
         }
         if (level >= 0f) voiceOrb.setLevel(level)
+    }
+
+    private fun statusRes(phase: VoiceOverlay.Phase): Int = when (phase) {
+        VoiceOverlay.Phase.LISTENING -> R.string.status_recording
+        VoiceOverlay.Phase.THINKING -> R.string.status_thinking
+        else -> R.string.status_speaking
+    }
+
+    /** Reflect the exchange's hold state on the orb: the pause glyph + resting
+     *  glow, and a "Paused" label that reverts to the live phase on resume. */
+    private fun applyPaused(paused: Boolean) {
+        voiceOrb.setPaused(paused)
+        val phase = shownPhase
+        voiceOverlayStatus.setText(
+            when {
+                paused -> R.string.status_paused
+                phase != null -> statusRes(phase)
+                else -> R.string.status_recording
+            }
+        )
     }
 
     // ── Dictation ───────────────────────────────────────────────────────────

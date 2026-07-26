@@ -4,6 +4,7 @@
     <string name="status_recording">Listening…</string>
     <string name="status_thinking">Thinking…</string>
     <string name="status_speaking">Speaking…</string>
+    <string name="status_paused">Paused — tap the orb to resume</string>
     <string name="status_offline">Not connected — check Settings</string>
     <string name="wake_toggle">“Hey Axon” always listening</string>
     <string name="settings_title">Settings</string>

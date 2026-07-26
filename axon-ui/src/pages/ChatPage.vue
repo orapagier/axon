@@ -815,6 +815,12 @@ function onWakeEnrolled() {
 // only the two wake-triggered recording entry points do.
 const handsFreeActive = ref(false)
 const handsFreePhase = ref('listening') // 'listening' | 'thinking' | 'speaking'
+// Orb-core tap hold: the reply is paused and the follow-up/wake capture window
+// freezes, so one toggle holds whichever half of the exchange is live.
+const handsFreePaused = ref(false)
+// While held during a listening window: the capture was stopped, so a resume
+// reopens a fresh one rather than trying to un-stop a MediaRecorder.
+let listeningHeld = false
 
 // The mic ('listening') feeds the orb the wake stream's own AnalyserNode
 // (wakeword.js) — a passive read that never touches playback. The 'speaking'
@@ -824,16 +830,52 @@ const orbAnalyser = computed(() =>
   handsFreePhase.value === 'listening' ? wake?.analyser || null : null
 )
 
-const handsFreeStatusText = computed(
-  () =>
-    ({ listening: 'Listening…', thinking: 'Thinking…', speaking: 'Axon is speaking…' })[handsFreePhase.value] || ''
-)
+const handsFreeStatusText = computed(() => {
+  if (handsFreePaused.value) return 'Paused — tap the orb to resume'
+  return (
+    { listening: 'Listening…', thinking: 'Thinking…', speaking: 'Axon is speaking…' }[handsFreePhase.value] || ''
+  )
+})
 
 function endHandsFree() {
   handsFreeActive.value = false
+  handsFreePaused.value = false
+  listeningHeld = false
   wake?.stopThinking()
   stopBargeMonitor()
   bargeBusy = false
+}
+
+// ── Orb-core tap: hold / resume the exchange ─────────────────────────────────
+// A playing reply pauses in place (browser <audio> resumes mid-sentence); an
+// open listening window is stopped and reopened on resume. A held reply never
+// reaches its natural-end callback, so the follow-up window simply doesn't open
+// until resume — the two halves hold together off one toggle.
+function toggleHandsFreePause() {
+  if (!handsFreeActive.value) return
+  if (handsFreePaused.value) resumeHandsFree()
+  else pauseHandsFree()
+}
+
+function pauseHandsFree() {
+  handsFreePaused.value = true
+  stopBargeMonitor()
+  pauseReplyAudio() // no-op when nothing is playing
+  if (recState.value === 'recording') {
+    wake?.cancelSilenceWatch()
+    stopRecording(true) // discard — don't transcribe a half-spoken clip
+    listeningHeld = true
+  }
+}
+
+function resumeHandsFree() {
+  handsFreePaused.value = false
+  resumeReplyAudio()
+  if (listeningHeld) {
+    listeningHeld = false
+    startFollowupCapture() // reopen a fresh listening window (chime + raised bar)
+  }
+  if (handsFreePhase.value === 'speaking' && bargeOn() && !bargeBusy) startBargeMonitor()
 }
 
 // The overlay's close button: bail out of hands-free back to the normal chat
@@ -964,6 +1006,7 @@ function followupClear() {
     wakeEnabled.value &&
     wake?.running &&
     !disabled.value &&
+    !handsFreePaused.value &&
     recState.value === 'idle' &&
     speakingIdx.value < 0 &&
     !document.hidden
@@ -2085,12 +2128,14 @@ watch(disabled, (newVal) => {
       <div
         v-if="handsFreeActive"
         class="handsfree-overlay"
+        title="Tap the orb to pause; tap outside to close"
+        @click="dismissHandsFree"
       >
         <button
           class="handsfree-close"
           type="button"
           title="Close (keeps “Hey Axon” listening)"
-          @click="dismissHandsFree"
+          @click.stop="dismissHandsFree"
         >
           <svg
             width="18"
@@ -2112,6 +2157,9 @@ watch(disabled, (newVal) => {
           :phase="handsFreePhase"
           :analyser="orbAnalyser"
           :speak-sample="speakSample"
+          :paused="handsFreePaused"
+          class="handsfree-orb-tap"
+          @click.stop="toggleHandsFreePause"
         />
         <div class="handsfree-status">
           {{ handsFreeStatusText }}
@@ -2960,6 +3008,11 @@ watch(disabled, (newVal) => {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: color-mix(in srgb, var(--text) 72%, transparent);
+}
+
+/* The orb is the pause/resume target; the scrim around it closes. */
+.handsfree-orb-tap {
+  cursor: pointer;
 }
 
 /* ── Read aloud ─────────────────────────────────────────────────────────── */
