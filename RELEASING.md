@@ -12,16 +12,30 @@ How to cut a GitHub release and how end users install it.
 > packaging scripts below, which build clean bundles (`.env.example` only, no
 > keys) and abort if any secret sneaks in.
 
-**Linux bundle** (`axon-linux-x86_64.tar.gz`) — run under WSL or Git Bash from the repo root:
+**Linux bundle** (`axon-linux-x86_64.tar.gz`) — run under WSL from the repo root:
 
 ```bash
 bash scripts/package-release.sh
 ```
 
-Builds the Vue dashboard, then a **static musl** `axon` binary (portable across
-distros), and assembles `axon-linux-x86_64.tar.gz`. Needs `node`/`npm` and either
-[`cross`](https://github.com/cross-rs/cross) (Docker) or the
-`x86_64-unknown-linux-musl` Rust target.
+Builds the Vue dashboard, then the `axon` binary, and assembles
+`axon-linux-x86_64.tar.gz`. Needs `node`/`npm` and a Rust toolchain.
+
+**Pick your binary flavour** (the script auto-selects, `--musl` / `--native` force it):
+
+| Flavour | Runs on | How to get it |
+|---------|---------|---------------|
+| **static musl** (recommended) | **any** x86_64 Linux, any glibc version | one-time: `rustup target add x86_64-unknown-linux-musl && sudo apt-get install -y musl-tools` — or have `cross` + Docker |
+| native glibc (fallback) | only glibc **≥ the build host's** (build on Ubuntu 24.04 ⇒ won't run on 22.04) | nothing extra |
+
+This project builds cleanly for musl (TLS is rustls+ring, no OpenSSL; the only C
+dep, `libsqlite3-sys`, is bundled). For a public download, prefer **musl** so
+users on any distro version can run it. If you skip the musl setup the script
+still produces a working glibc binary and prints exactly how to upgrade to musl.
+
+> The UI build step auto-detects a Windows-mounted repo (`/mnt/...` under WSL) and
+> builds the dashboard on the Linux filesystem, avoiding the shared-`node_modules`
+> rollup error (`Cannot find module @rollup/rollup-linux-x64-gnu`).
 
 **Windows bundle** (`axon-windows-x86_64.zip`) — run in PowerShell from the repo root:
 

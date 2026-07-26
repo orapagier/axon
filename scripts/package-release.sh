@@ -28,46 +28,108 @@ DIST="$ROOT_DIR/dist-release"
 OUT="$ROOT_DIR/axon-linux-x86_64.tar.gz"
 TARGET="x86_64-unknown-linux-musl"
 
-G='\033[0;32m'; Y='\033[1;33m'; C='\033[0;36m'; B='\033[1m'; N='\033[0m'
+R='\033[0;31m'; G='\033[0;32m'; Y='\033[1;33m'; C='\033[0;36m'; B='\033[1m'; N='\033[0m'
 log()  { echo -e "${G}[✓]${N} $*"; }
 info() { echo -e "${C}[→]${N} $*"; }
 warn() { echo -e "${Y}[!]${N} $*"; }
+err()  { echo -e "${R}[✗]${N} $*" >&2; exit 1; }
 step() { echo -e "\n${B}━━━ $* ━━━${N}"; }
+
+# ── Flags ────────────────────────────────────────────────────────────────────
+# BUILD_MODE: auto (prefer musl, fall back to glibc) | musl (require) | native (glibc)
+BUILD_MODE="auto"
+for arg in "$@"; do
+    case "$arg" in
+        --musl)   BUILD_MODE="musl" ;;
+        --native) BUILD_MODE="native" ;;
+        --help|-h)
+            echo "Usage: bash scripts/package-release.sh [--musl|--native]"
+            echo "  (default) auto : static musl if available, else native glibc"
+            echo "  --musl         : require a static musl build (fails if not set up)"
+            echo "  --native       : native glibc build (works on glibc >= this host's)"
+            exit 0 ;;
+        *) err "Unknown option: $arg (try --help)" ;;
+    esac
+done
 
 # ── 1. Build the dashboard (Vue) ─────────────────────────────────────────────
 step "Building dashboard (axon-ui)"
-pushd axon-ui >/dev/null
-if [ ! -d node_modules ]; then
+UI_SRC="$ROOT_DIR/axon-ui"
+UI_BUILD="$UI_SRC"
+# When the repo lives on a Windows mount (/mnt/... under WSL), axon-ui/node_modules
+# is shared with Windows and holds the wrong platform's native rollup/esbuild binary
+# (e.g. rollup-win32-x64-msvc, not rollup-linux-x64-gnu) — a Linux build then fails
+# with "Cannot find module @rollup/rollup-linux-x64-gnu". Build the UI on the Linux
+# filesystem in an isolated dir with its own Linux node_modules — the same trick
+# deployaxongcp.sh uses. Sources are mirrored with tar (no rsync dependency); the
+# isolated node_modules/dist are preserved across runs.
+case "$ROOT_DIR" in
+    /mnt/*)
+        if [ "$(uname -s)" = "Linux" ]; then
+            UI_BUILD="${XDG_CACHE_HOME:-$HOME/.cache}/axon-ui-build"
+            info "Windows-mounted repo — building UI on the Linux filesystem:"
+            info "  $UI_BUILD"
+            mkdir -p "$UI_BUILD"
+            ( cd "$UI_SRC" && tar --exclude=node_modules --exclude=dist --exclude=graphify-out -cf - . ) \
+                | ( cd "$UI_BUILD" && tar -xf - )
+        fi ;;
+esac
+
+pushd "$UI_BUILD" >/dev/null
+# npm ci is expensive; run it only when the lockfile actually changed.
+NM_STAMP="node_modules/.axon-install-stamp"
+if [ ! -d node_modules ] || ! cmp -s package-lock.json "$NM_STAMP" 2>/dev/null; then
     info "npm ci ..."
     npm ci --no-fund --no-audit
+    cp package-lock.json "$NM_STAMP" 2>/dev/null || true
 fi
 AXON_NODE_TYPES_OUT="$ROOT_DIR/crates/axon-agent/assets/node_types.json" npm run build
 popd >/dev/null
-rm -rf crates/axon-agent/static
-mkdir -p crates/axon-agent/static
-cp -r axon-ui/dist/* crates/axon-agent/static/
+rm -rf "$ROOT_DIR/crates/axon-agent/static"
+mkdir -p "$ROOT_DIR/crates/axon-agent/static"
+cp -r "$UI_BUILD/dist/"* "$ROOT_DIR/crates/axon-agent/static/"
 log "Dashboard built and synced into crates/axon-agent/static"
 
-# ── 2. Build the agent (static musl binary) ──────────────────────────────────
-step "Building agent (release, $TARGET)"
+# ── 2. Build the agent ───────────────────────────────────────────────────────
+# Prefer a static musl binary (runs on ANY Linux, any glibc version — ideal for a
+# public release). This project builds cleanly for musl: TLS is rustls+ring (no
+# openssl), and the only C dependency, libsqlite3-sys, is bundled and compiles
+# with musl-gcc. Fall back to a native glibc build if the musl toolchain isn't set
+# up — that binary works, but only on glibc >= the build host's (e.g. built on
+# Ubuntu 24.04 it won't run on 22.04). To force one or the other: --musl / --native.
+step "Building agent (release)"
 BIN=""
 INSTALLED_TARGETS="$(rustup target list --installed 2>/dev/null || true)"
-if command -v cross >/dev/null 2>&1; then
-    info "Using cross (Docker) ..."
+docker_up() { docker info >/dev/null 2>&1; }
+have_musl_target() { case "$INSTALLED_TARGETS" in *"$TARGET"*) return 0;; *) return 1;; esac; }
+
+build_glibc() {
+    warn "Building a NATIVE glibc binary (not statically linked)."
+    warn "It needs glibc >= this host's version, so users on older distros may see"
+    warn "  \"version 'GLIBC_2.xx' not found\". For a run-anywhere binary, enable musl:"
+    warn "      rustup target add $TARGET && sudo apt-get install -y musl-tools"
+    warn "  then re-run this script (or pass --musl)."
+    cargo build --release -p axon
+    BIN="target/release/axon"
+}
+
+if [ "$BUILD_MODE" != "native" ] && command -v cross >/dev/null 2>&1 && docker_up; then
+    info "Using cross (Docker) → static musl ..."
     cross build --release --target "$TARGET" -p axon
     BIN="target/$TARGET/release/axon"
+elif [ "$BUILD_MODE" != "native" ] && have_musl_target && command -v musl-gcc >/dev/null 2>&1; then
+    info "Using cargo target $TARGET → static musl ..."
+    cargo build --release --target "$TARGET" -p axon
+    BIN="target/$TARGET/release/axon"
+elif [ "$BUILD_MODE" = "musl" ]; then
+    err "--musl requested but the musl toolchain isn't ready. Set it up with:
+      rustup target add $TARGET && sudo apt-get install -y musl-tools"
 else
-    case "$INSTALLED_TARGETS" in
-        *"$TARGET"*)
-            info "Using cargo with target $TARGET ..."
-            cargo build --release --target "$TARGET" -p axon
-            BIN="target/$TARGET/release/axon" ;;
-        *)
-            warn "No musl toolchain — falling back to a native release build."
-            warn "The resulting binary is NOT statically linked and needs a matching glibc."
-            cargo build --release -p axon
-            BIN="target/release/axon" ;;
-    esac
+    if [ "$BUILD_MODE" != "native" ] && have_musl_target && ! command -v musl-gcc >/dev/null 2>&1; then
+        warn "musl target is installed but 'musl-gcc' is missing (needed to link libsqlite3-sys)."
+        warn "Install it with:  sudo apt-get install -y musl-tools"
+    fi
+    build_glibc
 fi
 [ -f "$BIN" ] || { echo "Build did not produce $BIN"; exit 1; }
 log "Binary: $BIN"
