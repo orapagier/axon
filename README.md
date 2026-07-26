@@ -10,6 +10,8 @@
 
 Axon is a single self-contained process that acts as the operating intelligence for your digital life. It bridges raw LLM power and real-world action: reading and replying to messages, executing shell commands and SSH, calling Gmail/Calendar/Drive/Outlook/Instagram/CRM, running scheduled jobs, watching sources for changes, and chaining those steps together in visual workflows — all behind a live web dashboard.
 
+This document is the complete guide: architecture, prerequisites, installing or building it, configuration, the dashboard, the model router, memory, tools, integrations, scheduling, workflows, security, deployment, cutting releases, and troubleshooting.
+
 ---
 
 ## Table of Contents
@@ -31,6 +33,7 @@ Axon is a single self-contained process that acts as the operating intelligence 
 - [🌐 The Dashboard](#-the-dashboard)
 - [📦 Production Deployment](#-production-deployment)
 - [🧰 Development](#-development)
+- [🚢 Releasing](#-releasing)
 - [🩹 Troubleshooting](#-troubleshooting)
 - [📄 License](#-license)
 - [📚 Further Reading](#-further-reading)
@@ -45,8 +48,8 @@ Axon is a single self-contained process that acts as the operating intelligence 
 - **Deep, layered memory.** Short-term SQLite history per session, long-term Qdrant vector recall (always presented as *hints to verify with tools*, never ground truth), and compressed searchable tool observations.
 - **Real tools.** Shell, SSH, HTTP, web search, image generation/processing, parallel workers, cron jobs, watchers, and workflows.
 - **Self-correcting.** A validation pipeline (claim guard, refusal nudge, blank/raw-syntax guards, and an optional secondary-LLM quality check) catches hallucinations and tool misuse before anything is sent publicly.
-- **Live dashboard.** Mobile-friendly Vue 3 UI for chat, models, tools, services, memory, files, tasks, watchers, and the visual workflow canvas — all changeable live without a restart.
-- **Secure by design.** Bearer master-key auth, AES-256-GCM encryption of all secrets at rest, shell blocklist, path-traversal protection, and HMAC-verified webhooks.
+- **Live dashboard.** Mobile-friendly Vue 3 UI for chat, models, tools, services, memory, files, tasks, watchers, and the visual workflow canvas — all changeable live without a restart. Installable as a phone app (PWA).
+- **Secure by design.** Bearer master-key auth, fail-closed AES-256-GCM encryption of all secrets at rest, shell blocklist, path-traversal protection, and HMAC-verified webhooks.
 
 ---
 
@@ -71,7 +74,7 @@ Axon is a single self-contained process that acts as the operating intelligence 
                                                      OpenAI-compatible, Ollama, …)
 ```
 
-The agent is the only process users talk to. It owns the dashboard, webhooks, the reasoning loop, **and** the integration tools themselves (Gmail, Calendar, Drive, OneDrive, Outlook, Facebook pages, Instagram, CRM, etc.), which run in-process. Axon can still connect to **external** MCP servers you add from the dashboard's Services/MCP page (those continue to use SSE). **Qdrant** is the only external dependency, used for long-term semantic memory.
+The agent is the only process users talk to. It owns the dashboard, webhooks, the reasoning loop, **and** the integration tools themselves (Gmail, Calendar, Drive, OneDrive, Outlook, Facebook pages, Instagram, CRM, etc.), which run in-process — the integrations are compiled directly into the agent (no second process, no SSE hop, no extra port). Axon can still connect to **external** MCP servers you add from the dashboard's Services/MCP page (those continue to use SSE). **Qdrant** is the only external dependency, used for long-term semantic memory.
 
 ---
 
@@ -86,11 +89,13 @@ The agent is the only process users talk to. It owns the dashboard, webhooks, th
 | `crates/axon-image/` | Image-processing/generation library (`image_processor`) used by the agent's `image_tool`. |
 | `axon-ui/` | **Web dashboard** (Vue 3 + Vite + Vue Flow). Built to static files and served by `axon-agent`. |
 | `qdrant/` | Deployment scripts for the Qdrant vector DB (systemd units, backup/health/trim timers, collection setup). |
+| `scripts/` | Release packaging (`package-release.sh`/`.ps1`) and end-user install scripts (`install.sh`/`install.ps1`). |
 | `deployaxongcp.sh`, `deploycham*.sh`, `deployfrontend.sh` | Production build + deploy scripts (build release binaries, bundle, ship to the server). |
 | `run.bat` | One-click local Windows build-and-run (builds UI, copies static, runs the agent). |
 | `crates/axon-agent/config/models.toml` | **Model catalog** — the source of truth for which LLMs Axon can use. |
 | `crates/axon-agent/memory/schema.sql` | SQLite schema applied on startup. |
-| `USER_GUIDE.md` | The deep operator manual (everything in this README and more, in narrative form). |
+
+The various `.zip`/`.tar.gz` files you may see after building are release/deploy archives and can be ignored for day-to-day operation.
 
 ---
 
@@ -105,6 +110,34 @@ The agent is the only process users talk to. It owns the dashboard, webhooks, th
 ---
 
 ## 🚀 Quick Start
+
+There are two ways to get Axon running: install a prebuilt release (fastest, no toolchain needed), or build from source (for development).
+
+### Option A — Install a prebuilt release
+
+On first install this **auto-generates a valid `AXON_MASTER_KEY`** (boot refuses a blank/placeholder key) and prints it — save it.
+
+**Linux (Debian/Ubuntu)** — straight from GitHub:
+
+```bash
+curl -fsSL https://github.com/orapagier/axon/releases/latest/download/install.sh | bash
+```
+
+Installs a `systemd` service (`axon-agent`), optionally installs Qdrant, and starts it. Options: `--dir PATH`, `--version vX.Y.Z`, `--file PATH`, `--with-qdrant` / `--no-qdrant`, `--no-service`.
+
+**Windows** — in PowerShell:
+
+```powershell
+irm https://github.com/orapagier/axon/releases/latest/download/install.ps1 | iex
+```
+
+Installs to `%LOCALAPPDATA%\Axon`, registers a hidden **Startup** launcher (runs on login), and starts it. Options: `-Dir PATH`, `-Version vX.Y.Z`, `-File PATH`, `-NoStartup`, `-NoStart`.
+
+Either installer also accepts a local artifact already downloaded into the current directory instead of fetching from GitHub (see [Releasing](#-releasing) for the artifact names).
+
+After install, open **http://localhost:3000**, add at least one LLM provider key to `.env` (`core/.env` on Linux, the install dir on Windows), and restart Axon.
+
+### Option B — Build from source
 
 The fastest path on Windows:
 
@@ -162,7 +195,9 @@ Loaded automatically from (in order) `$AXON_ENV_FILE`, the working-directory `.e
 |----------|---------|---------|
 | `AXON_PORT` | `3000` | Dashboard / API / webhook listen port. |
 | `AXON_DB_PATH` | `memory/axon.db` | SQLite database path. |
-| `AXON_MASTER_KEY` | *(unset)* | **Dashboard auth + secret-encryption key.** See [Security](#-security). |
+| `AXON_MASTER_KEY` | *(unset)* | **Dashboard auth + secret-encryption key.** Boot refuses to start without it unless `AXON_DEV=1`. See [Security](#-security). |
+| `AXON_MASTER_KEY_OLD` | *(unset)* | Previous master key — set for **one boot** to rotate all stored secrets onto a new `AXON_MASTER_KEY`, then remove it. See [Security](#-security). |
+| `AXON_DEV` | *(unset)* | Set to `1` to allow boot with no/weak `AXON_MASTER_KEY` (falls back to a public, insecure key). Local development only. |
 | `AXON_ENV_FILE` | *(unset)* | Explicit path to an env file to load first. |
 | `AXON_PUBLIC_BASE_URL` / `AXON_CALLBACK_HOST` | *(unset)* | Public base URL for OAuth redirects & Instagram media. |
 | `QDRANT_URL` | *(provider default)* | Qdrant endpoint for long-term memory. |
@@ -170,6 +205,7 @@ Loaded automatically from (in order) `$AXON_ENV_FILE`, the working-directory `.e
 | `TELOXIDE_TOKEN` | *(unset)* | Telegram bot token (or `messaging.telegram_token` in settings). |
 | `DISCORD_TOKEN` | *(unset)* | Discord bot token (or `messaging.discord_token`). |
 | `SLACK_BOT_TOKEN` | *(unset)* | Slack bot token (or `messaging.slack_token`). |
+| `AXON_EXPR_ENV` | *(unset)* | Comma-separated allowlist of process env vars exposed to workflow expressions (`$env`). See [Scheduler, Watchers & Workflows](#-scheduler-watchers--workflows). |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | *(unset)* | If set, enables OpenTelemetry tracing export. |
 | `RUST_LOG` | `axon=info` | Standard `tracing` log filter. |
 | `AXON_LOG_FORMAT` | *(unset)* | Set to `json` for structured JSON log lines (one object per line — easy to ship to a log aggregator). Unset stays human-readable, for local `cargo run`. |
@@ -215,7 +251,7 @@ Most behavior is tunable live via the **Settings** page (stored in the `settings
 
 - `agent.max_iterations` (`20`), `agent.max_parallel_tools` (`5`), `agent.tool_timeout_secs` (`30`)
 - `agent.run_timeout_secs` (`300`) — total wall-clock budget for one run; the model-failover chain is bounded only by this.
-- `agent.quality_check` (`true`), `agent.allow_tool_writing` (`true`)
+- `agent.quality_check` (`true`), `agent.allow_tool_writing` (`true`), `agent.temp_tool_max_retries` (`2`)
 - `agent.system_prompt` — the master system prompt (editable live). Ends with a `SPIRITUAL & BIBLICAL QUESTIONS` worldview section; `normalize.sql` re-appends it on boot if deleted, so edit its wording in place instead.
 - `router.error_threshold` (`2`, consecutive errors before a model is parked until midnight), `router.model_call_timeout_secs` (`30`, flat per-attempt timeout; overridable per model).
 - `memory.short_term_max_msgs` (`50`), `memory.long_term_top_k` (`5`).
@@ -278,7 +314,7 @@ Memories are always presented to the model as **hints to verify with tools**, ne
 
 | Tool | What it does |
 |------|-------------|
-| `shell_tool` | Runs `bash -c <cmd>` with a per-call timeout and streamed output. A blocklist rejects catastrophic commands (`rm -rf /`, `mkfs`, `dd if=`, `chmod -R`, `iptables`, `ufw`, `passwd`, `userdel`, …). |
+| `shell_tool` | Runs `bash -c <cmd>` with a per-call timeout and streamed output. A blocklist rejects catastrophic commands (see [Security](#-security) for the exact list). |
 | `ssh_tool` | Run commands / transfer files on remote servers configured on the SSH page; credentials encrypted at rest. |
 | `http_request` | Arbitrary HTTP requests plus a library of saved HTTP requests. |
 | `web_search` | Web search with quota-rotating accounts. |
@@ -322,7 +358,46 @@ Set the relevant token (env var or `messaging.*` setting) and restart:
 
 - **Scheduler** (Tasks page): natural-language or 6-field cron schedules ("every 5 minutes", "daily at 9am", "every Monday at 9am"). NL is converted to cron via the `router` model. Fired jobs run as agent tasks and can send reminders using `scheduler.nudge_prompt`.
 - **Watchers** (Watchers page): poll a source (e.g. an email inbox, a shell command's output) and notify the owner when something new/changed appears, with quiet-hours support.
-- **Workflows** (Workflows page): a visual DAG of nodes (Trigger, Shell, JS, Synapse/Axon agent node, IF, Switch) with edges, built on [Vue Flow](https://vueflow.dev/). Triggerable manually, on a schedule, or via `POST /webhook/external/:workflow_id`. On completion, a workflow can hand its output to the agent for post-processing. The **Stimulus** (Gmail) trigger supports optional **Subject** and **Body / Keyword** filters — applied server-side in the Gmail search query, so non-matching mail never fires the workflow; leave them empty to fire on every new email.
+- **Workflows** (Workflows page): a visual DAG of nodes (Trigger, Shell, JS, Synapse/Axon agent node, IF, Switch) with edges, built on [Vue Flow](https://vueflow.dev/). Triggerable manually, on a schedule, or via `POST /webhook/external/:workflow_id`. On completion, a workflow can hand its output to the agent for post-processing. The **Stimulus** (Gmail) trigger takes optional **Subject** and **Body / Keyword** filters: plain text (no `{{ }}` expressions, since a trigger has no upstream input) that's appended to the Gmail search query and matched server-side — the subject filter scopes to the subject line, the body/keyword filter matches anywhere in the message. Empty filters fire on every new email in the label; multi-word input uses Gmail AND semantics (every word must match). Both the live poller and the manual "Execute Step" test fetch apply the filters identically.
+
+### Expression helpers
+
+Any node field can embed an expression in `{{ … }}`, and the **JS/Code node** runs full JavaScript. Both surfaces share the same helper globals so `{{ }}` fields and Code nodes behave identically:
+
+| Helper | What it is |
+|---|---|
+| `$json` / `$input` | The previous node's output object (n8n's `$input.first().json`). |
+| `$node["Name"].data` | A specific upstream node's output (also `.json` / `.output`). Resolves by node name or id; `.error`, `.name`, `.id`, `.type` are also available. |
+| `$items` | Array of `{ json, data, name, id, type }` for every preceding node. |
+| `$prevNode` | Metadata (`name`/`id`/`type` + output) of the immediately preceding node. |
+| `$now` | Current timestamp, ISO-8601 string (UTC). Use `new Date($now)` for date math. |
+| `$today` | Current date, `YYYY-MM-DD`. |
+| `$jmespath(obj, expr)` | Run a [JMESPath](https://jmespath.org) query over any object/array. Invalid queries return `null` (never a run failure). |
+| `$workflow` | `{ id }` of the running workflow (Code node also exposes `$execution.workflowId`, `$nodeId`, `$nodeName`). |
+| `$env` | Whitelisted environment variables — **empty by default**. Only names listed in `AXON_EXPR_ENV` (comma-separated) are exposed; `AXON_MASTER_KEY` is never exposed even if listed. |
+
+Examples:
+
+```js
+{{ $json.email.toUpperCase() }}
+{{ $node["HTTP Request"].data.items.length }}
+{{ $jmespath($node["API"].data, "results[?score > `0.8`].id") }}
+{{ $env.REGION }}          // requires AXON_EXPR_ENV=REGION
+```
+
+**n8n → Axon cheat sheet**
+
+| n8n | Axon |
+|---|---|
+| `{{ $json.field }}` | `{{ $json.field }}` (same) |
+| `{{ $node["X"].json.field }}` | `{{ $node["X"].data.field }}` (`.json` also works) |
+| `{{ $now }}` (Luxon DateTime) | `{{ $now }}` (ISO string; wrap in `new Date($now)`) |
+| `{{ $today }}` | `{{ $today }}` (same) |
+| `{{ $jmespath($json, "…") }}` | `{{ $jmespath($json, "…") }}` (same) |
+| `{{ $env.VAR }}` | `{{ $env.VAR }}` — allow it first via `AXON_EXPR_ENV=VAR` |
+| `{{ $items("X") }}` | `{{ $node["X"].data }}` (a node's items) or `$items` (all upstream) |
+
+> **Security note:** unlike n8n, `$env` is deny-by-default. Nothing from the process environment is visible to expressions until you opt each variable in through `AXON_EXPR_ENV`, and the master key is hard-blocked regardless.
 
 ---
 
@@ -331,12 +406,14 @@ Set the relevant token (env var or `messaging.*` setting) and restart:
 - **Dashboard auth:** every `/api/*` route and the `/ws` WebSocket require the master key.
   - REST clients send `Authorization: Bearer <AXON_MASTER_KEY>`.
   - The browser WebSocket sends it as a (URL-encoded) `?api_key=` query parameter.
-  - **If `AXON_MASTER_KEY` is unset, auth is disabled entirely** (open dashboard). This is intended only for local dev — **always set a strong `AXON_MASTER_KEY` in production.**
-- **Secret encryption:** API keys, SSH credentials, and MCP keys are encrypted with **AES-256-GCM** (key derived from `AXON_MASTER_KEY`) before being written to SQLite.
-  - ⚠️ If `AXON_MASTER_KEY` is unset, encryption falls back to an insecure all-zeros key (and logs a warning). Changing the master key after secrets are stored makes existing secrets undecryptable — set it once, up front.
+  - **If `AXON_MASTER_KEY` is unset, boot refuses to start** rather than protecting secrets with a public development key — set a strong key, or set `AXON_DEV=1` to explicitly opt into the insecure default for local development only.
+- **Secret encryption:** API keys, SSH credentials, and MCP keys are encrypted with **AES-256-GCM** before being written to SQLite. The key is derived from `AXON_MASTER_KEY` with **SHA-256** (any key length is accepted; short/long keys are no longer silently truncated or padded). New ciphertext is tagged with a `v2:` prefix.
+  - **Seamless upgrade:** secrets written under the older truncate/pad scheme are still read correctly and are re-encrypted to the `v2:` scheme in place on the next boot. A `v2:` value that fails to decrypt (wrong/changed master key) resolves to *empty* — the credential must be re-entered — instead of leaking the raw ciphertext.
+  - **Key rotation:** changing `AXON_MASTER_KEY` normally leaves previously stored secrets unreadable. To rotate deliberately, set `AXON_MASTER_KEY_OLD` to the previous key for **one boot** alongside the new `AXON_MASTER_KEY` — every stored secret is re-encrypted under the new key on that boot — then remove `AXON_MASTER_KEY_OLD`.
+- **Credential test:** the Services page has a **Test** button per stored credential (`POST /api/credentials/:id/test`) that makes a cheap, service-specific call and reports validity without ever returning the secret. Services without a known probe report "present but not testable".
 - **File downloads** are restricted to the staging directory (`data/files`) via canonical-path validation, preventing path traversal.
 - **Webhook authenticity:** Facebook events are verified with HMAC-SHA256 against the app secret; the verify token gates subscription.
-- **Shell blocklist scope (be aware):** the shell guardrail blocks the catastrophic patterns listed above but, by design, still permits *scoped* destructive commands (e.g. `rm -rf ./build`). Treat the agent's shell access as you would a trusted operator account; do not expose the dashboard publicly without a master key, and run it as a least-privilege user.
+- **Shell blocklist scope (be aware):** the shell guardrail blocks the most catastrophic patterns (`rm -rf /`, `rm -rf /*`, `mkfs`, `dd if=`, `chmod -R`, `chown -R`, `iptables`, `ufw`, `passwd`, `userdel`, `groupdel`, …) but, by design, still permits *scoped* destructive commands (e.g. `rm -rf ./build`). Treat the agent's shell access as you would a trusted operator account; do not expose the dashboard publicly without a master key, and run it as a least-privilege user.
 
 ---
 
@@ -376,7 +453,7 @@ All `/api/*` and `/ws` routes require the master key (see [Security](#-security)
 | `GET` | `/api/integrations/status` |
 | `POST` | `/api/integrations/:platform/url` · `/api/integrations/:platform/disconnect` |
 | `GET` | `/api/messaging/status` · `POST /api/messaging/reconnect/:platform` |
-| `GET`/`POST` | `/api/credentials` · `DELETE /api/credentials/:id` |
+| `GET`/`POST` | `/api/credentials` · `DELETE /api/credentials/:id` · `POST /api/credentials/:id/test` |
 | `GET`/`POST` | `/api/ssh_servers` · `DELETE /api/ssh_servers/:name` |
 | `GET`/`POST` | `/api/websearch/accounts` · `DELETE /api/websearch/accounts/:id` · `POST /api/websearch/reset` |
 
@@ -436,6 +513,10 @@ To rebuild the dashboard after UI changes:
 cd axon-ui && npm run build && cp -r dist/* ../crates/axon-agent/static/
 ```
 
+### Installing the dashboard as an app (PWA)
+
+The dashboard ships a web-app manifest, so any HTTPS deployment is installable as an app — no store, no separate build. On Android Chrome, open the dashboard URL, then menu (⋮) → **Add to Home screen** → **Install** (Chrome may also offer an install banner on its own). On iOS Safari use Share → **Add to Home Screen**. The installed app opens standalone (no browser chrome) with the Axon icon and dark theme. Requirements: the site must be served over HTTPS (see [Production Deployment](#-production-deployment)) — plain `http://server-ip:3000` only gets a bookmark-style shortcut, not an install.
+
 ---
 
 ## 📦 Production Deployment
@@ -457,7 +538,7 @@ On the server:
 
 - Run the agent under a process supervisor (**systemd**).
 - Install Qdrant via `qdrant/install.sh` (also sets up backup/health/trim timers and the systemd unit).
-- Set a strong `AXON_MASTER_KEY` and keep it stable (it encrypts stored secrets).
+- Set a strong `AXON_MASTER_KEY` and keep it stable (it encrypts stored secrets — see [Security](#-security) for rotating it deliberately).
 - **`axon.db`/`crm.db` back up automatically** — a daily in-process sweep (`backup.enabled`/`backup.retention_days` in Settings → Backups) writes timestamped, `VACUUM INTO`-compacted snapshots to the Files page directory and prunes ones past the retention window. Like Qdrant's `axon-backup.sh`, these are **local, on-instance backups only** — they live on the same disk as the data they protect, so they don't protect against disk/instance loss. Copying them off-instance (rsync, object storage, …) is the operator's responsibility.
 - **TLS is required for any internet-facing deployment** — axon-agent itself only ever binds plain HTTP (`0.0.0.0:$AXON_PORT`, default 3000). Set `AXON_DOMAIN` (or `CHAM_DOMAIN`) in `.deploy.env` before deploying and the deploy script installs [Caddy](https://caddyserver.com/) as a reverse proxy in front of it, with automatic Let's Encrypt provisioning/renewal — no certbot cron job to maintain. DNS for the domain must already point at the instance first. See `deploy/Caddyfile.example` for the template, or point your own reverse proxy/load balancer at `localhost:$AXON_PORT` if you're not using the bundled Caddy setup. Deploying without a domain set is HTTP-only and should only be used for local/internal testing.
 
@@ -493,6 +574,66 @@ Set `RUST_LOG=axon=debug` for verbose tracing during development.
 
 ---
 
+## 🚢 Releasing
+
+How to cut a GitHub release (maintainers). This produces the artifacts installed by [Quick Start → Option A](#-quick-start).
+
+### 1. Build the release artifacts (sanitized — no secrets)
+
+> ⚠️ **Never upload `axon_deploy_cham.tar.gz` / `axon_deploy_gcp.tar.gz` or the `dist-cham/` `dist-gcp/` bundles.** Those are your private deploy bundles and contain your real `.env`, `credentials.json`, and **SSH private keys**. Use the packaging scripts below, which build clean bundles (`.env.example` only, no keys) and abort if any secret sneaks in.
+
+**Linux bundle** (`axon-linux-x86_64.tar.gz`) — run under WSL from the repo root:
+
+```bash
+bash scripts/package-release.sh
+```
+
+Builds the Vue dashboard, then the `axon` binary, and assembles `axon-linux-x86_64.tar.gz`. Needs `node`/`npm` and a Rust toolchain.
+
+**Pick your binary flavour** (the script auto-selects, `--musl` / `--native` force it):
+
+| Flavour | Runs on | How to get it |
+|---------|---------|---------------|
+| **static musl** (recommended) | **any** x86_64 Linux, any glibc version | one-time: `rustup target add x86_64-unknown-linux-musl && sudo apt-get install -y musl-tools` — or have `cross` + Docker |
+| native glibc (fallback) | only glibc **≥ the build host's** (build on Ubuntu 24.04 ⇒ won't run on 22.04) | nothing extra |
+
+This project builds cleanly for musl (TLS is rustls+ring, no OpenSSL; the only C dep, `libsqlite3-sys`, is bundled). For a public download, prefer **musl** so users on any distro version can run it. If you skip the musl setup the script still produces a working glibc binary and prints exactly how to upgrade to musl.
+
+> The UI build step auto-detects a Windows-mounted repo (`/mnt/...` under WSL) and builds the dashboard on the Linux filesystem, avoiding the shared-`node_modules` rollup error (`Cannot find module @rollup/rollup-linux-x64-gnu`).
+
+**Windows bundle** (`axon-windows-x86_64.zip`) — run in PowerShell from the repo root:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\package-release.ps1
+```
+
+Builds the dashboard and a native `axon.exe`, then zips it with its `static\`, `config\`, and `tools\` folders. `axon.exe` **cannot run alone** — it serves the dashboard from `static\` and reads `config\`/`.env` from its working directory — so the Windows release is a zip bundle, the twin of the Linux tarball.
+
+### 2. Create the GitHub release
+
+Tag the version and upload the artifacts **plus the two install scripts** so the one-line installers can fetch them from `releases/latest/download/…`:
+
+- `axon-linux-x86_64.tar.gz`
+- `axon-windows-x86_64.zip`
+- `install.sh`      (copy of `scripts/install.sh`)
+- `install.ps1`     (copy of `scripts/install.ps1`)
+
+With the GitHub CLI:
+
+```bash
+gh release create v0.4.0 \
+  axon-linux-x86_64.tar.gz \
+  axon-windows-x86_64.zip \
+  scripts/install.sh \
+  scripts/install.ps1 \
+  --title "Axon v0.4.0" \
+  --notes "See README for setup. Linux: install.sh · Windows: install.ps1"
+```
+
+…or draft it in the GitHub web UI and drag the four files in.
+
+---
+
 ## 🩹 Troubleshooting
 
 | Symptom | Likely cause / fix |
@@ -502,7 +643,7 @@ Set `RUST_LOG=axon=debug` for verbose tracing during development.
 | "All models exhausted — check API keys or wait for rate limits to reset" | No usable model. Check that provider keys resolve (`${...}` placeholders must exist in env or settings), that models are `enabled`, and whether everything is on rate-limit cooldown. |
 | `Model '…' has unresolved API key placeholder ${X}` | The `${X}` in `models.toml` isn't defined in the environment or the `settings` table. Add it to `.env` or the Settings page. |
 | Integration tools (Gmail/Calendar/etc.) missing | The in-process integrations failed to initialize — usually a missing `credentials.json`. Check the startup log for "In-process MCP init failed". |
-| Decryption warnings / garbled stored keys | `AXON_MASTER_KEY` changed (or was unset) after secrets were saved. Re-enter the affected secrets with the correct, stable key. |
+| Decryption warnings / garbled stored keys | `AXON_MASTER_KEY` changed (or was unset) after secrets were saved. Either re-enter the affected secrets, or rotate deliberately with `AXON_MASTER_KEY_OLD` (see [Security](#-security)). |
 | Long-term memory recall does nothing | Qdrant not running or `VOYAGE_API_KEY` unset. The agent runs fine without it, but semantic recall is disabled. |
 | `npm run build` fails with `'vite' is not recognized` | UI dev dependencies aren't installed. Run `npm install` in `axon-ui/` first. |
 | Stuck `running` runs after a crash | Cleaned up automatically on the next startup (marked `failed`). |
@@ -523,7 +664,6 @@ Axon is an **independent implementation** in Rust. Some workflow concepts and th
 
 ## 📚 Further Reading
 
-- **[`USER_GUIDE.md`](./USER_GUIDE.md)** — the complete operator manual: architecture, configuration, every dashboard page, the model router, memory, tools, integrations, scheduling, workflows, security, and troubleshooting in narrative depth.
 - **[`crates/axon-agent/README.md`](./crates/axon-agent/README.md)** — crate-level notes for the core agent.
 - **[`qdrant/README.md`](./qdrant/README.md)** — Qdrant setup, backups, and health timers.
 - **[`AGENTS.md`](./AGENTS.md)** — guidance for AI agents working in this repo (including the `graphify` knowledge-graph tooling).
