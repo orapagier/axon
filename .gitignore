@@ -12,6 +12,10 @@ axon-ui/dist/
 crates/axon-agent/static/assets/
 crates/axon-agent/static/index.html
 
+# ── wake-model-builder binary copied in for local dev/testing (release
+#    packaging builds+bundles its own copy; see scripts/package-release.*) ──
+crates/axon-agent/bin/
+
 # ── Runtime data / databases ──
 **/memory/*.db
 **/memory/*.db-wal
