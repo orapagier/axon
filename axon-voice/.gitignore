@@ -7,3 +7,8 @@ local.properties
 captures/
 app/src/main/jniLibs/
 rustpotter-jni/target/
+
+# Release signing — keep secrets out of the repo
+keystore.properties
+*.jks
+*.keystore
