@@ -1104,12 +1104,16 @@ async function onBargeTrigger() {
   bargeBusy = true
   stopBargeMonitor()
   pauseReplyAudio() // silence the reply so the capture isn't fighting it
+  // Flip the orb to LISTENING for the capture — in this phase it reads the mic
+  // analyser directly, so it's reactive to your voice, not a frozen SPEAKING.
+  handsFreePhase.value = 'listening'
   const text = await captureBargeClip()
   if (!text) {
     // Cough / leaked echo / nothing — resume the reply and keep listening.
     resumeReplyAudio()
+    handsFreePhase.value = 'speaking'
     bargeBusy = false
-    if (handsFreeActive.value && handsFreePhase.value === 'speaking') startBargeMonitor()
+    if (handsFreeActive.value) startBargeMonitor()
     return
   }
   // Real interruption: it IS the next command. Abandon the interrupted run so
