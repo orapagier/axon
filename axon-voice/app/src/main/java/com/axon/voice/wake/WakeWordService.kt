@@ -661,12 +661,24 @@ class WakeWordService : Service(), ChatSocket.Listener {
         // of leading it. The caller left us in THINKING, which is accurate until
         // then.
         val latch = CountDownLatch(1)
-        val stream = StreamingTts(
+        lateinit var stream: StreamingTts
+        stream = StreamingTts(
             player = p,
             client = client,
             cacheDir = cacheDir,
             filePrefix = "reply_wake",
-        ) { latch.countDown() }
+        ) {
+            // Playback has truly drained (not just text generation finishing —
+            // see the "done" handler below, which deliberately leaves
+            // [replyStream] live so a pause tapped after the WS "done" event
+            // but while trailing sentences are still speaking still reaches
+            // this stream). Only clear it here, at the point pause/resume have
+            // nothing left to act on, and only if a newer reply hasn't already
+            // replaced it (a barge's follow-up task, started while this one's
+            // tail was still draining).
+            synchronized(replyLock) { if (replyStream === stream) replyStream = null }
+            latch.countDown()
+        }
         synchronized(replyLock) {
             replyLatch = latch
             replyText = null
@@ -941,9 +953,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
                 // one fallback chunk so we're never silent.
                 val stream = synchronized(replyLock) {
                     replyText = full
-                    val s = replyStream
-                    replyStream = null
-                    s
+                    replyStream
                 }
                 if (stream != null && stream.hasContent) {
                     // Streaming reply: let it play out. finish() only schedules
@@ -955,12 +965,23 @@ class WakeWordService : Service(), ChatSocket.Listener {
                     // release interact() before the reply finished playing, and
                     // its next ack's TtsPlayer.play()→stop() would cut the
                     // reply's TTS off — the reply was never heard, only the ack.
+                    //
+                    // Deliberately leave [replyStream] set rather than nulling it
+                    // here: this "done" event only means text generation
+                    // finished, and trailing sentences can still be speaking for
+                    // a while after. Nulling it now would make a pause/resume
+                    // tapped during that window a silent no-op (the orb flips to
+                    // "paused" but the audio keeps playing). StreamingTts's
+                    // onDone callback (above, in awaitStreamBlocking) clears it
+                    // once playback truly drains.
                     stream.finish()
                     return
                 }
                 // The stream exists but never received a token frame. Finalizing
                 // it would speak nothing at all, so drop it and synthesize
-                // full_text below instead.
+                // full_text below instead — nothing was ever audible from it, so
+                // there's nothing left for pause/resume/close to reach.
+                synchronized(replyLock) { if (replyStream === stream) replyStream = null }
                 stream?.abort()
                 if (full.isNotBlank()) {
                     // Synthesize the whole reply as one fallback chunk so we're

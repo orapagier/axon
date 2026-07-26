@@ -66,7 +66,17 @@ class StreamingTts(
             full.append(token)
             consumeSentences()
         }
-        for (sentence in ready) synth.execute { synthAndEnqueue(sentence) }
+        for (sentence in ready) {
+            try {
+                synth.execute { synthAndEnqueue(sentence) }
+            } catch (_: RejectedExecutionException) {
+                // finish() already flushed and shut the executor down (a stray
+                // token arriving after the stream's terminal frame — the
+                // wake service keeps its stream reference live until playback
+                // drains, not just until text generation ends, so this is
+                // reachable). Nothing left to enqueue it behind; drop it.
+            }
+        }
     }
 
     /** Flush whatever is buffered as a final chunk and mark the stream closed.
