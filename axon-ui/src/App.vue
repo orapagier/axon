@@ -350,6 +350,27 @@ async function logout() {
             >{{ item.label }}</span>
           </button>
         </nav>
+
+        <div class="sidebar-footer">
+          <div
+            class="sidebar-status"
+            :title="isSidebarCollapsed ? wsLabel : ''"
+          >
+            <div class="sidebar-status-heading">
+              <span
+                class="ws-dot"
+                :class="wsDotClass"
+              />
+              <span v-if="!isSidebarCollapsed">{{ wsLabel }}</span>
+            </div>
+            <p
+              v-if="!isSidebarCollapsed"
+              class="sidebar-status-copy"
+            >
+              Realtime link to the agent runtime
+            </p>
+          </div>
+        </div>
       </div>
     </aside>
 

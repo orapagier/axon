@@ -565,6 +565,16 @@ textarea {
     .sidebar.collapsed .nav-item.active {
         box-shadow: none;
     }
+
+    .sidebar.collapsed .sidebar-status,
+    .sidebar.collapsed .sidebar-status-card {
+        align-items: center;
+        padding: 10px;
+    }
+
+    .sidebar.collapsed .sidebar-status-heading {
+        justify-content: center;
+    }
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
