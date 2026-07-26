@@ -72,30 +72,48 @@ function draw() {
 
   ctx2d.clearRect(0, 0, w, h)
 
-  const baseR = Math.min(w, h) * 0.16
-  const coreR = baseR * (1 + smoothed * 0.9)
+  // 0.13 (was 0.16): with the reactive rings' reach below, the outermost ring
+  // at a loud level lands at ~0.44*min — a full circle inside the canvas with
+  // margin, instead of clipping on the edges when the audio is loud.
+  const baseR = Math.min(w, h) * 0.13
+  const coreR = baseR * (1 + smoothed * 0.7)
 
-  // Ambient rotating ring reads as "processing" even at a near-zero level.
+  // Emphasized counter-rotating dashed rings — the gyroscope that reads as
+  // active "processing". Brighter, thicker, faster, with a second ring spinning
+  // the other way so the rotation is the eye-catching part.
+  const spin = t * (props.phase === 'thinking' ? 0.9 : 0.5)
   ctx2d.save()
   ctx2d.translate(cx, cy)
-  ctx2d.rotate(t * (props.phase === 'thinking' ? 0.6 : 0.25))
+  ctx2d.rotate(spin)
   ctx2d.strokeStyle = colors.glow
-  ctx2d.globalAlpha = 0.25
-  ctx2d.lineWidth = 2
-  ctx2d.setLineDash([6, 10])
+  ctx2d.globalAlpha = 0.55
+  ctx2d.lineWidth = 3
+  ctx2d.setLineDash([16, 12])
   ctx2d.beginPath()
-  ctx2d.arc(0, 0, baseR * 2.3, 0, Math.PI * 2)
+  ctx2d.arc(0, 0, baseR * 2.0, 0, Math.PI * 2)
+  ctx2d.stroke()
+  ctx2d.restore()
+  ctx2d.save()
+  ctx2d.translate(cx, cy)
+  ctx2d.rotate(-spin * 0.6)
+  ctx2d.strokeStyle = colors.accent
+  ctx2d.globalAlpha = 0.45
+  ctx2d.lineWidth = 2
+  ctx2d.setLineDash([4, 16])
+  ctx2d.beginPath()
+  ctx2d.arc(0, 0, baseR * 2.5, 0, Math.PI * 2)
   ctx2d.stroke()
   ctx2d.restore()
 
-  // Level-reactive rings, staggered outward.
+  // Level-reactive rings, staggered outward. Reach trimmed (0.7 base + 0.4/ring,
+  // from 1.6 + 0.5) so a loud level stays inside the canvas.
   ctx2d.setLineDash([])
   for (let i = 0; i < 3; i++) {
-    const spread = baseR * (1.3 + i * 0.45) + smoothed * baseR * (1.6 + i * 0.5)
+    const spread = baseR * (1.2 + i * 0.35) + smoothed * baseR * (0.7 + i * 0.4)
     ctx2d.beginPath()
     ctx2d.strokeStyle = i === 0 ? colors.accent : colors.glow
     ctx2d.globalAlpha = Math.max(0, 0.35 - i * 0.1) * (0.4 + smoothed)
-    ctx2d.lineWidth = 1.5
+    ctx2d.lineWidth = 2
     ctx2d.arc(cx, cy, spread, 0, Math.PI * 2)
     ctx2d.stroke()
   }

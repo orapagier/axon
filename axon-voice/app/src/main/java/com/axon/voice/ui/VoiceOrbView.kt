@@ -54,7 +54,10 @@ class VoiceOrbView @JvmOverloads constructor(
     private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val corePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-    private val dash = DashPathEffect(floatArrayOf(6f, 10f), 0f)
+    // Two dash patterns for the counter-rotating gyroscope rings — long ticks
+    // one way, fine ticks the other, so the rotation reads clearly.
+    private val dashA = DashPathEffect(floatArrayOf(16f, 12f), 0f)
+    private val dashB = DashPathEffect(floatArrayOf(4f, 16f), 0f)
 
     // Geometry + core gradient are size-derived, so they're built once per
     // layout in onSizeChanged and reused every frame — a fresh RadialGradient
@@ -111,7 +114,10 @@ class VoiceOrbView @JvmOverloads constructor(
         super.onSizeChanged(w, h, oldw, oldh)
         cx = w / 2f
         cy = h / 2f
-        baseR = min(w, h) * 0.16f
+        // 0.13 (was 0.16): with the reactive rings' reach below, the outermost
+        // ring at full level lands at ~0.44*min — a full circle inside the view
+        // with margin to spare, instead of the loud rings clipping on the edges.
+        baseR = min(w, h) * 0.13f
         // Reference gradient sized to the resting core (baseR * 1.8); onDraw
         // scales it to the live coreR each frame. Built here, not per frame.
         coreShader = RadialGradient(
@@ -155,25 +161,37 @@ class VoiceOrbView @JvmOverloads constructor(
         // between words shouldn't collapse the orb to nothing).
         smoothed += (raw - smoothed) * (if (raw > smoothed) 0.5f else 0.12f)
 
-        val scale = 1f + smoothed * 0.9f // coreR / baseR
+        val scale = 1f + smoothed * 0.7f // coreR / baseR
         val coreR = baseR * scale
 
-        // Ambient rotating dashed ring — reads as "processing" even at rest.
-        canvas.save()
-        val spinRad = t * (if (phase == Phase.THINKING) 0.6f else 0.25f)
-        canvas.rotate(Math.toDegrees(spinRad.toDouble()).toFloat(), cx, cy)
-        ringPaint.pathEffect = dash
-        ringPaint.strokeWidth = 2f
+        // Emphasized counter-rotating dashed rings — the gyroscope that reads as
+        // active "processing". Brighter, thicker, and faster than before, with a
+        // second ring spinning the other way so the rotation is the eye-catching
+        // part of the orb.
+        val spin = Math.toDegrees((t * (if (phase == Phase.THINKING) 0.9f else 0.5f)).toDouble()).toFloat()
+        ringPaint.strokeWidth = 3.5f
+        ringPaint.pathEffect = dashA
         ringPaint.color = glow
-        ringPaint.alpha = 64
-        canvas.drawCircle(cx, cy, baseR * 2.3f, ringPaint)
+        ringPaint.alpha = 150
+        canvas.save()
+        canvas.rotate(spin, cx, cy)
+        canvas.drawCircle(cx, cy, baseR * 2.0f, ringPaint)
+        canvas.restore()
+        ringPaint.strokeWidth = 2.5f
+        ringPaint.pathEffect = dashB
+        ringPaint.color = accent
+        ringPaint.alpha = 120
+        canvas.save()
+        canvas.rotate(-spin * 0.6f, cx, cy)
+        canvas.drawCircle(cx, cy, baseR * 2.5f, ringPaint)
         canvas.restore()
 
-        // Reactive concentric rings, staggered outward.
+        // Reactive concentric rings, staggered outward. Reach trimmed (0.7 base
+        // + 0.4/ring, from 1.6 + 0.5) so a loud level stays inside the view.
         ringPaint.pathEffect = null
         ringPaint.strokeWidth = 3f
         for (i in 0..2) {
-            val spread = baseR * (1.3f + i * 0.45f) + smoothed * baseR * (1.6f + i * 0.5f)
+            val spread = baseR * (1.2f + i * 0.35f) + smoothed * baseR * (0.7f + i * 0.4f)
             ringPaint.color = if (i == 0) accent else glow
             ringPaint.alpha = (maxOf(0f, 0.35f - i * 0.1f) * (0.4f + smoothed) * 255f).toInt().coerceIn(0, 255)
             canvas.drawCircle(cx, cy, spread, ringPaint)
