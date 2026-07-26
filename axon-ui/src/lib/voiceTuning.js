@@ -9,11 +9,15 @@ const KEY = 'axon-voice-tuning'
 
 export const VOICE_TUNING_DEFAULTS = Object.freeze({
   followupTicks: FOLLOWUP_CAPTURE.noSpeechTicks, // follow-up window length (×100ms)
+  bargeEnabled: 0, // 0/1 — talk over a reply to interrupt it (relies on the browser's echo cancellation)
+  bargeOnsetLevel: 50, // mic RMS×1000 the user must exceed to interrupt (raised bar keeps distant/quiet voices out)
 })
 
 // [min, max] clamps, matching the Android slider.
 export const VOICE_TUNING_RANGES = Object.freeze({
   followupTicks: [30, 150],
+  bargeEnabled: [0, 1],
+  bargeOnsetLevel: [15, 200],
 })
 
 function clamp(v, [lo, hi]) {

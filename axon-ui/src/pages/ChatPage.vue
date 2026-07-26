@@ -33,6 +33,12 @@ const starterPrompts = [
 
 // Current in-flight agent response
 let currentRunId = null
+// run_ids abandoned by a barge-in: a barge sends a NEW task on the same session
+// (which the server auto-supersedes the old run for), but the old run's in-flight
+// tokens and its superseded terminal event keep arriving — dropping them by
+// run_id stops the interrupted reply from polluting or ending the one that
+// replaced it. Same approach as the Android client. Cleared per conversation.
+const abandonedRuns = new Set()
 let agentIdx = -1 // index in messages[] of the in-progress agent msg
 let traceIdx = -1 // index of the trace block preceding it
 let runWatchdog = null // unsticks a run whose terminal 'done'/'error' never arrives
@@ -193,6 +199,7 @@ function focusComposer() {
 function newChat() {
   currentSessionId.value = uuid()
   messages.value = []
+  abandonedRuns.clear()
   resetRunTrackers()
   stopSpeaking()
   disabled.value = false
@@ -268,6 +275,9 @@ function prettyStatus(text) {
 }
 
 function handleWsEvent(ev) {
+  // A run a barge already walked away from: ignore its tail tokens and its
+  // superseded/late "done" so they can't touch the reply that replaced it.
+  if (ev.run_id && abandonedRuns.has(ev.run_id)) return
   if (!currentRunId && ev.run_id) currentRunId = ev.run_id
   // Any event for the live run means the stream is alive — push the stall
   // watchdog back out. (Terminal events also refresh here, then clear it via
@@ -799,6 +809,8 @@ const handsFreeStatusText = computed(
 function endHandsFree() {
   handsFreeActive.value = false
   wake?.stopThinking()
+  stopBargeMonitor()
+  bargeBusy = false
 }
 
 // The overlay's close button: bail out of hands-free back to the normal chat
@@ -958,6 +970,162 @@ function startFollowupCapture() {
   }, 250)
 }
 
+// ── Barge-in (talk over a reply to interrupt it) ─────────────────────────────
+// Unlike the Android client this is NOT headset-gated: the hands-free mic is
+// opened with the browser's echo cancellation on (see wakeword.js), which
+// largely subtracts the reply's own audio out of the capture — so a loudness
+// trigger on the mic analyser can fire on the user without the reply tripping
+// it, even on speakers. It's still best with headphones. Safety net either way:
+// a trigger pauses the reply and only commits if real words come back (a cough
+// or leaked echo transcribes to nothing → resume). Off by default (toggle in
+// the tuning panel).
+const BARGE_ONSET_TICKS = 2 // ~120ms of loud mic (60ms ticks) before pausing
+let bargeTimer = null
+let bargeBusy = false
+
+function bargeOn() {
+  return voiceTuning.value.bargeEnabled === 1
+}
+
+function pauseReplyAudio() {
+  if (streamingSpeech) streamingSpeech.pauseAudio()
+  else if (audioEl) {
+    try {
+      audioEl.pause()
+    } catch {
+      /* not started */
+    }
+  }
+}
+
+function resumeReplyAudio() {
+  if (streamingSpeech) streamingSpeech.resumeAudio()
+  else if (audioEl) audioEl.play().catch(() => {})
+}
+
+function startBargeMonitor() {
+  if (bargeTimer || !bargeOn() || !wake?.analyser) return
+  const analyser = wake.analyser
+  const data = new Float32Array(analyser.fftSize)
+  const onset = voiceTuning.value.bargeOnsetLevel / 1000
+  let loud = 0
+  bargeTimer = setInterval(() => {
+    analyser.getFloatTimeDomainData(data)
+    let acc = 0
+    for (let i = 0; i < data.length; i++) acc += data[i] * data[i]
+    const rms = Math.sqrt(acc / data.length)
+    if (rms > onset) loud++
+    else loud = 0
+    if (loud >= BARGE_ONSET_TICKS) {
+      loud = 0
+      onBargeTrigger()
+    }
+  }, 60)
+}
+
+function stopBargeMonitor() {
+  clearInterval(bargeTimer)
+  bargeTimer = null
+}
+
+// Record a short clip from the wake mic (echo-cancelled) until the user stops,
+// transcribe it, and return the words — or '' when it was a cough / leaked echo
+// / nothing (so the caller resumes the reply instead of interrupting it). Its
+// own MediaRecorder + silence watch, separate from the push-to-talk state
+// machine, so it never sends on its own.
+async function captureBargeClip() {
+  const stream = wake?.stream
+  const analyser = wake?.analyser
+  if (!stream || !analyser) return ''
+  const mime = recorderMime()
+  let rec
+  try {
+    rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream)
+  } catch {
+    return ''
+  }
+  const chunks = []
+  rec.ondataavailable = (e) => {
+    if (e.data && e.data.size > 0) chunks.push(e.data)
+  }
+  const stopped = new Promise((resolve) => {
+    rec.onstop = resolve
+  })
+  rec.start()
+  // Stop on ~1.2s of quiet after a raised-bar onset, or a 4s cap. The raised bar
+  // (FOLLOWUP_CAPTURE.speechRms) rejects distant/quiet talkers.
+  await new Promise((resolve) => {
+    const data = new Float32Array(analyser.fftSize)
+    let hadSpeech = false
+    let quiet = 0
+    let ticks = 0
+    const t = setInterval(() => {
+      analyser.getFloatTimeDomainData(data)
+      let acc = 0
+      for (let i = 0; i < data.length; i++) acc += data[i] * data[i]
+      const rms = Math.sqrt(acc / data.length)
+      ticks++
+      if (rms > FOLLOWUP_CAPTURE.speechRms) {
+        hadSpeech = true
+        quiet = 0
+      } else if (hadSpeech) {
+        quiet++
+      }
+      if ((hadSpeech && quiet >= 12) || ticks >= 40) {
+        clearInterval(t)
+        resolve()
+      }
+    }, 100)
+  })
+  try {
+    rec.stop()
+  } catch {
+    /* already stopped */
+  }
+  await stopped
+  const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' })
+  if (blob.size < 1024) return '' // no real speech — a clap/click
+  const ext = blob.type.includes('mp4') ? 'mp4' : blob.type.includes('ogg') ? 'ogg' : 'webm'
+  const fd = new FormData()
+  fd.append('file', blob, `barge.${ext}`)
+  try {
+    const res = await postForm('/audio/transcribe', fd)
+    const text = (res.text || '').trim()
+    if (res.error || !text) return '' // cough/echo → server silence filter returns empty
+    if (wakeEnabled.value && isSelfEcho(text)) return '' // leaked reply audio
+    return text
+  } catch {
+    return ''
+  }
+}
+
+async function onBargeTrigger() {
+  if (bargeBusy) return
+  bargeBusy = true
+  stopBargeMonitor()
+  pauseReplyAudio() // silence the reply so the capture isn't fighting it
+  const text = await captureBargeClip()
+  if (!text) {
+    // Cough / leaked echo / nothing — resume the reply and keep listening.
+    resumeReplyAudio()
+    bargeBusy = false
+    if (handsFreeActive.value && handsFreePhase.value === 'speaking') startBargeMonitor()
+    return
+  }
+  // Real interruption: it IS the next command. Abandon the interrupted run so
+  // its tail can't pollute the new one, stop its audio, and send the words as a
+  // fresh voice turn (which supersedes the old run server-side). No explicit
+  // cancel — that would make the server emit an empty "done" that aborts the new
+  // reply (the bug fixed on Android).
+  if (currentRunId) abandonedRuns.add(currentRunId)
+  stopSpeaking()
+  currentRunId = null
+  disabled.value = false
+  handsFreePhase.value = 'thinking'
+  bargeBusy = false
+  sendMessage(text, true)
+}
+
 // A brief blur — a pulled-down notification shade, the app switcher, a
 // lock-then-immediate-unlock — fires 'hidden' too, and tearing hands-free down
 // on it is exactly the "it just stopped even though I didn't touch anything"
@@ -1069,6 +1237,9 @@ watch(handsFreePhase, (phase) => {
   if (phase !== 'speaking') clearSpeakEnvelope()
   if (phase === 'thinking' && handsFreeActive.value) wake?.startThinking()
   else wake?.stopThinking()
+  // Barge monitor listens for an interruption only while a reply is playing.
+  if (phase === 'speaking' && handsFreeActive.value && bargeOn() && !bargeBusy) startBargeMonitor()
+  else if (phase !== 'speaking') stopBargeMonitor()
 })
 
 // The agent bubble renders markdown; the utterance needs the prose only.
@@ -1312,10 +1483,31 @@ class StreamingSpeech {
     this.curAudio = null
     this.curUrl = null
     this.fetchAbort = null
+    this.paused = false // barge hold — no new sentence starts; current one resumes in place
   }
 
   hasContent() {
     return this.full.trim().length > 0
+  }
+
+  // Barge hold: pause the sentence in progress (a browser <audio> resumes from
+  // where it paused, so unlike the Android client this can resume mid-sentence)
+  // and don't start the next one. Newly-synthesized sentences keep queuing.
+  pauseAudio() {
+    this.paused = true
+    if (this.curAudio) {
+      try {
+        this.curAudio.pause()
+      } catch {
+        /* not started */
+      }
+    }
+  }
+
+  resumeAudio() {
+    this.paused = false
+    if (this.curAudio) this.curAudio.play().catch(() => {})
+    else this.startPlaybackIfIdle()
   }
 
   append(token) {
@@ -1425,11 +1617,11 @@ class StreamingSpeech {
   }
 
   startPlaybackIfIdle() {
-    if (!this.playing && !this.aborted) this.playNext()
+    if (!this.playing && !this.aborted && !this.paused) this.playNext()
   }
 
   playNext() {
-    if (this.aborted) return
+    if (this.aborted || this.paused) return
     const item = this.playQueue.shift()
     if (item === undefined) {
       this.playing = false
@@ -2302,6 +2494,32 @@ watch(disabled, (newVal) => {
             @change="applyVoiceTuning"
           />
           <span class="tune-hint">How long the mic stays open after a reply before it stops listening</span>
+        </label>
+
+        <label class="tune-row">
+          <span class="tune-label">Barge-in <em>{{ voiceTuning.bargeEnabled === 1 ? 'on' : 'off' }}</em></span>
+          <input
+            type="checkbox"
+            :checked="voiceTuning.bargeEnabled === 1"
+            @change="voiceTuning.bargeEnabled = $event.target.checked ? 1 : 0; applyVoiceTuning()"
+          />
+          <span class="tune-hint">Talk over a reply to interrupt it. Best with headphones; relies on the browser's echo cancellation on speakers</span>
+        </label>
+
+        <label
+          v-if="voiceTuning.bargeEnabled === 1"
+          class="tune-row"
+        >
+          <span class="tune-label">Interrupt loudness <em>{{ (voiceTuning.bargeOnsetLevel / 1000).toFixed(3) }}</em></span>
+          <input
+            type="range"
+            :min="VOICE_TUNING_RANGES.bargeOnsetLevel[0]"
+            :max="VOICE_TUNING_RANGES.bargeOnsetLevel[1]"
+            step="5"
+            v-model.number="voiceTuning.bargeOnsetLevel"
+            @change="applyVoiceTuning"
+          />
+          <span class="tune-hint">How loud you must speak to interrupt — raise it until distant or quiet voices no longer cut the reply off</span>
         </label>
 
         <div class="tune-actions">
