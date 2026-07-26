@@ -124,6 +124,20 @@ class WakeWordService : Service(), ChatSocket.Listener {
     @Volatile
     private var bargeMonitorAlive = false
 
+    /** run_id of the reply whose events we're currently accepting (every
+     *  AgentEvent carries one). Updated as events arrive; read on a barge to
+     *  abandon the interrupted run. */
+    @Volatile
+    private var lastRunId: String? = null
+
+    /** run_ids of runs superseded by a barge. A barge starts a NEW task on the
+     *  same session, which the server auto-supersedes the old run for — but the
+     *  old run's in-flight tokens (and any late terminal event) keep arriving on
+     *  the socket; ignoring them by run_id keeps the interrupted reply's tail
+     *  from polluting or prematurely ending the new one. Cleared per wake
+     *  conversation in [interact]. */
+    private val abandonedRuns = java.util.Collections.synchronizedSet(HashSet<String>())
+
     /** Filled by the barge monitor when a real spoken interruption is confirmed
      *  during a reply: [command] is the transcribed interruption (the next
      *  turn), [partial] is however much of the cut-off reply had been spoken. */
@@ -311,6 +325,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
         // saved as a single, separately reviewable conversation. The NEXT wake
         // calls interact() again and mints another.
         val sessionId = prefs.newWakeConversationId()
+        abandonedRuns.clear() // fresh conversation — no superseded runs to ignore yet
         // Optional, non-authoritative hint built from the previous wake
         // conversation (before we overwrite it below). Attached only to the
         // first agent task of this conversation.
@@ -598,7 +613,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
         val slot = BargeSlot()
         val monitor = if (prefs.bargeInEnabled && rec != null && hasHeadsetOutput()) {
             bargeMonitorAlive = true
-            thread(name = "axon-barge") { monitorBarge(rec, stream, sessionId, latch, slot) }
+            thread(name = "axon-barge") { monitorBarge(rec, stream, latch, slot) }
         } else {
             null
         }
@@ -629,7 +644,6 @@ class WakeWordService : Service(), ChatSocket.Listener {
     private fun monitorBarge(
         rec: AudioRecord,
         stream: StreamingTts,
-        sessionId: String,
         latch: CountDownLatch,
         slot: BargeSlot,
     ) {
@@ -685,12 +699,17 @@ class WakeWordService : Service(), ChatSocket.Listener {
                 notify(getString(R.string.status_speaking))
                 continue
             }
-            // Genuine interruption. Cancel the server run so it stops generating,
-            // abort local playback, hand the words + whatever was spoken back to
-            // interact, and release the reply latch so awaitStreamBlocking returns.
+            // Genuine interruption. Abandon the interrupted run by id so its
+            // in-flight tokens and its superseded "done" are ignored from here
+            // on, abort local playback, and hand the words + whatever was spoken
+            // back to interact. DON'T send an explicit cancel: that makes the
+            // server emit an empty "done" that would abort the barge reply — and
+            // sending the barge command as a new task already supersedes this run
+            // server-side (ws.rs), silently. Release the latch so awaitStream
+            // returns.
             slot.partial = stream.accumulated()
             slot.command = text
-            runCatching { chat?.cancel(sessionId) }
+            lastRunId?.let { abandonedRuns.add(it) }
             synchronized(replyLock) {
                 replyStream?.abort()
                 replyStream = null
@@ -817,6 +836,15 @@ class WakeWordService : Service(), ChatSocket.Listener {
     }
 
     override fun onWsEvent(ev: JSONObject) {
+        // Drop anything from a run a barge already walked away from: its tail
+        // tokens and its late/superseded "done" must not touch the reply that
+        // replaced it (a stray empty "done" here would abort the new reply's
+        // stream and end the conversation). Every AgentEvent carries run_id.
+        val runId = ev.optString("run_id")
+        if (runId.isNotEmpty()) {
+            if (abandonedRuns.contains(runId)) return
+            lastRunId = runId
+        }
         when (ev.optString("type")) {
             // Streamed reply token — feed it straight to TTS so speech begins
             // with the first sentence, not after the whole reply arrives.
