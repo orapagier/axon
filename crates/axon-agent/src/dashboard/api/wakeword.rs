@@ -51,17 +51,13 @@ fn builder_bin_path() -> PathBuf {
 }
 
 pub async fn build_wakeword(State(state): State<AppState>, mut multipart: Multipart) -> Json<Value> {
-    let bin = builder_bin_path();
-    if !bin.is_file() {
-        return Json(json!({
-            "error": format!(
-                "wake-model-builder not found at {} — build it from wake-model-builder/ \
-                 (cargo build --release) and copy the binary there, or set AXON_WAKE_BUILDER_BIN",
-                bin.display()
-            )
-        }));
-    }
-
+    // The bin.is_file() check below intentionally runs AFTER the multipart
+    // loop, not before: axum's Multipart extractor streams the request body
+    // rather than buffering it up front, so returning early — before the
+    // client has finished uploading its WAV samples — makes hyper close the
+    // connection mid-upload. The client's still-in-flight writes then fail
+    // with a broken pipe, which a fronting proxy (e.g. cloudflared) surfaces
+    // as a bare 502 instead of this handler's intended JSON error body.
     let mut name = String::new();
     let mut samples: Vec<Vec<u8>> = Vec::new();
     while let Ok(Some(field)) = multipart.next_field().await {
@@ -87,6 +83,17 @@ pub async fn build_wakeword(State(state): State<AppState>, mut multipart: Multip
     if samples.len() < MIN_SAMPLES {
         return Json(json!({
             "error": format!("need at least {MIN_SAMPLES} samples, got {}", samples.len())
+        }));
+    }
+
+    let bin = builder_bin_path();
+    if !bin.is_file() {
+        return Json(json!({
+            "error": format!(
+                "wake-model-builder not found at {} — build it from wake-model-builder/ \
+                 (cargo build --release) and copy the binary there, or set AXON_WAKE_BUILDER_BIN",
+                bin.display()
+            )
         }));
     }
 
