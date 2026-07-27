@@ -6,6 +6,7 @@
     <color name="text_dim">#98A6A1</color>
     <color name="accent">#7FD7C4</color>
     <color name="accent_dim">#3E6A60</color>
+    <color name="warning">#E6B673</color>
     <color name="user_bubble">#1E2E29</color>
     <color name="error">#E4A1A1</color>
     <color name="launcher_bg">#0E1513</color>

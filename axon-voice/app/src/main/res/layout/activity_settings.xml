@@ -10,16 +10,16 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="20dp">
+        android:padding="16dp">
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/settings_title"
             android:textColor="@color/accent"
-            android:textSize="20sp"
+            android:textSize="19sp"
             android:textStyle="bold"
-            android:layout_marginBottom="20dp" />
+            android:layout_marginBottom="14dp" />
 
         <EditText
             android:id="@+id/serverUrl"
@@ -35,7 +35,7 @@
             android:id="@+id/masterKey"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
+            android:layout_marginTop="8dp"
             android:hint="@string/master_key_hint"
             android:inputType="textPassword"
             android:textColor="@color/text"
@@ -46,20 +46,21 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:layout_marginTop="12dp">
+            android:layout_marginTop="10dp">
 
             <Button
                 android:id="@+id/saveBtn"
+                style="@style/Widget.Axon.Button"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/save" />
 
             <Button
                 android:id="@+id/testBtn"
-                style="@style/Widget.Material3.Button.OutlinedButton"
+                style="@style/Widget.Axon.Button.Outlined"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="12dp"
+                android:layout_marginStart="8dp"
                 android:text="@string/test_connection" />
         </LinearLayout>
 
@@ -67,7 +68,8 @@
             android:id="@+id/testResult"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
+            android:layout_marginTop="8dp"
+            android:textSize="13sp"
             android:textColor="@color/text_dim" />
 
         <!-- Server-side voice settings (tts.* / stt.*), built dynamically from
@@ -78,7 +80,7 @@
             android:id="@+id/voiceStatus"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
+            android:layout_marginTop="16dp"
             android:textColor="@color/text_dim" />
 
         <LinearLayout
@@ -87,17 +89,21 @@
             android:layout_height="wrap_content"
             android:orientation="vertical" />
 
+        <View style="@style/SettingsDivider" />
+
         <!-- Follow-up window: how long the mic stays open for a next turn
              after a spoken reply. Slider built programmatically in
              SettingsActivity.buildFollowupTuner(); persists on change and
-             takes effect on the next reply. -->
+             takes effect on the next reply. The Save button below is a
+             confirmation affordance, mirroring the per-category Save used
+             for stt/tts above — the value is already saved as the slider
+             moves. -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="28dp"
             android:text="@string/followup_title"
             android:textColor="@color/accent"
-            android:textSize="16sp"
+            android:textSize="15sp"
             android:textStyle="bold" />
 
         <LinearLayout
@@ -105,7 +111,18 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:layout_marginTop="8dp" />
+            android:layout_marginTop="4dp" />
+
+        <Button
+            android:id="@+id/followupSaveBtn"
+            style="@style/Widget.Axon.Button"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="end"
+            android:layout_marginTop="8dp"
+            android:text="@string/save" />
+
+        <View style="@style/SettingsDivider" />
 
         <!-- Barge-in: talk over a reply to interrupt it. Toggle + trigger-level
              slider built programmatically in SettingsActivity.buildBargeTuner();
@@ -113,10 +130,9 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="28dp"
             android:text="@string/barge_title"
             android:textColor="@color/accent"
-            android:textSize="16sp"
+            android:textSize="15sp"
             android:textStyle="bold" />
 
         <LinearLayout
@@ -124,33 +140,58 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:layout_marginTop="8dp" />
+            android:layout_marginTop="4dp" />
+
+        <Button
+            android:id="@+id/bargeSaveBtn"
+            style="@style/Widget.Axon.Button"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="end"
+            android:layout_marginTop="8dp"
+            android:text="@string/save" />
+
+        <View style="@style/SettingsDivider" />
 
         <!-- Wake word: shows the enrolled phrase (or "not set up") and a
              button into EnrollWakeWordActivity to (re)train it. -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="28dp"
             android:text="@string/settings_wake_title"
             android:textColor="@color/accent"
-            android:textSize="16sp"
+            android:textSize="15sp"
             android:textStyle="bold" />
 
         <TextView
             android:id="@+id/wakePhraseStatus"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
+            android:layout_marginTop="6dp"
+            android:textSize="13sp"
             android:textColor="@color/text_dim" />
 
-        <Button
-            android:id="@+id/wakeRetrainBtn"
-            style="@style/Widget.Material3.Button.OutlinedButton"
-            android:layout_width="wrap_content"
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="@string/settings_wake_retrain" />
+            android:orientation="horizontal"
+            android:layout_marginTop="8dp">
+
+            <Button
+                android:id="@+id/wakeRetrainBtn"
+                style="@style/Widget.Axon.Button.Outlined"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_wake_retrain" />
+
+            <Button
+                android:id="@+id/wakeSaveBtn"
+                style="@style/Widget.Axon.Button"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="@string/save" />
+        </LinearLayout>
 
         <!-- ══════════════════ Device control ══════════════════
              Local HTTP API + Cloudflare tunnel exposing SMS/calls/files/shell/
@@ -161,10 +202,10 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="28dp"
+            android:layout_marginTop="20dp"
             android:text="@string/device_api_title"
             android:textColor="@color/accent"
-            android:textSize="16sp"
+            android:textSize="15sp"
             android:textStyle="bold" />
 
         <!-- ── Server status ──────────────────────────────────────────── -->
@@ -172,9 +213,9 @@
             android:id="@+id/tvStatus"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
+            android:layout_marginTop="8dp"
             android:text="○ Stopped"
-            android:textSize="16sp"
+            android:textSize="15sp"
             android:textStyle="bold"
             android:textColor="@color/status_stopped"
             tools:ignore="HardcodedText" />
@@ -185,7 +226,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
             android:text="—"
-            android:textSize="13sp"
+            android:textSize="12sp"
             android:textColor="@color/text_dim"
             android:fontFamily="monospace"
             tools:ignore="HardcodedText" />
@@ -194,9 +235,9 @@
             android:id="@+id/tvToken"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
+            android:layout_marginTop="4dp"
             android:text="Token: —"
-            android:textSize="13sp"
+            android:textSize="12sp"
             android:textColor="@color/text_dim"
             android:fontFamily="monospace"
             android:background="?attr/selectableItemBackground"
@@ -205,6 +246,7 @@
 
         <Button
             android:id="@+id/btnToggle"
+            style="@style/Widget.Axon.Button"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
@@ -214,19 +256,19 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
+            android:layout_marginTop="16dp"
             android:text="@string/device_tunnel_title"
             android:textColor="@color/text"
-            android:textSize="14sp"
+            android:textSize="13sp"
             android:textStyle="bold" />
 
         <TextView
             android:id="@+id/tvTunnelStatus"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
+            android:layout_marginTop="4dp"
             android:text="○ Not configured"
-            android:textSize="13sp"
+            android:textSize="12sp"
             android:textColor="@color/text_dim"
             tools:ignore="HardcodedText" />
 
@@ -234,7 +276,7 @@
             android:id="@+id/etCloudflaredToken"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
+            android:layout_marginTop="6dp"
             android:hint="@string/device_tunnel_token_hint"
             android:inputType="textPassword"
             android:textColor="@color/text"
@@ -245,35 +287,35 @@
 
         <Button
             android:id="@+id/btnSaveCloudflaredToken"
-            style="@style/Widget.Material3.Button.OutlinedButton"
+            style="@style/Widget.Axon.Button.Outlined"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
+            android:layout_marginTop="6dp"
             android:text="@string/device_tunnel_save" />
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
+            android:layout_marginTop="6dp"
             android:text="@string/device_tunnel_help"
-            android:textSize="12sp"
+            android:textSize="11sp"
             android:textColor="@color/text_dim" />
 
         <!-- ── Webhook config ─────────────────────────────────────────── -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
+            android:layout_marginTop="16dp"
             android:text="@string/device_webhook_title"
             android:textColor="@color/text"
-            android:textSize="14sp"
+            android:textSize="13sp"
             android:textStyle="bold" />
 
         <EditText
             android:id="@+id/etWebhook"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
+            android:layout_marginTop="6dp"
             android:hint="@string/device_webhook_hint"
             android:inputType="textUri"
             android:textColor="@color/text"
@@ -284,97 +326,102 @@
 
         <Button
             android:id="@+id/btnSaveWebhook"
-            style="@style/Widget.Material3.Button.OutlinedButton"
+            style="@style/Widget.Axon.Button.Outlined"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
+            android:layout_marginTop="6dp"
             android:text="@string/device_webhook_save" />
 
         <!-- ── Push events (persist on change, no save button needed) ──── -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
+            android:layout_marginTop="16dp"
             android:text="@string/device_push_title"
             android:textColor="@color/text"
-            android:textSize="14sp"
+            android:textSize="13sp"
             android:textStyle="bold" />
 
         <com.google.android.material.switchmaterial.SwitchMaterial
             android:id="@+id/swPushSms"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
+            android:layout_marginTop="6dp"
             android:text="@string/device_push_sms"
-            android:textColor="@color/text" />
+            android:textColor="@color/text"
+            android:textSize="14sp" />
 
         <com.google.android.material.switchmaterial.SwitchMaterial
             android:id="@+id/swPushCalls"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
+            android:layout_marginTop="2dp"
             android:text="@string/device_push_calls"
-            android:textColor="@color/text" />
+            android:textColor="@color/text"
+            android:textSize="14sp" />
 
         <com.google.android.material.switchmaterial.SwitchMaterial
             android:id="@+id/swPushLocation"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
+            android:layout_marginTop="2dp"
             android:text="@string/device_push_location"
-            android:textColor="@color/text" />
+            android:textColor="@color/text"
+            android:textSize="14sp" />
 
         <com.google.android.material.switchmaterial.SwitchMaterial
             android:id="@+id/swPushBattery"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
+            android:layout_marginTop="2dp"
             android:text="@string/device_push_battery"
-            android:textColor="@color/text" />
+            android:textColor="@color/text"
+            android:textSize="14sp" />
 
         <!-- ── Call automation (persists on change) ─────────────────────── -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
+            android:layout_marginTop="16dp"
             android:text="@string/device_auto_answer_title"
             android:textColor="@color/text"
-            android:textSize="14sp"
+            android:textSize="13sp"
             android:textStyle="bold" />
 
         <com.google.android.material.switchmaterial.SwitchMaterial
             android:id="@+id/swAutoAnswer"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
+            android:layout_marginTop="6dp"
             android:text="@string/device_auto_answer_label"
-            android:textColor="@color/text" />
+            android:textColor="@color/text"
+            android:textSize="14sp" />
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
+            android:layout_marginTop="2dp"
             android:text="@string/device_auto_answer_help"
-            android:textSize="12sp"
+            android:textSize="11sp"
             android:textColor="@color/text_dim" />
 
         <!-- ── System (permissions, battery, storage) ───────────────────── -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
+            android:layout_marginTop="16dp"
             android:text="@string/device_system_title"
             android:textColor="@color/text"
-            android:textSize="14sp"
+            android:textSize="13sp"
             android:textStyle="bold" />
 
         <TextView
             android:id="@+id/tvPermissions"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
+            android:layout_marginTop="6dp"
             android:text="Checking permissions…"
-            android:textSize="13sp"
+            android:textSize="12sp"
             android:textColor="@color/text_dim"
             tools:ignore="HardcodedText" />
 
@@ -382,58 +429,58 @@
             android:id="@+id/tvTermux"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
+            android:layout_marginTop="4dp"
             android:text="Termux: checking…"
-            android:textSize="13sp"
+            android:textSize="12sp"
             android:textColor="@color/text_dim"
             tools:ignore="HardcodedText" />
 
         <Button
             android:id="@+id/btnPermissions"
-            style="@style/Widget.Material3.Button.OutlinedButton"
+            style="@style/Widget.Axon.Button.Warning"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
+            android:layout_marginTop="8dp"
             android:text="@string/device_grant_permissions" />
 
         <Button
             android:id="@+id/btnBatteryOpt"
-            style="@style/Widget.Material3.Button.OutlinedButton"
+            style="@style/Widget.Axon.Button.Warning"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
+            android:layout_marginTop="6dp"
             android:text="Disable Battery Optimization ⚠"
             tools:ignore="HardcodedText" />
 
         <Button
             android:id="@+id/btnAllFiles"
-            style="@style/Widget.Material3.Button.OutlinedButton"
+            style="@style/Widget.Axon.Button.Warning"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
+            android:layout_marginTop="6dp"
             android:text="Grant All Files Access ⚠"
             tools:ignore="HardcodedText" />
 
         <Button
             android:id="@+id/btnWriteSettings"
-            style="@style/Widget.Material3.Button.OutlinedButton"
+            style="@style/Widget.Axon.Button.Warning"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
+            android:layout_marginTop="6dp"
             android:text="Grant Modify System Settings ⚠"
             tools:ignore="HardcodedText" />
 
         <Button
             android:id="@+id/btnOverlayPerm"
-            style="@style/Widget.Material3.Button.OutlinedButton"
+            style="@style/Widget.Axon.Button.Warning"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
+            android:layout_marginTop="6dp"
             android:text="Grant Draw Over Other Apps ⚠"
             tools:ignore="HardcodedText" />
 
         <View
             android:layout_width="match_parent"
-            android:layout_height="32dp" />
+            android:layout_height="20dp" />
     </LinearLayout>
 </ScrollView>

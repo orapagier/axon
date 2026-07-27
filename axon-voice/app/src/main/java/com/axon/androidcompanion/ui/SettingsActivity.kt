@@ -3,6 +3,7 @@ package com.axon.androidcompanion.ui
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -33,6 +34,7 @@ import com.axon.androidcompanion.device.ApiService
 import com.axon.androidcompanion.device.AppConfig
 import com.axon.androidcompanion.device.AutoAnswerAccessibilityService
 import com.axon.androidcompanion.device.CloudflaredManager
+import com.google.android.material.button.MaterialButton
 import com.google.android.material.switchmaterial.SwitchMaterial
 import org.json.JSONObject
 import kotlin.concurrent.thread
@@ -46,7 +48,10 @@ import kotlin.concurrent.thread
  *    Each category gets its own Save button, mirroring the dashboard's
  *    per-category save. The model fields offer the same catalogue picker as
  *    the web dropdowns (POST /api/audio/models), with free text always allowed.
- *  - Follow-up window / barge-in / wake word tuning
+ *  - Follow-up window / barge-in / wake word tuning — each with its own Save
+ *    button for consistency with the stt/tts sections above, though the
+ *    underlying prefs already persist as the slider/switch changes; the
+ *    button is a confirmation affordance, not a pending-write flush.
  *  - Device control: the local HTTP API + Cloudflare tunnel exposing SMS/calls/
  *    files/shell/etc to axon-agent. Used to be its own DeviceApiActivity screen;
  *    folded in here so there is only one settings page. ChatActivity's landing-page
@@ -129,6 +134,11 @@ class SettingsActivity : AppCompatActivity() {
         findViewById<Button>(R.id.wakeRetrainBtn).setOnClickListener {
             startActivity(Intent(this, EnrollWakeWordActivity::class.java))
         }
+        // These three tuning sections persist on change already; the Save
+        // buttons are just a confirmation tap, matching the stt/tts pattern.
+        findViewById<Button>(R.id.followupSaveBtn).setOnClickListener { toastMsg(getString(R.string.saved)) }
+        findViewById<Button>(R.id.bargeSaveBtn).setOnClickListener { toastMsg(getString(R.string.saved)) }
+        findViewById<Button>(R.id.wakeSaveBtn).setOnClickListener { toastMsg(getString(R.string.saved)) }
 
         bindDeviceControlViews()
         loadDeviceControlConfig()
@@ -236,11 +246,35 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
-    private fun categorySaveButton(category: String): Button = Button(this).apply {
-        text = getString(R.string.save)
-        setPadding(0, dp(10), 0, 0)
+    private fun categorySaveButton(category: String): Button = compactButton(getString(R.string.save)).apply {
+        setPadding(paddingLeft, paddingTop + dp(10), paddingRight, paddingBottom)
         setOnClickListener { saveCategory(category) }
     }
+
+    /** A small, accent-filled button matching the XML `Widget.Axon.Button`
+     *  style — created in code since that style only auto-applies to
+     *  `<Button>` tags inflated from XML, not `Button(this)` instances. */
+    private fun compactButton(label: String, outlined: Boolean = false): MaterialButton =
+        MaterialButton(this).apply {
+            text = label
+            isAllCaps = false
+            insetTop = 0
+            insetBottom = 0
+            minHeight = dp(36)
+            minimumHeight = dp(36)
+            cornerRadius = dp(10)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setPadding(dp(14), dp(6), dp(14), dp(6))
+            if (outlined) {
+                setTextColor(ContextCompat.getColor(context, R.color.accent))
+                strokeColor = ColorStateList.valueOf(ContextCompat.getColor(context, R.color.accent))
+                strokeWidth = dp(1)
+                backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(context, android.R.color.transparent))
+            } else {
+                setTextColor(ContextCompat.getColor(context, R.color.bg))
+                backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(context, R.color.accent))
+            }
+        }
 
     /** Push edited rows of one category (stt or tts) to the server — the same
      *  per-category Save the dashboard's Settings page uses, so editing Voice
@@ -298,10 +332,10 @@ class SettingsActivity : AppCompatActivity() {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 addView(edit, editParams)
-                addView(Button(context).apply {
-                    text = "▾"
+                addView(compactButton("▾", outlined = true).apply {
                     minWidth = dp(48)
                     minimumWidth = dp(48)
+                    setPadding(dp(8), dp(6), dp(8), dp(6))
                     setOnClickListener { pickModel(category, edit) }
                 })
             })
@@ -559,35 +593,48 @@ class SettingsActivity : AppCompatActivity() {
                              else "✗ Missing: ${missing.joinToString { it.substringAfterLast('.') }}"
 
         btnToggle.text = if (running) getString(R.string.device_stop_server) else getString(R.string.device_start_server)
+        // Always a live, tappable primary action (never muted) — amber while
+        // running (draws the eye: tapping stops something active), accent
+        // while stopped (the inviting "go" color).
+        btnToggle.backgroundTintList = ColorStateList.valueOf(getColor(if (running) R.color.warning else R.color.accent))
+        btnToggle.setTextColor(getColor(R.color.bg))
 
         // Battery optimization
         val pm = getSystemService(POWER_SERVICE) as PowerManager
-        btnBatteryOpt.text = if (pm.isIgnoringBatteryOptimizations(packageName))
-            "Battery Optimization: Disabled ✓"
-        else
-            "Disable Battery Optimization ⚠"
+        val batteryOk = pm.isIgnoringBatteryOptimizations(packageName)
+        btnBatteryOpt.text = if (batteryOk) "Battery Optimization: Disabled ✓" else "Disable Battery Optimization ⚠"
+        tintButton(btnBatteryOpt, needsAction = !batteryOk)
 
         // All Files Access (MANAGE_EXTERNAL_STORAGE) — required for Termux shell output
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            btnAllFiles.text = if (Environment.isExternalStorageManager())
-                "All Files Access: Granted ✓"
-            else
-                "Grant All Files Access ⚠  (required for shell.run)"
+            val filesOk = Environment.isExternalStorageManager()
+            btnAllFiles.text = if (filesOk) "All Files Access: Granted ✓" else "Grant All Files Access ⚠  (required for shell.run)"
+            tintButton(btnAllFiles, needsAction = !filesOk)
         } else {
             btnAllFiles.text = "All Files Access: Not required on this Android version"
+            tintButton(btnAllFiles, needsAction = false)
         }
 
         // WRITE_SETTINGS — required for brightness control
-        btnWriteSettings.text = if (Settings.System.canWrite(this))
-            "Modify System Settings: Granted ✓"
-        else
-            "Grant Modify System Settings ⚠  (required for brightness)"
+        val writeOk = Settings.System.canWrite(this)
+        btnWriteSettings.text = if (writeOk) "Modify System Settings: Granted ✓" else "Grant Modify System Settings ⚠  (required for brightness)"
+        tintButton(btnWriteSettings, needsAction = !writeOk)
 
         // SYSTEM_ALERT_WINDOW — required for launch.url / launch.app on Android 10+
-        btnOverlayPerm.text = if (Settings.canDrawOverlays(this))
-            "Draw Over Other Apps: Granted ✓"
-        else
-            "Grant Draw Over Other Apps ⚠  (required for launch.url/app)"
+        val overlayOk = Settings.canDrawOverlays(this)
+        btnOverlayPerm.text = if (overlayOk) "Draw Over Other Apps: Granted ✓" else "Grant Draw Over Other Apps ⚠  (required for launch.url/app)"
+        tintButton(btnOverlayPerm, needsAction = !overlayOk)
+
+        tintButton(btnPermissions, needsAction = missing.isNotEmpty())
+    }
+
+    /** Warning amber while a tap is still needed, muted accent_dim once
+     *  granted/handled — so the color itself signals what still needs doing. */
+    private fun tintButton(button: Button, needsAction: Boolean) {
+        val bgRes = if (needsAction) R.color.warning else R.color.accent_dim
+        val fgRes = if (needsAction) R.color.bg else R.color.text
+        button.backgroundTintList = ColorStateList.valueOf(getColor(bgRes))
+        button.setTextColor(getColor(fgRes))
     }
 
     private fun toggleServer() {
