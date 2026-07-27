@@ -8,9 +8,8 @@
 //!   file fields (WAV clips, mirroring axon-voice's on-device JNI builder)
 //!   builds a personal `.rpw`, persists it in `wake_model`, and confirms.
 //! * `GET /api/wakeword/model` — serves the persisted model back as raw
-//!   bytes, or 404 when nothing's enrolled yet — the dashboard's
-//!   `wakeword.js` falls back to the bundled `/rustpotter/heyaxon.rpw`
-//!   default in that case.
+//!   bytes, or 404 when nothing's enrolled yet — the dashboard has no bundled
+//!   fallback model, so a 404 sends the user into the enrollment flow instead.
 //!
 //! The actual build runs in the standalone `wake-model-builder` binary
 //! (repo root, deliberately outside the cargo workspace — same reasoning as

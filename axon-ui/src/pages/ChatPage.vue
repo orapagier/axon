@@ -785,8 +785,8 @@ let wake = null
 
 // Local hint only — the enrolled model itself lives server-side
 // (/api/wakeword/model). First time wake-word is turned on with no hint set,
-// EnrollWakeWord.vue opens instead of starting the detector immediately; the
-// shared bundled model still works either way (see lib/wakeword.js's fallback).
+// EnrollWakeWord.vue opens instead of starting the detector immediately —
+// there is no bundled fallback model, so enrollment is required.
 const showEnrollWake = ref(false)
 function hasEnrolledWake() {
   try {

@@ -40,8 +40,9 @@ class Prefs(ctx: Context) {
         set(v) { sp.edit().putString("wake_phrase", v.trim()).apply() }
 
     /** Absolute path to the on-device-built personal .rpw model
-     *  (filesDir/wake_model.rpw), or empty if the user hasn't enrolled yet —
-     *  [WakeWordService] falls back to the bundled `heyaxon.rpw` asset then. */
+     *  (filesDir/wake_model.rpw). Empty until enrollment completes — there is
+     *  no bundled fallback model, so [wakeEnrolled] gates ever starting
+     *  [WakeWordService]. */
     var wakeModelPath: String
         get() = sp.getString("wake_model_path", "") ?: ""
         set(v) { sp.edit().putString("wake_model_path", v).apply() }

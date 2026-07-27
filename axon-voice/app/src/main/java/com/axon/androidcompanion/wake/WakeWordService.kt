@@ -232,9 +232,9 @@ class WakeWordService : Service(), ChatSocket.Listener {
 
     // ── Detection loop ──────────────────────────────────────────────────────
 
-    /** The enrolled wake phrase, or the bundled default's label before
-     *  enrollment ([Prefs.wakeEnrolled] is false — see [runLoop]'s model
-     *  fallback below). */
+    /** The enrolled wake phrase, or the "Hey Axon" default label if somehow
+     *  empty despite enrollment (cosmetic only — doesn't affect which model
+     *  loads; see [runLoop]). */
     private fun wakeLabel(): String = prefs.wakePhrase.ifEmpty { "Hey Axon" }
 
     private fun runLoop() {
@@ -242,14 +242,13 @@ class WakeWordService : Service(), ChatSocket.Listener {
             fail("Wake engine missing from this build")
             return
         }
+        // Callers only ever start this service once prefs.wakeEnrolled is true
+        // (see ChatActivity.setWakeEnabled) — there is no shared/default model
+        // to fall back to anymore, enrollment is required.
         val model = try {
-            if (prefs.wakeEnrolled) {
-                File(prefs.wakeModelPath).readBytes()
-            } else {
-                assets.open("heyaxon.rpw").readBytes()
-            }
+            File(prefs.wakeModelPath).readBytes()
         } catch (_: Exception) {
-            fail("Wake model asset missing")
+            fail("Wake model missing — re-enroll your wake word")
             return
         }
         val detector = try {

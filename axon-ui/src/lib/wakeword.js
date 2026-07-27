@@ -11,11 +11,10 @@ const ASSETS = {
   workerPath: '/rustpotter/rustpotter-worker.min.js',
   wasmPath: '/rustpotter/rustpotter_wasm_bg.wasm',
 }
-// The bundled shared default; a personal model built via EnrollWakeWord.vue
-// (served from /api/wakeword/model, auth-gated like the rest of /api/*) is
-// tried first — see start() below — falling back to this when nothing's
-// enrolled yet.
-const MODEL_URL = '/rustpotter/heyaxon.rpw'
+// The personal model built via EnrollWakeWord.vue (served from
+// /api/wakeword/model, auth-gated like the rest of /api/*). There is no
+// shared/default fallback model — ChatPage.vue's toggleWake() only ever
+// calls start() once enrollment has happened.
 const PERSONAL_MODEL_URL = '/api/wakeword/model'
 const MODEL_KEY = 'hey axon'
 
@@ -103,8 +102,7 @@ export function createWakeWord({ onDetection, onState }) {
       })
       const masterKey = localStorage.getItem('AXON_MASTER_KEY')
       const authHeaders = masterKey ? { Authorization: `Bearer ${masterKey}` } : {}
-      let ok = await service.addWakewordByPath(MODEL_KEY, PERSONAL_MODEL_URL, authHeaders)
-      if (!ok) ok = await service.addWakewordByPath(MODEL_KEY, MODEL_URL)
+      const ok = await service.addWakewordByPath(MODEL_KEY, PERSONAL_MODEL_URL, authHeaders)
       if (!ok) throw new Error('wake word model rejected')
       node = await service.getProcessorNode(ctx)
       source = ctx.createMediaStreamSource(stream)

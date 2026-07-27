@@ -30,8 +30,10 @@ Android's built-in TextToSpeech when server TTS fails.
    the ported silence-watcher thresholds (1.4 s quiet / 5 s no speech / 12 s
    cap), and the transcript sends as its own chat message (speak-and-go).
 2. **"Hey Axon" always-on** — the wake button in the input row starts a
-   microphone foreground service running rustpotter (same `heyaxon.rpw` model
-   as the dashboard, `spot -g -e -t 0.47` tuning). Wake → "Yes?" → command →
+   microphone foreground service running rustpotter against your personally
+   enrolled model (`spot -g -e -t 0.47` tuning; first toggle-on with nothing
+   enrolled opens EnrollWakeWordActivity instead of starting the detector —
+   there's no shared/default model to fall back to). Wake → "Yes?" → command →
    spoken reply → soft chime reopening a follow-up window with the raised 2×
    bystander RMS bar. Grant the battery-optimization exemption when prompted
    or Doze will eventually kill it. Exchanges land in the same chat thread.
@@ -61,9 +63,9 @@ cd ..
 Install via `adb install` (or copy the APK to the phone). On first run open
 Settings in the app, enter the server URL and master key, and Test connection.
 
-The wake model ships as `app/src/main/assets/heyaxon.rpw` — a copy of
-`axon-ui/public/rustpotter/heyaxon.rpw`. Re-copy it if the model is ever
-retrained (rebuild kit lives in `Dev/rustpotter-test`).
+There is no bundled wake model — turning on "Hey Axon" for the first time
+opens the in-app enrollment flow, which builds a personal `.rpw` model
+on-device from a few recordings of your own voice.
 
 ## Layout
 
