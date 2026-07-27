@@ -1,5 +1,5 @@
 //! JNI bridge for the rustpotter wake-word engine, consumed by
-//! com.axon.voice.wake.RustpotterNative. Detector defaults are passed in from
+//! com.axon.androidcompanion.wake.RustpotterNative. Detector defaults are passed in from
 //! Kotlin and mirror axon-ui/src/lib/wakeword.js (threshold 0.47, score_ref
 //! 0.22, min_scores 10, eager, gain normalization on, band-pass off).
 //!
@@ -15,7 +15,7 @@ use rustpotter::{
 use std::collections::HashMap;
 
 #[no_mangle]
-pub extern "system" fn Java_com_axon_voice_wake_RustpotterNative_create(
+pub extern "system" fn Java_com_axon_androidcompanion_wake_RustpotterNative_create(
     env: JNIEnv,
     _class: JClass,
     model: JByteArray,
@@ -68,7 +68,7 @@ pub extern "system" fn Java_com_axon_voice_wake_RustpotterNative_create(
 /// Returns the serialized `.rpw` bytes, or null on failure (bad audio, or
 /// fewer than 3 usable samples).
 #[no_mangle]
-pub extern "system" fn Java_com_axon_voice_wake_RustpotterNative_build(
+pub extern "system" fn Java_com_axon_androidcompanion_wake_RustpotterNative_build(
     mut env: JNIEnv,
     _class: JClass,
     name: JString,
@@ -124,7 +124,7 @@ pub extern "system" fn Java_com_axon_voice_wake_RustpotterNative_build(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_axon_voice_wake_RustpotterNative_samplesPerFrame(
+pub extern "system" fn Java_com_axon_androidcompanion_wake_RustpotterNative_samplesPerFrame(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -139,7 +139,7 @@ pub extern "system" fn Java_com_axon_voice_wake_RustpotterNative_samplesPerFrame
 /// Feed one frame of 16k mono PCM16. Returns the detection score, -1.0 when
 /// nothing fired this frame.
 #[no_mangle]
-pub extern "system" fn Java_com_axon_voice_wake_RustpotterNative_process(
+pub extern "system" fn Java_com_axon_androidcompanion_wake_RustpotterNative_process(
     env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -164,7 +164,7 @@ pub extern "system" fn Java_com_axon_voice_wake_RustpotterNative_process(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_axon_voice_wake_RustpotterNative_destroy(
+pub extern "system" fn Java_com_axon_androidcompanion_wake_RustpotterNative_destroy(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,

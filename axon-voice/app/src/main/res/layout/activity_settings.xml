@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/bg"
@@ -40,6 +41,51 @@
             android:textColor="@color/text"
             android:textColorHint="@color/text_dim"
             android:importantForAutofill="no" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="12dp">
+
+            <Button
+                android:id="@+id/saveBtn"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/save" />
+
+            <Button
+                android:id="@+id/testBtn"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:text="@string/test_connection" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/testResult"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:textColor="@color/text_dim" />
+
+        <!-- Server-side voice settings (tts.* / stt.*), built dynamically from
+             GET /api/settings — same rows as the dashboard's Voice Input /
+             Voice Replies sections. Each category gets its own Save button,
+             appended after its rows in buildVoiceUi(). -->
+        <TextView
+            android:id="@+id/voiceStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:textColor="@color/text_dim" />
+
+        <LinearLayout
+            android:id="@+id/voiceContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
 
         <!-- Follow-up window: how long the mic stays open for a next turn
              after a spoken reply. Slider built programmatically in
@@ -106,8 +152,12 @@
             android:layout_marginTop="8dp"
             android:text="@string/settings_wake_retrain" />
 
-        <!-- Device control: local HTTP API + Cloudflare tunnel exposing SMS/calls/
-             files/shell/etc to axon-agent. Status and setup live in DeviceApiActivity. -->
+        <!-- ══════════════════ Device control ══════════════════
+             Local HTTP API + Cloudflare tunnel exposing SMS/calls/files/shell/
+             etc to axon-agent. Used to be its own DeviceApiActivity screen —
+             folded in here so there's only one Settings page. The landing
+             page's quick switch (ChatActivity) starts/stops the same
+             ApiService; this section is the detailed view. -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -117,56 +167,273 @@
             android:textSize="16sp"
             android:textStyle="bold" />
 
+        <!-- ── Server status ──────────────────────────────────────────── -->
+        <TextView
+            android:id="@+id/tvStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="○ Stopped"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="@color/status_stopped"
+            tools:ignore="HardcodedText" />
+
+        <TextView
+            android:id="@+id/tvUrl"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="—"
+            android:textSize="13sp"
+            android:textColor="@color/text_dim"
+            android:fontFamily="monospace"
+            tools:ignore="HardcodedText" />
+
+        <TextView
+            android:id="@+id/tvToken"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="Token: —"
+            android:textSize="13sp"
+            android:textColor="@color/text_dim"
+            android:fontFamily="monospace"
+            android:background="?attr/selectableItemBackground"
+            android:padding="4dp"
+            tools:ignore="HardcodedText" />
+
         <Button
-            android:id="@+id/deviceApiBtn"
+            android:id="@+id/btnToggle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/device_start_server" />
+
+        <!-- ── Cloudflare tunnel ──────────────────────────────────────── -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/device_tunnel_title"
+            android:textColor="@color/text"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvTunnelStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="○ Not configured"
+            android:textSize="13sp"
+            android:textColor="@color/text_dim"
+            tools:ignore="HardcodedText" />
+
+        <EditText
+            android:id="@+id/etCloudflaredToken"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:hint="@string/device_tunnel_token_hint"
+            android:inputType="textPassword"
+            android:textColor="@color/text"
+            android:textColorHint="@color/text_dim"
+            android:fontFamily="monospace"
+            android:textSize="13sp"
+            android:importantForAutofill="no" />
+
+        <Button
+            android:id="@+id/btnSaveCloudflaredToken"
             style="@style/Widget.Material3.Button.OutlinedButton"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:text="@string/device_api_open" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:layout_marginTop="20dp">
-
-            <Button
-                android:id="@+id/saveBtn"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/save" />
-
-            <Button
-                android:id="@+id/testBtn"
-                style="@style/Widget.Material3.Button.OutlinedButton"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="12dp"
-                android:text="@string/test_connection" />
-        </LinearLayout>
+            android:text="@string/device_tunnel_save" />
 
         <TextView
-            android:id="@+id/testResult"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
+            android:layout_marginTop="8dp"
+            android:text="@string/device_tunnel_help"
+            android:textSize="12sp"
             android:textColor="@color/text_dim" />
 
-        <!-- Server-side voice settings (tts.* / stt.*), built dynamically from
-             GET /api/settings — same rows as the dashboard's Voice Input /
-             Voice Replies sections. -->
+        <!-- ── Webhook config ─────────────────────────────────────────── -->
         <TextView
-            android:id="@+id/voiceStatus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/device_webhook_title"
+            android:textColor="@color/text"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <EditText
+            android:id="@+id/etWebhook"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
+            android:layout_marginTop="8dp"
+            android:hint="@string/device_webhook_hint"
+            android:inputType="textUri"
+            android:textColor="@color/text"
+            android:textColorHint="@color/text_dim"
+            android:fontFamily="monospace"
+            android:textSize="13sp"
+            android:importantForAutofill="no" />
+
+        <Button
+            android:id="@+id/btnSaveWebhook"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/device_webhook_save" />
+
+        <!-- ── Push events (persist on change, no save button needed) ──── -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/device_push_title"
+            android:textColor="@color/text"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <com.google.android.material.switchmaterial.SwitchMaterial
+            android:id="@+id/swPushSms"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/device_push_sms"
+            android:textColor="@color/text" />
+
+        <com.google.android.material.switchmaterial.SwitchMaterial
+            android:id="@+id/swPushCalls"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="@string/device_push_calls"
+            android:textColor="@color/text" />
+
+        <com.google.android.material.switchmaterial.SwitchMaterial
+            android:id="@+id/swPushLocation"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="@string/device_push_location"
+            android:textColor="@color/text" />
+
+        <com.google.android.material.switchmaterial.SwitchMaterial
+            android:id="@+id/swPushBattery"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="@string/device_push_battery"
+            android:textColor="@color/text" />
+
+        <!-- ── Call automation (persists on change) ─────────────────────── -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/device_auto_answer_title"
+            android:textColor="@color/text"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <com.google.android.material.switchmaterial.SwitchMaterial
+            android:id="@+id/swAutoAnswer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/device_auto_answer_label"
+            android:textColor="@color/text" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/device_auto_answer_help"
+            android:textSize="12sp"
             android:textColor="@color/text_dim" />
 
-        <LinearLayout
-            android:id="@+id/voiceContainer"
+        <!-- ── System (permissions, battery, storage) ───────────────────── -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/device_system_title"
+            android:textColor="@color/text"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvPermissions"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical" />
+            android:layout_marginTop="8dp"
+            android:text="Checking permissions…"
+            android:textSize="13sp"
+            android:textColor="@color/text_dim"
+            tools:ignore="HardcodedText" />
+
+        <TextView
+            android:id="@+id/tvTermux"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="Termux: checking…"
+            android:textSize="13sp"
+            android:textColor="@color/text_dim"
+            tools:ignore="HardcodedText" />
+
+        <Button
+            android:id="@+id/btnPermissions"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="@string/device_grant_permissions" />
+
+        <Button
+            android:id="@+id/btnBatteryOpt"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Disable Battery Optimization ⚠"
+            tools:ignore="HardcodedText" />
+
+        <Button
+            android:id="@+id/btnAllFiles"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Grant All Files Access ⚠"
+            tools:ignore="HardcodedText" />
+
+        <Button
+            android:id="@+id/btnWriteSettings"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Grant Modify System Settings ⚠"
+            tools:ignore="HardcodedText" />
+
+        <Button
+            android:id="@+id/btnOverlayPerm"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Grant Draw Over Other Apps ⚠"
+            tools:ignore="HardcodedText" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="32dp" />
     </LinearLayout>
 </ScrollView>

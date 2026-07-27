@@ -13,11 +13,11 @@ val keystoreProps = Properties().apply {
 }
 
 android {
-    namespace = "com.axon.voice"
+    namespace = "com.axon.androidcompanion"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.axon.voice"
+        applicationId = "com.axon.androidcompanion"
         minSdk = 26
         targetSdk = 36
         versionCode = 1
@@ -85,7 +85,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
-    // AgentAPI: Ktor server — Netty engine (local device-control HTTP API)
+    // AndroidCompanion: Ktor server — Netty engine (local device-control HTTP API)
     implementation("io.ktor:ktor-server-core-jvm:$ktorVersion")
     implementation("io.ktor:ktor-server-netty-jvm:$ktorVersion")
     implementation("io.ktor:ktor-server-content-negotiation-jvm:$ktorVersion")
@@ -93,12 +93,12 @@ dependencies {
     implementation("io.ktor:ktor-server-status-pages-jvm:$ktorVersion")
     implementation("io.ktor:ktor-server-auth-jvm:$ktorVersion")
 
-    // AgentAPI: Ktor client — pushes proactive events (sms/call/location/battery) to axon-agent
+    // AndroidCompanion: Ktor client — pushes proactive events (sms/call/location/battery) to axon-agent
     implementation("io.ktor:ktor-client-core-jvm:$ktorVersion")
     implementation("io.ktor:ktor-client-okhttp-jvm:$ktorVersion")
     implementation("io.ktor:ktor-client-content-negotiation-jvm:$ktorVersion")
 
-    // AgentAPI: WorkManager watchdog + Play Services location + Gson
+    // AndroidCompanion: WorkManager watchdog + Play Services location + Gson
     implementation("androidx.work:work-runtime-ktx:2.11.1")
     implementation("com.google.android.gms:play-services-location:21.3.0")
     implementation("com.google.code.gson:gson:2.11.0")

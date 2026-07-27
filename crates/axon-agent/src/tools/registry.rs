@@ -240,6 +240,27 @@ fn internal_tools() -> Vec<ToolDefinition> {
             vec!["action".into()],
         ),
         ToolDefinition::internal(
+            "device_tool",
+            "Call a registered companion device (a phone or PC running a device-control \
+             companion app — AndroidCompanion today, more kinds later) to send SMS, make \
+             calls, use the camera, run shell commands, check battery, etc. Devices are \
+             registered on the Devices dashboard page. Call action=list_devices first if \
+             you don't know the device name, then action=list_tools to see what that \
+             device can do before action=call. Many requests need TWO calls, not one: \
+             if asked to call/text someone by NAME (not a raw number), first \
+             action=call tool=contacts.list params={q:name} to resolve their number, \
+             THEN action=call tool=call.make/sms.send with that number — there is no \
+             single 'call this named contact' tool.",
+            serde_json::json!({
+                "action": {"type": "string", "enum": ["list_devices", "list_tools", "call"], "description": "Action to perform"},
+                "device_name": {"type": "string", "description": "Name of the registered device (from list_devices)", "displayOptions": {"show": {"action": ["list_tools", "call"]}}},
+                "tool": {"type": "string", "description": "The device-side tool name to invoke, e.g. 'sms.send', 'shell.run', 'camera.photo' (from list_tools)", "displayOptions": {"show": {"action": ["call"]}}},
+                "params": {"type": "object", "description": "Parameters object for the device tool call, matching the params listed by list_tools for that tool", "displayOptions": {"show": {"action": ["call"]}}},
+                "timeout_seconds": {"type": "integer", "default": 30, "description": "Max wait for the device's response. Defaults to 30s; raise to 60-120s for actions that require an on-device Approve/Deny tap (shell.run, files.write/files.delete/files.zip outside the sandbox, contacts.delete, clearing call log) or slow hardware ops like camera.photo.", "displayOptions": {"show": {"action": ["call"]}}}
+            }),
+            vec!["action".into()],
+        ),
+        ToolDefinition::internal(
             "parallel_worker",
             "Execute multiple independent sub-tasks in parallel iterations. Use this specifically to speed up execution when tasks don't depend on each other (e.g. checking 5 different servers, analyzing 3 different files concurrently).",
             serde_json::json!({

@@ -1,3 +1,4 @@
+pub mod device;
 pub mod file_handler;
 pub mod http;
 pub mod image_tool;
@@ -12,6 +13,7 @@ pub mod telegram;
 pub mod web_search;
 pub mod whatsapp;
 pub mod workflow;
+pub use device::DeviceTool;
 pub use file_handler::FileHandler;
 pub use registry::ToolRegistry;
 pub use schema::ToolDefinition;

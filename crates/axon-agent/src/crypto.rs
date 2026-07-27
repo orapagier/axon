@@ -266,6 +266,7 @@ const ENCRYPTED_COLUMNS: &[(&str, &str)] = &[
     ("mcp_servers", "api_key"),
     ("credentials", "data"),
     ("settings", "value"),
+    ("devices", "bearer_token"),
 ];
 
 /// Was this column ever written under the v1 (untagged) scheme? Only those get

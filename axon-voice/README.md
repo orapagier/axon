@@ -67,7 +67,7 @@ retrained (rebuild kit lives in `Dev/rustpotter-test`).
 
 ## Layout
 
-- `app/` — Kotlin app (`com.axon.voice`): `api/` HTTP+WS client, `audio/`
+- `app/` — Kotlin app (`com.axon.androidcompanion`): `api/` HTTP+WS client, `audio/`
   recorder/player/chime, `wake/` JNI bridge + foreground service, `assist/`
   digital-assistant role services, `ui/` chat screen + settings.
 - `rustpotter-jni/` — standalone Rust cdylib wrapping rustpotter 3.x for JNI.

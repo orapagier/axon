@@ -61,7 +61,7 @@
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
-    <!-- Device control (AgentAPI routes) -->
+    <!-- Device control (AndroidCompanion routes) -->
     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
     <uses-permission android:name="android.permission.SET_WALLPAPER" />
     <uses-permission android:name="android.permission.VIBRATE" />
@@ -197,15 +197,15 @@
                 android:resource="@xml/recognition_service" />
         </service>
 
-        <!-- ── AgentAPI: device-control HTTP API + Cloudflare tunnel ─────────────── -->
+        <!-- ── AndroidCompanion: device-control HTTP API + Cloudflare tunnel ─────────────── -->
 
         <receiver
-            android:name="com.agentapi.android.AlarmRingerReceiver"
+            android:name="com.axon.androidcompanion.device.AlarmRingerReceiver"
             android:exported="false" />
 
         <!-- Handles the Approve/Deny taps on ApprovalManager's notifications. -->
         <receiver
-            android:name="com.agentapi.android.ApprovalReceiver"
+            android:name="com.axon.androidcompanion.device.ApprovalReceiver"
             android:exported="false" />
 
         <!--
@@ -215,28 +215,21 @@
             excludeFromRecents keeps it off the Recents screen.
         -->
         <activity
-            android:name="com.agentapi.android.AlarmDismissActivity"
+            android:name="com.axon.androidcompanion.device.AlarmDismissActivity"
             android:exported="false"
             android:showOnLockScreen="true"
             android:turnScreenOn="true"
             android:noHistory="true"
             android:excludeFromRecents="true"
             android:launchMode="singleInstance"
-            android:theme="@style/Theme.AgentAPI" />
-
-        <!-- Device-control status/setup screen — reached from Settings, not a launcher. -->
-        <activity
-            android:name="com.agentapi.android.DeviceApiActivity"
-            android:exported="false"
-            android:launchMode="singleTop"
-            android:screenOrientation="portrait" />
+            android:theme="@style/Theme.AndroidCompanion" />
 
         <!--
             stopWithTask="false"  keeps the service alive when the user swipes the app away.
             Both dataSync (HTTP server) + location (GPS updates) types declared for API 29+.
         -->
         <service
-            android:name="com.agentapi.android.ApiService"
+            android:name="com.axon.androidcompanion.device.ApiService"
             android:enabled="true"
             android:exported="false"
             android:stopWithTask="false"
@@ -245,12 +238,12 @@
         <!--
             AccessibilityService for auto-answer.
             The user MUST enable this manually in:
-            Settings → Accessibility → AgentAPI Auto Answer
+            Settings → Accessibility → AndroidCompanion Auto Answer
         -->
         <service
-            android:name="com.agentapi.android.AutoAnswerAccessibilityService"
+            android:name="com.axon.androidcompanion.device.AutoAnswerAccessibilityService"
             android:exported="true"
-            android:label="AgentAPI Auto Answer"
+            android:label="AndroidCompanion Auto Answer"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
@@ -261,7 +254,7 @@
         </service>
 
         <receiver
-            android:name="com.agentapi.android.BootReceiver"
+            android:name="com.axon.androidcompanion.device.BootReceiver"
             android:enabled="true"
             android:exported="true">
             <intent-filter android:priority="999">
@@ -274,7 +267,7 @@
 
         <!-- Incoming SMS → push to axon-agent's webhook immediately -->
         <receiver
-            android:name="com.agentapi.android.SmsReceiver"
+            android:name="com.axon.androidcompanion.device.SmsReceiver"
             android:enabled="true"
             android:exported="true"
             android:permission="android.permission.BROADCAST_SMS">
@@ -285,7 +278,7 @@
 
         <!-- Call state changes → push missed/incoming calls to axon-agent -->
         <receiver
-            android:name="com.agentapi.android.CallStateReceiver"
+            android:name="com.axon.androidcompanion.device.CallStateReceiver"
             android:enabled="true"
             android:exported="true">
             <intent-filter android:priority="999">

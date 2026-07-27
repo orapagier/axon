@@ -243,6 +243,19 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::delete(api::delete_ssh_server),
         )
         .route(
+            "/api/devices",
+            get(api::get_devices).post(api::add_device),
+        )
+        .route(
+            "/api/devices/:name",
+            axum::routing::delete(api::delete_device),
+        )
+        .route(
+            "/api/devices/:name/test",
+            axum::routing::post(api::test_device),
+        )
+        .route("/api/devices/:name/tools", get(api::get_device_tools))
+        .route(
             "/api/websearch/accounts",
             get(api::get_websearch_accounts).post(api::upsert_websearch_account),
         )

@@ -21,6 +21,7 @@ const PAGES = {
   workflows: markRaw(defineAsyncComponent(() => import('./pages/WorkflowsPage.vue'))),
   crm: markRaw(defineAsyncComponent(() => import('./pages/CrmPage.vue'))),
   services: markRaw(defineAsyncComponent(() => import('./pages/ServicesPage.vue'))),
+  devices: markRaw(defineAsyncComponent(() => import('./pages/DevicesPage.vue'))),
   files: markRaw(defineAsyncComponent(() => import('./pages/FilesPage.vue'))),
   docs: markRaw(defineAsyncComponent(() => import('./pages/DocsPage.vue'))),
   settings: markRaw(defineAsyncComponent(() => import('./pages/SettingsPage.vue'))),
@@ -82,6 +83,13 @@ const NAV = [
     description: 'External integrations and auth',
     tint: '#4cc98a',
     icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 2.5V8M15 2.5V8M6 8h12l-1.2 5.5a5 5 0 0 1-9.6 0L6 8Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 17.5v4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+  },
+  {
+    id: 'devices',
+    label: 'Devices',
+    description: 'Companion phones the agent can control',
+    tint: '#5fb8d9',
+    icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M11 18.5h2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
   },
   {
     id: 'files',

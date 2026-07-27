@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="agentapi_app_name">AgentAPI</string>
-    <string name="accessibility_service_description">Allows AgentAPI to auto-answer incoming calls when enabled in the app settings.</string>
-</resources>

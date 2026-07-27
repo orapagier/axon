@@ -10,7 +10,7 @@
 use crate::agent::RunContext;
 use crate::scheduler::store::StopCondition;
 use crate::state::AppState;
-use crate::tools::{ShellTool, SshTool};
+use crate::tools::{DeviceTool, ShellTool, SshTool};
 use std::sync::Arc;
 
 /// Fill in stored credentials for an agent-invoked tool so the model doesn't
@@ -229,6 +229,7 @@ pub(crate) async fn handle_internal(
         "watcher_tool" => handle_watcher(args, state, ctx).await,
         "agent_memory_tool" => handle_memory(args, state, &ctx).await,
         "ssh_tool" => handle_ssh(args, state).await,
+        "device_tool" => handle_device(args, state).await,
         "shell_tool" => handle_shell(args).await,
         "parallel_worker" => handle_parallel_worker(args, state, ctx).await,
         "web_search" => handle_web_search(args, state).await,
@@ -832,6 +833,28 @@ async fn handle_ssh(args: serde_json::Value, state: AppState) -> anyhow::Result<
         "upload_file"                        => SshTool::upload_file(server, remote, local_path, state).await,
         "download_file"                      => SshTool::download_file(server, remote, state).await,
         other => anyhow::bail!("Unknown SSH action: '{}'. Valid actions are: 'run', 'upload_file', 'download_file', 'list_servers'.", other),
+    }
+}
+
+async fn handle_device(args: serde_json::Value, state: AppState) -> anyhow::Result<serde_json::Value> {
+    let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("");
+    let device_name = args
+        .get("device_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    match action {
+        "list_devices" => DeviceTool::list_devices(state).await,
+        "list_tools" => DeviceTool::list_device_tools(device_name, state).await,
+        "call" => {
+            let tool = args.get("tool").and_then(|v| v.as_str()).unwrap_or("");
+            let params = args.get("params").cloned().unwrap_or(serde_json::json!({}));
+            let timeout = args
+                .get("timeout_seconds")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(30);
+            DeviceTool::call(device_name, tool, params, timeout, state).await
+        }
+        other => anyhow::bail!("Unknown device_tool action: '{}'. Valid actions: 'list_devices', 'list_tools', 'call'.", other),
     }
 }
 

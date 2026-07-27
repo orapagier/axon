@@ -152,7 +152,7 @@ pub fn closest_tool_names(name: &str, all_tools: &[ToolDefinition], k: usize) ->
         .collect()
 }
 
-fn levenshtein(a: &str, b: &str) -> usize {
+pub(crate) fn levenshtein(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
     let mut prev: Vec<usize> = (0..=b.len()).collect();
@@ -190,6 +190,7 @@ pub fn derive_is_mutating(name: &str) -> bool {
         "watcher_tool",
         "parallel_worker",
         "image_tool",
+        "device_tool",
     ];
     if ALWAYS_MUTATING.contains(&lower.as_str()) {
         return true;

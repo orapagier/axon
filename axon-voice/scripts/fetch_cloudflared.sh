@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Downloads cloudflared release binaries and places them where the AgentAPI app expects
+# Downloads cloudflared release binaries and places them where the AndroidCompanion app expects
 # to find them: app/src/main/jniLibs/<abi>/libcloudflared.so
 #
-# Run from the AgentAPI project root (or anywhere — path is resolved relative to this script):
+# Run from the AndroidCompanion project root (or anywhere — path is resolved relative to this script):
 #   bash scripts/fetch_cloudflared.sh
 #
 # WHY THIS IS A SEPARATE SCRIPT YOU RUN YOURSELF:
@@ -13,7 +13,7 @@
 #
 # After running this, rebuild the app (packagingOptions.jniLibs.useLegacyPackaging in
 # build.gradle makes sure these get extracted as real executable files on-device, not
-# mmap'd in place like a normal .so). Then set your Cloudflare Tunnel token in AgentAPI's
+# mmap'd in place like a normal .so). Then set your Cloudflare Tunnel token in AndroidCompanion's
 # Settings screen (or POST/PATCH /config with {"cloudflared_token": "..."}).
 #
 # Get a token: https://one.dash.cloudflare.com -> Networks -> Tunnels -> Create a tunnel

@@ -63,6 +63,30 @@
                 android:contentDescription="@string/settings_title" />
         </LinearLayout>
 
+        <!-- One switch for the local device-control HTTP API + its Cloudflare
+             tunnel — ApiService already starts/stops CloudflaredManager as part
+             of its own lifecycle, so a single toggle here covers both. -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginTop="6dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/device_control_toggle_label"
+                android:textColor="@color/text_dim"
+                android:textSize="12sp" />
+
+            <com.google.android.material.switchmaterial.SwitchMaterial
+                android:id="@+id/deviceControlToggle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content" />
+        </LinearLayout>
+
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/chatList"
             android:layout_width="match_parent"
@@ -141,7 +165,7 @@
         android:focusable="true"
         android:visibility="gone">
 
-        <com.axon.voice.ui.VoiceOrbView
+        <com.axon.androidcompanion.ui.VoiceOrbView
             android:id="@+id/voiceOrb"
             android:layout_width="280dp"
             android:layout_height="280dp" />

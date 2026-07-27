@@ -541,6 +541,7 @@ async fn main() -> anyhow::Result<()> {
         run_semaphore: Arc::new(tokio::sync::Semaphore::new(max_concurrent_runs)),
         active_runs: Arc::new(std::sync::atomic::AtomicI64::new(0)),
         run_queue_depth: Arc::new(std::sync::atomic::AtomicI64::new(0)),
+        device_last_ok: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
     };
 
     // Stored files cleanup (every 6 hours)

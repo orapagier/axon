@@ -42,4 +42,10 @@ pub struct AppState {
     /// Read by observability (C3) and used to enforce `workflow.max_queue_depth`.
     pub active_runs: Arc<std::sync::atomic::AtomicI64>,
     pub run_queue_depth: Arc<std::sync::atomic::AtomicI64>,
+    /// Last known reachability per companion device (keyed by device `name`),
+    /// so `DeviceTool::test_connection` can notify the dashboard bell + messaging
+    /// gateway only on a connected<->disconnected transition, not on every poll.
+    /// In-memory only: resets to "unknown" on restart, which just suppresses the
+    /// one-time notification for the first check after a restart.
+    pub device_last_ok: Arc<tokio::sync::Mutex<std::collections::HashMap<String, bool>>>,
 }
