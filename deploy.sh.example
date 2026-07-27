@@ -272,6 +272,15 @@ if ! $SKIP_BUILD; then
         echo "  ✅ qdrant setup scripts copied"
     fi
 
+    # ── Piper TTS voice models ── (ships the installer only; it downloads the
+    # binary + voice model directly on the server on first deploy, then skips
+    # already-installed files on every deploy after — see setup-piper.sh)
+    if [ -f "deploy/setup-piper.sh" ]; then
+        mkdir -p "$DIST_DIR/deploy"
+        cp deploy/setup-piper.sh "$DIST_DIR/deploy/"
+        echo "  ✅ setup-piper.sh copied"
+    fi
+
     # ── TLS reverse proxy (Caddy) — only if AXON_DOMAIN is set in .deploy.env ──
     # Rendered here (not on the server) so run.sh never needs AXON_DOMAIN in its
     # own environment — it just ships or doesn't ship a ready-to-use Caddyfile.
@@ -507,6 +516,16 @@ ssh $SSH_OPTS "$TARGET_SERVER" "bash -s" <<REMOTE
         echo "  🗄️ Installing/Verifying Qdrant..."
         sudo chmod +x qdrant/install.sh
         (cd qdrant && bash install.sh)
+    fi
+
+    # ── Install Piper TTS voice (idempotent — re-run is a fast no-op) ──
+    # No sudo: must land under this SSH user's \$HOME so it matches the data
+    # dir axon-agent resolves at runtime (its systemd unit runs as this same
+    # user — see run.sh's User=\$CURR_USER).
+    if [ -f "deploy/setup-piper.sh" ]; then
+        echo "  🗣️ Installing/Verifying Piper TTS voice..."
+        chmod +x deploy/setup-piper.sh
+        bash deploy/setup-piper.sh en_US-hfc_female-medium || echo "  ⚠️  Piper voice install failed (server network issue?) — rerun deploy/setup-piper.sh on the server to retry"
     fi
 
     # ── Restore: preserve server-only state, let local config win ──

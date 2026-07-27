@@ -2,8 +2,10 @@
 #
 # Installs the Piper offline TTS engine (binary + voice models) into Axon's
 # data dir, so `tts.base_url = "piper"` (Settings → Voice Replies) works.
-# Standalone and idempotent — not part of deploycham.sh/deployaxongcp.sh, run
-# it directly wherever spoken replies should use Piper:
+# Idempotent — safe to re-run, skips whatever's already installed. Bundled and
+# auto-run (with the en_US-hfc_female-medium default) by deploycham.sh,
+# deployaxongcp.sh, and deploy.sh.example after every deploy. Run it directly
+# for local dev or to add extra voices beyond that default:
 #   local dev (Git Bash):  bash deploy/setup-piper.sh
 #   server (over SSH):     ssh user@host 'bash -s' < deploy/setup-piper.sh
 #
