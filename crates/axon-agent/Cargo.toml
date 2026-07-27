@@ -1,6 +1,6 @@
 [package]
 name    = "axon"
-version = "0.4.0"
+version = "1.2.0"
 edition = "2021"
 publish = false
 default-run = "axon"
