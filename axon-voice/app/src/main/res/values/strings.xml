@@ -23,6 +23,7 @@
     <string name="voice_models_need_base_url">Set the base_url first</string>
     <string name="notif_channel_wake">Axon voice</string>
     <string name="notif_listening">Listening for “%1$s”</string>
+    <string name="notif_in_call">Paused during the call</string>
     <string name="chat_hint">Message Axon…</string>
     <string name="chat_hint_listening">Listening… tap mic to stop</string>
     <string name="transcribing">Transcribing…</string>

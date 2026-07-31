@@ -26,6 +26,7 @@ import com.axon.androidcompanion.audio.StreamingTts
 import com.axon.androidcompanion.audio.TtsPlayer
 import com.axon.androidcompanion.audio.VoicePrompts
 import com.axon.androidcompanion.audio.WavRecorder
+import com.axon.androidcompanion.device.CallGuard
 import com.axon.androidcompanion.ui.ChatFeed
 import com.axon.androidcompanion.ui.ChatActivity
 import com.axon.androidcompanion.ui.VoiceOverlay
@@ -145,6 +146,25 @@ class WakeWordService : Service(), ChatSocket.Listener {
         override fun onClose() = closeExchange()
     }
 
+    /** Set when the agent placed a phone call on this device during the current
+     *  exchange (device_tool's call op — see [CallGuard]). The exchange then ends
+     *  with the reply that announced it: the phone is dialing, so anything the
+     *  mic would pick up next is the user talking to the person they called, not
+     *  a follow-up for Axon. Reset at the top of each [interact]. */
+    @Volatile
+    private var callPlaced = false
+
+    /** Arrives on the API server's request thread the instant a call is dialed.
+     *  Sets the flag [interact] checks before reopening the mic, and drops the
+     *  barge monitor, which is the one part of the exchange already listening
+     *  while the reply plays. */
+    private val callListener = object : CallGuard.Listener {
+        override fun onCallPlaced() {
+            callPlaced = true
+            bargeMonitorAlive = false
+        }
+    }
+
     /** run_id of the reply whose events we're currently accepting (every
      *  AgentEvent carries one). Updated as events arrive; read on a barge to
      *  abandon the interrupted run. */
@@ -190,6 +210,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
             onLevel = { rms -> onReplyLevel(rms) }
         }
         VoiceOverlay.controller = overlayController
+        CallGuard.listener = callListener
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -218,6 +239,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
         alive = false
         running = false
         if (VoiceOverlay.controller === overlayController) VoiceOverlay.controller = null
+        if (CallGuard.listener === callListener) CallGuard.listener = null
         setPhase(VoiceOverlay.Phase.IDLE)
         chat?.close()
         chat = null
@@ -265,7 +287,12 @@ class WakeWordService : Service(), ChatSocket.Listener {
         try {
             val frame = ShortArray(detector.samplesPerFrame)
             while (alive) {
-                if (micHold) {
+                // A call in progress holds the mic exactly like push-to-talk
+                // does: the AudioRecord is released for the call's duration, so
+                // a false-positive "Hey Axon" can't start capturing the
+                // conversation. Detection resumes on its own when the call ends
+                // — this is a poll of the audio mode, not a latch to get stuck.
+                if (micHold || inCall()) {
                     record?.release()
                     record = null
                     Thread.sleep(100)
@@ -291,6 +318,29 @@ class WakeWordService : Service(), ChatSocket.Listener {
             record?.release()
             detector.close()
         }
+    }
+
+    /** [CallGuard.inCall] for the wake loop: throttled, and it keeps the ongoing
+     *  notification honest about why detection went quiet. The mode read is a
+     *  binder round-trip and the loop would ask once per ~30ms detector frame,
+     *  so the answer is cached for 500ms — the hold's own granularity is its
+     *  100ms sleep anyway. Wake thread only, so plain fields suffice. */
+    private var inCallCached = false
+    private var inCallCheckedAt = 0L
+
+    private fun inCall(): Boolean {
+        val now = System.currentTimeMillis()
+        if (now - inCallCheckedAt < 500) return inCallCached
+        inCallCheckedAt = now
+        val current = CallGuard.inCall(this)
+        if (current != inCallCached) {
+            inCallCached = current
+            notify(
+                if (current) getString(R.string.notif_in_call)
+                else getString(R.string.notif_listening, wakeLabel())
+            )
+        }
+        return current
     }
 
     @SuppressLint("MissingPermission")
@@ -386,6 +436,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
 
     private fun interact(rec: AudioRecord) {
         cancelExchange = false
+        callPlaced = false
         if (paused) {
             paused = false
             VoiceOverlay.setPaused(false)
@@ -422,6 +473,11 @@ class WakeWordService : Service(), ChatSocket.Listener {
                 ackPhrase = ""
                 ChatFeed.post(this, sessionId, "user", text)
             } else {
+                // Never open the mic into a live call. [callPlaced] covers the
+                // call this exchange placed itself; this covers one that started
+                // any other way mid-exchange — the user answering an incoming
+                // call while a reply was playing, most likely.
+                if (CallGuard.inCall(this)) break
                 notify(getString(R.string.status_recording))
                 setPhase(VoiceOverlay.Phase.LISTENING)
                 // A wake is answered out loud; the follow-up window opens on
@@ -507,6 +563,14 @@ class WakeWordService : Service(), ChatSocket.Listener {
                 ChatFeed.post(this, sessionId, "error", "Sorry — $err")
             }
             first = false // reopen as the follow-up window, raised speech bar
+            // A call was dialed on this device during this turn ("call Mom"), so
+            // this exchange ends with the reply that announced it. The follow-up
+            // window would otherwise open the mic while the phone is ringing and
+            // transcribe the user's half of the call as their next request. Also
+            // drops a barge captured in the same moment — that clip is from the
+            // same open mic. The wake word keeps listening for the next
+            // "Hey Axon", gated by the in-call hold in [runLoop].
+            if (callPlaced) break
             if (barge != null) {
                 // Run the interruption as the next turn: no ack, no re-listen.
                 pending = barge.command
@@ -749,7 +813,7 @@ class WakeWordService : Service(), ChatSocket.Listener {
         // the pause/resume below doesn't disarm it.
         var armed = false
         var lastDiag = 0L
-        while (bargeMonitorAlive && alive && !micHold) {
+        while (bargeMonitorAlive && alive && !micHold && !callPlaced) {
             if (!fillFrame(rec, frame)) continue
             preRoll.addLast(frameBytes(frame, frameSamples))
             while (preRoll.size > preRollFrames) preRoll.pollFirst()
@@ -778,6 +842,17 @@ class WakeWordService : Service(), ChatSocket.Listener {
             notify(getString(R.string.status_recording))
             setPhase(VoiceOverlay.Phase.LISTENING)
             val wav = captureBarge(rec, preRoll)
+            // A call was dialed while we were capturing (the reply's tool call
+            // landing mid-barge): the clip may already be the user talking to the
+            // dialer, so drop it untranscribed. Resume rather than abort so the
+            // reply drains normally and releases [latch] — interact then sees
+            // [callPlaced] and ends the exchange.
+            if (callPlaced) {
+                stream.resume()
+                notify(getString(R.string.status_speaking))
+                setPhase(VoiceOverlay.Phase.SPEAKING)
+                return
+            }
             // No sustained near speech (a clap/knock/blip) — captureBarge returns
             // null; don't transcribe it. A cough reaches STT but comes back empty.
             val text = if (wav != null) runCatching { client.transcribe(wav) }.getOrNull() else null

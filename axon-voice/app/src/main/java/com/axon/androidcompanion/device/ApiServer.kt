@@ -1299,6 +1299,11 @@ class ApiServer(private val context: Context) {
         val clean = number.replace(Regex("[^+0-9]"), "")
         val uri   = Uri.fromParts("tel", clean, null)
 
+        // Tell the hands-free path before dialing: if this call came out of a
+        // spoken "call Mom", its exchange must close instead of opening a
+        // follow-up window onto the call itself.
+        CallGuard.markCallPlaced()
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val telecom = context.getSystemService(TelecomManager::class.java)
             if (ContextCompat.checkSelfPermission(context, Manifest.permission.CALL_PHONE)
