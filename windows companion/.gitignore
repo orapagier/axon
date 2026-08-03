@@ -1,0 +1,14 @@
+# Build artifacts
+target/
+
+# Config with secrets — never commit
+config.toml
+
+# Embedded binary (too large for git)
+bin/cloudflared.exe
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

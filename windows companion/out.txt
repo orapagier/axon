@@ -1,0 +1,52 @@
+    Checking windowsapi v1.0.0 (C:\Users\Admin\OneDrive - samuzziel\Documents\Dev\Antigravity\WindowsAPI\windowsAPI)
+error[E0432]: unresolved imports `windows_sys::Win32::Devices::DeviceAndDriverInstallation::DBT_DEVICEARRIVAL`, `windows_sys::Win32::Devices::DeviceAndDriverInstallation::DBT_DEVTYP_VOLUME`, `windows_sys::Win32::Devices::DeviceAndDriverInstallation::DEV_BROADCAST_HDR`, `windows_sys::Win32::Devices::DeviceAndDriverInstallation::DEV_BROADCAST_VOLUME`
+   --> src\indexer.rs:147:9
+    |
+147 |         DBT_DEVICEARRIVAL, DBT_DEVTYP_VOLUME, DEV_BROADCAST_HDR, DEV_BROADCAST_VOLUME,
+    |         ^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^ no `DEV_BROADCAST_VOLUME` in `Win32::Devices::DeviceAndDriverInstallation`
+    |         |                  |                  |
+    |         |                  |                  no `DEV_BROADCAST_HDR` in `Win32::Devices::DeviceAndDriverInstallation`
+    |         |                  no `DBT_DEVTYP_VOLUME` in `Win32::Devices::DeviceAndDriverInstallation`
+    |         no `DBT_DEVICEARRIVAL` in `Win32::Devices::DeviceAndDriverInstallation`
+
+error[E0432]: unresolved imports `windows_sys::Win32::Devices::DeviceAndDriverInstallation::RegisterDeviceNotificationW`, `windows_sys::Win32::Devices::DeviceAndDriverInstallation::DBT_DEVTYP_VOLUME`, `windows_sys::Win32::Devices::DeviceAndDriverInstallation::DEV_BROADCAST_HDR`, `windows_sys::Win32::Devices::DeviceAndDriverInstallation::DEVICE_NOTIFY_WINDOW_HANDLE`
+   --> src\indexer.rs:189:9
+    |
+189 |         RegisterDeviceNotificationW, DBT_DEVTYP_VOLUME, DEV_BROADCAST_HDR,
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^ no `DEV_BROADCAST_HDR` in `Win32::Devices::DeviceAndDriverInstallation`
+    |         |                            |
+    |         |                            no `DBT_DEVTYP_VOLUME` in `Win32::Devices::DeviceAndDriverInstallation`
+    |         no `RegisterDeviceNotificationW` in `Win32::Devices::DeviceAndDriverInstallation`
+190 |         DEVICE_NOTIFY_WINDOW_HANDLE,
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^ no `DEVICE_NOTIFY_WINDOW_HANDLE` in `Win32::Devices::DeviceAndDriverInstallation`
+
+error[E0432]: unresolved imports `windows_sys::Win32::UI::WindowsAndMessaging::RegisterClassW`, `windows_sys::Win32::UI::WindowsAndMessaging::WNDCLASSW`
+    --> src\indexer.rs:194:57
+     |
+ 194 |         CreateWindowExW, DispatchMessageW, GetMessageW, RegisterClassW,
+     |                                                         ^^^^^^^^^^^^^^
+     |                                                         |
+     |                                                         no `RegisterClassW` in `Win32::UI::WindowsAndMessaging`
+     |                                                         help: a similar name exists in the module: `UnregisterClassW`
+ 195 |         CS_HREDRAW, CS_VREDRAW, HWND_MESSAGE, MSG, WS_OVERLAPPED, WNDCLASSW,
+     |                                                                   ^^^^^^^^^ no `WNDCLASSW` in `Win32::UI::WindowsAndMessaging`
+     |
+note: found an item that was configured out
+    --> C:\Users\Admin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-sys-0.52.0\src\Windows\Win32\UI\WindowsAndMessaging\mod.rs:4728:12
+     |
+4727 | #[cfg(all(feature = "Win32_Foundation", feature = "Win32_Graphics_Gdi"))]
+     |                                         ------------------------------ the item is gated behind the `Win32_Graphics_Gdi` feature
+4728 | pub struct WNDCLASSW {
+     |            ^^^^^^^^^
+
+warning: unused import: `debug`
+  --> src\indexer.rs:22:15
+   |
+22 | use tracing::{debug, info, warn};
+   |               ^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+For more information about this error, try `rustc --explain E0432`.
+warning: `windowsapi` (bin "windowsapi") generated 1 warning
+error: could not compile `windowsapi` (bin "windowsapi") due to 3 previous errors; 1 warning emitted

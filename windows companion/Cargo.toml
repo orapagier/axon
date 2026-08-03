@@ -1,0 +1,72 @@
+# Standalone crate — not a member of the Axon workspace at the repo root.
+[workspace]
+
+[package]
+name = "windowsapi"
+version = "1.0.0"
+edition = "2021"
+description = "Windows API"
+
+[[bin]]
+name = "windowsapi"
+path = "src/main.rs"
+
+[dependencies]
+# Web server
+axum = { version = "0.7", features = ["multipart"] }
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.5", features = ["cors", "trace", "limit", "fs"] }
+tower = "0.4"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Automation - keyboard & mouse
+enigo = "0.2"
+
+# Screenshots
+screenshots = "0.8"
+image = "0.25"
+base64 = "0.22"
+
+# System info & process management
+sysinfo = "0.31"
+
+# Open files, URLs, apps
+open = "5"
+
+# Clipboard
+clipboard-win = "5"
+
+# Utilities
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"
+axum-extra = { version = "0.9", features = ["typed-header"] }
+reqwest = { version = "0.13.2", features = ["json"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Devices_DeviceAndDriverInstallation",
+    "Win32_System_Threading",
+    "Win32_Graphics_Gdi",
+]}
+
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Threading",
+    "Win32_System_Shutdown",
+    "Win32_System_JobObjects",
+    "Win32_Security",
+] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
