@@ -93,7 +93,17 @@ object CloudflaredManager {
             try {
                 val p = ProcessBuilder(binary, "tunnel", "--no-autoupdate", "run")
                     .redirectErrorStream(true)
-                    .apply { environment()["TUNNEL_TOKEN"] = token }
+                    .apply {
+                        environment()["TUNNEL_TOKEN"] = token
+                        // cloudflared is a Go binary expecting a normal user
+                        // environment. In an Android sandbox HOME is unset or
+                        // points somewhere unwritable, so its attempts to place
+                        // ~/.cloudflared state fail — pointing both at our own
+                        // private dirs costs nothing and removes that class of
+                        // startup death.
+                        environment()["HOME"] = ctx.filesDir.absolutePath
+                        environment()["TMPDIR"] = ctx.cacheDir.absolutePath
+                    }
                     .start()
                 // Publish the handle only while still current, under the same
                 // lock stop() takes — otherwise a stop() landing during this
@@ -112,19 +122,36 @@ object CloudflaredManager {
                     return
                 }
                 Log.i(TAG, "cloudflared started")
+                appendLog(ctx, "--- supervisor $gen: cloudflared started ---")
                 backoffMs = 3_000L // reset backoff after a successful start
 
                 streamToLog(ctx, p)
                 val exitCode = p.waitFor()
                 Log.w(TAG, "cloudflared exited with code $exitCode")
+                // Into the file, not just logcat: the API server is
+                // loopback-only, so when the tunnel is down this file read from
+                // Settings is the only way to see why without a USB cable.
+                appendLog(ctx, "--- supervisor $gen: cloudflared exited with code $exitCode ---")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to launch cloudflared: ${e.message}", e)
+                appendLog(ctx, "--- supervisor $gen: failed to launch — ${e.message} ---")
             }
 
             if (gen != generation.get()) return
             Thread.sleep(backoffMs)
             backoffMs = (backoffMs * 2).coerceAtMost(60_000L)
         }
+    }
+
+    /** Timestamped supervisor line in the same file cloudflared's own output
+     *  goes to, so the two interleave into one readable history. */
+    @Synchronized
+    private fun appendLog(ctx: Context, line: String) {
+        try {
+            val stamp = java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.US)
+                .format(java.util.Date())
+            File(ctx.filesDir, "cloudflared.log").appendText("$stamp $line\n")
+        } catch (_: Exception) {}
     }
 
     private fun streamToLog(ctx: Context, process: Process) {

@@ -533,6 +533,11 @@ class SettingsActivity : AppCompatActivity() {
         btnWriteSettings.setOnClickListener { openWriteSettingsSettings() }
         btnOverlayPerm.setOnClickListener { openOverlayPermSettings() }
 
+        // Tunnel status tap → cloudflared's own log. The API server is
+        // loopback-only, so when the tunnel is down there is no remote way to
+        // ask the phone what happened; this screen is it.
+        tvTunnelStatus.setOnClickListener { showTunnelLog() }
+
         // Token tap → copy to clipboard
         tvToken.setOnClickListener {
             val token = AppConfig.getBearerToken(this)
@@ -552,6 +557,24 @@ class SettingsActivity : AppCompatActivity() {
         swPushCalls.setOnCheckedChangeListener    { _, v -> AppConfig.setPushCalls(this, v) }
         swPushLocation.setOnCheckedChangeListener { _, v -> AppConfig.setPushLocation(this, v) }
         swPushBattery.setOnCheckedChangeListener  { _, v -> AppConfig.setPushBattery(this, v) }
+    }
+
+    /** Last ~200 lines of cloudflared.log, with a copy button so the whole
+     *  thing can be pasted somewhere useful rather than retyped off a phone. */
+    private fun showTunnelLog() {
+        val lines = CloudflaredManager.tailLog(this, 200)
+        val text  = if (lines.isEmpty()) getString(R.string.tunnel_log_empty)
+                    else lines.joinToString("\n")
+        AlertDialog.Builder(this)
+            .setTitle(R.string.tunnel_log_title)
+            .setMessage(text)
+            .setPositiveButton(R.string.tunnel_log_copy) { _, _ ->
+                val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("cloudflared log", text))
+                toastMsg(getString(R.string.tunnel_log_copied))
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     private fun loadDeviceControlConfig() {

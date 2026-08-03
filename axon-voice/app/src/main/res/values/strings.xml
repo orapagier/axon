@@ -86,4 +86,8 @@
     <string name="tunnel_token_saved">Tunnel token saved — restarting tunnel</string>
     <string name="tunnel_token_empty">Enter a token first</string>
     <string name="token_copied">Token copied!</string>
+    <string name="tunnel_log_title">Tunnel log</string>
+    <string name="tunnel_log_empty">No tunnel log yet — the tunnel has not started on this install.</string>
+    <string name="tunnel_log_copy">Copy</string>
+    <string name="tunnel_log_copied">Tunnel log copied!</string>
 </resources>
