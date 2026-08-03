@@ -516,14 +516,24 @@ class SettingsActivity : AppCompatActivity() {
 
         btnSaveCloudflaredToken.setOnClickListener {
             val tok = etCloudflaredToken.text.toString().trim()
-            if (tok.isNotEmpty()) {
-                AppConfig.setCloudflaredToken(this, tok)
-                etCloudflaredToken.setText("")
-                CloudflaredManager.start(this)
-                toastMsg(getString(R.string.tunnel_token_saved))
-                handler.postDelayed({ refreshDeviceStatus() }, 1500)
-            } else {
-                toastMsg(getString(R.string.tunnel_token_empty))
+            when {
+                tok.isEmpty() -> toastMsg(getString(R.string.tunnel_token_empty))
+                // The field is masked, so a truncated or line-wrapped paste looks
+                // exactly like a good one. Storing it anyway just starts a silent
+                // 3-second restart loop, so refuse it here and say why.
+                !CloudflaredManager.tokenLooksValid(tok) ->
+                    AlertDialog.Builder(this)
+                        .setTitle(R.string.tunnel_token_invalid_title)
+                        .setMessage(getString(R.string.tunnel_token_invalid_body, tok.length))
+                        .setPositiveButton(android.R.string.ok, null)
+                        .show()
+                else -> {
+                    AppConfig.setCloudflaredToken(this, tok)
+                    etCloudflaredToken.setText("")
+                    CloudflaredManager.start(this)
+                    toastMsg(getString(R.string.tunnel_token_saved))
+                    handler.postDelayed({ refreshDeviceStatus() }, 1500)
+                }
             }
         }
 
