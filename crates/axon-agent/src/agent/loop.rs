@@ -1866,7 +1866,15 @@ pub(crate) async fn run_inner(
                 let t0 = std::time::Instant::now();
                 let (ok, val) = match crate::agent::internal_tools::handle_internal(&tc.name, tc.input.clone(), state.clone(), ctx.clone(), run_id.clone()).await {
                     Ok(v) => (true, v),
-                    Err(e) => (false, serde_json::json!({"error": e.to_string()})),
+                    // `{:#}`, not `{}`: anyhow's Display prints only the outermost
+                    // context and drops the source chain, so a wrapped failure like
+                    // device_tool's "Device 'x' call to tool 'y' failed" reached the
+                    // model with the actual cause (connection refused, timed out,
+                    // HTTP 502 from the tunnel) stripped off — leaving it nothing to
+                    // report but a vague "connection error". The alternate form
+                    // renders the whole chain, and the same value is what lands in
+                    // tool_calls.error for later diagnosis.
+                    Err(e) => (false, serde_json::json!({"error": format!("{:#}", e)})),
                 };
                 let duration_ms = t0.elapsed().as_millis() as u64;
                 if let Some(ref t) = tx_clone {
