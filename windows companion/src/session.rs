@@ -43,6 +43,24 @@ const LIVENESS_POLL_SECS: u64 = 2;
 const MIN_BACKOFF_SECS: u64 = 5;
 const MAX_BACKOFF_SECS: u64 = 120;
 
+/// How long a freshly spawned agent gets to bind its port before we treat the
+/// launch as failed. Generous: the session may still be finishing logon.
+const LISTEN_TIMEOUT_SECS: u64 = 20;
+
+/// Polls until the agent accepts a loopback connection, or the timeout expires.
+async fn wait_until_listening(port: u16, timeout_secs: u64) -> bool {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+    let addr = format!("127.0.0.1:{}", port);
+
+    while std::time::Instant::now() < deadline {
+        if tokio::net::TcpStream::connect(&addr).await.is_ok() {
+            return true;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    false
+}
+
 /// Handle to the desktop agent, shared between the supervisor that keeps it
 /// alive and the proxy that forwards desktop routes to it.
 pub struct SessionAgent {
@@ -130,9 +148,31 @@ pub async fn supervise(agent: Arc<SessionAgent>, mut shutdown_rx: watch::Receive
 
         match spawn_in_session(session_id, &exe, &agent, job) {
             Ok(child) => {
-                info!("Desktop agent running (pid {}) in session {}", child.pid, session_id);
-                agent.ready.store(true, Ordering::Relaxed);
-                backoff_secs = MIN_BACKOFF_SECS;
+                info!("Desktop agent spawned (pid {}) in session {}", child.pid, session_id);
+
+                // "Spawned" is not "serving". Wait for the agent to actually
+                // accept a connection before advertising it — otherwise a child
+                // that starts but wedges before binding is reported ready, and
+                // every desktop route fails with AGENT_UNREACHABLE while
+                // /status insists everything is fine.
+                if wait_until_listening(agent.port, LISTEN_TIMEOUT_SECS).await {
+                    info!("Desktop agent listening on 127.0.0.1:{}", agent.port);
+                    agent.ready.store(true, Ordering::Relaxed);
+                    backoff_secs = MIN_BACKOFF_SECS;
+                } else {
+                    error!(
+                        "Desktop agent (pid {}) did not start listening on 127.0.0.1:{} within {}s \
+                         — killing it and retrying",
+                        child.pid, agent.port, LISTEN_TIMEOUT_SECS
+                    );
+                    child.terminate();
+                    backoff_secs = (backoff_secs * 2).min(MAX_BACKOFF_SECS);
+                    tokio::select! {
+                        _ = tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)) => {}
+                        _ = shutdown_rx.changed() => return,
+                    }
+                    continue;
+                }
 
                 // Hold here until the agent exits (logoff, crash) or we shut down.
                 loop {
@@ -248,7 +288,9 @@ fn spawn_in_session(
     job: isize,
 ) -> anyhow::Result<OwnedProcess> {
     use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, SetHandleInformation, HANDLE, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
+    };
     use windows_sys::Win32::Security::{
         DuplicateTokenEx, GetTokenInformation, SecurityImpersonation, TokenLinkedToken,
         TokenPrimary, SECURITY_ATTRIBUTES, TOKEN_ALL_ACCESS, TOKEN_LINKED_TOKEN,
@@ -335,6 +377,18 @@ fn spawn_in_session(
         }
         let pipe_read_guard = HandleGuard(pipe_read);
         let pipe_write_guard = HandleGuard(pipe_write);
+
+        // The child must inherit the READ end only. `sa` marks both ends
+        // inheritable, and CreateProcessAsUserW is called with bInheritHandles
+        // = TRUE, so without this the child also holds the write end open — the
+        // pipe never reaches EOF, the agent blocks forever in read_to_string,
+        // and it never gets as far as binding its port.
+        if SetHandleInformation(pipe_write, HANDLE_FLAG_INHERIT, 0) == 0 {
+            anyhow::bail!(
+                "SetHandleInformation failed on the token pipe: {}",
+                std::io::Error::last_os_error()
+            );
+        }
 
         // ── 5. The user's environment, not SYSTEM's ──────────────────────────
         let mut env_block: *mut std::ffi::c_void = std::ptr::null_mut();

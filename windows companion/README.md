@@ -106,6 +106,13 @@ cargo build --release
 
 This embeds `cloudflared.exe` inside the output binary — the result is a single `.exe`.
 
+To also produce the double-click installer (requires [Inno Setup 6](https://jrsoftware.org/isdl.php)):
+
+```powershell
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+# -> Output\windowsapi-setup.exe
+```
+
 ### 4. Configure
 
 Copy `config.example.toml` to `config.toml` and put it next to the `.exe`:
@@ -144,16 +151,42 @@ automation layer wedges, you need a way in that does not depend on the
 automation layer. Reach it over Tailscale or `cloudflared access tcp`, never a
 forwarded port.
 
-### 6. Install the service
+### 6. Install
+
+**Double-click install (recommended).** Put these two files in the same folder:
+
+```
+some-folder\
+  windowsapi-setup.exe     ← from Output\
+  config.toml              ← your filled-in config
+```
+
+Double-click `windowsapi-setup.exe`, approve the UAC prompt, and it does the
+rest. The `config.toml` sitting beside the installer is read **at install time**
+and travels with the binary into `C:\ProgramData\WindowsAPI\`. No wizard pages,
+no directory to pick — the install location has to match the service
+registration, so it is fixed.
+
+If you leave out `config.toml`, setup still completes but the service cannot
+start; the finished page offers to open the placeholder config in Notepad and
+starts the service as soon as you save and close it.
+
+Reinstalling over a configured machine warns before replacing a config that is
+already filled in.
+
+**Or install from the plain exe.** Same idea, no Inno needed — put
+`windowsapi.exe` and `config.toml` in a folder and double-click the exe. It
+raises its own UAC prompt and installs itself.
+
+**Or from a terminal:**
 
 ```powershell
-# elevated PowerShell
 .\windowsapi.exe --install
 ```
 
-This copies the binary and config to `C:\ProgramData\WindowsAPI\`, restricts
-that directory to SYSTEM and Administrators, registers a LocalSystem service set
-to start at boot, and starts it. Confirm:
+Any of these copies the binary and config to `C:\ProgramData\WindowsAPI\`,
+restricts that directory to SYSTEM and Administrators, registers a LocalSystem
+service set to start at boot, and starts it. Confirm:
 
 ```bash
 curl http://127.0.0.1:8080/ping
@@ -165,14 +198,22 @@ session" apart from "something is broken".
 
 | Command | Effect |
 |---|---|
+| `windowsapi` *(no args)* | Same as `--install` — this is what double-clicking does |
 | `windowsapi --install` | Install to ProgramData, register the service, start it |
 | `windowsapi --uninstall` | Stop and remove the service (leaves ProgramData) |
 | `windowsapi --start` / `--stop` | Service control |
 | `windowsapi --user-mode` | Run in the current console as you — no service, no lock-screen access |
+| `--quiet` | Log results instead of showing a dialog |
 
-All except `--user-mode` need an elevated prompt. The binary is GUI-subsystem,
-so it attaches to your terminal to print results and falls back to a message box
-when double-clicked.
+All except `--user-mode` need elevation, and will raise their own UAC prompt if
+you are not already elevated. The binary is GUI-subsystem, so it attaches to
+your terminal to print results and falls back to a message box when
+double-clicked.
+
+> `--quiet` is **required** when calling this exe from a script or installer.
+> Without a console to attach to, the message-box fallback is both invisible
+> under `runhidden` and modal, so the caller waits on it forever. `installer.iss`
+> passes it on every call for exactly this reason.
 
 If it exits immediately, check `windowsapi_error.log` in the install directory —
 config and startup failures are written there because there is no console.

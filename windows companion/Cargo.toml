@@ -76,6 +76,9 @@ windows-sys = { version = "0.52", features = [
     # AttachConsole, so the GUI-subsystem binary can still talk to a terminal
     # when run as `windowsapi --install`.
     "Win32_System_Console",
+    # ShellExecuteW with the "runas" verb — lets a double-clicked exe raise its
+    # own UAC prompt instead of failing with "needs an elevated prompt".
+    "Win32_UI_Shell",
 ]}
 
 windows = { version = "0.58", features = [

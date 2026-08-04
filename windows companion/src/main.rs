@@ -20,12 +20,21 @@ use tracing::{error, info};
 const USAGE: &str = "\
 Windows Automation API
 
-  windowsapi --install            Install and start the service (needs admin)
+  windowsapi                      Double-click / no arguments: set up and start
+                                  the service, prompting for admin if needed.
+                                  A config.toml next to this exe is installed
+                                  alongside it.
+
+  windowsapi --install            Same as above, explicitly
   windowsapi --uninstall          Stop and remove the service (needs admin)
   windowsapi --start              Start the installed service
   windowsapi --stop               Stop the installed service
   windowsapi --user-mode          Run in this console as the current user
                                   (no service, no lock-screen access)
+
+  --quiet                         Log results instead of showing a dialog.
+                                  Required when calling this exe from a script
+                                  or installer.
 
 The service runs as LocalSystem, so /shell, /files/*, /system/*, /processes and
 /registry/* stay available while the machine is locked or at the login screen.
@@ -33,11 +42,23 @@ Screenshot, clipboard, keyboard, mouse and window routes are served by a helper
 launched into the interactive session, and return 503 when nobody is logged on.
 ";
 
+/// Suppresses the message-box fallback in `notify_user`.
+///
+/// Set by `--quiet`, which the installer passes to every invocation it makes.
+/// Those run with Inno's `runhidden` and `waituntilterminated`: there is no
+/// console to attach to, so an unsuppressed message box is both invisible and
+/// modal, and setup hangs on it forever.
+static QUIET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let has = |flag: &str| args.iter().any(|a| a == flag);
 
     init_logging();
+
+    if has("--quiet") {
+        QUIET.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
 
     // Launched by the SCM. Must hand control to the dispatcher promptly or
     // Windows fails the start with error 1053.
@@ -56,21 +77,25 @@ fn main() {
         return;
     }
 
-    if has("--install") {
-        require_admin("--install");
-        match service::install().and_then(|_| service::start()) {
-            Ok(_) => notify_user(&format!(
-                "Service installed and started.\n\nInstall directory: {}\n\nEdit config.toml \
-                 there, then run: windowsapi --stop && windowsapi --start",
-                service::install_dir().display()
-            )),
-            Err(e) => notify_user(&format!("Install failed: {e}")),
+    // Double-clicked with no arguments: set yourself up. Drop the exe and a
+    // filled-in config.toml in a folder, run it, approve the UAC prompt, done.
+    if args.len() == 1 || has("--install") {
+        if !elevate_if_needed("--install") {
+            return;
         }
+        do_install();
+        return;
+    }
+
+    if has("--help") || has("-h") || has("/?") {
+        notify_user(USAGE);
         return;
     }
 
     if has("--uninstall") {
-        require_admin("--uninstall");
+        if !elevate_if_needed("--uninstall") {
+            return;
+        }
         match service::uninstall() {
             Ok(_) => notify_user(&format!(
                 "Service removed. {} was left in place — delete it manually if you also \
@@ -83,16 +108,26 @@ fn main() {
     }
 
     if has("--start") {
-        require_admin("--start");
-        match service::start() {
-            Ok(_) => notify_user("Service started."),
-            Err(e) => notify_user(&format!("Could not start service: {e}")),
+        if !elevate_if_needed("--start") {
+            return;
+        }
+        let _ = service::start();
+        let state = service::wait_until_settled(std::time::Duration::from_secs(15))
+            .unwrap_or_else(|e| format!("unknown ({e})"));
+        if state == "Running" {
+            notify_user("Service started.");
+        } else {
+            let reason = service::last_error_line()
+                .unwrap_or_else(|| "no reason recorded in windowsapi_error.log".to_string());
+            notify_user(&format!("Service is {state}.\n\nReason: {reason}"));
         }
         return;
     }
 
     if has("--stop") {
-        require_admin("--stop");
+        if !elevate_if_needed("--stop") {
+            return;
+        }
         match service::stop_if_running() {
             Ok(_) => notify_user("Service stopped."),
             Err(e) => notify_user(&format!("Could not stop service: {e}")),
@@ -106,6 +141,125 @@ fn main() {
     }
 
     notify_user(USAGE);
+}
+
+/// Installs, starts, and then reports what actually happened.
+///
+/// The status check is the point. `start()` succeeding only means the SCM
+/// accepted the request — a placeholder config produces a service that starts
+/// and immediately stops, which would otherwise be reported as success.
+fn do_install() {
+    let dir = service::install_dir();
+
+    if let Err(e) = service::install() {
+        notify_user(&format!(
+            "Install failed: {e}\n\nInstall directory: {}",
+            dir.display()
+        ));
+        return;
+    }
+
+    // May report an error for a service that starts then exits; the state check
+    // below is what decides.
+    let _ = service::start();
+
+    let state = service::wait_until_settled(std::time::Duration::from_secs(15))
+        .unwrap_or_else(|e| format!("unknown ({e})"));
+
+    if state == "Running" {
+        notify_user(&format!(
+            "Setup complete — the service is running.\n\n\
+             Installed to: {}\n\n\
+             The machine is now reachable while locked for /shell, /files/*, /system/* \
+             and /registry/*. Screenshot, clipboard and input routes need someone \
+             logged in.\n\n\
+             Check both halves with:  GET /status\n\n\
+             If this is a laptop, run scripts\\prepare-laptop.ps1 from an elevated \
+             PowerShell so it does not sleep.",
+            dir.display()
+        ));
+    } else {
+        let reason = service::last_error_line()
+            .unwrap_or_else(|| "no reason recorded in windowsapi_error.log".to_string());
+        notify_user(&format!(
+            "Installed, but the service is {state}.\n\n\
+             Reason: {reason}\n\n\
+             Fix it in:  {}\\config.toml\n\
+             Then run:   windowsapi --start\n\n\
+             A fresh install ships placeholder credentials, so this is expected until \
+             tunnel_token and api_secret are filled in.",
+            dir.display()
+        ));
+    }
+}
+
+/// Re-launches this exe elevated, carrying `flag`, and returns false if the
+/// caller should stop because the elevated instance has taken over (or the user
+/// declined the prompt).
+///
+/// Without this, double-clicking produced "needs an elevated prompt" and left
+/// the user to find a terminal — but registering a LocalSystem service is the
+/// entire point, so the prompt has to come from us.
+fn elevate_if_needed(flag: &str) -> bool {
+    if service::is_elevated() {
+        return true;
+    }
+
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::UI::Shell::ShellExecuteW;
+        use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+        let exe = match std::env::current_exe() {
+            Ok(p) => p,
+            Err(e) => {
+                notify_user(&format!("Could not locate own executable: {e}"));
+                return false;
+            }
+        };
+
+        let wide = |s: &str| {
+            use std::os::windows::ffi::OsStrExt;
+            std::ffi::OsStr::new(s)
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect::<Vec<u16>>()
+        };
+
+        let verb = wide("runas");
+        let file = wide(&exe.to_string_lossy());
+        let params = wide(flag);
+
+        // ShellExecuteW returns a fake HINSTANCE; anything > 32 means success.
+        let rc = unsafe {
+            ShellExecuteW(
+                0,
+                verb.as_ptr(),
+                file.as_ptr(),
+                params.as_ptr(),
+                std::ptr::null(),
+                SW_SHOWNORMAL as i32,
+            )
+        };
+
+        if rc as isize > 32 {
+            // The elevated copy owns the install from here.
+            return false;
+        }
+
+        notify_user(
+            "Administrator approval is required to register the service.\n\n\
+             Nothing was changed. Run this again and choose Yes at the prompt, or \
+             start it from an elevated PowerShell.",
+        );
+        return false;
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = flag;
+        false
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -264,23 +418,20 @@ fn arg_value(args: &[String], flag: &str) -> Option<String> {
         .cloned()
 }
 
-fn require_admin(what: &str) {
-    if !service::is_elevated() {
-        notify_user(&format!(
-            "{what} needs an elevated prompt.\n\nOpen PowerShell or Terminal as \
-             Administrator and run it again — registering a LocalSystem service is not \
-             something a standard token can do."
-        ));
-        std::process::exit(1);
-    }
-}
-
 /// Gets a message in front of the user regardless of how the exe was launched.
 ///
 /// Release builds are GUI-subsystem, so `println!` goes nowhere. Attaching to
 /// the parent console covers the "ran it from a terminal" case; the message box
 /// covers double-clicking.
 fn notify_user(msg: &str) {
+    // Non-interactive caller (the installer). A message box here would be
+    // invisible under `runhidden` and would block setup indefinitely.
+    if QUIET.load(std::sync::atomic::Ordering::Relaxed) {
+        info!("{}", msg);
+        log_error_to_file(msg);
+        return;
+    }
+
     #[cfg(windows)]
     {
         use windows_sys::Win32::System::Console::{

@@ -202,13 +202,16 @@ mod imp {
             })?;
             info!("Installed binary to {}", target.display());
 
-            // Seed config.toml from whatever sits next to the source exe, but
-            // never clobber an install that already has one.
+            // A config.toml sitting next to the binary being installed is taken
+            // as deliberate and wins, including over an existing install — that
+            // is the whole "drop the exe and your config in a folder, run it"
+            // flow. Only when there is no source config do we fall back to
+            // seeding a placeholder, and that never overwrites a live install.
             let src_cfg = current.with_file_name("config.toml");
             let dst_cfg = dir.join("config.toml");
-            if src_cfg.exists() && !dst_cfg.exists() {
+            if src_cfg.exists() {
                 std::fs::copy(&src_cfg, &dst_cfg)?;
-                info!("Copied config.toml to {}", dst_cfg.display());
+                info!("Installed config.toml from {}", src_cfg.display());
             } else if !dst_cfg.exists() {
                 std::fs::write(&dst_cfg, include_str!("../config.example.toml"))?;
                 info!("Wrote starter config to {}", dst_cfg.display());
@@ -276,6 +279,32 @@ mod imp {
         Ok(())
     }
 
+    /// Polls the service until it settles into Running or Stopped.
+    ///
+    /// `start()` returning Ok only means the SCM accepted the request. A service
+    /// that starts and then dies on a bad config still looks like a successful
+    /// start from there, which is how "installed and started" ends up on screen
+    /// for a service that is not running. This is the authoritative check.
+    pub fn wait_until_settled(timeout: Duration) -> anyhow::Result<String> {
+        let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)?;
+        let service = manager.open_service(SERVICE_NAME, ServiceAccess::QUERY_STATUS)?;
+
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            let state = service.query_status()?.current_state;
+            match state {
+                ServiceState::Running => return Ok("Running".into()),
+                ServiceState::Stopped => return Ok("Stopped".into()),
+                other => {
+                    if std::time::Instant::now() >= deadline {
+                        return Ok(format!("{other:?}"));
+                    }
+                    std::thread::sleep(Duration::from_millis(300));
+                }
+            }
+        }
+    }
+
     pub fn stop_if_running() -> anyhow::Result<()> {
         let manager =
             ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)?;
@@ -289,7 +318,23 @@ mod imp {
 }
 
 #[cfg(windows)]
-pub use imp::{install, run, start, stop_if_running, uninstall};
+pub use imp::{install, run, start, stop_if_running, uninstall, wait_until_settled};
+
+/// Last line of the on-disk error log, used to explain a service that installed
+/// but would not stay running. There is no console, so this is where the real
+/// reason lives.
+pub fn last_error_line() -> Option<String> {
+    let log = install_dir().join("windowsapi_error.log");
+    let content = std::fs::read_to_string(log).ok()?;
+    let line = content.lines().rev().find(|l| !l.trim().is_empty())?;
+    // Strip the "[unix_timestamp] " prefix that log_error_to_file adds.
+    Some(
+        line.split_once("] ")
+            .map(|(_, rest)| rest)
+            .unwrap_or(line)
+            .to_string(),
+    )
+}
 
 /// Restricts the install directory to SYSTEM and Administrators.
 ///
@@ -349,6 +394,10 @@ pub fn start() -> anyhow::Result<()> {
 }
 #[cfg(not(windows))]
 pub fn stop_if_running() -> anyhow::Result<()> {
+    anyhow::bail!("Windows service mode is Windows-only")
+}
+#[cfg(not(windows))]
+pub fn wait_until_settled(_timeout: std::time::Duration) -> anyhow::Result<String> {
     anyhow::bail!("Windows service mode is Windows-only")
 }
 
