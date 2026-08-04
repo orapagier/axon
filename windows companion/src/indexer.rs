@@ -5,12 +5,19 @@
 /// Index so that `/files/search` always uses the fast index path.
 ///
 /// Design:
-///   • Startup  — enumerate every ready drive (C:–Z:) and add each to the index.
-///   • Runtime  — a dedicated Win32 thread creates a message-only window and
-///                registers for device-change notifications.  Windows delivers
-///                WM_DEVICECHANGE / DBT_DEVICEARRIVAL the instant a new volume
+///   • Startup  — enumerate every ready fixed/removable drive and index each.
+///   • Runtime  — a dedicated Win32 thread creates a hidden top-level window
+///                and pumps messages.  Windows broadcasts WM_DEVICECHANGE /
+///                DBT_DEVICEARRIVAL to top-level windows the instant a volume
 ///                mounts.  No polling, no timers, zero CPU cost at idle.
 ///   • Shutdown — WM_QUIT is posted to the message thread so it exits cleanly.
+///
+/// IMPORTANT: the window must NOT be a message-only (HWND_MESSAGE) window.
+/// Message-only windows are excluded from broadcast messages, and volume
+/// arrival is delivered *only* as a broadcast — RegisterDeviceNotification
+/// cannot subscribe to it either, since that API accepts only
+/// DBT_DEVTYP_DEVICEINTERFACE and DBT_DEVTYP_HANDLE filters. An earlier version
+/// did both, so hot-plug detection never fired at all.
 ///
 /// Index mutation uses PowerShell → ISearchCrawlScopeManager COM, the same API
 /// Windows Explorer uses for "Add location to index". Adding a scope just
@@ -24,7 +31,7 @@ use tracing::{info, warn};
 pub async fn start(mut shutdown_rx: watch::Receiver<bool>) {
     #[cfg(not(windows))]
     {
-        debug!("Indexer: not on Windows, skipping");
+        tracing::debug!("Indexer: not on Windows, skipping");
         let _ = shutdown_rx.changed().await;
         return;
     }
@@ -95,34 +102,71 @@ pub async fn start(mut shutdown_rx: watch::Receiver<bool>) {
 // Drive enumeration
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Enumerate drives worth indexing.
+///
+/// Uses GetLogicalDrives + GetDriveTypeW rather than probing paths with
+/// `Path::exists()`. Probing touches every letter, which spins up and can
+/// trigger "There is no disk in the drive" dialogs on empty optical/card
+/// readers, and it cannot tell a network share from a local disk. We index
+/// fixed and removable volumes only — indexing a network share would drag the
+/// whole remote tree through the crawler.
+#[cfg(windows)]
 fn enumerate_ready_drives() -> Vec<String> {
-    (b'C'..=b'Z')
-        .map(|c| format!("{}:\\", c as char))
-        .filter(|root| std::path::Path::new(root).exists())
-        .collect()
+    use windows_sys::Win32::Storage::FileSystem::{GetDriveTypeW, GetLogicalDrives};
+    // windows-sys puts GetDriveTypeW's return constants in a different module
+    // from the function itself.
+    use windows_sys::Win32::System::WindowsProgramming::{DRIVE_FIXED, DRIVE_REMOVABLE};
+
+    let mask = unsafe { GetLogicalDrives() };
+    if mask == 0 {
+        warn!("Indexer: GetLogicalDrives failed; no drives enumerated");
+        return Vec::new();
+    }
+
+    let mut drives = Vec::new();
+    for bit in 2u32..26 {
+        // start at 'C' — skip legacy floppy letters A/B
+        if mask & (1 << bit) == 0 {
+            continue;
+        }
+        let root = format!("{}:\\", (b'A' + bit as u8) as char);
+        let wide: Vec<u16> = root.encode_utf16().chain(std::iter::once(0)).collect();
+        let kind = unsafe { GetDriveTypeW(wide.as_ptr()) };
+        if kind == DRIVE_FIXED || kind == DRIVE_REMOVABLE {
+            drives.push(root);
+        }
+    }
+    drives
+}
+
+#[cfg(not(windows))]
+fn enumerate_ready_drives() -> Vec<String> {
+    Vec::new()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Win32 device-change notification (message-only window)
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// We create a message-only window (HWND_MESSAGE) — it is invisible, has no
-// taskbar entry, and exists purely to receive WM_DEVICECHANGE messages.
-// RegisterDeviceNotification with DBT_DEVTYP_VOLUME makes Windows deliver
-// DBT_DEVICEARRIVAL the moment any volume is mounted.
+// We create a hidden TOP-LEVEL window: invisible (never shown), kept out of the
+// taskbar and Alt-Tab by WS_EX_TOOLWINDOW, and existing purely to receive
+// WM_DEVICECHANGE. Windows broadcasts DBT_DEVICEARRIVAL to top-level windows
+// whenever a volume mounts, so no registration is needed.
+//
+// Two traps, both of which this code previously fell into:
+//
+//   • A message-only window (HWND_MESSAGE parent) does NOT receive broadcast
+//     messages, and volume arrival is only ever delivered as a broadcast.
+//   • RegisterDeviceNotification cannot substitute for that: it accepts only
+//     DBT_DEVTYP_DEVICEINTERFACE and DBT_DEVTYP_HANDLE filters, so passing
+//     DBT_DEVTYP_VOLUME fails with ERROR_INVALID_DATA.
+//
+// Together those meant the watcher thread pumped a message loop that could
+// never receive anything, and hot-plug detection silently never worked.
 //
 // The window procedure extracts the drive-letter bitmask from the
 // DEV_BROADCAST_VOLUME structure, converts it to root paths, and sends
 // them to the async side over an unbounded channel.
-//
-// Crate dependency (add to Cargo.toml):
-//   [target.'cfg(windows)'.dependencies]
-//   windows-sys = { version = "0.52", features = [
-//     "Win32_Foundation",
-//     "Win32_UI_WindowsAndMessaging",
-//     "Win32_Devices_DeviceAndDriverInstallation",
-//     "Win32_System_Threading",
-//   ]}
 
 #[cfg(windows)]
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -148,33 +192,52 @@ unsafe extern "system" fn wnd_proc(
     lparam: windows_sys::Win32::Foundation::LPARAM,
 ) -> windows_sys::Win32::Foundation::LRESULT {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        DefWindowProcW, DBT_DEVICEARRIVAL, DBT_DEVTYP_VOLUME, DEV_BROADCAST_HDR,
-        DEV_BROADCAST_VOLUME, WM_DEVICECHANGE,
+        DefWindowProcW, DBT_DEVICEARRIVAL, DBT_DEVICEREMOVECOMPLETE, DBT_DEVTYP_VOLUME,
+        DEV_BROADCAST_HDR, DEV_BROADCAST_VOLUME, WM_DEVICECHANGE,
     };
 
-    if msg == WM_DEVICECHANGE && wparam as u32 == DBT_DEVICEARRIVAL {
+    let event = wparam as u32;
+    let is_arrival = event == DBT_DEVICEARRIVAL;
+    let is_removal = event == DBT_DEVICEREMOVECOMPLETE;
+
+    // Most WM_DEVICECHANGE events (e.g. DBT_DEVNODES_CHANGED) carry a null
+    // lparam — dereferencing it would fault, so check before casting.
+    if msg == WM_DEVICECHANGE && (is_arrival || is_removal) && lparam != 0 {
         let hdr = &*(lparam as *const DEV_BROADCAST_HDR);
         if hdr.dbch_devicetype == DBT_DEVTYP_VOLUME {
             let vol = &*(lparam as *const DEV_BROADCAST_VOLUME);
             let mask = vol.dbcv_unitmask;
 
             for bit in 0u32..26 {
-                if mask & (1 << bit) != 0 {
-                    let letter = (b'A' + bit as u8) as char;
-                    if letter == 'A' || letter == 'B' {
-                        continue;
-                    }
-                    let root = format!("{}:\\", letter);
+                if mask & (1 << bit) == 0 {
+                    continue;
+                }
+                let letter = (b'A' + bit as u8) as char;
+                if letter == 'A' || letter == 'B' {
+                    continue;
+                }
+                let root = format!("{}:\\", letter);
 
-                    if let Some(known_lock) = KNOWN_DRIVES.get() {
-                        let mut known = known_lock.lock().unwrap();
-                        if known.insert(root.clone()) {
-                            if let Some(tx_lock) = DRIVE_TX.get() {
-                                if let Ok(guard) = tx_lock.lock() {
-                                    if let Some(tx) = guard.as_ref() {
-                                        let _ = tx.send(root);
-                                    }
-                                }
+                let Some(known_lock) = KNOWN_DRIVES.get() else {
+                    continue;
+                };
+                // A poisoned lock must not abort the window procedure — an
+                // unwind across the FFI boundary is undefined behaviour.
+                let Ok(mut known) = known_lock.lock() else {
+                    continue;
+                };
+
+                if is_removal {
+                    // Forget it so the same letter is re-indexed if remounted.
+                    known.remove(&root);
+                    continue;
+                }
+
+                if known.insert(root.clone()) {
+                    if let Some(tx_lock) = DRIVE_TX.get() {
+                        if let Ok(guard) = tx_lock.lock() {
+                            if let Some(tx) = guard.as_ref() {
+                                let _ = tx.send(root);
                             }
                         }
                     }
@@ -193,10 +256,8 @@ fn device_watcher_thread(
 ) {
     use windows_sys::Win32::System::Threading::GetCurrentThreadId;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DispatchMessageW, GetMessageW, RegisterClassW,
-        RegisterDeviceNotificationW, CS_HREDRAW, CS_VREDRAW, DBT_DEVTYP_VOLUME,
-        DEVICE_NOTIFY_WINDOW_HANDLE, DEV_BROADCAST_HDR, HWND_MESSAGE, MSG, WNDCLASSW,
-        WS_OVERLAPPED,
+        CreateWindowExW, DispatchMessageW, GetMessageW, RegisterClassW, CS_HREDRAW, CS_VREDRAW,
+        MSG, WNDCLASSW, WS_EX_TOOLWINDOW, WS_OVERLAPPED,
     };
 
     // Store globals for the wnd_proc callback
@@ -219,11 +280,21 @@ fn device_watcher_thread(
             lpszMenuName: std::ptr::null(),
             lpszClassName: class_name.as_ptr(),
         };
-        RegisterClassW(&wc);
+        if RegisterClassW(&wc) == 0 {
+            tracing::error!(
+                "Indexer: RegisterClassW failed (error {})",
+                windows_sys::Win32::Foundation::GetLastError()
+            );
+            return;
+        }
 
-        // Message-only window: HWND_MESSAGE parent, invisible, no taskbar entry
+        // A hidden TOP-LEVEL window (parent = 0, never shown). It must be
+        // top-level to receive the WM_DEVICECHANGE broadcast — a message-only
+        // window (HWND_MESSAGE parent) is skipped by broadcasts entirely.
+        // WS_EX_TOOLWINDOW keeps it out of the taskbar and the Alt-Tab list,
+        // and we never call ShowWindow, so it stays invisible.
         let hwnd = CreateWindowExW(
-            0,
+            WS_EX_TOOLWINDOW,
             class_name.as_ptr(),
             std::ptr::null(),
             WS_OVERLAPPED,
@@ -231,31 +302,28 @@ fn device_watcher_thread(
             0,
             0,
             0,
-            HWND_MESSAGE,
+            0, // no parent — top-level
             0,
             0,
             std::ptr::null(),
         );
 
         if hwnd == 0 {
-            tracing::error!("Indexer: CreateWindowExW failed");
+            tracing::error!(
+                "Indexer: CreateWindowExW failed (error {})",
+                windows_sys::Win32::Foundation::GetLastError()
+            );
             return;
         }
 
-        // Tell Windows to send us DBT_DEVICEARRIVAL for volumes
-        let filter = DEV_BROADCAST_HDR {
-            dbch_size: std::mem::size_of::<DEV_BROADCAST_HDR>() as u32,
-            dbch_devicetype: DBT_DEVTYP_VOLUME,
-            dbch_reserved: 0,
-        };
-        RegisterDeviceNotificationW(
-            hwnd as _,
-            &filter as *const _ as *const _,
-            DEVICE_NOTIFY_WINDOW_HANDLE,
-        );
+        // No RegisterDeviceNotification call here on purpose: it only accepts
+        // DBT_DEVTYP_DEVICEINTERFACE or DBT_DEVTYP_HANDLE filters, so it cannot
+        // subscribe to volume arrival. Volume events reach us as a broadcast to
+        // this top-level window, which needs no registration.
 
         info!(
-            "Indexer: device watcher active (thread {})",
+            "Indexer: device watcher active (hwnd {:#x}, thread {})",
+            hwnd,
             GetCurrentThreadId()
         );
 

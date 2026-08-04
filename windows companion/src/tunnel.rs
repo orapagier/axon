@@ -20,7 +20,20 @@ pub async fn start(token: String, mut shutdown_rx: watch::Receiver<bool>) {
 
     info!("Starting Cloudflare tunnel...");
 
+    // Exponential backoff between restarts. A tunnel that dies instantly —
+    // almost always a bad or revoked token — used to respawn every 5 s forever,
+    // burning a process launch each time with nothing in the log to explain it.
+    const MIN_BACKOFF_SECS: u64 = 5;
+    const MAX_BACKOFF_SECS: u64 = 300;
+    /// A run shorter than this counts as a failure rather than a real session.
+    const HEALTHY_RUN_SECS: u64 = 60;
+
+    let mut backoff_secs = MIN_BACKOFF_SECS;
+    let mut consecutive_failures: u32 = 0;
+
     loop {
+        let started = std::time::Instant::now();
+
         match tokio::process::Command::new(&exe_path)
             .args(["tunnel", "run", "--token", &token])
             .creation_flags(0x08000000) // CREATE_NO_WINDOW
@@ -56,9 +69,31 @@ pub async fn start(token: String, mut shutdown_rx: watch::Receiver<bool>) {
             }
         }
 
+        if started.elapsed().as_secs() >= HEALTHY_RUN_SECS {
+            // The tunnel ran long enough to have been working — treat this as a
+            // transient drop and retry promptly.
+            consecutive_failures = 0;
+            backoff_secs = MIN_BACKOFF_SECS;
+        } else {
+            consecutive_failures += 1;
+            backoff_secs = (backoff_secs * 2).min(MAX_BACKOFF_SECS);
+
+            // Surface the likely cause once, rather than silently looping.
+            if consecutive_failures == 3 {
+                let msg = format!(
+                    "Cloudflare tunnel has failed {} times in a row, each within {}s of starting. \
+                     The tunnel_token in config.toml is most likely invalid, revoked, or for a \
+                     deleted tunnel. Backing off to {}s between attempts.",
+                    consecutive_failures, HEALTHY_RUN_SECS, backoff_secs
+                );
+                error!("{}", msg);
+                crate::log_error_to_file(&msg);
+            }
+        }
+
         tokio::select! {
-            _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
-                info!("Reconnecting tunnel...");
+            _ = tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)) => {
+                info!("Reconnecting tunnel (attempt after {}s backoff)...", backoff_secs);
             }
             _ = shutdown_rx.changed() => {
                 info!("Shutdown during retry wait");

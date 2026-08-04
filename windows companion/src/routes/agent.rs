@@ -11,6 +11,14 @@ use crate::{routes::AppError, server::AppState};
 /// How long (in minutes) before old files are cleaned up
 const FILE_TTL_MINUTES: u64 = 30;
 
+/// Shared HTTP client. Building a `reqwest::Client` per request throws away the
+/// connection pool and re-initialises the TLS/certificate machinery every call.
+static CLIENT: std::sync::OnceLock<Client> = std::sync::OnceLock::new();
+
+fn client() -> &'static Client {
+    CLIENT.get_or_init(Client::new)
+}
+
 #[derive(Deserialize)]
 pub struct ProxyRequest {
     pub method: String,
@@ -23,7 +31,7 @@ pub async fn proxy_endpoint(
     State(state): State<AppState>,
     Json(req): Json<ProxyRequest>,
 ) -> Result<Json<Value>, AppError> {
-    let client = Client::new();
+    let client = client();
     let port = state.config.port;
     let token = &state.config.api_secret;
     let public_url = state.config.public_url.clone();
@@ -35,8 +43,14 @@ pub async fn proxy_endpoint(
         format!("/{}", req.path)
     };
 
-    // Reject recursive proxy
-    if path == "/agent" || path == "/agent/" || path.starts_with("/public") {
+    // Reject recursive or forbidden proxying.
+    //
+    // The guard compares the ROUTE, not the raw string: axum matches on path
+    // only, so "/agent?x=1" and "/agent#f" both reach this same handler while
+    // comparing unequal to "/agent". Strip the query and fragment first, then
+    // normalise trailing slashes and duplicate separators.
+    let route = normalize_route(&path);
+    if route == "/agent" || route.starts_with("/public") {
         return Err(AppError::bad_request("Recursive or forbidden proxy path"));
     }
 
@@ -107,11 +121,87 @@ pub async fn proxy_endpoint(
         });
     }
 
-    // Convert any base64 blobs in the response to downloadable file URLs,
-    // exactly as screenshots are handled.
-    let resp_body = save_base64_fields(resp_body, &path, &public_url).await;
+    // Convert base64 blobs in the response to downloadable file URLs, exactly
+    // as screenshots are handled — but never for endpoints whose payload is
+    // user text (see returns_user_text).
+    let resp_body = if returns_user_text(&route) {
+        resp_body
+    } else {
+        save_base64_fields(resp_body, &path, &public_url).await
+    };
 
     Ok(Json(resp_body))
+}
+
+/// Reduce a caller-supplied path to the route axum will actually match:
+/// drop the query string and fragment, collapse repeated slashes, and strip a
+/// trailing slash. Used only for the security guard — the original path is
+/// still what gets proxied.
+fn normalize_route(path: &str) -> String {
+    let no_query = path
+        .split(['?', '#'])
+        .next()
+        .unwrap_or("")
+        .trim_end_matches('/');
+
+    let mut out = String::with_capacity(no_query.len() + 1);
+    let mut last_was_slash = false;
+    for c in no_query.chars() {
+        if c == '/' {
+            if last_was_slash {
+                continue;
+            }
+            last_was_slash = true;
+        } else {
+            last_was_slash = false;
+        }
+        out.push(c);
+    }
+
+    if out.is_empty() {
+        "/".to_string()
+    } else {
+        out
+    }
+}
+
+/// Endpoints whose response carries text the user asked for verbatim.
+///
+/// Base64 rewriting must never touch these: a text file, clipboard entry, or
+/// shell output that happens to be a valid base64 string would otherwise be
+/// deleted and replaced with a download link, losing the content the caller
+/// actually requested.
+fn returns_user_text(route: &str) -> bool {
+    matches!(
+        route,
+        "/files/read"
+            | "/files/list"
+            | "/files/search"
+            | "/clipboard"
+            | "/shell"
+            | "/system/env"
+            | "/registry/read"
+            | "/windows"
+            | "/processes"
+    )
+}
+
+/// Field names that carry binary payloads. Rewriting is restricted to these so
+/// an ordinary long string is never mistaken for a blob. Deliberately excludes
+/// ambiguous names like `content`, `data`, and `result`.
+fn is_binary_field(name: &str) -> bool {
+    matches!(
+        name,
+        "image"
+            | "photo"
+            | "screenshot"
+            | "thumbnail"
+            | "blob"
+            | "bytes"
+            | "audio"
+            | "video"
+            | "attachment"
+    )
 }
 
 /// Recursively walks response JSON.  Any string field that looks like a base64
@@ -128,7 +218,7 @@ fn save_base64_fields<'a>(
                 let mut new_map = serde_json::Map::new();
                 for (key, v) in map {
                     let new_val = match &v {
-                        Value::String(s) if is_base64_blob(s) => {
+                        Value::String(s) if is_binary_field(&key) && is_base64_blob(s) => {
                             match save_blob(s, &key, endpoint_path, public_url).await {
                                 Ok(url) => json!({
                                     "url": url,
@@ -185,7 +275,15 @@ async fn save_blob(
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let filename = format!("{}_{}.{}", stem, ts, ext);
+    // The random component matters: /public/* is unauthenticated, so a purely
+    // timestamped name could be enumerated by guessing recent seconds.
+    let filename = format!(
+        "{}_{}_{}.{}",
+        stem,
+        ts,
+        crate::server::random_token(),
+        ext
+    );
 
     let public_dir = crate::server::public_dir();
     fs::create_dir_all(&public_dir).await?;
@@ -267,5 +365,69 @@ async fn cleanup_old_files(dir: PathBuf, ttl_minutes: u64) {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn is_blocked(path: &str) -> bool {
+        let route = normalize_route(path);
+        route == "/agent" || route.starts_with("/public")
+    }
+
+    #[test]
+    fn blocks_plain_recursive_paths() {
+        assert!(is_blocked("/agent"));
+        assert!(is_blocked("/agent/"));
+        assert!(is_blocked("/public/x.png"));
+    }
+
+    #[test]
+    fn blocks_recursion_disguised_by_query_or_fragment() {
+        // axum routes on the path alone, so these all reach /agent.
+        assert!(is_blocked("/agent?x=1"));
+        assert!(is_blocked("/agent#frag"));
+        assert!(is_blocked("/agent/?x=1"));
+        assert!(is_blocked("//agent"));
+        assert!(is_blocked("/agent//"));
+    }
+
+    #[test]
+    fn allows_normal_endpoints() {
+        assert!(!is_blocked("/shell"));
+        assert!(!is_blocked("/screenshot?screen=1"));
+        assert!(!is_blocked("/files/read"));
+        // Not the /public route — a different path that merely starts similarly
+        // is still blocked by the prefix rule, which is the conservative choice.
+        assert!(!is_blocked("/processes"));
+    }
+
+    #[test]
+    fn text_endpoints_are_exempt_from_base64_rewriting() {
+        assert!(returns_user_text("/files/read"));
+        assert!(returns_user_text("/clipboard"));
+        assert!(returns_user_text("/shell"));
+        assert!(!returns_user_text("/screenshot"));
+    }
+
+    #[test]
+    fn only_binary_field_names_are_rewritten() {
+        assert!(is_binary_field("image"));
+        assert!(is_binary_field("screenshot"));
+        // `content` is the /files/read text field — rewriting it destroyed the
+        // file contents the caller asked for.
+        assert!(!is_binary_field("content"));
+        assert!(!is_binary_field("data"));
+        assert!(!is_binary_field("result"));
+        assert!(!is_binary_field("stdout"));
+    }
+
+    #[test]
+    fn base64_detection_needs_length_and_charset() {
+        assert!(!is_base64_blob("short"));
+        assert!(!is_base64_blob(&"hello world ".repeat(40)));
+        assert!(is_base64_blob(&"QUJDRA".repeat(60)));
     }
 }

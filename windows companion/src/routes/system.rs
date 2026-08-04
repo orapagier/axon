@@ -139,13 +139,26 @@ pub async fn kill_process(Json(req): Json<KillRequest>) -> Result<Json<ActionRes
         }
 
         if let Some(ref name) = req.name {
+            // sysinfo's processes_by_name is a SUBSTRING match, so asking to
+            // kill "chrome" would also take out "chromedriver" and anything
+            // else containing the word. Filter down to an exact
+            // (case-insensitive) name match before killing anything.
+            let wanted = name.to_lowercase();
             let count = sys
                 .processes_by_name(OsStr::new(name))
+                .filter(|p| p.name().to_string_lossy().to_lowercase() == wanted)
                 .map(|p| {
                     p.kill();
                     1u32
                 })
                 .sum::<u32>();
+
+            if count == 0 {
+                return Err(AppError::not_found(format!(
+                    "No process named exactly '{}' is running",
+                    name
+                )));
+            }
 
             return Ok(ActionResponse::with_message(format!(
                 "Killed {} process(es) named '{}'",

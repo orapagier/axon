@@ -390,7 +390,16 @@ async fn build_download_link(file_path: &str, state: &AppState) -> Result<Downlo
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let filename = format!("{}_{}.{}", sanitize_filename(&original_name), ts, ext);
+    // /public is unauthenticated, so the name needs a random component —
+    // otherwise a link to any file copied there could be found by guessing the
+    // original name plus a recent timestamp.
+    let filename = format!(
+        "{}_{}_{}.{}",
+        sanitize_filename(&original_name),
+        ts,
+        crate::server::random_token(),
+        ext
+    );
 
     let public_dir = crate::server::public_dir();
     tokio::fs::create_dir_all(&public_dir)

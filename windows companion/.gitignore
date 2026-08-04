@@ -1,11 +1,29 @@
 # Build artifacts
 target/
+Output/
 
-# Config with secrets — never commit
+# Config with secrets — never commit.
+# config.example.toml IS committed, so it must only ever contain placeholders.
 config.toml
 
 # Embedded binary (too large for git)
 bin/cloudflared.exe
+
+# Files served by /public — transient, regenerated at runtime
+public/
+
+# Runtime logs
+windowsapi_error.log
+
+# Local debugging scratch output
+*.log
+out.txt
+output.txt
+bin_out.txt
+bin_err.txt
+check_output.txt
+curl_v*.txt
+test*.png
 
 # IDE
 .idea/

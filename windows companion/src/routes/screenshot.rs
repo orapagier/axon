@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{routes::AppError, server::AppState};
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct ScreenshotQuery {
     /// Which monitor to capture (0 = primary). Defaults to 0.
     #[serde(default)]
@@ -27,6 +27,19 @@ pub struct ScreenshotQuery {
 
 fn default_quality() -> u8 { 90 }
 fn png_str() -> String { "png".to_string() }
+
+/// A JSON body wins over query parameters when both are supplied. `Option<Json<T>>`
+/// yields `None` for a GET, a bodyless POST, or a body that fails to parse, so
+/// query-only callers keep working exactly as before.
+fn merge_options(
+    query: ScreenshotQuery,
+    body: Option<Json<ScreenshotQuery>>,
+) -> ScreenshotQuery {
+    match body {
+        Some(Json(b)) => b,
+        None => query,
+    }
+}
 
 #[derive(Serialize)]
 pub struct ScreenshotResponse {
@@ -52,9 +65,17 @@ pub struct SaveResponse {
 /// When called through /agent, the proxy automatically intercepts the base64
 /// image field and replaces it with a { url, note } object pointing to a
 /// temporary public file. No manual base64 decoding needed by the caller.
+///
+/// Options may arrive either as query parameters (`GET /screenshot?screen=1`)
+/// or as a JSON body (`POST /screenshot {"screen": 1}`). The body form matters:
+/// the /agent proxy only ever forwards a JSON body, so with query parameters
+/// alone every agent-driven capture silently fell back to a full primary-screen
+/// PNG regardless of what the caller asked for.
 pub async fn capture(
     Query(query): Query<ScreenshotQuery>,
+    body: Option<Json<ScreenshotQuery>>,
 ) -> Result<Json<ScreenshotResponse>, AppError> {
+    let query = merge_options(query, body);
     tokio::task::spawn_blocking(move || {
         let screens = Screen::all().map_err(|e| AppError::internal(e.to_string()))?;
 
@@ -116,9 +137,11 @@ pub async fn capture(
 pub async fn capture_and_save(
     State(state): State<AppState>,
     Query(query): Query<ScreenshotQuery>,
+    body: Option<Json<ScreenshotQuery>>,
 ) -> Result<Json<SaveResponse>, AppError> {
     // Extract public_url before entering spawn_blocking (AppState is not Send-safe to move)
     let public_url = state.config.public_url.clone();
+    let query = merge_options(query, body);
 
     tokio::task::spawn_blocking(move || {
         let screens = Screen::all().map_err(|e| AppError::internal(e.to_string()))?;
@@ -150,12 +173,19 @@ pub async fn capture_and_save(
             _ => "png",
         };
 
-        // Timestamped filename — avoids collisions and makes ordering obvious
+        // Timestamped filename keeps ordering obvious; the random suffix stops
+        // the unauthenticated /public route from being enumerated by guessing
+        // recent timestamps, and removes the collision risk within one second.
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let filename = format!("screenshot_{}.{}", timestamp, ext);
+        let filename = format!(
+            "screenshot_{}_{}.{}",
+            timestamp,
+            crate::server::random_token(),
+            ext
+        );
 
         // Save directly into public/ — same dir the static file server reads from
         let public = crate::server::public_dir();

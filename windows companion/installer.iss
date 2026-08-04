@@ -7,7 +7,10 @@ AppId={{D3B3E5B1-4C3D-4A5D-B6E7-F8D9C0A1B2C3}
 AppName=Windows API
 AppVersion=1.0.0
 AppPublisher=Samuzziel
-DefaultDirName={userappdata}\windowsapi
+; Must match the self-install target in src/main.rs (%LOCALAPPDATA%\WindowsAPI).
+; If these differ, the app copies itself to LOCALAPPDATA on first run and
+; registers THAT copy for autostart, leaving two installs on disk.
+DefaultDirName={localappdata}\WindowsAPI
 DefaultGroupName=Windows API
 AllowNoIcons=yes
 ; Where the installer EXE will be saved
@@ -28,11 +31,19 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 ; The main executable
 Source: "target\release\windowsapi.exe"; DestDir: "{app}"; Flags: ignoreversion
-; Bundle config.toml if it exists in the project root, otherwise bundle config.example.toml but rename it to config.toml
+; Bundle config.toml if it exists in the project root, otherwise bundle
+; config.example.toml but rename it to config.toml.
+;
+; config.example.toml contains PLACEHOLDERS ONLY, and must stay that way — it is
+; committed to git and it is what every fresh install starts from. The app
+; refuses to run until the placeholders are replaced.
+;
+; onlyifdoesntexist protects a config the user has already filled in from being
+; overwritten when they install a newer build over the top.
 #if FileExists("config.toml")
   Source: "config.toml"; DestDir: "{app}"; Flags: ignoreversion
 #else
-  Source: "config.example.toml"; DestDir: "{app}"; DestName: "config.toml"; Flags: ignoreversion
+  Source: "config.example.toml"; DestDir: "{app}"; DestName: "config.toml"; Flags: onlyifdoesntexist
 #endif
 
 [Icons]
@@ -41,5 +52,10 @@ Name: "{group}\{cm:UninstallProgram,Windows API}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\Windows API"; Filename: "{app}\windowsapi.exe"; Tasks: desktopicon
 
 [Run]
+; A fresh install ships placeholder credentials and the app will exit
+; immediately until they are filled in, so offer the config for editing first.
+#if !FileExists("config.toml")
+Filename: "notepad.exe"; Parameters: """{app}\config.toml"""; Description: "Edit config.toml (required before first run)"; Flags: postinstall skipifsilent nowait
+#endif
 Filename: "{app}\windowsapi.exe"; Description: "{cm:LaunchProgram,Windows API}"; Flags: nowait postinstall skipifsilent
 

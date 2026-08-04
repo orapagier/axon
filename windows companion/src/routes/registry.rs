@@ -3,6 +3,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::routes::{ActionResponse, AppError};
 
+/// CREATE_NO_WINDOW. Release builds are compiled with `windows_subsystem =
+/// "windows"` and therefore own no console, so a console child spawned without
+/// this flag gets a brand-new console window that flashes on screen — even when
+/// its stdout and stderr are redirected.
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 #[derive(Deserialize)]
 pub struct RegistryReadRequest {
     /// e.g. "HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
@@ -47,6 +53,7 @@ pub async fn read_key(
         .args(["-NoProfile", "-NonInteractive", "-Command", &script])
         .env("REG_KEY", &req.key)
         .env("REG_NAME", &req.name)
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
         .await
         .map_err(|e| AppError::internal(e.to_string()))?;
@@ -96,6 +103,7 @@ Set-ItemProperty -Path $path -Name $env:REG_NAME -Value $env:REG_VALUE -Type {ps
         .env("REG_KEY", &req.key)
         .env("REG_NAME", &req.name)
         .env("REG_VALUE", &req.value)
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
         .await
         .map_err(|e| AppError::internal(e.to_string()))?;

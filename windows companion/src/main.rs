@@ -23,10 +23,10 @@ async fn main() {
 
     info!("Windows API starting (headless)...");
 
-    // Self-install to a persistent location and register for autostart
-    self_install();
+    let skip_install = std::env::args().any(|a| a == "--no-install");
 
-    // Load config — log and exit on failure
+    // Load config FIRST — a misconfigured run must not leave an installed copy
+    // and an autostart registry entry behind. Log and exit on failure.
     let config = Arc::new(match config::Config::load() {
         Ok(c) => c,
         Err(e) => {
@@ -37,6 +37,13 @@ async fn main() {
     });
 
     info!("Config loaded — port {}", config.port);
+
+    // Only now that we know this is a working install do we make it persistent.
+    if skip_install {
+        info!("--no-install given — skipping self-install and autostart registration");
+    } else {
+        self_install();
+    }
 
     // Shutdown signal
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -73,6 +80,9 @@ async fn main() {
 /// - Registers the installed copy in HKCU\...\Run so it survives reboots
 /// - If already running from the install dir, just ensures the registry key is set
 /// - Updates the installed exe if the running binary is newer/different
+///
+/// Only runs after the config has loaded and validated, and can be suppressed
+/// entirely with `--no-install`.
 fn self_install() {
     #[cfg(windows)]
     {
@@ -155,6 +165,17 @@ fn self_install() {
         );
 
         // --- Register in Installed Apps (HKCU\...\Uninstall\WindowsAPI) ---
+        //
+        // Skip this when the installer already owns the install: Inno Setup
+        // drops unins000.exe alongside the exe and registers its own Installed
+        // Apps entry. Adding ours too would list the app twice, with our
+        // rmdir-based uninstall command able to delete the directory out from
+        // under Inno's uninstaller.
+        if install_dir.join("unins000.exe").exists() {
+            info!("Installer-managed install detected — skipping Installed Apps registration");
+            return;
+        }
+
         let uninstall_key = r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\WindowsAPI";
         let uninstall_cmd = format!(
             "cmd /c taskkill /im windowsapi.exe /f & reg delete \"HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run\" /v WindowsAPI /f & reg delete \"HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\WindowsAPI\" /f & rmdir /s /q \"{}\"",
@@ -190,7 +211,7 @@ fn reg_set(key: &str, name: &str, reg_type: &str, value: &str) {
 }
 
 /// Write error to a log file next to the executable (useful when there's no console)
-fn log_error_to_file(msg: &str) {
+pub(crate) fn log_error_to_file(msg: &str) {
     if let Ok(exe) = std::env::current_exe() {
         let log_path = exe.with_file_name("windowsapi_error.log");
         let timestamp = std::time::SystemTime::now()

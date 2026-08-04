@@ -1,18 +1,23 @@
 # Win Automation API - Config File
 # Copy this to config.toml and fill in your values.
-# Place config.toml next to win-automation-api.exe
+# Place config.toml next to windowsapi.exe
+#
+# NEVER commit config.toml, and never put real credentials in THIS file —
+# config.example.toml is committed to git and is bundled into the installer
+# as the default config for fresh installs.
 
 # Your Cloudflare Tunnel token from the dashboard
 # Get it from: Cloudflare Zero Trust > Networks > Tunnels > your tunnel > Configure
-tunnel_token = "eyJhIjoiYzhiNzcyMTY4NjFiNTAyMDdiNTEwZmVjMDQwZTgwM2EiLCJ0IjoiMjkwZmJkMjMtMmI3OC00YmY1LWI4OGEtZDUwNGEyM2FkMGNiIiwicyI6IlkyVXpZVFU0WkRndFlqbGtZeTAwTVdZM0xUazFNamd0Wm1FMFlUWmtNRE14TW1ReCJ9"
+tunnel_token = "YOUR_CLOUDFLARE_TUNNEL_TOKEN_HERE"
 
-# Secret key used to authenticate n8n requests
-# Use a long random string - e.g. generate with: openssl rand -hex 32
-api_secret = "05201991012319901223202008182025"
+# Secret used to authenticate every API request (Authorization: Bearer <secret>).
+# Must be at least 32 characters of high-entropy random text.
+# Generate one with:  openssl rand -hex 32
+api_secret = "change-this-to-a-strong-random-secret"
 
 # Local port the API listens on (cloudflared forwards to this)
 port = 8080
 
 # Public URL for downloadable file links (your Cloudflare tunnel domain)
-# Screenshots and other binary responses will be saved as files and served via this URL
-public_url = "https://windows.canchowlung.com"
+# Screenshots and other binary responses are saved as files and served via this URL
+public_url = "https://windows.example.com"

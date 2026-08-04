@@ -45,11 +45,15 @@ pub async fn type_text(Json(req): Json<TypeRequest>) -> Result<Json<ActionRespon
 // Key press / hotkey
 // ──────────────────────────────────────────────────────────────────────────────
 
+/// Upper bound on `repeat` — without it a single request can pin a blocking
+/// thread for hours while hammering the focused window with keystrokes.
+const MAX_REPEAT: u32 = 1000;
+
 #[derive(Deserialize)]
 pub struct KeyRequest {
     /// e.g. ["ctrl", "c"] or ["win", "d"] or ["f5"]
     pub keys: Vec<String>,
-    /// How many times to press (default 1)
+    /// How many times to press (default 1, max 1000)
     #[serde(default = "one")]
     pub repeat: u32,
 }
@@ -72,30 +76,65 @@ pub async fn press_key(Json(req): Json<KeyRequest>) -> Result<Json<ActionRespons
             )));
         }
 
+        if req.repeat > MAX_REPEAT {
+            return Err(AppError::bad_request(format!(
+                "repeat is {} — maximum is {}",
+                req.repeat, MAX_REPEAT
+            )));
+        }
+
+        let (modifiers, last) = keys.split_at(keys.len() - 1);
+        let last = last[0];
+
         for _ in 0..req.repeat {
-            // Press all modifier keys down
-            for key in &keys[..keys.len() - 1] {
-                enigo
-                    .key(*key, Direction::Press)
-                    .map_err(|e| AppError::internal(e.to_string()))?;
+            // Press modifiers, click the final key, then ALWAYS release the
+            // modifiers — including when the click fails. Returning early
+            // between press and release leaves Ctrl/Alt/Win physically stuck
+            // down system-wide, which the user cannot clear from the API.
+            let mut result = press_all(&mut enigo, modifiers);
+
+            if result.is_ok() {
+                result = enigo
+                    .key(last, Direction::Click)
+                    .map_err(|e| AppError::internal(e.to_string()));
             }
-            // Click the final key
-            let last = *keys.last().unwrap();
-            enigo
-                .key(last, Direction::Click)
-                .map_err(|e| AppError::internal(e.to_string()))?;
-            // Release modifiers in reverse
-            for key in keys[..keys.len() - 1].iter().rev() {
-                enigo
-                    .key(*key, Direction::Release)
-                    .map_err(|e| AppError::internal(e.to_string()))?;
-            }
+
+            let release_result = release_all(&mut enigo, modifiers);
+            result?;
+            release_result?;
         }
 
         Ok(ActionResponse::ok())
     })
     .await
     .map_err(|e| AppError::internal(e.to_string()))?
+}
+
+/// Press modifiers in order. On failure, releases the ones already pressed so
+/// the keyboard is never left in a half-held state.
+fn press_all(enigo: &mut Enigo, modifiers: &[Key]) -> Result<(), AppError> {
+    for (i, key) in modifiers.iter().enumerate() {
+        if let Err(e) = enigo.key(*key, Direction::Press) {
+            let _ = release_all(enigo, &modifiers[..i]);
+            return Err(AppError::internal(e.to_string()));
+        }
+    }
+    Ok(())
+}
+
+/// Release modifiers in reverse order. Every key is attempted even if an
+/// earlier one fails — a stuck modifier is worse than a lost error message.
+fn release_all(enigo: &mut Enigo, modifiers: &[Key]) -> Result<(), AppError> {
+    let mut first_err = None;
+    for key in modifiers.iter().rev() {
+        if let Err(e) = enigo.key(*key, Direction::Release) {
+            first_err.get_or_insert(AppError::internal(e.to_string()));
+        }
+    }
+    match first_err {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
 }
 
 fn parse_key(s: &str) -> Option<Key> {
@@ -135,8 +174,33 @@ fn parse_key(s: &str) -> Option<Key> {
         "capslock" => Some(Key::CapsLock),
         "numlock" => Some(Key::Numlock),
         "scrolllock" => Some(Key::Scroll),
-        // Single character keys
-        s if s.len() == 1 => s.chars().next().map(Key::Unicode),
+        // Single character keys. Count chars, not bytes — "é" and "ü" are
+        // multi-byte, so a byte-length check silently rejected them.
+        s if s.chars().count() == 1 => s.chars().next().map(Key::Unicode),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_named_and_single_char_keys() {
+        assert!(matches!(parse_key("ctrl"), Some(Key::Control)));
+        assert!(matches!(parse_key("F5"), Some(Key::F5)));
+        assert!(matches!(parse_key("a"), Some(Key::Unicode('a'))));
+    }
+
+    #[test]
+    fn parses_multibyte_single_characters() {
+        assert!(matches!(parse_key("é"), Some(Key::Unicode('é'))));
+        assert!(matches!(parse_key("ü"), Some(Key::Unicode('ü'))));
+    }
+
+    #[test]
+    fn rejects_unknown_multi_char_keys() {
+        assert!(parse_key("nope").is_none());
+        assert!(parse_key("").is_none());
     }
 }

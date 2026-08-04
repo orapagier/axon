@@ -97,6 +97,18 @@ impl AppError {
             message: msg.into(),
         }
     }
+
+    /// Used by the `cfg(not(windows))` stubs in `window.rs`. Those branches are
+    /// never compiled on Windows, so a missing constructor here went unnoticed
+    /// while still breaking any non-Windows build.
+    #[allow(dead_code)]
+    pub fn not_implemented(msg: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::NOT_IMPLEMENTED,
+            code: "NOT_IMPLEMENTED",
+            message: msg.into(),
+        }
+    }
 }
 
 impl IntoResponse for AppError {
