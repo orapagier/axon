@@ -2024,6 +2024,24 @@ label {
     font-size: 0.88em;
 }
 
+/* Inline images in chat — screenshots are the main case, and a full-resolution
+   desktop capture would otherwise blow the bubble out of the layout. Capped by
+   height as well as width so a tall portrait screenshot cannot push the rest of
+   the conversation off screen. Click-through to the full size is handled by the
+   surrounding download link the agent emits alongside. */
+.chat-markdown .md-image {
+    display: block;
+    max-width: 100%;
+    max-height: 420px;
+    width: auto;
+    height: auto;
+    margin: 8px 0;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--bg);
+    object-fit: contain;
+}
+
 .chat-markdown a {
     color: var(--accent);
     text-decoration: underline;

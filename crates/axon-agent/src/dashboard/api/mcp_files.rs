@@ -220,13 +220,29 @@ pub async fn download_file(
         let mime = mime_guess::from_path(&path)
             .first_or_octet_stream()
             .to_string();
+
+        // Images are served inline so the chat renderer can display them in the
+        // bubble; `attachment` would make the browser download the file even
+        // when it is the src of an <img>. Everything else keeps `attachment`,
+        // which also stops HTML or SVG from rendering as a same-origin document.
+        let inline_ok = matches!(
+            mime.as_str(),
+            "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "image/bmp"
+        );
+        let disposition = if inline_ok {
+            format!("inline; filename=\"{}\"", filename)
+        } else {
+            format!("attachment; filename=\"{}\"", filename)
+        };
+
         (
             [
                 (header::CONTENT_TYPE, mime),
-                (
-                    header::CONTENT_DISPOSITION,
-                    format!("attachment; filename=\"{}\"", filename),
-                ),
+                (header::CONTENT_DISPOSITION, disposition),
+                // Defence in depth: these bytes come from tool output, so make
+                // sure a mislabelled file is never sniffed into something
+                // executable in the dashboard's origin.
+                (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_string()),
             ],
             bytes,
         )

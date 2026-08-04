@@ -76,3 +76,49 @@ describe('renderMarkdown formatting', () => {
     expect(renderMarkdown(null)).toBe('')
   })
 })
+
+describe('renderMarkdown images', () => {
+  it('renders ![alt](url) as an inline image', () => {
+    const out = renderMarkdown('![shot.png](https://windows.example.com/public/shot.png)')
+    expect(out).toContain('<img class="md-image"')
+    expect(out).toContain('src="https://windows.example.com/public/shot.png"')
+    expect(out).toContain('alt="shot.png"')
+    // The "!" must be consumed, not left dangling before a link.
+    expect(out).not.toContain('!<')
+    expect(out).not.toContain('<a href')
+  })
+
+  it('appends the master key to /api/download images but not to remote ones', () => {
+    localStorage.setItem('AXON_MASTER_KEY', 'k123')
+    try {
+      const local = renderMarkdown('![a.png](/api/download?path=data%2Ffiles%2Fa.png)')
+      expect(local).toContain('api_key=k123')
+
+      // A companion's own public URL is unauthenticated by design — leaking the
+      // dashboard master key to another host would be a real credential leak.
+      const remote = renderMarkdown('![a.png](https://windows.example.com/public/a.png)')
+      expect(remote).not.toContain('api_key')
+      expect(remote).not.toContain('k123')
+    } finally {
+      localStorage.removeItem('AXON_MASTER_KEY')
+    }
+  })
+
+  it('still renders ordinary links after an image', () => {
+    const out = renderMarkdown('![p](/api/download?path=p.png)\n\n[Download p](/api/download?path=p.png)')
+    expect(out).toContain('<img class="md-image"')
+    expect(out).toContain('<a href="/api/download?path=p.png')
+    expect(out).toContain('>Download p</a>')
+  })
+
+  it('does not allow protocol-relative or javascript image sources', () => {
+    expect(renderMarkdown('![x](//evil.com/a.png)')).not.toContain('<img')
+    expect(renderMarkdown('![x](javascript:alert(1))')).not.toContain('<img')
+  })
+
+  it('escapes markup in alt text', () => {
+    const out = renderMarkdown('![<script>alert(1)</script>](/api/download?path=a.png)')
+    expect(out).not.toContain('<script>')
+    expect(out).toContain('&lt;script&gt;')
+  })
+})

@@ -14,6 +14,11 @@ function escapeHtml(s) {
 // route sits behind require_auth, so a plain <a href> navigation would
 // 401. Append the master key the same way FilesPage does. The href has
 // already been through escapeHtml, so the key is escaped to match.
+//
+// Applies to <img src> too: an image pointing at /api/download needs the key
+// just as much as a link does, or it renders as a broken icon. Absolute
+// http(s) sources — e.g. a companion's own /public URL — pass through
+// untouched and must never receive the master key.
 function withApiKey(href) {
   if (!href.startsWith('/api/download?')) return href
   const key = typeof localStorage !== 'undefined'
@@ -31,6 +36,18 @@ function renderInline(text) {
 
   // **bold**
   out = out.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+
+  // ![alt](url) -> inline image, so screenshots and generated charts are
+  // visible in the bubble instead of being a link the user has to download.
+  //
+  // MUST run before the link rule below: that pattern also matches the
+  // `[alt](url)` half of an image, which would leave a stray "!" and render
+  // the picture as a plain link. Same href restrictions as links.
+  out = out.replace(
+    /!\[([^\]\n]*)\]\((https?:\/\/[^)\s]+|\/(?!\/)[^)\s]*)\)/g,
+    (_m, alt, href) =>
+      `<img class="md-image" src="${withApiKey(href)}" alt="${alt}" loading="lazy">`
+  )
 
   // [label](https://url) or [label](/relative/path) — a single leading slash
   // is allowed (same-origin links like /api/download), but not `//host/...`,

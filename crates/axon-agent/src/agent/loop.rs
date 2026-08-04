@@ -2320,14 +2320,39 @@ fn rewrite_send_file_links(text: &str, stage: bool) -> String {
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
-        let md_link = format!(
-            "\n\n📎 **[Download {}](/api/download?path={})**\n\n",
-            filename,
-            urlencoding::encode(&path)
-        );
+        let encoded = urlencoding::encode(&path);
+        // Images render in the bubble instead of being a link to click. The
+        // download link stays underneath: the inline copy is height-capped by
+        // CSS, so it is a preview, not a replacement for the full-size file.
+        let md_link = if is_image_file(&filename) {
+            format!(
+                "\n\n![{}](/api/download?path={})\n\n📎 **[Download {}](/api/download?path={})**\n\n",
+                filename, encoded, filename, encoded
+            )
+        } else {
+            format!(
+                "\n\n📎 **[Download {}](/api/download?path={})**\n\n",
+                filename, encoded
+            )
+        };
         out = format!("{}{}{}", &out[..s], md_link, &out[e + 12..]);
     }
     out
+}
+
+/// Extensions the chat renderer can display inline. Deliberately narrow —
+/// formats every browser handles natively. SVG is excluded: it is a scriptable
+/// document, and these files come from tool output.
+fn is_image_file(filename: &str) -> bool {
+    matches!(
+        filename
+            .rsplit('.')
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase()
+            .as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp"
+    )
 }
 
 /// Resolve a `<send_file>` path to something the staging-only download endpoint
@@ -2474,6 +2499,34 @@ mod tests {
             "<thought>The user said \"hihihihi\". This is a greeting.</thought>Hello! How can I help you today?",
         );
         assert_eq!(out, "Hello! How can I help you today?");
+    }
+
+    #[test]
+    fn image_send_file_renders_inline_and_keeps_download() {
+        let out = resolve_send_file_links("Here: <send_file>data/files/shot.png</send_file>");
+        // Inline preview first, so the user sees the picture without clicking.
+        assert!(out.contains("![shot.png](/api/download?path="), "got: {out}");
+        // ...and the full-size file is still one click away.
+        assert!(out.contains("[Download shot.png]"), "got: {out}");
+        assert!(!out.contains("<send_file>"));
+    }
+
+    #[test]
+    fn non_image_send_file_stays_a_plain_download() {
+        let out = resolve_send_file_links("<send_file>data/files/report.pdf</send_file>");
+        assert!(!out.contains("!["), "PDFs must not be emitted as images: {out}");
+        assert!(out.contains("[Download report.pdf]"), "got: {out}");
+    }
+
+    #[test]
+    fn image_detection_covers_case_and_excludes_svg() {
+        assert!(is_image_file("a.png"));
+        assert!(is_image_file("A.JPEG"));
+        assert!(is_image_file("shot.WebP"));
+        // SVG is a scriptable document and these files come from tool output.
+        assert!(!is_image_file("diagram.svg"));
+        assert!(!is_image_file("report.pdf"));
+        assert!(!is_image_file("noextension"));
     }
 
     #[test]
