@@ -165,7 +165,15 @@ fn assign_process_to_job(pid: u32, job_handle: isize) {
 }
 
 fn extract_exe() -> anyhow::Result<PathBuf> {
-    let path = std::env::temp_dir().join("win_automation_cloudflared.exe");
+    // Next to our own binary, NOT %TEMP%. As a LocalSystem service we execute
+    // whatever is at this path, and when the service runs, %TEMP% resolves to
+    // C:\Windows\Temp — a directory standard users can create files in. The
+    // install directory is ACL'd to SYSTEM and Administrators by
+    // service::lock_down_install_dir, so nothing unprivileged can swap the
+    // binary we are about to launch.
+    let path = std::env::current_exe()
+        .map(|exe| exe.with_file_name("cloudflared.exe"))
+        .unwrap_or_else(|_| std::env::temp_dir().join("win_automation_cloudflared.exe"));
 
     let needs_write = if path.exists() {
         match std::fs::metadata(&path) {

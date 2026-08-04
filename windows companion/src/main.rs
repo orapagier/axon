@@ -1,216 +1,331 @@
-// No console window in release builds — runs as a silent background process
+// No console window in release builds — runs as a silent background process.
+// CLI modes re-attach to the parent console explicitly, see `notify_user`.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod auth;
 mod config;
 mod indexer;
+mod proxy;
 mod routes;
 mod server;
+mod service;
+mod session;
+mod session_server;
 mod tunnel;
 
 use std::sync::Arc;
 use tokio::sync::watch;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
-#[tokio::main(worker_threads = 2)]
-async fn main() {
-    // Init logging — writes to stdout in debug; silent in release (no console)
+const USAGE: &str = "\
+Windows Automation API
+
+  windowsapi --install            Install and start the service (needs admin)
+  windowsapi --uninstall          Stop and remove the service (needs admin)
+  windowsapi --start              Start the installed service
+  windowsapi --stop               Stop the installed service
+  windowsapi --user-mode          Run in this console as the current user
+                                  (no service, no lock-screen access)
+
+The service runs as LocalSystem, so /shell, /files/*, /system/*, /processes and
+/registry/* stay available while the machine is locked or at the login screen.
+Screenshot, clipboard, keyboard, mouse and window routes are served by a helper
+launched into the interactive session, and return 503 when nobody is logged on.
+";
+
+fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    let has = |flag: &str| args.iter().any(|a| a == flag);
+
+    init_logging();
+
+    // Launched by the SCM. Must hand control to the dispatcher promptly or
+    // Windows fails the start with error 1053.
+    if has("--service") {
+        if let Err(e) = service::run() {
+            let msg = format!("Service dispatcher failed: {e}");
+            error!("{}", msg);
+            log_error_to_file(&msg);
+        }
+        return;
+    }
+
+    // Launched by the service into the interactive session.
+    if has("--session-agent") {
+        run_session_agent(&args);
+        return;
+    }
+
+    if has("--install") {
+        require_admin("--install");
+        match service::install().and_then(|_| service::start()) {
+            Ok(_) => notify_user(&format!(
+                "Service installed and started.\n\nInstall directory: {}\n\nEdit config.toml \
+                 there, then run: windowsapi --stop && windowsapi --start",
+                service::install_dir().display()
+            )),
+            Err(e) => notify_user(&format!("Install failed: {e}")),
+        }
+        return;
+    }
+
+    if has("--uninstall") {
+        require_admin("--uninstall");
+        match service::uninstall() {
+            Ok(_) => notify_user(&format!(
+                "Service removed. {} was left in place — delete it manually if you also \
+                 want the config and cached files gone.",
+                service::install_dir().display()
+            )),
+            Err(e) => notify_user(&format!("Uninstall failed: {e}")),
+        }
+        return;
+    }
+
+    if has("--start") {
+        require_admin("--start");
+        match service::start() {
+            Ok(_) => notify_user("Service started."),
+            Err(e) => notify_user(&format!("Could not start service: {e}")),
+        }
+        return;
+    }
+
+    if has("--stop") {
+        require_admin("--stop");
+        match service::stop_if_running() {
+            Ok(_) => notify_user("Service stopped."),
+            Err(e) => notify_user(&format!("Could not stop service: {e}")),
+        }
+        return;
+    }
+
+    if has("--user-mode") {
+        run_user_mode();
+        return;
+    }
+
+    notify_user(USAGE);
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Plane A — everything the service runs
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Drives the four long-running pieces of the service: the tunnel, the public
+/// API, the desktop-agent supervisor, and the public/ file expiry sweep.
+///
+/// The tunnel lives here rather than in the user session on purpose. Under the
+/// old `HKCU\...\Run` model, logging out took cloudflared down with it — the
+/// machine did not just lose its desktop routes, it fell off the internet.
+pub async fn run_plane_a(
+    config: Arc<config::Config>,
+    agent: Arc<session::SessionAgent>,
+    shutdown_rx: watch::Receiver<bool>,
+) {
+    info!(
+        "Plane A starting — API on 127.0.0.1:{}, desktop agent on 127.0.0.1:{}",
+        config.port,
+        config.session_port()
+    );
+
+    tokio::join!(
+        tunnel::start(config.tunnel_token.clone(), shutdown_rx.clone()),
+        server::start(config.clone(), agent.clone(), shutdown_rx.clone()),
+        session::supervise(agent.clone(), shutdown_rx.clone()),
+        indexer::start(shutdown_rx.clone()),
+    );
+
+    info!("Plane A stopped");
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Plane B — the desktop agent
+// ──────────────────────────────────────────────────────────────────────────────
+
+fn run_session_agent(args: &[String]) {
+    let port = arg_value(args, "--session-port")
+        .and_then(|v| v.parse::<u16>().ok())
+        .unwrap_or(0);
+
+    if port == 0 {
+        let msg = "Desktop agent started without a valid --session-port".to_string();
+        error!("{}", msg);
+        log_error_to_file(&msg);
+        return;
+    }
+
+    let public_url = arg_value(args, "--public-url").unwrap_or_default();
+
+    // The shared token arrives on stdin rather than argv so it never shows up
+    // in the process list, where any local user could read it.
+    let token = match session::read_token_from_stdin() {
+        Ok(t) => t,
+        Err(e) => {
+            let msg = format!("Desktop agent could not read its session token: {e}");
+            error!("{}", msg);
+            log_error_to_file(&msg);
+            return;
+        }
+    };
+
+    let rt = match tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(e) => {
+            log_error_to_file(&format!("Desktop agent runtime build failed: {e}"));
+            return;
+        }
+    };
+
+    rt.block_on(async {
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+        tokio::spawn(async move {
+            let _ = tokio::signal::ctrl_c().await;
+            let _ = shutdown_tx.send(true);
+        });
+
+        session_server::start(port, token, public_url, shutdown_rx).await;
+    });
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Legacy single-process mode
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Runs both planes in one process as the current user, the way the app worked
+/// before the service split. Kept as an escape hatch for machines where a
+/// service cannot be installed, and for debugging without the SCM in the way.
+///
+/// The tradeoff is the original one: no LocalSystem, and everything dies with
+/// the session, so nothing is reachable once you log out.
+fn run_user_mode() {
+    let config = Arc::new(match config::Config::load() {
+        Ok(c) => c,
+        Err(e) => {
+            let msg = format!("Config error: {e}");
+            error!("{}", msg);
+            log_error_to_file(&msg);
+            notify_user(&msg);
+            std::process::exit(1);
+        }
+    });
+
+    notify_user(
+        "Running in user mode. The API is up, but the machine is NOT reachable while \
+         locked or logged out — install the service with --install for that.",
+    );
+
+    let agent = Arc::new(session::SessionAgent::new(
+        config.session_port(),
+        server::loopback_token(),
+        config.public_url.clone(),
+    ));
+
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .expect("failed to build runtime");
+
+    rt.block_on(async {
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+        tokio::spawn(async move {
+            let _ = tokio::signal::ctrl_c().await;
+            info!("Shutdown signal received");
+            let _ = shutdown_tx.send(true);
+        });
+
+        run_plane_a(config, agent, shutdown_rx).await;
+    });
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ──────────────────────────────────────────────────────────────────────────────
+
+fn init_logging() {
     tracing_subscriber::fmt()
         .with_target(false)
         .with_thread_ids(false)
         .compact()
         .init();
-
-    info!("Windows API starting (headless)...");
-
-    let skip_install = std::env::args().any(|a| a == "--no-install");
-
-    // Load config FIRST — a misconfigured run must not leave an installed copy
-    // and an autostart registry entry behind. Log and exit on failure.
-    let config = Arc::new(match config::Config::load() {
-        Ok(c) => c,
-        Err(e) => {
-            error!("Config error: {}", e);
-            log_error_to_file(&format!("Config error: {}", e));
-            std::process::exit(1);
-        }
-    });
-
-    info!("Config loaded — port {}", config.port);
-
-    // Only now that we know this is a working install do we make it persistent.
-    if skip_install {
-        info!("--no-install given — skipping self-install and autostart registration");
-    } else {
-        self_install();
-    }
-
-    // Shutdown signal
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
-
-    let token = config.tunnel_token.clone();
-    let config_server = config.clone();
-
-    let tunnel_rx  = shutdown_rx.clone();
-    let server_rx  = shutdown_rx.clone();
-    let indexer_rx = shutdown_rx;
-
-    // Listen for Ctrl+C (or service stop signal) to trigger graceful shutdown
-    let shutdown_tx_signal = shutdown_tx.clone();
-    tokio::spawn(async move {
-        let _ = tokio::signal::ctrl_c().await;
-        info!("Shutdown signal received — stopping services...");
-        let _ = shutdown_tx_signal.send(true);
-    });
-
-    // Run tunnel and server concurrently
-    info!("Starting background services...");
-    tokio::join!(
-        tunnel::start(token, tunnel_rx),
-        server::start(config_server, server_rx),
-        indexer::start(indexer_rx),
-    );
-
-    info!("All services stopped. Exiting.");
 }
 
-/// Install the app to %LOCALAPPDATA%\WindowsAPI\ and register it in startup.
+fn arg_value(args: &[String], flag: &str) -> Option<String> {
+    args.iter()
+        .position(|a| a == flag)
+        .and_then(|i| args.get(i + 1))
+        .cloned()
+}
+
+fn require_admin(what: &str) {
+    if !service::is_elevated() {
+        notify_user(&format!(
+            "{what} needs an elevated prompt.\n\nOpen PowerShell or Terminal as \
+             Administrator and run it again — registering a LocalSystem service is not \
+             something a standard token can do."
+        ));
+        std::process::exit(1);
+    }
+}
+
+/// Gets a message in front of the user regardless of how the exe was launched.
 ///
-/// - Copies the exe (and config.toml if present) to a persistent location
-/// - Registers the installed copy in HKCU\...\Run so it survives reboots
-/// - If already running from the install dir, just ensures the registry key is set
-/// - Updates the installed exe if the running binary is newer/different
-///
-/// Only runs after the config has loaded and validated, and can be suppressed
-/// entirely with `--no-install`.
-fn self_install() {
+/// Release builds are GUI-subsystem, so `println!` goes nowhere. Attaching to
+/// the parent console covers the "ran it from a terminal" case; the message box
+/// covers double-clicking.
+fn notify_user(msg: &str) {
     #[cfg(windows)]
     {
-        use std::path::PathBuf;
-
-        let current_exe = match std::env::current_exe() {
-            Ok(p) => p,
-            Err(e) => {
-                warn!("Could not determine exe path: {}", e);
-                return;
-            }
+        use windows_sys::Win32::System::Console::{
+            AttachConsole, GetConsoleWindow, ATTACH_PARENT_PROCESS,
         };
 
-        // Install directory: %LOCALAPPDATA%\WindowsAPI
-        let install_dir = match std::env::var("LOCALAPPDATA") {
-            Ok(dir) => PathBuf::from(dir).join("WindowsAPI"),
-            Err(_) => {
-                warn!("LOCALAPPDATA not set, skipping self-install");
-                return;
-            }
-        };
+        // Debug builds are console-subsystem and already own a console, and
+        // AttachConsole fails with ERROR_ACCESS_DENIED in that case — without
+        // this check every dev run would pop a message box instead of printing.
+        let have_console = unsafe { GetConsoleWindow() != 0 }
+            || unsafe { AttachConsole(ATTACH_PARENT_PROCESS) != 0 };
 
-        let installed_exe = install_dir.join("windowsapi.exe");
-        let installed_config = install_dir.join("config.toml");
-
-        // Create install directory if it doesn't exist
-        if let Err(e) = std::fs::create_dir_all(&install_dir) {
-            warn!("Failed to create install dir: {}", e);
+        if have_console {
+            println!("\n{msg}\n");
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
             return;
         }
 
-        let running_from_install_dir = current_exe == installed_exe;
-
-        if !running_from_install_dir {
-            // Copy the exe to the install location (update if size/content changed)
-            let should_copy = if installed_exe.exists() {
-                // Update if file size differs (new build)
-                match (
-                    std::fs::metadata(&current_exe),
-                    std::fs::metadata(&installed_exe),
-                ) {
-                    (Ok(src), Ok(dst)) => src.len() != dst.len(),
-                    _ => true,
-                }
-            } else {
-                true
-            };
-
-            if should_copy {
-                match std::fs::copy(&current_exe, &installed_exe) {
-                    Ok(_) => info!("Installed exe to {}", installed_exe.display()),
-                    Err(e) => {
-                        // The installed copy might be running — that's fine, it's already there
-                        warn!("Could not update installed exe (may be in use): {}", e);
-                    }
-                }
-            }
-
-            // Copy config.toml if it exists next to the source exe and not yet in install dir
-            let source_dir = current_exe.parent().unwrap_or(std::path::Path::new("."));
-            let source_config = source_dir.join("config.toml");
-            if source_config.exists() {
-                // Always update config so changes are picked up
-                match std::fs::copy(&source_config, &installed_config) {
-                    Ok(_) => info!("Copied config.toml to {}", install_dir.display()),
-                    Err(e) => warn!("Could not copy config.toml: {}", e),
-                }
-            }
+        use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONINFORMATION, MB_OK};
+        let wide = |s: &str| {
+            use std::os::windows::ffi::OsStrExt;
+            std::ffi::OsStr::new(s)
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect::<Vec<u16>>()
+        };
+        let text = wide(msg);
+        let title = wide("Windows Automation API");
+        unsafe {
+            MessageBoxW(
+                0,
+                text.as_ptr(),
+                title.as_ptr(),
+                MB_OK | MB_ICONINFORMATION,
+            );
         }
-
-        let install_path_str = installed_exe.to_string_lossy().to_string();
-        let install_dir_str = install_dir.to_string_lossy().to_string();
-
-        // --- Register in startup (HKCU\...\Run) ---
-        reg_set(
-            r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
-            "WindowsAPI",
-            "REG_SZ",
-            &install_path_str,
-        );
-
-        // --- Register in Installed Apps (HKCU\...\Uninstall\WindowsAPI) ---
-        //
-        // Skip this when the installer already owns the install: Inno Setup
-        // drops unins000.exe alongside the exe and registers its own Installed
-        // Apps entry. Adding ours too would list the app twice, with our
-        // rmdir-based uninstall command able to delete the directory out from
-        // under Inno's uninstaller.
-        if install_dir.join("unins000.exe").exists() {
-            info!("Installer-managed install detected — skipping Installed Apps registration");
-            return;
-        }
-
-        let uninstall_key = r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\WindowsAPI";
-        let uninstall_cmd = format!(
-            "cmd /c taskkill /im windowsapi.exe /f & reg delete \"HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run\" /v WindowsAPI /f & reg delete \"HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\WindowsAPI\" /f & rmdir /s /q \"{}\"",
-            install_dir_str
-        );
-
-        reg_set(uninstall_key, "DisplayName", "REG_SZ", "Windows API");
-        reg_set(
-            uninstall_key,
-            "DisplayVersion",
-            "REG_SZ",
-            env!("CARGO_PKG_VERSION"),
-        );
-        reg_set(uninstall_key, "Publisher", "REG_SZ", "WindowsAPI");
-        reg_set(uninstall_key, "InstallLocation", "REG_SZ", &install_dir_str);
-        reg_set(uninstall_key, "DisplayIcon", "REG_SZ", &install_path_str);
-        reg_set(uninstall_key, "UninstallString", "REG_SZ", &uninstall_cmd);
-        reg_set(uninstall_key, "NoModify", "REG_DWORD", "1");
-        reg_set(uninstall_key, "NoRepair", "REG_DWORD", "1");
-
-        info!("App registered in Installed Apps");
+    }
+    #[cfg(not(windows))]
+    {
+        println!("{msg}");
     }
 }
 
-/// Helper: set a single registry value quietly
-#[cfg(windows)]
-fn reg_set(key: &str, name: &str, reg_type: &str, value: &str) {
-    use std::os::windows::process::CommandExt;
-    let _ = std::process::Command::new("reg")
-        .args(["add", key, "/v", name, "/t", reg_type, "/d", value, "/f"])
-        .creation_flags(0x08000000) // CREATE_NO_WINDOW
-        .output();
-}
-
-/// Write error to a log file next to the executable (useful when there's no console)
+/// Write an error to a log file next to the executable (useful when there's no console)
 pub(crate) fn log_error_to_file(msg: &str) {
     if let Ok(exe) = std::env::current_exe() {
         let log_path = exe.with_file_name("windowsapi_error.log");

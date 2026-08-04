@@ -1,6 +1,11 @@
 # Win Automation API - Config File
 # Copy this to config.toml and fill in your values.
-# Place config.toml next to windowsapi.exe
+#
+# When installed as a service, config.toml lives next to windowsapi.exe in
+#   C:\ProgramData\WindowsAPI\
+# That directory is restricted to SYSTEM and Administrators, so editing it needs
+# an elevated editor. Restart the service after any change:
+#   windowsapi --stop  &&  windowsapi --start
 #
 # NEVER commit config.toml, and never put real credentials in THIS file —
 # config.example.toml is committed to git and is bundled into the installer
@@ -17,6 +22,12 @@ api_secret = "change-this-to-a-strong-random-secret"
 
 # Local port the API listens on (cloudflared forwards to this)
 port = 8080
+
+# Loopback port for the desktop agent — the helper the service launches into
+# your logged-in session to handle screenshot, clipboard, keyboard, mouse and
+# window routes. Bound to 127.0.0.1 only and never exposed through the tunnel.
+# Defaults to port + 1. Only set this if something else already holds that port.
+# session_port = 8081
 
 # Public URL for downloadable file links (your Cloudflare tunnel domain)
 # Screenshots and other binary responses are saved as files and served via this URL

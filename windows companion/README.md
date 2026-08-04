@@ -1,13 +1,68 @@
 # 🖥️ Win Automation API
 
 A self-contained Windows automation API server with an embedded Cloudflare Tunnel,
-controlled from n8n (or any HTTP client) from anywhere in the world.
+controlled from axon-agent, n8n, or any HTTP client, from anywhere in the world.
 
 ```
-n8n (anywhere) ──HTTPS──► Cloudflare ──► cloudflared (embedded) ──► axum API ──► Windows
+caller (anywhere) ──HTTPS──► Cloudflare ──► cloudflared ──► axum API ──► Windows
 ```
 
-**Single `.exe`. Runs headless with no window. Survives sleep/wake cycles. Zero setup after first run.**
+**Single `.exe`. Runs headless as a Windows service. Reachable while the machine is locked.**
+
+---
+
+## 🧭 Two planes
+
+Windows draws a hard line through this API, and the design has to respect it.
+
+A service runs in session 0 with no window station. It can execute anything as
+LocalSystem, but `SendInput` goes nowhere, screen capture returns black, and the
+clipboard it sees is not yours. Those routes only work from a process inside the
+logged-on user's desktop — which in turn does not exist when nobody is logged on.
+
+So the app is two processes:
+
+```
+                        ┌──────────────────────────────────────────┐
+   HTTPS + Bearer ─────► │  Plane A — windowsapi.exe --service      │
+                        │  Windows service, LocalSystem, session 0 │
+                        │  owns cloudflared + the public listener  │
+                        │                                          │
+                        │  /shell /files/* /system/* /processes    │
+                        │  /registry/* /agent /status              │
+                        └───────────────┬──────────────────────────┘
+                                        │ 127.0.0.1, per-boot token
+                                        ▼
+                        ┌──────────────────────────────────────────┐
+                        │  Plane B — windowsapi.exe --session-agent │
+                        │  spawned into WinSta0\Default as you      │
+                        │                                          │
+                        │  /screenshot /clipboard /keyboard/*       │
+                        │  /mouse/* /windows/* /notify /open        │
+                        └──────────────────────────────────────────┘
+```
+
+Callers see one API on one URL. Plane A forwards desktop routes to Plane B and
+relaunches it automatically on logon, unlock and fast-user-switch.
+
+### What works when
+
+| State | `/shell` `/files/*` `/system/*` `/registry/*` | `/screenshot` `/clipboard` `/keyboard/*` `/mouse/*` `/windows/*` |
+|---|---|---|
+| Logged in, unlocked | ✅ | ✅ |
+| **Locked screen** | ✅ | ❌ 503 `NO_DESKTOP_SESSION` |
+| Logged out / login screen | ✅ | ❌ 503 `NO_DESKTOP_SESSION` |
+| Lid closed on AC (after `prepare-laptop.ps1`) | ✅ | ✅ |
+| Asleep | ❌ nothing is reachable | ❌ |
+
+The locked-screen row is not a bug and cannot be engineered away from inside the
+process. Windows switches the input desktop to Winlogon when you lock; DXGI
+Desktop Duplication returns `DXGI_ERROR_ACCESS_LOST` and GDI `BitBlt` returns
+black. To capture or drive your actual desktop, the session must be unlocked —
+either don't let the machine lock, or unlock it over RDP first (see
+`scripts/prepare-laptop.ps1 -EnableRdp`, then `tscon <id> /dest:console`).
+
+Check live state any time with `GET /status`.
 
 ---
 
@@ -72,35 +127,76 @@ placeholder, is empty, is under 32 characters, or is built from too few distinct
 characters. That secret is the only thing between the public internet and full
 control of the machine.
 
-### 5. Run
+### 5. Prepare the machine (laptops especially)
 
-Double-click `windowsapi.exe` or run it from the terminal. There is no window
-and no tray icon — release builds are compiled as a GUI-subsystem binary and run
-silently in the background. Confirm it is up with:
+```powershell
+# elevated PowerShell
+.\scripts\prepare-laptop.ps1
+```
+
+A sleeping laptop has no network, so the tunnel drops and every route fails no
+matter how the API is built. This script stops the machine sleeping while it is
+plugged in, makes lid-close a no-op on AC, and keeps the network up in connected
+standby. Battery behaviour is left alone. `-Revert` undoes it.
+
+Add `-EnableRdp` for a break-glass path in. Strongly recommended: when the
+automation layer wedges, you need a way in that does not depend on the
+automation layer. Reach it over Tailscale or `cloudflared access tcp`, never a
+forwarded port.
+
+### 6. Install the service
+
+```powershell
+# elevated PowerShell
+.\windowsapi.exe --install
+```
+
+This copies the binary and config to `C:\ProgramData\WindowsAPI\`, restricts
+that directory to SYSTEM and Administrators, registers a LocalSystem service set
+to start at boot, and starts it. Confirm:
 
 ```bash
 curl http://127.0.0.1:8080/ping
+curl -H "Authorization: Bearer <secret>" http://127.0.0.1:8080/status
 ```
 
-If it exits immediately, check `windowsapi_error.log` next to the `.exe` —
-config and startup failures are written there because there is no console.
+`/status` reports both planes, so it is the fastest way to tell "no desktop
+session" apart from "something is broken".
 
-Run with `--no-install` to start it without installing itself or touching the
-registry (see below).
+| Command | Effect |
+|---|---|
+| `windowsapi --install` | Install to ProgramData, register the service, start it |
+| `windowsapi --uninstall` | Stop and remove the service (leaves ProgramData) |
+| `windowsapi --start` / `--stop` | Service control |
+| `windowsapi --user-mode` | Run in the current console as you — no service, no lock-screen access |
+
+All except `--user-mode` need an elevated prompt. The binary is GUI-subsystem,
+so it attaches to your terminal to print results and falls back to a message box
+when double-clicked.
+
+If it exits immediately, check `windowsapi_error.log` in the install directory —
+config and startup failures are written there because there is no console.
 
 ---
 
 ## 🚀 Auto-Start on Boot
 
-This is automatic. On a successful start — **after** the config validates — the
-app copies itself to `%LOCALAPPDATA%\WindowsAPI\` and registers that copy under
-`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, plus an entry in Installed
-Apps so it can be removed from Settings.
+Handled by the service, registered `AutoStart` by `--install`. It starts at boot
+before anyone logs in, which is the whole point: the tunnel and the shell/file
+routes are up while the machine sits at the login screen.
 
-- Pass `--no-install` to skip this entirely, e.g. when test-running a build.
-- A run that fails config validation installs nothing.
-- When installed via `installer.iss`, Inno Setup owns the Installed Apps entry
-  and the app does not add a second one.
+The desktop agent is launched and relaunched by the service as sessions come and
+go — nothing to configure, and no `Run` key involved.
+
+> **Upgrading from the old build?** Earlier versions installed to
+> `%LOCALAPPDATA%\WindowsAPI` and auto-started via
+> `HKCU\...\CurrentVersion\Run`. That entry is not removed automatically —
+> delete it, or you will run two copies and the second will fail to bind the
+> port:
+> ```powershell
+> reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v WindowsAPI /f
+> reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\WindowsAPI" /f
+> ```
 
 ---
 
@@ -126,6 +222,34 @@ No auth required.
 
 ---
 
+### 🧭 Status
+
+```
+GET /status      (also POST)
+```
+Reports which plane is answering. Check this first when a desktop route fails —
+a 503 at 3am is usually "the laptop is at the login screen", not a bug.
+
+```json
+{
+  "version": "1.0.0",
+  "service_plane": {
+    "ready": true,
+    "routes": ["/shell", "/files/*", "/system/*", "/processes", "/registry/*"],
+    "available_at_lockscreen": true
+  },
+  "desktop_plane": {
+    "ready": false,
+    "console_session": null,
+    "routes": ["/screenshot", "/clipboard", "/keyboard/*", "/mouse/*", "/windows/*", "/notify", "/open"],
+    "available_at_lockscreen": false,
+    "detail": "No desktop agent. Nobody is logged on, or the agent is restarting."
+  }
+}
+```
+
+---
+
 ### 💻 Shell / PowerShell
 
 ```
@@ -136,9 +260,27 @@ POST /shell
   "command": "Get-Date",
   "shell": "powershell",
   "timeout_secs": 30,
-  "cwd": "C:\\Users\\you"
+  "cwd": "C:\\Users\\you",
+  "run_as": "system"
 }
 ```
+
+**`run_as` picks which plane runs the command:**
+
+| Value | Runs as | Available at lock screen | Notes |
+|---|---|---|---|
+| `"system"` *(default)* | LocalSystem | ✅ | Full machine privilege |
+| `"user"` | The logged-on user | ❌ 503 | Your real profile and environment |
+
+LocalSystem is not simply "Administrator++". It cannot see `HKCU`, your mapped
+drives, or anything DPAPI-protected for your account, and on the network it
+authenticates as the machine account rather than as you. If a command works in
+your own terminal but returns empty or "not found" over the API, that mismatch
+is almost always why — send `"run_as": "user"`.
+
+The desktop agent is launched with the elevated half of your UAC split token, so
+`run_as: "user"` is still elevated, and synthetic input can reach elevated
+windows (UIPI would otherwise drop it silently).
 Response:
 ```json
 {
@@ -528,6 +670,36 @@ This API grants complete control of the machine — arbitrary shell execution,
 registry writes, file read/write, keyboard and mouse input. Treat `api_secret`
 as a root password.
 
+> ⚠️ **Running as a service raises the stakes.** Before the split, a leaked
+> `api_secret` meant remote code execution as you. Now `/shell` defaults to
+> LocalSystem, so it means **SYSTEM-level RCE reachable from the public
+> internet**, available even when nobody is logged in. The two mitigations below
+> are worth treating as part of the setup, not as follow-ups.
+
+**1. Put Cloudflare Access in front of the tunnel.** SSO or mTLS enforced at
+Cloudflare's edge, before a request ever reaches your machine. Free at this
+scale, and it means a leaked bearer token alone is not game over. Zero Trust →
+Access → Applications → Self-hosted, pointed at your tunnel hostname.
+
+**2. Restrict what the token can reach.** There is currently one secret for the
+whole API. If you only need screenshots from a given workflow, that workflow
+still holds a credential that can call `/shell` as SYSTEM. Per-capability tokens
+are the obvious next hardening step and are not implemented yet.
+
+**Install directory.** `--install` drops inherited ACEs on
+`C:\ProgramData\WindowsAPI` and grants only SYSTEM and Administrators. This
+matters: the service executes `cloudflared.exe` from that directory as SYSTEM,
+so a path any standard user could write to would be a straightforward privilege
+escalation. Do not loosen it, and do not move the install somewhere world-writable.
+
+**Loopback hop.** Plane A authenticates to Plane B with a token generated per
+service start from `BCryptGenRandom` and handed over via an inherited stdin pipe,
+so it never appears in the process list. The desktop agent deliberately never
+reads `config.toml` — `api_secret` stays in the service. The loopback port is
+bound to `127.0.0.1` and is never routed through the tunnel. A local process
+could still reach that port if it guessed the token; a named pipe with a DACL
+would close that gap and is the natural next step.
+
 - The API only listens on `127.0.0.1` — never exposed directly to the internet
 - All external traffic goes through Cloudflare's encrypted tunnel
 - The Bearer token is required for every request, compared in constant time
@@ -549,9 +721,40 @@ as a root password.
 ## 🐛 Troubleshooting
 
 **It exits immediately / nothing happens:**  
-There is no console and no tray icon by design. Check `windowsapi_error.log`
-next to the `.exe` — config errors, port conflicts, and repeated tunnel failures
-are written there. For live logs, run a debug build (`cargo run`).
+There is no console and no tray icon by design. Check
+`C:\ProgramData\WindowsAPI\windowsapi_error.log` — config errors, port
+conflicts, and repeated tunnel failures are written there. For live logs, run a
+debug build (`cargo run -- --user-mode`).
+
+**Service won't start / `sc query WindowsAPI` shows exit code 1610:**  
+1610 is `ERROR_BAD_CONFIGURATION` — the service loaded `config.toml` and refused
+it. The error log names the exact field. Almost always a placeholder
+`tunnel_token` or an `api_secret` under 32 characters.
+
+**Everything works except screenshot / clipboard / keyboard / mouse:**  
+Call `GET /status`. If `desktop_plane.ready` is `false`, no interactive session
+exists — the machine is locked, at the login screen, or nobody is logged on.
+This is expected, not a fault; see the "What works when" table above.
+
+**Desktop routes return 503 even though I'm logged in:**  
+The agent may have failed to launch. Check the error log for
+`WTSQueryUserToken failed` (the service is not running as LocalSystem) or
+`Desktop agent failed to bind` (something else holds `session_port` — set a free
+one in `config.toml`).
+
+**Typing/clicking does nothing in an elevated window:**  
+UIPI blocks input from a lower-integrity process. The agent is normally launched
+with the elevated half of your UAC split token, which avoids this. If your
+account is a standard user, there is no elevated token to use and this is a
+Windows-level restriction.
+
+**Commands can't find my files / registry keys / mapped drives:**  
+`/shell` defaults to `run_as: "system"`, and LocalSystem has no `HKCU`, no user
+profile, and no mapped drives. Send `"run_as": "user"`.
+
+**Two copies running / port bind failures after upgrading:**  
+The old `HKCU\...\Run` autostart entry is still there. See the upgrade note in
+Auto-Start on Boot.
 
 **"Please set a secure api_secret" on startup:**  
 `config.toml` still has the placeholder, or the secret is under 32 characters or

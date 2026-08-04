@@ -21,6 +21,18 @@ pub struct Config {
     /// Base URL for downloadable file links (e.g. "https://windows.example.com")
     #[serde(default)]
     pub public_url: String,
+    /// Loopback port the desktop agent listens on. The service forwards
+    /// screenshot/clipboard/input routes here. Never leaves 127.0.0.1 and is
+    /// never exposed through the tunnel. Defaults to `port + 1`.
+    #[serde(default)]
+    pub session_port: Option<u16>,
+}
+
+impl Config {
+    /// Resolved loopback port for the desktop agent.
+    pub fn session_port(&self) -> u16 {
+        self.session_port.unwrap_or(self.port.wrapping_add(1))
+    }
 }
 
 impl Config {
@@ -76,6 +88,13 @@ impl Config {
         if self.port == 0 {
             anyhow::bail!("port must be between 1 and 65535 in {}", where_);
         }
+        if self.session_port() == 0 || self.session_port() == self.port {
+            anyhow::bail!(
+                "session_port in {} must be non-zero and different from port ({})",
+                where_,
+                self.port
+            );
+        }
 
         Ok(())
     }
@@ -107,6 +126,7 @@ mod tests {
             api_secret: secret.to_string(),
             port: 8080,
             public_url: String::new(),
+            session_port: None,
         }
     }
 

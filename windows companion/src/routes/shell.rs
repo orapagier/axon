@@ -30,6 +30,9 @@ pub struct ShellRequest {
     pub timeout_secs: u64,
     /// Working directory (optional)
     pub cwd: Option<String>,
+    /// Which plane runs the command — see `dispatch`.
+    #[serde(default = "default_run_as")]
+    pub run_as: String,
 }
 
 fn default_shell() -> String {
@@ -37,6 +40,9 @@ fn default_shell() -> String {
 }
 fn default_timeout() -> u64 {
     30
+}
+fn default_run_as() -> String {
+    "system".to_string()
 }
 
 #[derive(Serialize)]
@@ -47,6 +53,59 @@ pub struct ShellResponse {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub truncated: Option<bool>,
+}
+
+/// Routes a shell request to the plane that can satisfy it.
+///
+/// - `run_as: "system"` (default) — runs here, in the service, as LocalSystem.
+///   Full machine privilege and available at the lock screen, but it cannot see
+///   HKCU, mapped drives, or anything DPAPI-protected for the user, and its
+///   network identity is the machine account rather than the user.
+/// - `run_as: "user"` — forwarded to the desktop agent, so the command runs as
+///   the logged-on user with their real profile and environment. Requires an
+///   interactive session; answers 503 when nobody is logged on.
+///
+/// Getting this wrong is the most likely source of "it works in my terminal but
+/// not over the API" confusion, so an unknown value is rejected rather than
+/// silently defaulted.
+pub async fn dispatch(
+    axum::extract::State(state): axum::extract::State<crate::server::AppState>,
+    req: axum::extract::Request,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let (parts, body) = req.into_parts();
+
+    let bytes = match axum::body::to_bytes(body, 10 * 1024 * 1024).await {
+        Ok(b) => b,
+        Err(e) => {
+            return AppError::bad_request(format!("Could not read request body: {e}"))
+                .into_response()
+        }
+    };
+
+    let parsed = match serde_json::from_slice::<ShellRequest>(&bytes) {
+        Ok(p) => p,
+        Err(e) => {
+            return AppError::bad_request(format!("Invalid /shell body: {e}")).into_response()
+        }
+    };
+
+    match parsed.run_as.as_str() {
+        // Forward the original bytes rather than re-serialising, so the desktop
+        // agent sees exactly what the caller sent.
+        "user" => {
+            let rebuilt = axum::extract::Request::from_parts(parts, axum::body::Body::from(bytes));
+            crate::proxy::forward(axum::extract::State(state), rebuilt).await
+        }
+        "system" => run_command(Json(parsed)).await.into_response(),
+        other => AppError::bad_request(format!(
+            "Unknown run_as {:?}. Use \"system\" (LocalSystem, works at the lock screen) \
+             or \"user\" (the logged-on user, needs an interactive session).",
+            other
+        ))
+        .into_response(),
+    }
 }
 
 pub async fn run_command(Json(req): Json<ShellRequest>) -> Result<Json<ShellResponse>, AppError> {
@@ -156,6 +215,32 @@ mod tests {
     #[test]
     fn truncate_is_a_noop_below_the_limit() {
         assert_eq!(truncate_output("hello"), "hello");
+    }
+
+    fn parse(json: &str) -> ShellRequest {
+        serde_json::from_str(json).expect("should parse")
+    }
+
+    #[test]
+    fn run_as_defaults_to_system() {
+        // Every pre-split caller omits run_as, and must keep working — landing
+        // on the service plane, which is the one that survives a lock screen.
+        assert_eq!(parse(r#"{"command":"Get-Date"}"#).run_as, "system");
+    }
+
+    #[test]
+    fn run_as_user_is_parsed() {
+        assert_eq!(
+            parse(r#"{"command":"whoami","run_as":"user"}"#).run_as,
+            "user"
+        );
+    }
+
+    #[test]
+    fn unknown_run_as_survives_parsing_and_is_rejected_later() {
+        // dispatch() rejects this with a 400 rather than silently defaulting,
+        // so an unrecognised value must not fail deserialisation first.
+        assert_eq!(parse(r#"{"command":"x","run_as":"root"}"#).run_as, "root");
     }
 
     #[test]

@@ -48,6 +48,7 @@ axum-extra = { version = "0.9", features = ["typed-header"] }
 # The /agent proxy only ever talks to 127.0.0.1, so the default TLS stack and
 # platform certificate verifier are dead weight — disable default features.
 reqwest = { version = "0.13.2", default-features = false, features = ["json"] }
+windows-service = "0.8.1"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.52", features = [
@@ -58,6 +59,23 @@ windows-sys = { version = "0.52", features = [
     "Win32_System_Threading",
     "Win32_System_WindowsProgramming",
     "Win32_Graphics_Gdi",
+    # Launching the session agent into the interactive desktop: WTSQueryUserToken
+    # (RemoteDesktop), DuplicateTokenEx/TOKEN_* (Security), and
+    # CreateEnvironmentBlock (Environment) are all required by session.rs.
+    "Win32_Security",
+    "Win32_System_RemoteDesktop",
+    "Win32_System_Environment",
+    "Win32_System_StationsAndDesktops",
+    # The session token is handed to the agent over an inherited anonymous pipe
+    # rather than argv, so it never appears in the process list.
+    "Win32_System_Pipes",
+    "Win32_System_JobObjects",
+    "Win32_System_IO",
+    # BCryptGenRandom for the loopback token — see server::loopback_token.
+    "Win32_Security_Cryptography",
+    # AttachConsole, so the GUI-subsystem binary can still talk to a terminal
+    # when run as `windowsapi --install`.
+    "Win32_System_Console",
 ]}
 
 windows = { version = "0.58", features = [
@@ -67,6 +85,12 @@ windows = { version = "0.58", features = [
     "Win32_System_Shutdown",
     "Win32_System_JobObjects",
     "Win32_Security",
+    # session.rs launches the desktop agent into the interactive session:
+    # WTSQueryUserToken (RemoteDesktop) + CreateEnvironmentBlock (Environment).
+    # DuplicateTokenEx / GetTokenInformation come from Win32_Security above.
+    "Win32_System_RemoteDesktop",
+    "Win32_System_Environment",
+    "Win32_System_StationsAndDesktops",
 ] }
 
 [profile.release]

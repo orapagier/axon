@@ -11,7 +11,7 @@ use tokio::sync::watch;
 use tower_http::trace::TraceLayer;
 use tracing::{error, info};
 
-use crate::{auth, config::Config, routes};
+use crate::{auth, config::Config, proxy, routes, session::SessionAgent};
 
 /// Request body cap for every endpoint except /files/upload.
 const BODY_LIMIT: usize = 10 * 1024 * 1024;
@@ -19,11 +19,24 @@ const BODY_LIMIT: usize = 10 * 1024 * 1024;
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<Config>,
+    /// The desktop agent to forward capture/clipboard/input routes to.
+    /// `None` inside the desktop agent itself, which serves those routes
+    /// directly and has nothing further to forward to.
+    pub agent: Option<Arc<SessionAgent>>,
+    /// Shared client for the loopback hop. Rebuilding it per request would
+    /// discard the connection pool.
+    pub http: reqwest::Client,
 }
 
-pub async fn start(config: Arc<Config>, mut shutdown_rx: watch::Receiver<bool>) {
+pub async fn start(
+    config: Arc<Config>,
+    agent: Arc<SessionAgent>,
+    mut shutdown_rx: watch::Receiver<bool>,
+) {
     let state = AppState {
         config: config.clone(),
+        agent: Some(agent),
+        http: reqwest::Client::new(),
     };
 
     // Ensure public dir exists at startup — must exist before we serve from it
@@ -54,20 +67,43 @@ pub async fn start(config: Arc<Config>, mut shutdown_rx: watch::Receiver<bool>) 
     //   /clipboard    — POST body:{} = read;  POST body:{text} = use /clipboard/set
     // These are split into separate endpoints to avoid the ambiguity of an
     // empty-body POST hitting a handler that requires a JSON body extractor.
-    let protected = Router::new()
-        .route("/shell", post(routes::shell::run_command))
-        .route("/keyboard/type", post(routes::keyboard::type_text))
-        .route("/keyboard/key", post(routes::keyboard::press_key))
-        .route("/mouse/move", post(routes::mouse::move_mouse))
-        .route("/mouse/click", post(routes::mouse::click_mouse))
-        .route("/mouse/scroll", post(routes::mouse::scroll_mouse))
-        .route("/mouse/drag", post(routes::mouse::drag_mouse))
+    // ── Desktop plane ────────────────────────────────────────────────────────
+    // Everything here needs a window station and therefore cannot run in the
+    // service's session 0. These are forwarded verbatim to the desktop agent,
+    // which answers 503 NO_DESKTOP_SESSION when nobody is logged on.
+    let desktop = Router::new()
+        .route("/keyboard/type", post(proxy::forward))
+        .route("/keyboard/key", post(proxy::forward))
+        .route("/mouse/move", post(proxy::forward))
+        .route("/mouse/click", post(proxy::forward))
+        .route("/mouse/scroll", post(proxy::forward))
+        .route("/mouse/drag", post(proxy::forward))
         // Screenshot: GET returns base64 (agent auto-converts to URL); POST same handler.
         // Options may be supplied as query params (GET) or a JSON body (POST).
-        .route("/screenshot", get(routes::screenshot::capture).post(routes::screenshot::capture))
+        .route("/screenshot", get(proxy::forward).post(proxy::forward))
         // Screenshot/save: saves directly to public/, returns {filename,path,url}
-        .route("/screenshot/save", get(routes::screenshot::capture_and_save).post(routes::screenshot::capture_and_save))
-        .route("/open", post(routes::files::open_target))
+        .route("/screenshot/save", get(proxy::forward).post(proxy::forward))
+        // ShellExecute from session 0 would open the target on an invisible
+        // desktop nobody can see, so /open belongs to the desktop plane too.
+        .route("/open", post(proxy::forward))
+        .route("/clipboard", get(proxy::forward).post(proxy::forward))
+        .route("/clipboard/set", post(proxy::forward))
+        .route("/windows", get(proxy::forward).post(proxy::forward))
+        .route("/windows/focus", post(proxy::forward))
+        .route("/windows/close", post(proxy::forward))
+        .route("/windows/minimize", post(proxy::forward))
+        .route("/windows/maximize", post(proxy::forward))
+        .route("/windows/resize", post(proxy::forward))
+        .route("/notify", post(proxy::forward));
+
+    // ── Service plane ────────────────────────────────────────────────────────
+    // Served in-process as LocalSystem. These keep working at the lock screen,
+    // at the login screen, and with no user logged on at all.
+    let protected = Router::new()
+        .merge(desktop)
+        // /shell picks its plane from run_as: "system" (default) runs here,
+        // "user" is forwarded to the desktop agent.
+        .route("/shell", post(routes::shell::dispatch))
         .route("/files/read", post(routes::files::read_file))
         .route("/files/write", post(routes::files::write_file))
         .route("/files/list", post(routes::files::list_dir))
@@ -84,20 +120,10 @@ pub async fn start(config: Arc<Config>, mut shutdown_rx: watch::Receiver<bool>) 
         // processes: no body extractor — GET and POST both work
         .route("/processes", get(routes::system::list_processes).post(routes::system::list_processes))
         .route("/processes/kill", post(routes::system::kill_process))
-        // clipboard: GET or POST(empty body) = read; /clipboard/set = write
-        .route("/clipboard", get(routes::clipboard::get_clipboard).post(routes::clipboard::get_clipboard))
-        .route("/clipboard/set", post(routes::clipboard::set_clipboard))
-        // windows: no body extractor — GET and POST both work
-        .route("/windows", get(routes::window::list_windows).post(routes::window::list_windows))
-        .route("/windows/focus", post(routes::window::focus_window))
-        .route("/windows/close", post(routes::window::close_window))
-        .route("/windows/minimize", post(routes::window::minimize_window))
-        .route("/windows/maximize", post(routes::window::maximize_window))
-        .route("/windows/resize", post(routes::window::resize_window))
-        .route("/notify", post(routes::notification::send_notification))
         .route("/registry/read", post(routes::registry::read_key))
         .route("/registry/write", post(routes::registry::write_key))
         .route("/agent", post(routes::agent::proxy_endpoint))
+        .route("/status", get(status).post(status))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_auth,
@@ -171,6 +197,37 @@ pub async fn start(config: Arc<Config>, mut shutdown_rx: watch::Receiver<bool>) 
     if let Err(e) = served {
         fatal(&format!("Server stopped with an error: {}", e));
     }
+}
+
+/// Which half of the API is currently answering.
+///
+/// Worth checking before blaming a workflow: a 503 from /screenshot at 3am is
+/// almost always "the laptop is at the login screen", not a bug.
+async fn status(
+    axum::extract::State(state): axum::extract::State<AppState>,
+) -> axum::Json<serde_json::Value> {
+    let desktop_ready = state.agent.as_ref().map(|a| a.is_ready()).unwrap_or(false);
+    let console_session = crate::session::active_console_session();
+
+    axum::Json(serde_json::json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "service_plane": {
+            "ready": true,
+            "routes": ["/shell", "/files/*", "/system/*", "/processes", "/registry/*"],
+            "available_at_lockscreen": true,
+        },
+        "desktop_plane": {
+            "ready": desktop_ready,
+            "console_session": console_session,
+            "routes": ["/screenshot", "/clipboard", "/keyboard/*", "/mouse/*", "/windows/*", "/notify", "/open"],
+            "available_at_lockscreen": false,
+            "detail": if desktop_ready {
+                "Desktop agent is running in the interactive session."
+            } else {
+                "No desktop agent. Nobody is logged on, or the agent is restarting."
+            },
+        }
+    }))
 }
 
 /// Report a startup failure. In release builds there is no console, so the
@@ -251,6 +308,43 @@ pub fn public_dir() -> std::path::PathBuf {
     exe.parent()
         .expect("Executable has no parent directory")
         .join("public")
+}
+
+/// 32 bytes of cryptographic randomness, hex encoded — the shared secret for
+/// the loopback hop between the service and the desktop agent.
+///
+/// Deliberately not `random_token()`. `RandomState::new()` caches its keys in a
+/// thread-local and merely increments them between calls, so successive values
+/// are related rather than independent. That is acceptable for unguessable
+/// public filenames; it is not acceptable for a token that authorises synthetic
+/// keyboard and mouse input.
+pub fn loopback_token() -> String {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Security::Cryptography::{
+            BCryptGenRandom, BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+        };
+
+        let mut buf = [0u8; 32];
+        let status = unsafe {
+            BCryptGenRandom(
+                std::ptr::null_mut(),
+                buf.as_mut_ptr(),
+                buf.len() as u32,
+                BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+            )
+        };
+
+        if status == 0 {
+            return buf.iter().map(|b| format!("{:02x}", b)).collect();
+        }
+
+        // Never expected: BCryptGenRandom with the system-preferred RNG does not
+        // fail in practice. Loud, because the fallback is materially weaker.
+        error!("BCryptGenRandom failed with status {status:#x} — using a weaker fallback token");
+    }
+
+    (0..4).map(|_| random_token()).collect()
 }
 
 /// 16 hex characters of OS-seeded randomness, used to make /public filenames
