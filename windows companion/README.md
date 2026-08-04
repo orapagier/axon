@@ -670,7 +670,66 @@ Types: `string`, `dword`, `qword`, `expand_string`, `binary`, `multi_string`
 
 ---
 
+### 🧰 Tool RPC (axon-agent)
+
+The protocol axon-agent's `DeviceTool` speaks. Register this machine on the
+Devices page with **Kind: Windows Companion**, **Base URL** = your `public_url`,
+**Bearer Token** = your `api_secret`, and the agent can drive it with the same
+code path it uses for AndroidCompanion.
+
+```
+GET  /agent/tools    → the catalogue the LLM reads
+POST /agent/tool     → { "tool": "shell.run", "params": { "command": "Get-Date" } }
+```
+
+`/agent/tools` returns 31 tools, each tagged with the plane it runs on:
+
+```json
+{
+  "name": "shell.run",
+  "description": "Run a PowerShell or cmd command as LocalSystem...",
+  "params": ["command", "shell? (powershell|cmd)", "timeout_secs?", "cwd?"],
+  "plane": "service",
+  "availability": "Always available, including while the machine is locked."
+}
+```
+
+That `plane` field is the point. A model reading this catalogue knows *before
+calling* that `shell.run` survives a lock screen and `screen.capture` does not,
+rather than discovering it through a 503 at 3am.
+
+| Namespace | Tools |
+|---|---|
+| `shell.*` | `run` (LocalSystem), `run_as_user` (logged-in user) |
+| `files.*` | `read` `write` `list` `search` `delete` `exists` `link` |
+| `system.*` | `info` `status` `power` |
+| `process.*` | `list` `kill` |
+| `registry.*` | `read` `write` |
+| `screen.*` | `capture` |
+| `clipboard.*` | `get` `set` |
+| `input.*` | `type` `key` |
+| `mouse.*` | `click` `move` `scroll` `drag` |
+| `window.*` | `list` `focus` `close` `resize` |
+| `notify.*` / `launch.*` | `push` / `open` |
+
+Notes:
+
+- `shell.run` and `shell.run_as_user` are the same endpoint; the tool name sets
+  `run_as`, and a caller-supplied `run_as` is ignored. Otherwise `shell.run`
+  could silently become a desktop call and 503 on a locked machine.
+- `params` may be a JSON object **or** a string containing one — axon-agent's
+  synapse tool serialises it before sending.
+- Binary results come back as download URLs, so `screen.capture` returns
+  `image: { url, note }`, never base64.
+- Unknown tool names get a "did you mean" suggestion.
+- Tools are an explicit allow-list. Adding a REST route does not expose it here.
+
+---
+
 ### 🤖 Agent Proxy
+
+Lower-level alternative to `/agent/tool` — dispatches to any route by path
+rather than by tool name. Both share the same dispatcher.
 
 ```
 POST /agent

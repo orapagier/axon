@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod agent_tools;
 pub mod clipboard;
 pub mod files;
 pub mod keyboard;
@@ -51,6 +52,7 @@ impl ActionResponse {
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// Structured JSON error response for the API.
+#[derive(Debug)]
 pub struct AppError {
     pub status: StatusCode,
     pub code: &'static str,

@@ -123,6 +123,13 @@ pub async fn start(
         .route("/registry/read", post(routes::registry::read_key))
         .route("/registry/write", post(routes::registry::write_key))
         .route("/agent", post(routes::agent::proxy_endpoint))
+        // Tool-RPC surface consumed by axon-agent's DeviceTool. Registered here
+        // so it sits behind the same bearer auth as everything else.
+        .route(
+            "/agent/tools",
+            get(routes::agent_tools::list_tools).post(routes::agent_tools::list_tools),
+        )
+        .route("/agent/tool", post(routes::agent_tools::call_tool))
         .route("/status", get(status).post(status))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),

@@ -31,10 +31,33 @@ pub async fn proxy_endpoint(
     State(state): State<AppState>,
     Json(req): Json<ProxyRequest>,
 ) -> Result<Json<Value>, AppError> {
+    dispatch(&state, &req.method, &req.path, req.body)
+        .await
+        .map(Json)
+}
+
+/// Re-enters our own public router over loopback and returns the parsed body.
+///
+/// Shared by `/agent` and by the tool executor in `agent_tools.rs`, so both get
+/// the same behaviour for free: desktop routes are forwarded to the session
+/// agent by the router, and base64 blobs come back as download URLs. Going back
+/// through HTTP rather than calling handlers directly is what makes that work —
+/// the plane split lives in the router, not in the handlers.
+pub async fn dispatch(
+    state: &AppState,
+    method: &str,
+    raw_path: &str,
+    body: Value,
+) -> Result<Value, AppError> {
     let client = client();
     let port = state.config.port;
     let token = &state.config.api_secret;
     let public_url = state.config.public_url.clone();
+    let req = ProxyRequest {
+        method: method.to_string(),
+        path: raw_path.to_string(),
+        body,
+    };
 
     // Ensure the path starts with /
     let path = if req.path.starts_with('/') {
@@ -50,7 +73,7 @@ pub async fn proxy_endpoint(
     // comparing unequal to "/agent". Strip the query and fragment first, then
     // normalise trailing slashes and duplicate separators.
     let route = normalize_route(&path);
-    if route == "/agent" || route.starts_with("/public") {
+    if is_blocked_route(&route) {
         return Err(AppError::bad_request("Recursive or forbidden proxy path"));
     }
 
@@ -130,7 +153,16 @@ pub async fn proxy_endpoint(
         save_base64_fields(resp_body, &path, &public_url).await
     };
 
-    Ok(Json(resp_body))
+    Ok(resp_body)
+}
+
+/// Routes the proxy must never re-enter.
+///
+/// `/agent`, `/agent/tool` and `/agent/tools` would recurse into the dispatcher
+/// itself. `/public/*` is the unauthenticated download area, and proxying to it
+/// would turn the authenticated API into a fetch primitive for its own files.
+fn is_blocked_route(route: &str) -> bool {
+    route == "/agent" || route.starts_with("/agent/") || route.starts_with("/public")
 }
 
 /// Reduce a caller-supplied path to the route axum will actually match:
@@ -372,9 +404,10 @@ async fn cleanup_old_files(dir: PathBuf, ttl_minutes: u64) {
 mod tests {
     use super::*;
 
+    // Calls the real guard rather than restating it — a copy here would drift
+    // from production the moment a new /agent/* route is added.
     fn is_blocked(path: &str) -> bool {
-        let route = normalize_route(path);
-        route == "/agent" || route.starts_with("/public")
+        is_blocked_route(&normalize_route(path))
     }
 
     #[test]
@@ -382,6 +415,15 @@ mod tests {
         assert!(is_blocked("/agent"));
         assert!(is_blocked("/agent/"));
         assert!(is_blocked("/public/x.png"));
+    }
+
+    #[test]
+    fn blocks_the_tool_executor_routes() {
+        // These dispatch through the proxy, so proxying *to* them recurses.
+        assert!(is_blocked("/agent/tool"));
+        assert!(is_blocked("/agent/tools"));
+        assert!(is_blocked("/agent/tool?x=1"));
+        assert!(is_blocked("//agent//tool"));
     }
 
     #[test]
