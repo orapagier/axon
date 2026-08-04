@@ -238,25 +238,83 @@ mod imp {
             account_password: None,
         };
 
-        let service = match manager.create_service(&info, ServiceAccess::CHANGE_CONFIG) {
+        // START is not for starting the service — `start()` opens its own
+        // handle. It is there because a failure action of SC_ACTION_RESTART
+        // means the SCM will start the service on our behalf, and
+        // ChangeServiceConfig2 refuses to configure that from a handle that
+        // could not have started it itself. Without START, setting recovery
+        // actions fails with access denied.
+        let access = ServiceAccess::CHANGE_CONFIG | ServiceAccess::START;
+
+        let service = match manager.create_service(&info, access) {
             Ok(s) => s,
             Err(e) => {
                 // Already installed — update the existing registration instead
                 // so a reinstall picks up a moved binary or changed arguments.
                 warn!("create_service failed ({}), trying to update existing", e);
-                let existing = manager.open_service(
-                    SERVICE_NAME,
-                    ServiceAccess::CHANGE_CONFIG | ServiceAccess::QUERY_CONFIG,
-                )?;
+                let existing = manager
+                    .open_service(SERVICE_NAME, access | ServiceAccess::QUERY_CONFIG)?;
                 existing.change_config(&info)?;
                 existing
             }
         };
 
         service.set_description(SERVICE_DESCRIPTION)?;
+        set_recovery_actions(&service);
 
         info!("Service '{}' installed", SERVICE_NAME);
         Ok(())
+    }
+
+    /// Tells the SCM to restart us if we ever die.
+    ///
+    /// Without this a crash is permanent: the SCM's default for a failed
+    /// service is to take no action at all, so the machine stays unreachable
+    /// until somebody reboots it or starts the service by hand — which, for a
+    /// box whose whole purpose is remote access, means it is gone until
+    /// somebody walks over to it.
+    ///
+    /// `on_non_crash_failures` matters as much as the delays. Exiting with a
+    /// non-zero code is not a "crash" by the SCM's reckoning, and a config or
+    /// bind failure exits cleanly, so without it the most likely failures are
+    /// exactly the ones that would not be retried.
+    ///
+    /// Best-effort: a service that is installed but has no recovery policy is
+    /// still a working service, so a failure here is logged, not fatal.
+    fn set_recovery_actions(service: &windows_service::service::Service) {
+        use windows_service::service::{ServiceAction, ServiceActionType, ServiceFailureActions};
+
+        let restart = |secs| ServiceAction {
+            action_type: ServiceActionType::Restart,
+            delay: Duration::from_secs(secs),
+        };
+
+        let actions = ServiceFailureActions {
+            // Forget the failure count after a day without incident, so a
+            // once-a-month blip never lands on the long delay.
+            reset_period: windows_service::service::ServiceFailureResetPeriod::After(
+                Duration::from_secs(86_400),
+            ),
+            reboot_msg: None,
+            command: None,
+            // Quick, then quick, then back off — a transient port conflict
+            // clears in seconds, and anything still failing after two tries is
+            // waiting on something slower.
+            actions: Some(vec![restart(5), restart(15), restart(60)]),
+        };
+
+        // {:?} rather than {}: the crate's Display for a winapi failure is the
+        // bare string "IO error in winapi call", which says nothing. The Debug
+        // form carries the actual OS error code.
+        if let Err(e) = service.update_failure_actions(actions) {
+            warn!("Could not set service recovery actions: {:?}", e);
+            return;
+        }
+        if let Err(e) = service.set_failure_actions_on_non_crash_failures(true) {
+            warn!("Could not enable recovery on non-crash failures: {:?}", e);
+            return;
+        }
+        info!("Service recovery configured — restart after 5s, 15s, then 60s");
     }
 
     pub fn uninstall() -> anyhow::Result<()> {

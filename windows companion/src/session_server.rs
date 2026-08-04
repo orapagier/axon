@@ -37,6 +37,10 @@ pub async fn start(
         port,
         public_url,
         session_port: None,
+        // Plane B never owns the tunnel — the service does — so these are
+        // inert here.
+        tunnel_protocol: None,
+        tunnel_metrics_port: None,
     });
 
     let state = AppState {

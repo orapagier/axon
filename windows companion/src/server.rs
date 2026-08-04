@@ -215,9 +215,14 @@ async fn status(
 ) -> axum::Json<serde_json::Value> {
     let desktop_ready = state.agent.as_ref().map(|a| a.is_ready()).unwrap_or(false);
     let console_session = crate::session::active_console_session();
+    let tunnel = crate::tunnel::snapshot();
 
     axum::Json(serde_json::json!({
         "version": env!("CARGO_PKG_VERSION"),
+        // Only meaningful when read over the loopback port: if you are reading
+        // this through the tunnel, the tunnel is up by definition. That is the
+        // point — it lets a local watchdog see an outage the outside cannot.
+        "tunnel": tunnel,
         "service_plane": {
             "ready": true,
             "routes": ["/shell", "/files/*", "/system/*", "/processes", "/registry/*"],

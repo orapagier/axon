@@ -32,3 +32,23 @@ port = 8080
 # Public URL for downloadable file links (your Cloudflare tunnel domain)
 # Screenshots and other binary responses are saved as files and served via this URL
 public_url = "https://windows.example.com"
+
+# Transport cloudflared uses to reach the Cloudflare edge.
+#
+#   "auto"   (default) start on QUIC, fall back to HTTP/2 if QUIC keeps dropping
+#   "http2"  pin HTTP/2 over TCP
+#   "quic"   pin QUIC over UDP/7844
+#
+# QUIC is faster, but it rides UDP/7844, and plenty of consumer routers, ISPs
+# and captive networks quietly drop long-lived UDP flows. When that happens the
+# tunnel does not die — it reconnects, over and over, and the host answers 502
+# in the gaps while the service still looks perfectly healthy locally. If this
+# machine is on Wi-Fi behind consumer NAT and the tunnel keeps flapping, pin
+# "http2" and it will stop.
+# tunnel_protocol = "auto"
+
+# Loopback port for cloudflared's metrics endpoint. The supervisor polls it to
+# tell "the tunnel is up" apart from "the process is up" — without it, a
+# cloudflared with zero edge connections looks identical to a working one.
+# Bound to 127.0.0.1 only and never exposed through the tunnel.
+# tunnel_metrics_port = 20241

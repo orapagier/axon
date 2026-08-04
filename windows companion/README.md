@@ -122,6 +122,11 @@ tunnel_token = "eyJhIjoiMTk..."   # from Cloudflare dashboard
 api_secret   = "some-long-random-secret-key"
 port         = 8080
 public_url   = "https://automation.yourdomain.com"
+
+# Optional. "auto" (default) starts on QUIC and falls back to HTTP/2 if QUIC
+# proves unstable; "http2" pins TCP from the start, which is the right answer
+# behind consumer NAT that drops long-lived UDP.
+# tunnel_protocol = "auto"
 ```
 
 Generate a strong secret: `openssl rand -hex 32`
@@ -868,6 +873,55 @@ something else holds the port. Change `port` in `config.toml`.
 Check `tunnel_token` in `config.toml` and that the tunnel is active in the
 Cloudflare dashboard. After three quick failures in a row the app logs the
 likely cause and backs off, up to 5 minutes between attempts.
+
+**The tunnel keeps dropping / the host 502s at random:**  
+Start with `cloudflared.log` in the install directory and `GET /status`, then
+work down this list — the order matters, because the top two look identical
+from outside.
+
+1. **Is it the internet?** Ping your router, then ping anything past it. A
+   gateway that answers in single-digit milliseconds while `1.1.1.1` and DNS
+   time out is a dead uplink, and no tunnel can survive one. The supervisor
+   detects this itself: on every restart it TCP-connects to the Cloudflare
+   edge, and if that fails too it records `"network_reachable": false` on
+   `/status`, says so in the log, and does *not* blame the transport. After
+   three such restarts it writes a plain-language note to
+   `windowsapi_error.log`. Nothing in this app can work around a flapping ISP
+   link — a wired connection or a second WAN is the only real fix.
+2. **Is it QUIC?** cloudflared defaults to QUIC over UDP/7844, and plenty of
+   consumer routers and ISPs quietly drop long-lived UDP flows. The signature
+   is `failed to dial to edge with quic: timeout: no recent network activity`
+   in `cloudflared.log` *while* plain TCP to the edge still works. Left alone,
+   the supervisor falls back to HTTP/2 over TCP after two such failures and
+   logs that it did. Set `tunnel_protocol = "http2"` in `config.toml` to skip
+   the discovery and pin it from the start.
+3. **Is it the token?** Three failures inside 60 s of starting each, with the
+   edge reachable, means a revoked or mistyped `tunnel_token`. The error log
+   says so explicitly.
+
+`GET /status` carries a `tunnel` block for exactly this — `healthy` is the
+answer to "can the outside world reach this machine", which is *not* the same
+question as "is cloudflared running":
+
+```json
+"tunnel": {
+  "running": true, "healthy": true, "protocol": "quic",
+  "ready_connections": 4, "restarts": 0,
+  "quic_closed_connections": 0, "fell_back_to_http2": false,
+  "metrics_reachable": true, "metrics_port": 20241,
+  "network_reachable": null, "last_event": "started on quic"
+}
+```
+
+Read it over `127.0.0.1:8080`, not through the tunnel — over the tunnel, a
+reply proves the tunnel is up and the interesting cases cannot occur.
+
+**The service died and never came back:**  
+It should now: `--install` registers recovery actions (restart after 5 s, 15 s,
+then 60 s, counter reset daily) including for non-crash exits, which is what a
+config or port-bind failure produces. Confirm with
+`sc qfailure WindowsAPI`. Installs made before this existed have no recovery
+policy at all — re-run `--install` to add it.
 
 **Commands run but nothing happens:**  
 Some actions (keyboard/mouse) require the target window to be focused first. Use

@@ -284,7 +284,12 @@ pub async fn run_plane_a(
     );
 
     tokio::join!(
-        tunnel::start(config.tunnel_token.clone(), shutdown_rx.clone()),
+        tunnel::start(
+            config.tunnel_token.clone(),
+            config.tunnel_protocol.clone(),
+            config.tunnel_metrics_port(),
+            shutdown_rx.clone(),
+        ),
         server::start(config.clone(), agent.clone(), shutdown_rx.clone()),
         session::supervise(agent.clone(), shutdown_rx.clone()),
         indexer::start(shutdown_rx.clone()),

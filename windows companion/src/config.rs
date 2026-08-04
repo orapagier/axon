@@ -13,6 +13,14 @@ const PLACEHOLDER_SECRET: &str = "change-this-to-a-strong-random-secret";
 /// or guessable value is treated as a fatal misconfiguration rather than a warning.
 const MIN_SECRET_LEN: usize = 32;
 
+/// cloudflared's own first-choice metrics port, so an operator who has looked
+/// at a running instance before sees the port they expect.
+const DEFAULT_METRICS_PORT: u16 = 20241;
+
+/// Accepted values for `tunnel_protocol`. Anything else is a typo, and silently
+/// treating a typo as "auto" would hide a pin the operator meant to set.
+const VALID_PROTOCOLS: [&str; 4] = ["auto", "quic", "http2", "h2"];
+
 #[derive(Deserialize, Clone)]
 pub struct Config {
     pub tunnel_token: String,
@@ -26,12 +34,31 @@ pub struct Config {
     /// never exposed through the tunnel. Defaults to `port + 1`.
     #[serde(default)]
     pub session_port: Option<u16>,
+    /// Transport cloudflared uses to reach the Cloudflare edge.
+    ///
+    /// * `"auto"` (default) — start on QUIC and fall back to HTTP/2 if QUIC
+    ///   proves unstable on this network.
+    /// * `"http2"` — pin HTTP/2 over TCP. The right answer on links that drop
+    ///   long-lived UDP flows, which is most consumer NAT.
+    /// * `"quic"` — pin QUIC even if it flaps.
+    #[serde(default)]
+    pub tunnel_protocol: Option<String>,
+    /// Loopback port for cloudflared's metrics endpoint, which the supervisor
+    /// polls to tell "tunnel up" from "process up". Never exposed through the
+    /// tunnel. Defaults to 20241, cloudflared's own first choice.
+    #[serde(default)]
+    pub tunnel_metrics_port: Option<u16>,
 }
 
 impl Config {
     /// Resolved loopback port for the desktop agent.
     pub fn session_port(&self) -> u16 {
         self.session_port.unwrap_or(self.port.wrapping_add(1))
+    }
+
+    /// Resolved loopback port for cloudflared's metrics endpoint.
+    pub fn tunnel_metrics_port(&self) -> u16 {
+        self.tunnel_metrics_port.unwrap_or(DEFAULT_METRICS_PORT)
     }
 }
 
@@ -95,6 +122,28 @@ impl Config {
                 self.port
             );
         }
+        if let Some(p) = &self.tunnel_protocol {
+            let p = p.trim().to_ascii_lowercase();
+            if !VALID_PROTOCOLS.contains(&p.as_str()) {
+                anyhow::bail!(
+                    "tunnel_protocol in {} is \"{}\", which is not one of: {}. \
+                     Leave it unset for \"auto\" (QUIC, falling back to HTTP/2 if it flaps).",
+                    where_,
+                    p,
+                    VALID_PROTOCOLS.join(", ")
+                );
+            }
+        }
+        let metrics = self.tunnel_metrics_port();
+        if metrics == 0 || metrics == self.port || metrics == self.session_port() {
+            anyhow::bail!(
+                "tunnel_metrics_port in {} must be non-zero and different from port ({}) \
+                 and session_port ({})",
+                where_,
+                self.port,
+                self.session_port()
+            );
+        }
 
         Ok(())
     }
@@ -127,6 +176,8 @@ mod tests {
             port: 8080,
             public_url: String::new(),
             session_port: None,
+            tunnel_protocol: None,
+            tunnel_metrics_port: None,
         }
     }
 
@@ -153,6 +204,37 @@ mod tests {
     #[test]
     fn accepts_strong_secret() {
         assert!(validate("9f3b1c7ae2d84610bf59ca03e7d24b8f").is_ok());
+    }
+
+    #[test]
+    fn rejects_unknown_tunnel_protocol() {
+        let mut c = cfg("9f3b1c7ae2d84610bf59ca03e7d24b8f");
+        c.tunnel_protocol = Some("tcp".into());
+        assert!(c.validate(std::path::Path::new("config.toml")).is_err());
+    }
+
+    #[test]
+    fn accepts_known_tunnel_protocols() {
+        for p in ["auto", "QUIC", " http2 ", "h2"] {
+            let mut c = cfg("9f3b1c7ae2d84610bf59ca03e7d24b8f");
+            c.tunnel_protocol = Some(p.into());
+            assert!(
+                c.validate(std::path::Path::new("config.toml")).is_ok(),
+                "{p} should be accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_metrics_port_colliding_with_api() {
+        let mut c = cfg("9f3b1c7ae2d84610bf59ca03e7d24b8f");
+        c.tunnel_metrics_port = Some(8080);
+        assert!(c.validate(std::path::Path::new("config.toml")).is_err());
+    }
+
+    #[test]
+    fn metrics_port_defaults_when_unset() {
+        assert_eq!(cfg("x").tunnel_metrics_port(), DEFAULT_METRICS_PORT);
     }
 
     #[test]
