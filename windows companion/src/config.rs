@@ -21,6 +21,11 @@ const DEFAULT_METRICS_PORT: u16 = 20241;
 /// treating a typo as "auto" would hide a pin the operator meant to set.
 const VALID_PROTOCOLS: [&str; 4] = ["auto", "quic", "http2", "h2"];
 
+/// Accepted values for `tunnel_edge_ip_version`, matching cloudflared's own
+/// `--edge-ip-version`. Rejected rather than silently defaulted for the same
+/// reason as the protocol: a typo here is a pin the operator meant to set.
+const VALID_EDGE_IP_VERSIONS: [&str; 5] = ["auto", "4", "6", "ipv4", "ipv6"];
+
 #[derive(Deserialize, Clone)]
 pub struct Config {
     pub tunnel_token: String,
@@ -48,6 +53,17 @@ pub struct Config {
     /// tunnel. Defaults to 20241, cloudflared's own first choice.
     #[serde(default)]
     pub tunnel_metrics_port: Option<u16>,
+    /// Address family cloudflared dials the Cloudflare edge with.
+    ///
+    /// * `"auto"` (default) — use whichever of IPv4/IPv6 is working.
+    /// * `"4"` — IPv4 only, which is cloudflared's own default.
+    /// * `"6"` — IPv6 only.
+    ///
+    /// We default to `auto` rather than `4` because a machine whose IPv4 path
+    /// to the edge is being dropped will often reach it fine over IPv6, and the
+    /// IPv4-only default turns that into a dead tunnel for no reason.
+    #[serde(default)]
+    pub tunnel_edge_ip_version: Option<String>,
 }
 
 impl Config {
@@ -134,6 +150,19 @@ impl Config {
                 );
             }
         }
+        if let Some(v) = &self.tunnel_edge_ip_version {
+            let v = v.trim().to_ascii_lowercase();
+            if !VALID_EDGE_IP_VERSIONS.contains(&v.as_str()) {
+                anyhow::bail!(
+                    "tunnel_edge_ip_version in {} is \"{}\", which is not one of: {}. \
+                     Leave it unset for \"auto\" (use whichever of IPv4/IPv6 reaches the \
+                     Cloudflare edge).",
+                    where_,
+                    v,
+                    VALID_EDGE_IP_VERSIONS.join(", ")
+                );
+            }
+        }
         let metrics = self.tunnel_metrics_port();
         if metrics == 0 || metrics == self.port || metrics == self.session_port() {
             anyhow::bail!(
@@ -178,6 +207,7 @@ mod tests {
             session_port: None,
             tunnel_protocol: None,
             tunnel_metrics_port: None,
+            tunnel_edge_ip_version: None,
         }
     }
 
@@ -221,6 +251,25 @@ mod tests {
             assert!(
                 c.validate(std::path::Path::new("config.toml")).is_ok(),
                 "{p} should be accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_edge_ip_version() {
+        let mut c = cfg("9f3b1c7ae2d84610bf59ca03e7d24b8f");
+        c.tunnel_edge_ip_version = Some("dual".into());
+        assert!(c.validate(std::path::Path::new("config.toml")).is_err());
+    }
+
+    #[test]
+    fn accepts_known_edge_ip_versions() {
+        for v in ["auto", "4", "6", " IPv4 ", "ipv6"] {
+            let mut c = cfg("9f3b1c7ae2d84610bf59ca03e7d24b8f");
+            c.tunnel_edge_ip_version = Some(v.into());
+            assert!(
+                c.validate(std::path::Path::new("config.toml")).is_ok(),
+                "{v} should be accepted"
             );
         }
     }

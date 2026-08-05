@@ -29,6 +29,9 @@ Windows Automation API
   windowsapi --uninstall          Stop and remove the service (needs admin)
   windowsapi --start              Start the installed service
   windowsapi --stop               Stop the installed service
+  windowsapi --ensure-running     Start the service only if it is stopped.
+                                  Registered in Startup Apps and run at every
+                                  logon; needs no admin rights.
   windowsapi --user-mode          Run in this console as the current user
                                   (no service, no lock-screen access)
 
@@ -74,6 +77,31 @@ fn main() {
     // Launched by the service into the interactive session.
     if has("--session-agent") {
         run_session_agent(&args);
+        return;
+    }
+
+    // Run at every logon by the Startup Apps entry. Deliberately before the
+    // no-arguments install branch, and outside `elevate_if_needed`: a Run key
+    // fires unelevated and unattended, and a UAC prompt at every logon would be
+    // both useless and infuriating. `install` grants interactive users
+    // SERVICE_START precisely so this works without one.
+    if has("--ensure-running") {
+        match service::ensure_running() {
+            Ok(what) => {
+                info!("Startup check: service {}", what);
+                if !QUIET.load(std::sync::atomic::Ordering::Relaxed) {
+                    notify_user(&format!("Service {what}."));
+                }
+            }
+            Err(e) => {
+                // Logged, never shown. This runs at every logon, and the usual
+                // reason to fail is a machine where the service was removed on
+                // purpose — a message box for that would be noise forever.
+                let msg = format!("Startup check could not start the service: {e}");
+                error!("{}", msg);
+                log_error_to_file(&msg);
+            }
+        }
         return;
     }
 
@@ -287,6 +315,7 @@ pub async fn run_plane_a(
         tunnel::start(
             config.tunnel_token.clone(),
             config.tunnel_protocol.clone(),
+            config.tunnel_edge_ip_version.clone(),
             config.tunnel_metrics_port(),
             shutdown_rx.clone(),
         ),

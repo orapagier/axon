@@ -34,6 +34,18 @@ pub fn installed_exe() -> PathBuf {
     install_dir().join("windowsapi.exe")
 }
 
+/// CREATE_NO_WINDOW — every helper process spawned from here is a console
+/// program, and release builds own no console to inherit.
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+/// Machine-wide Run key. Entries here are what Windows lists under
+/// Settings > Apps > Startup and Task Manager > Startup apps.
+const STARTUP_RUN_KEY: &str = r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
+
+/// The value name doubles as the label Windows shows in Startup Apps, so it is
+/// written for a human reading that list rather than as an identifier.
+const STARTUP_VALUE_NAME: &str = "Windows Automation API";
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Service entry point
 // ──────────────────────────────────────────────────────────────────────────────
@@ -261,6 +273,9 @@ mod imp {
 
         service.set_description(SERVICE_DESCRIPTION)?;
         set_recovery_actions(&service);
+        // After create/change_config, so the ACL edit lands on the final
+        // registration rather than one that is about to be rewritten.
+        super::register_startup_entry();
 
         info!("Service '{}' installed", SERVICE_NAME);
         Ok(())
@@ -319,6 +334,9 @@ mod imp {
 
     pub fn uninstall() -> anyhow::Result<()> {
         let _ = stop_if_running();
+        // Before the delete, so a failure to deregister the service does not
+        // leave Windows running a command for a service that is going away.
+        super::unregister_startup_entry();
 
         let manager =
             ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)?;
@@ -326,6 +344,31 @@ mod imp {
         service.delete()?;
         info!("Service '{}' deleted", SERVICE_NAME);
         Ok(())
+    }
+
+    /// Starts the service if it is not already running, and says what it found.
+    ///
+    /// This is what the Startup Apps entry runs at every logon. It has to work
+    /// unelevated — a Run key gives you the user's filtered token — which is
+    /// why `install` grants interactive users SERVICE_START. Doing nothing when
+    /// the service is already up is the overwhelmingly common case and must
+    /// stay silent and instant.
+    pub fn ensure_running() -> anyhow::Result<String> {
+        let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)?;
+        let service = manager.open_service(
+            SERVICE_NAME,
+            ServiceAccess::QUERY_STATUS | ServiceAccess::START,
+        )?;
+
+        let state = service.query_status()?.current_state;
+        match state {
+            ServiceState::Running => Ok("already running".into()),
+            ServiceState::StartPending => Ok("already starting".into()),
+            other => {
+                service.start(&[] as &[&std::ffi::OsStr])?;
+                Ok(format!("was {other:?} — start requested"))
+            }
+        }
     }
 
     pub fn start() -> anyhow::Result<()> {
@@ -376,7 +419,7 @@ mod imp {
 }
 
 #[cfg(windows)]
-pub use imp::{install, run, start, stop_if_running, uninstall, wait_until_settled};
+pub use imp::{ensure_running, install, run, start, stop_if_running, uninstall, wait_until_settled};
 
 /// Last line of the on-disk error log, used to explain a service that installed
 /// but would not stay running. There is no console, so this is where the real
@@ -394,34 +437,266 @@ pub fn last_error_line() -> Option<String> {
     )
 }
 
-/// Restricts the install directory to SYSTEM and Administrators.
+// ──────────────────────────────────────────────────────────────────────────────
+// Startup Apps
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Adds the app to Windows' Startup Apps list.
+///
+/// The service is already AutoStart, so this is not what makes the machine come
+/// up connected — the SCM does that, earlier, without anyone logging in. Two
+/// things it does add:
+///
+/// * **Visibility.** A background service that owns the machine's remote access
+///   should be somewhere the person using the laptop can see it. Settings >
+///   Apps > Startup and Task Manager > Startup apps are where people look, and
+///   a service registration appears in neither.
+/// * **A per-logon backstop.** If the service is stopped — a failed start at
+///   boot before the network stack was ready, a manual stop that was never
+///   undone, an SCM recovery ladder that ran out — nothing brings it back until
+///   someone notices. This entry retries at every logon, which is exactly when
+///   a human is present to benefit from it.
+///
+/// Best-effort: a machine whose service is registered but which is missing this
+/// entry still works, so failures are logged rather than fatal.
+pub fn register_startup_entry() {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+
+        // Quoted because the path contains no spaces today but ProgramData can
+        // be redirected, and an unquoted path with a space is the classic
+        // unquoted-service-path bug.
+        let command = format!("\"{}\" --ensure-running --quiet", installed_exe().display());
+
+        let out = std::process::Command::new("reg.exe")
+            .args([
+                "add",
+                STARTUP_RUN_KEY,
+                "/v",
+                STARTUP_VALUE_NAME,
+                "/t",
+                "REG_SZ",
+                "/d",
+                &command,
+                "/f",
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+
+        match out {
+            Ok(o) if o.status.success() => {
+                info!("Registered in Startup Apps as '{}'", STARTUP_VALUE_NAME)
+            }
+            Ok(o) => warn!(
+                "Could not add the Startup Apps entry: {}",
+                String::from_utf8_lossy(&o.stderr).trim()
+            ),
+            Err(e) => warn!("Could not run reg.exe to add the Startup Apps entry: {}", e),
+        }
+
+        grant_interactive_start_right();
+    }
+}
+
+/// Removes the Startup Apps entry. Called from `uninstall`, so an uninstalled
+/// app does not leave a dead command behind for Windows to run at every logon.
+pub fn unregister_startup_entry() {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+
+        let out = std::process::Command::new("reg.exe")
+            .args(["delete", STARTUP_RUN_KEY, "/v", STARTUP_VALUE_NAME, "/f"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+
+        // A missing value is the expected result of uninstalling twice, so a
+        // non-zero exit here is not worth a warning.
+        match out {
+            Ok(o) if o.status.success() => info!("Removed the Startup Apps entry"),
+            Ok(_) => info!("No Startup Apps entry to remove"),
+            Err(e) => warn!("Could not run reg.exe to remove the Startup Apps entry: {}", e),
+        }
+    }
+}
+
+/// Lets interactive users *start* the service, and nothing else.
+///
+/// The Startup Apps entry runs unelevated, as the logged-on user, because that
+/// is what a Run key does — and by default only Administrators may start a
+/// service. Without this grant the backstop above would fail with access denied
+/// on precisely the machines that need it.
+///
+/// The widening is deliberately the smallest one that works: `RP` is
+/// SERVICE_START alone. Not stop, not pause, not change-config. Starting a
+/// service that is already configured to start itself at boot gives a local
+/// user nothing they did not already have by rebooting, whereas SERVICE_STOP
+/// would hand any local account the ability to take the machine off the
+/// internet.
+#[cfg(windows)]
+fn grant_interactive_start_right() {
+    use std::os::windows::process::CommandExt;
+
+    /// Allow, no flags, SERVICE_START, for INTERACTIVE (all logged-on users).
+    const START_ACE: &str = "(A;;RP;;;IU)";
+
+    let show = std::process::Command::new("sc.exe")
+        .args(["sdshow", SERVICE_NAME])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+
+    let sddl = match show {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        Ok(o) => {
+            warn!(
+                "sc sdshow failed, leaving service permissions alone: {}",
+                String::from_utf8_lossy(&o.stderr).trim()
+            );
+            return;
+        }
+        Err(e) => {
+            warn!("Could not run sc.exe sdshow: {}", e);
+            return;
+        }
+    };
+
+    if sddl.contains(START_ACE) {
+        return;
+    }
+
+    let Some(updated) = insert_dacl_ace(&sddl, START_ACE) else {
+        warn!("Could not parse the service security descriptor; permissions left alone");
+        return;
+    };
+
+    let set = std::process::Command::new("sc.exe")
+        .args(["sdset", SERVICE_NAME, &updated])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+
+    match set {
+        Ok(o) if o.status.success() => {
+            info!("Granted interactive users permission to start (not stop) the service")
+        }
+        Ok(o) => warn!(
+            "sc sdset failed — the Startup Apps entry will not be able to restart a \
+             stopped service for non-admin users: {}",
+            String::from_utf8_lossy(&o.stderr).trim()
+        ),
+        Err(e) => warn!("Could not run sc.exe sdset: {}", e),
+    }
+}
+
+/// Splices an ACE into the DACL of an SDDL string, immediately before the first
+/// existing ACE.
+///
+/// Position matters: Windows evaluates ACEs in order, and the canonical form
+/// puts deny ACEs first. A default service descriptor has none, so inserting at
+/// the head is safe and keeps the allow-only ordering intact. Returns `None`
+/// rather than guessing if the string does not look like what we expect — an
+/// unparsed descriptor is left untouched, which fails closed.
+fn insert_dacl_ace(sddl: &str, ace: &str) -> Option<String> {
+    let dacl = sddl.find("D:")?;
+    let after_marker = dacl + 2;
+    let rest = sddl.get(after_marker..)?;
+
+    // Between "D:" and the first ACE sit optional flag letters (P, AI, AR).
+    let first_ace = rest.find('(')?;
+
+    // An empty DACL followed by a SACL would put that '(' inside S:, and
+    // inserting an allow ACE into the audit list would be silently wrong.
+    if let Some(sacl) = rest.find("S:") {
+        if first_ace > sacl {
+            return None;
+        }
+    }
+
+    let at = after_marker + first_ace;
+    Some(format!("{}{}{}", &sddl[..at], ace, &sddl[at..]))
+}
+
+/// Restricts the install directory to SYSTEM and Administrators, then carves
+/// out the one thing an unprivileged user legitimately needs: permission to run
+/// `windowsapi.exe`.
 ///
 /// config.toml holds `api_secret`, and the directory is where cloudflared.exe
 /// gets extracted — a SYSTEM service executing a binary from a path a standard
-/// user can write to is a straightforward privilege escalation.
+/// user can write to is a straightforward privilege escalation. So writes stay
+/// closed to everyone but SYSTEM and Administrators.
+///
+/// The carve-out exists because the Startup Apps entry runs at medium
+/// integrity: a Run key gives you the *filtered* token, in which Administrators
+/// is deny-only. Without it, that entry cannot traverse this directory or
+/// execute the binary it points at, and silently does nothing on every machine
+/// — which is precisely how it behaved before this was noticed.
+///
+/// What is granted is deliberately narrow:
+///
+/// * **The directory, read/execute, this-folder-only.** No `(OI)(CI)`, so it
+///   does not propagate to the files inside. Users get traverse and list, not
+///   the contents.
+/// * **`windowsapi.exe`, read/execute.** Explicit, on that one file.
+///
+/// `config.toml` is deliberately not included and stays unreadable, so the API
+/// secret and tunnel token are no more exposed than before. Nothing anywhere
+/// gains write access, so the escalation the lockdown exists to prevent is
+/// still prevented.
 fn lock_down_install_dir(dir: &std::path::Path) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         let path = dir.to_string_lossy().to_string();
 
+        let icacls = |args: &[&str]| -> Result<std::process::Output, std::io::Error> {
+            std::process::Command::new("icacls")
+                .args(args)
+                .creation_flags(CREATE_NO_WINDOW)
+                .output()
+        };
+
         // /inheritance:r drops inherited ACEs, which is what would otherwise
         // leave Users with write access inherited from C:\ProgramData.
-        let out = std::process::Command::new("icacls")
-            .args([
-                &path,
-                "/inheritance:r",
-                "/grant:r",
-                "*S-1-5-18:(OI)(CI)F", // LocalSystem
-                "/grant:r",
-                "*S-1-5-32-544:(OI)(CI)F", // Administrators
-            ])
-            .creation_flags(0x08000000)
-            .output();
+        let out = icacls(&[
+            &path,
+            "/inheritance:r",
+            "/grant:r",
+            "*S-1-5-18:(OI)(CI)F", // LocalSystem
+            "/grant:r",
+            "*S-1-5-32-544:(OI)(CI)F", // Administrators
+            // Users: traverse and list this folder only. No (OI)(CI), so the
+            // files within — config.toml above all — keep inheriting the
+            // SYSTEM/Administrators-only ACL set above.
+            "/grant:r",
+            "*S-1-5-32-545:(RX)",
+        ]);
+
+        // Read/execute on the binary itself, so an unelevated logon can run
+        // `--ensure-running`. Read, not write: the binary a SYSTEM service
+        // launches must stay unmodifiable by non-admins.
+        let exe = installed_exe();
+        if exe.exists() {
+            let exe_path = exe.to_string_lossy().to_string();
+            match icacls(&[&exe_path, "/grant:r", "*S-1-5-32-545:(RX)"]) {
+                Ok(o) if o.status.success() => {
+                    info!("Granted users execute permission on {}", exe_path)
+                }
+                Ok(o) => warn!(
+                    "Could not grant execute on {} — the Startup Apps entry will not \
+                     be able to run unelevated: {}",
+                    exe_path,
+                    String::from_utf8_lossy(&o.stderr).trim()
+                ),
+                Err(e) => warn!("Could not run icacls on {}: {}", exe_path, e),
+            }
+        }
 
         match out {
             Ok(o) if o.status.success() => {
-                info!("Locked down {} to SYSTEM and Administrators", path)
+                info!(
+                    "Locked down {} — writes restricted to SYSTEM and Administrators",
+                    path
+                )
             }
             Ok(o) => warn!(
                 "icacls on {} returned {}: {}",
@@ -457,6 +732,64 @@ pub fn stop_if_running() -> anyhow::Result<()> {
 #[cfg(not(windows))]
 pub fn wait_until_settled(_timeout: std::time::Duration) -> anyhow::Result<String> {
     anyhow::bail!("Windows service mode is Windows-only")
+}
+#[cfg(not(windows))]
+pub fn ensure_running() -> anyhow::Result<String> {
+    anyhow::bail!("Windows service mode is Windows-only")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A real descriptor as `sc sdshow` prints it for a freshly created service.
+    const DEFAULT_SDDL: &str = "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)\
+                                (A;;CCLCSWLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)\
+                                S:(AU;FA;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;WD)";
+
+    #[test]
+    fn inserts_ace_at_the_head_of_the_dacl() {
+        let out = insert_dacl_ace(DEFAULT_SDDL, "(A;;RP;;;IU)").expect("should parse");
+        assert!(out.starts_with("D:(A;;RP;;;IU)(A;;CCLCSWRPWPDTLOCRRC;;;SY)"));
+        // The audit list must come through untouched.
+        assert!(out.ends_with("S:(AU;FA;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;WD)"));
+    }
+
+    #[test]
+    fn preserves_dacl_flag_letters() {
+        // "P" (protected) and "AI" (auto-inherited) sit between D: and the
+        // first ACE; splicing in front of them would corrupt the descriptor.
+        let sddl = "D:PAI(A;;CCLCSWRPWPDTLOCRRC;;;SY)";
+        let out = insert_dacl_ace(sddl, "(A;;RP;;;IU)").expect("should parse");
+        assert_eq!(out, "D:PAI(A;;RP;;;IU)(A;;CCLCSWRPWPDTLOCRRC;;;SY)");
+    }
+
+    #[test]
+    fn refuses_to_splice_an_allow_ace_into_a_sacl() {
+        // Empty DACL, non-empty SACL: the first '(' belongs to the audit list.
+        // Adding an allow ACE there would be silently wrong, so bail instead.
+        let sddl = "D:S:(AU;FA;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;WD)";
+        assert!(insert_dacl_ace(sddl, "(A;;RP;;;IU)").is_none());
+    }
+
+    #[test]
+    fn refuses_input_without_a_dacl() {
+        assert!(insert_dacl_ace("S:(AU;FA;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;WD)", "(A;;RP;;;IU)").is_none());
+        assert!(insert_dacl_ace("", "(A;;RP;;;IU)").is_none());
+        // "Access is denied." and similar sc.exe chatter must not be mangled
+        // into something we would then hand back to sdset.
+        assert!(insert_dacl_ace("[SC] OpenService FAILED 5:", "(A;;RP;;;IU)").is_none());
+    }
+
+    #[test]
+    fn granted_right_is_start_only() {
+        // Guards the security property: RP is SERVICE_START. WP (SERVICE_STOP)
+        // and DC (SERVICE_CHANGE_CONFIG) must never appear in the ACE we add,
+        // or any local user could take the machine off the internet.
+        let ace = "(A;;RP;;;IU)";
+        assert!(!ace.contains("WP"), "must not grant SERVICE_STOP");
+        assert!(!ace.contains("DC"), "must not grant SERVICE_CHANGE_CONFIG");
+    }
 }
 
 /// True when the current process holds an elevated (high-integrity) token.

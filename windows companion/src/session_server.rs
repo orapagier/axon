@@ -41,6 +41,7 @@ pub async fn start(
         // inert here.
         tunnel_protocol: None,
         tunnel_metrics_port: None,
+        tunnel_edge_ip_version: None,
     });
 
     let state = AppState {

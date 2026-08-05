@@ -47,6 +47,18 @@ public_url = "https://windows.example.com"
 # "http2" and it will stop.
 # tunnel_protocol = "auto"
 
+# Address family used to reach the Cloudflare edge.
+#
+#   "auto"  (default) use whichever of IPv4/IPv6 is actually working
+#   "4"     IPv4 only — this is cloudflared's own default
+#   "6"     IPv6 only
+#
+# We default to "auto" rather than cloudflared's "4" because a machine whose
+# IPv4 path to the edge is being dropped will often reach it perfectly well over
+# IPv6, and the IPv4-only default turns that into a dead tunnel for no reason.
+# On an IPv4-only network "auto" behaves exactly like "4".
+# tunnel_edge_ip_version = "auto"
+
 # Loopback port for cloudflared's metrics endpoint. The supervisor polls it to
 # tell "the tunnel is up" apart from "the process is up" — without it, a
 # cloudflared with zero edge connections looks identical to a working one.

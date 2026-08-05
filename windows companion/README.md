@@ -127,6 +127,12 @@ public_url   = "https://automation.yourdomain.com"
 # proves unstable; "http2" pins TCP from the start, which is the right answer
 # behind consumer NAT that drops long-lived UDP.
 # tunnel_protocol = "auto"
+
+# Optional. Address family used to reach the Cloudflare edge: "auto" (default),
+# "4", or "6". cloudflared's own default is IPv4-only; we default to "auto"
+# because a machine whose IPv4 path to the edge is being dropped will often
+# reach it perfectly well over IPv6.
+# tunnel_edge_ip_version = "auto"
 ```
 
 Generate a strong secret: `openssl rand -hex 32`
@@ -150,6 +156,14 @@ A sleeping laptop has no network, so the tunnel drops and every route fails no
 matter how the API is built. This script stops the machine sleeping while it is
 plugged in, makes lid-close a no-op on AC, and keeps the network up in connected
 standby. Battery behaviour is left alone. `-Revert` undoes it.
+
+It also stops Windows powering down the network adapter, and puts the wireless
+radio in maximum-performance mode. **Do not skip this on a laptop that flaps.**
+A Wi-Fi card Windows is allowed to park does not announce it — the link still
+reads "connected" while outbound connections time out for tens of seconds at a
+time. That is indistinguishable from a bad ISP from inside the app, and it is
+the most common cause of a tunnel that drops on a laptop which browses the web
+perfectly well.
 
 Add `-EnableRdp` for a break-glass path in. Strongly recommended: when the
 automation layer wedges, you need a way in that does not depend on the
@@ -232,7 +246,27 @@ before anyone logs in, which is the whole point: the tunnel and the shell/file
 routes are up while the machine sits at the login screen.
 
 The desktop agent is launched and relaunched by the service as sessions come and
-go — nothing to configure, and no `Run` key involved.
+go — nothing to configure there.
+
+`--install` also adds the app to **Startup Apps**, visible in Settings > Apps >
+Startup and Task Manager > Startup apps:
+
+```
+HKLM\...\CurrentVersion\Run
+  Windows Automation API = "C:\ProgramData\WindowsAPI\windowsapi.exe" --ensure-running --quiet
+```
+
+This is not what starts the machine connected — the service does that, earlier,
+with nobody logged in. It is there for two other reasons. A background service
+that owns the machine's remote access should be somewhere its owner can *see* it,
+and a service registration appears in neither of those lists. And it is a
+per-logon backstop: if the service is stopped for any reason — a failed start at
+boot, a manual stop nobody undid, an exhausted SCM recovery ladder — this brings
+it back at the next logon.
+
+`--ensure-running` no-ops when the service is already up, and needs no admin
+rights: `--install` grants interactive users `SERVICE_START` on the service (and
+only start — not stop, not reconfigure). `--uninstall` removes the entry.
 
 > **Upgrading from the old build?** Earlier versions installed to
 > `%LOCALAPPDATA%\WindowsAPI` and auto-started via
@@ -873,6 +907,42 @@ something else holds the port. Change `port` in `config.toml`.
 Check `tunnel_token` in `config.toml` and that the tunnel is active in the
 Cloudflare dashboard. After three quick failures in a row the app logs the
 likely cause and backs off, up to 5 minutes between attempts.
+
+**Tunnel keeps flapping / the host 502s intermittently:**
+
+Start with `GET /status` on the loopback port (`127.0.0.1:8080`, not through the
+tunnel — through the tunnel it can only ever answer when the tunnel is up). The
+`tunnel` block is built for exactly this question:
+
+| Field | What it means when it stands out |
+|---|---|
+| `restarts` | Climbing steadily means something is genuinely failing. Should be 0 for a healthy machine. |
+| `waiting_for_uplink` | `true` means the machine cannot reach the internet at all. **This is your network, not the app** — and nothing is being restarted, deliberately. |
+| `network_reachable` | `false` at the last outage says the same thing. |
+| `secs_without_edge` | How long the tunnel has been down right now. |
+| `restart_budget_spent` | Restarts have hit their hourly cap and stopped helping. Look at link quality. |
+| `ready_connections` | 1-4 is fine. The tunnel works on one. |
+| `fell_back_to_http2` | QUIC was unusable here; the transport already moved. |
+
+Ordinary things to try, in order:
+
+1. **Run `scripts\prepare-laptop.ps1` elevated.** On a laptop this is the fix
+   more often than anything in the app. A parked Wi-Fi adapter looks exactly
+   like a bad ISP.
+2. **Pin `tunnel_protocol = "http2"`** if the log shows QUIC reconnect churn.
+3. Leave `tunnel_edge_ip_version` at `auto` so a broken IPv4 path can fail over
+   to IPv6.
+
+What the app will *not* do is restart cloudflared to make you feel better about
+it. A restart costs about 45 seconds of hard downtime — DNS, feature fetch and
+protocol negotiation all happen before the first edge connection — while
+cloudflared's own retry reconnects a dropped connection in seconds without
+disturbing the others. So the supervisor waits five minutes of *continuous* zero
+connections, with the Cloudflare edge confirmed TCP-reachable throughout, before
+it restarts anything, and never restarts at all while the uplink is down. If you
+see edge drops in `cloudflared.log` while `restarts` stays at 0 and
+`ready_connections` recovers, that is the design working, not a stuck
+supervisor.
 
 **The tunnel keeps dropping / the host 502s at random:**  
 Start with `cloudflared.log` in the install directory and `GET /status`, then
