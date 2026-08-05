@@ -674,6 +674,11 @@ async fn watch_health(metrics_port: u16, protocol: Protocol, strikes_required: u
     let mut strikes: u32 = 0;
     let mut ever_reachable = false;
     let mut unreachable_polls: u32 = 0;
+    // Wall-clock start of the current outage. Counting polls would understate
+    // it: once the uplink probe starts timing out it adds seconds to every
+    // iteration, so `strikes * HEALTH_POLL_SECS` drifts low exactly when
+    // someone is reading the number to judge how bad an outage is.
+    let mut down_since: Option<Instant> = None;
     // Consecutive polls spent waiting out an uplink outage, and when it started.
     let mut link_down_polls: u32 = 0;
     let mut link_down_since: Option<Instant> = None;
@@ -745,13 +750,14 @@ async fn watch_health(metrics_port: u16, protocol: Protocol, strikes_required: u
         match verdict {
             None => {}
             Some(true) => {
-                if strikes > 0 {
+                if let Some(since) = down_since {
                     info!(
                         "Tunnel recovered after {}s without an edge connection",
-                        strikes as u64 * HEALTH_POLL_SECS
+                        since.elapsed().as_secs()
                     );
                 }
                 strikes = 0;
+                down_since = None;
                 link_down_polls = 0;
                 link_down_since = None;
                 link_down_reported = false;
@@ -762,7 +768,10 @@ async fn watch_health(metrics_port: u16, protocol: Protocol, strikes_required: u
             }
             Some(false) => {
                 strikes += 1;
-                let secs = strikes as u64 * HEALTH_POLL_SECS;
+                let secs = down_since
+                    .get_or_insert_with(Instant::now)
+                    .elapsed()
+                    .as_secs();
                 update(|s| s.secs_without_edge = secs);
 
                 if strikes < strikes_required {
