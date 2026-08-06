@@ -27,8 +27,11 @@ struct OaiReq {
     reasoning_effort: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 struct OaiMsg {
+    // Only ever read on the request side; gateways that omit it on the way back
+    // must not cost us the whole response.
+    #[serde(default)]
     role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     content: Option<Value>,
@@ -52,12 +55,20 @@ struct OaiFn {
 }
 #[derive(Debug, Deserialize)]
 struct OaiResp {
+    // Absent on the error envelopes some gateways return with a 2xx status;
+    // `parse_chat_completion` reports those rather than a serde message.
+    #[serde(default)]
     choices: Vec<OaiChoice>,
     usage: Option<OaiUsage>,
 }
 #[derive(Debug, Deserialize)]
 struct OaiChoice {
-    message: OaiMsg,
+    #[serde(default)]
+    message: Option<OaiMsg>,
+    // A gateway fronting a streaming upstream sometimes answers a
+    // non-streaming request with the streaming field name.
+    #[serde(default)]
+    delta: Option<OaiMsg>,
     finish_reason: Option<String>,
 }
 #[derive(Debug, Deserialize)]
@@ -393,6 +404,65 @@ fn to_oai_tools(tools: &[ToolDefinition]) -> Vec<Value> {
         .collect()
 }
 
+/// First 400 characters of a body, for error messages. Char-based so a
+/// multi-byte response can't panic the truncation.
+fn body_snippet(raw: &str) -> String {
+    const MAX: usize = 400;
+    let trimmed = raw.trim();
+    if trimmed.chars().count() <= MAX {
+        return trimmed.to_string();
+    }
+    let head: String = trimmed.chars().take(MAX).collect();
+    format!("{}… ({} bytes total)", head, raw.len())
+}
+
+/// Pull a human-readable message out of an OpenAI-style `{"error": …}`
+/// envelope, which gateways word inconsistently: an object with `message`, a
+/// bare string, or a nested upstream payload.
+fn upstream_error_message(value: &Value) -> Option<String> {
+    let err = value.get("error").or_else(|| value.get("detail"))?;
+    if let Some(s) = err.as_str() {
+        return Some(s.to_string());
+    }
+    err.get("message")
+        .and_then(|m| m.as_str())
+        .map(str::to_string)
+        .or_else(|| Some(err.to_string()))
+}
+
+/// Deserialize a non-streaming chat completion from a 2xx body.
+///
+/// A bare `serde_json` failure here reads only as "parse response", which says
+/// nothing about which of the several ways an OpenAI-compatible gateway can
+/// break the contract actually happened — the aggregators in particular forward
+/// an upstream failure as an error envelope under a 200, so the status check
+/// before this point never sees it. Each case gets named instead, with a body
+/// snippet so an unrecognized shape is still diagnosable from the alert alone.
+fn parse_chat_completion(raw: &str) -> anyhow::Result<OaiResp> {
+    let trimmed = raw.trim_start();
+    if trimmed.is_empty() {
+        anyhow::bail!("provider returned an empty body");
+    }
+    if trimmed.starts_with("data:") || trimmed.starts_with("event:") {
+        anyhow::bail!(
+            "provider streamed an SSE response to a non-streaming request: {}",
+            body_snippet(raw)
+        );
+    }
+    if !trimmed.starts_with('{') && !trimmed.starts_with('[') {
+        anyhow::bail!("provider returned a non-JSON body: {}", body_snippet(raw));
+    }
+    let value: Value = serde_json::from_str(raw)
+        .map_err(|e| anyhow::anyhow!("body is not valid JSON ({}): {}", e, body_snippet(raw)))?;
+    if value.get("choices").is_none() {
+        if let Some(msg) = upstream_error_message(&value) {
+            anyhow::bail!("provider reported an error under a 2xx status: {}", msg);
+        }
+    }
+    serde_json::from_value(value)
+        .map_err(|e| anyhow::anyhow!("unexpected response shape ({}): {}", e, body_snippet(raw)))
+}
+
 fn extract_text_value(value: &Value) -> Option<String> {
     match value {
         Value::String(s) => Some(s.clone()),
@@ -540,8 +610,28 @@ async fn call_streaming(
                 continue;
             }
 
-            let chunk: OaiStreamResp =
-                serde_json::from_str(&data).with_context(|| "parse streaming response chunk")?;
+            // Aggregators also deliver a mid-stream upstream failure as an
+            // error frame rather than a non-2xx status, so it has to be read
+            // off the frame itself.
+            let frame: Value = serde_json::from_str(&data).map_err(|e| {
+                anyhow::anyhow!(
+                    "parse streaming response chunk ({}): {}",
+                    e,
+                    body_snippet(&data)
+                )
+            })?;
+            if frame.get("choices").is_none() {
+                if let Some(msg) = upstream_error_message(&frame) {
+                    anyhow::bail!("provider reported an error mid-stream: {}", msg);
+                }
+            }
+            let chunk: OaiStreamResp = serde_json::from_value(frame).map_err(|e| {
+                anyhow::anyhow!(
+                    "unexpected streaming chunk shape ({}): {}",
+                    e,
+                    body_snippet(&data)
+                )
+            })?;
 
             if let Some(usage_chunk) = chunk.usage {
                 usage.input_tokens = usage_chunk.prompt_tokens.unwrap_or(usage.input_tokens);
@@ -851,10 +941,18 @@ pub async fn call(
 
         anyhow::bail!("provider error {} at {}: {}", status, url, body);
     }
-    let body: OaiResp = resp.json().await.context("parse response")?;
-    let choice = body.choices.into_iter().next().context("empty choices")?;
+    let raw = resp.text().await.context("read response body")?;
+    let body = parse_chat_completion(&raw)
+        .with_context(|| format!("parse response from {} (model {})", url, model.model_id))?;
+    let choice = body
+        .choices
+        .into_iter()
+        .next()
+        .with_context(|| format!("provider returned no choices: {}", body_snippet(&raw)))?;
+    let finish_reason = choice.finish_reason;
+    let message = choice.message.or(choice.delta).unwrap_or_default();
     let mut partial_tools = Vec::new();
-    if let Some(tcs) = &choice.message.tool_calls {
+    if let Some(tcs) = &message.tool_calls {
         for tc in tcs {
             partial_tools.push(PartialToolCall {
                 id: tc.id.clone(),
@@ -863,7 +961,7 @@ pub async fn call(
                 arguments: tc.function.arguments.clone(),
             });
         }
-    } else if let Some(fc) = &choice.message.function_call {
+    } else if let Some(fc) = &message.function_call {
         partial_tools.push(PartialToolCall {
             id: uuid::Uuid::new_v4().to_string(),
             r#type: "function".to_string(),
@@ -871,14 +969,13 @@ pub async fn call(
             arguments: fc.arguments.clone(),
         });
     }
-    let stop_reason = match choice.finish_reason.as_deref() {
+    let stop_reason = match finish_reason.as_deref() {
         Some("tool_calls") | Some("function_call") => StopReason::ToolUse,
         Some("length") => StopReason::MaxTokens,
         _ => StopReason::EndTurn,
     };
     Ok(build_unified_response_from_parts(
-        choice
-            .message
+        message
             .content
             .as_ref()
             .and_then(extract_text_value)
@@ -1064,6 +1161,89 @@ mod tests {
         );
         // The unterminated trailing event stays in the buffer for the next chunk.
         assert_eq!(buffer, "data: partial-no-terminator-yet");
+    }
+
+    #[test]
+    fn parses_a_normal_completion() {
+        let resp = parse_chat_completion(
+            r#"{"choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1}}"#,
+        )
+        .unwrap();
+        let choice = resp.choices.into_iter().next().unwrap();
+        let msg = choice.message.or(choice.delta).unwrap();
+        assert_eq!(
+            msg.content.as_ref().and_then(extract_text_value).as_deref(),
+            Some("hi")
+        );
+        assert_eq!(resp.usage.unwrap().prompt_tokens, Some(3));
+    }
+
+    // Gateways that omit `role`, or answer a non-streaming request with the
+    // streaming field name, used to cost us the entire response.
+    #[test]
+    fn tolerates_missing_role_and_delta_in_place_of_message() {
+        let resp = parse_chat_completion(r#"{"choices":[{"message":{"content":"no role here"}}]}"#)
+            .unwrap();
+        assert!(resp.choices[0].message.is_some());
+
+        let resp =
+            parse_chat_completion(r#"{"choices":[{"delta":{"content":"streamed"}}]}"#).unwrap();
+        let choice = resp.choices.into_iter().next().unwrap();
+        let msg = choice.message.or(choice.delta).unwrap();
+        assert_eq!(
+            msg.content.as_ref().and_then(extract_text_value).as_deref(),
+            Some("streamed")
+        );
+    }
+
+    // The failure that reads as a bare "parse response": an aggregator forwards
+    // an upstream error as a 200 with no `choices`. The alert must name it.
+    #[test]
+    fn names_an_error_envelope_returned_with_a_2xx_status() {
+        let err = parse_chat_completion(
+            r#"{"error":{"message":"model claude-opus-5 is not available on your plan","type":"invalid_request_error"}}"#,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("2xx"), "{err}");
+        assert!(err.contains("not available on your plan"), "{err}");
+
+        // Bare-string and `detail` wordings are common too.
+        let err = parse_chat_completion(r#"{"error":"insufficient credits"}"#)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("insufficient credits"), "{err}");
+        let err = parse_chat_completion(r#"{"detail":"Not Found"}"#)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Not Found"), "{err}");
+    }
+
+    #[test]
+    fn names_empty_sse_and_non_json_bodies() {
+        let err = parse_chat_completion("   ").unwrap_err().to_string();
+        assert!(err.contains("empty body"), "{err}");
+
+        let err = parse_chat_completion("data: {\"choices\":[]}\n\ndata: [DONE]\n\n")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("SSE"), "{err}");
+
+        let err = parse_chat_completion("<html><body>502 Bad Gateway</body></html>")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("non-JSON"), "{err}");
+        assert!(err.contains("502 Bad Gateway"), "{err}");
+    }
+
+    // Truncation is char-based: a multi-byte body must not panic.
+    #[test]
+    fn body_snippet_truncates_on_char_boundaries() {
+        let long = "é".repeat(1000);
+        let snip = body_snippet(&long);
+        assert!(snip.starts_with(&"é".repeat(400)));
+        assert!(snip.contains("2000 bytes total"));
+        assert_eq!(body_snippet("  short  "), "short");
     }
 
     // Both wire shapes /images/generations can answer with: gpt-image-1 style
