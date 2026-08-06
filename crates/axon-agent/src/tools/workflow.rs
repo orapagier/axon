@@ -1386,6 +1386,17 @@ async fn execute_node_by_type(
     );
     let max_attempts = if no_retry { 0 } else { node.retries };
 
+    // Live push for the editor's run animation — every dispatch (main loop,
+    // loop-body iterations, single-node runs) funnels through this function,
+    // so instrumenting here covers all of them in one place. Best-effort: no
+    // connected socket is the common case and must never slow node execution.
+    state.notify.broadcast(crate::agent::AgentEvent::WorkflowNodeStart {
+        run_id: run_id.to_string(),
+        workflow_id: workflow_id.to_string(),
+        node_id: node.id.clone(),
+    });
+    let node_start = std::time::Instant::now();
+
     // `attempt` is the 0-based retry index; `attempts_made` counts every dispatch
     // invocation (the value reported to the UI via NodeResult.attempts).
     let mut attempt: u32 = 0;
@@ -1405,9 +1416,29 @@ async fn execute_node_by_type(
         )
         .await
         {
-            Ok(v) => return (Ok(v), attempts_made),
+            Ok(v) => {
+                state.notify.broadcast(crate::agent::AgentEvent::WorkflowNodeEnd {
+                    run_id: run_id.to_string(),
+                    workflow_id: workflow_id.to_string(),
+                    node_id: node.id.clone(),
+                    ok: true,
+                    duration_ms: node_start.elapsed().as_millis() as u64,
+                    attempts: attempts_made,
+                    error: None,
+                });
+                return (Ok(v), attempts_made);
+            }
             Err(e) => {
                 if attempt >= max_attempts {
+                    state.notify.broadcast(crate::agent::AgentEvent::WorkflowNodeEnd {
+                        run_id: run_id.to_string(),
+                        workflow_id: workflow_id.to_string(),
+                        node_id: node.id.clone(),
+                        ok: false,
+                        duration_ms: node_start.elapsed().as_millis() as u64,
+                        attempts: attempts_made,
+                        error: Some(e.clone()),
+                    });
                     return (Err(e), attempts_made);
                 }
                 attempt += 1;
@@ -1438,6 +1469,15 @@ async fn execute_node_by_type(
                         c.contains(workflow_id) || c.contains(run_id)
                     };
                     if cancelled {
+                        state.notify.broadcast(crate::agent::AgentEvent::WorkflowNodeEnd {
+                            run_id: run_id.to_string(),
+                            workflow_id: workflow_id.to_string(),
+                            node_id: node.id.clone(),
+                            ok: false,
+                            duration_ms: node_start.elapsed().as_millis() as u64,
+                            attempts: attempts_made,
+                            error: Some("Workflow cancelled during retry backoff".to_string()),
+                        });
                         return (
                             Err("Workflow cancelled during retry backoff".to_string()),
                             attempts_made,
@@ -1474,6 +1514,21 @@ impl Drop for CancellationCleanup {
             }
         });
     }
+}
+
+/// Push a run-level status change to connected dashboard sockets, mirroring
+/// whatever just landed in `workflow_runs.status` via a DB UPDATE elsewhere.
+/// Call this right after that UPDATE succeeds — this never touches the DB
+/// itself, it only lets the editor's run view react live instead of on its
+/// next poll.
+fn emit_run_status(state: &AppState, workflow_id: &str, run_id: &str, status: &str) {
+    state
+        .notify
+        .broadcast(crate::agent::AgentEvent::WorkflowRunStatus {
+            run_id: run_id.to_string(),
+            workflow_id: workflow_id.to_string(),
+            status: status.to_string(),
+        });
 }
 
 /// Persist a run-state UPDATE whose failure must not abort the run but must
@@ -2028,6 +2083,7 @@ impl WorkflowEngine {
                     let conn = state.db.get()?;
                     conn.execute("UPDATE workflow_runs SET status = 'cancelled', finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?", [&run_id])?;
                 }
+                emit_run_status(state, workflow_id, &run_id, "cancelled");
                 crate::observability::record_run_complete(
                     "cancelled",
                     start.elapsed().as_secs_f64(),
@@ -2676,6 +2732,7 @@ impl WorkflowEngine {
                             ],
                         )?;
                     }
+                    emit_run_status(state, workflow_id, &run_id, "waiting");
                     tracing::info!(
                         "Workflow run {} suspended at node '{}' ({} mode){} (durable)",
                         run_id,
@@ -2954,6 +3011,7 @@ impl WorkflowEngine {
             conn.execute("UPDATE workflow_runs SET status = ?, finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), node_results = ? WHERE id = ?", [status, &res_json, &run_id])?;
             conn.execute("UPDATE workflows SET last_status = ?, last_run_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?", [status, workflow_id])?;
         }
+        emit_run_status(state, workflow_id, &run_id, status);
         // C3: terminal run metric (success/error). 'waiting' suspends return early
         // above, so they're never double-counted here.
         crate::observability::record_run_complete(status, total_ms as f64 / 1000.0);
@@ -3402,6 +3460,7 @@ impl WorkflowEngine {
                         "shed status",
                     );
                 }
+                emit_run_status(&s, &wf_id, &rid, "failed");
                 return;
             };
 
@@ -3427,6 +3486,7 @@ impl WorkflowEngine {
                         "failed status",
                     );
                 }
+                emit_run_status(&s, &wf_id, &rid, "failed");
                 let details = format!("workflow_id={}\nrun_id={}\nerror={}", wf_id, rid, e);
                 if let Err(notify_err) = send_global_error_notification(
                     &s,
@@ -3527,6 +3587,7 @@ impl WorkflowEngine {
             if claimed != 1 {
                 continue; // another tick already claimed it
             }
+            emit_run_status(state, &workflow_id, &run_id, "running");
 
             let mut results: Vec<NodeResult> = match serde_json::from_str(&results_json) {
                 Ok(v) => v,
@@ -3545,6 +3606,7 @@ impl WorkflowEngine {
                             "failed status",
                         );
                     }
+                    emit_run_status(state, &workflow_id, &run_id, "failed");
                     continue;
                 }
             };
@@ -3626,6 +3688,7 @@ impl WorkflowEngine {
                             "failed status",
                         );
                     }
+                    emit_run_status(&s, &wf, &rid, "failed");
                 }
             });
         }
@@ -3687,6 +3750,7 @@ impl WorkflowEngine {
         if claimed != 1 {
             return Err("run already resumed, finished, or cancelled".to_string());
         }
+        emit_run_status(state, &workflow_id, &run_id, "running");
 
         // 2. Rebuild the chain and patch the resumed node with the payload +
         //    decision so downstream nodes see it and approval branches route.
@@ -3700,6 +3764,7 @@ impl WorkflowEngine {
                     "failed status",
                 );
             }
+            emit_run_status(state, &workflow_id, &run_id, "failed");
             format!("corrupt node_results on resume: {e}")
         })?;
         binary::rehydrate_results(&mut results);
@@ -3806,6 +3871,7 @@ impl WorkflowEngine {
                         "failed status",
                     );
                 }
+                emit_run_status(&s, &wf, &rid, "failed");
             }
         });
 

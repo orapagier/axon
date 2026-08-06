@@ -56,6 +56,18 @@ impl NotifyHub {
         self.tx.subscribe()
     }
 
+    /// Fire-and-forget a live event to every connected dashboard socket
+    /// without persisting it, unlike `emit`. For high-frequency progress
+    /// signals (workflow node/run status) where a DB row — `workflow_runs`,
+    /// via the engine's own UPDATEs — is already the durable source of truth,
+    /// so there is nothing here worth surviving a reload on its own; a client
+    /// that missed the broadcast just sees the current row on its next fetch.
+    /// No receivers is the common case (nobody has the workflow open) and is
+    /// silently fine, same as `emit`'s broadcast step.
+    pub fn broadcast(&self, event: AgentEvent) {
+        let _ = self.tx.send(event);
+    }
+
     /// Persist a notification and broadcast it to all connected clients.
     ///
     /// `source` is a dotted category (`scheduler`, `watcher`, `agent.runtime`,

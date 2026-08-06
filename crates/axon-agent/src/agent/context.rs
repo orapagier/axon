@@ -163,4 +163,31 @@ pub enum AgentEvent {
         run_id: String,
         count: usize,
     },
+    /// A workflow node just started executing. `run_id` here is the workflow
+    /// run id (workflow_runs.id), not an agent RunContext id — reuses the same
+    /// field name so the frontend's existing run-scoped filtering works
+    /// unchanged for both chat and workflow events.
+    WorkflowNodeStart {
+        run_id: String,
+        workflow_id: String,
+        node_id: String,
+    },
+    /// A workflow node finished (after any retries). Mirrors `ToolEnd`'s shape.
+    WorkflowNodeEnd {
+        run_id: String,
+        workflow_id: String,
+        node_id: String,
+        ok: bool,
+        duration_ms: u64,
+        attempts: u32,
+        error: Option<String>,
+    },
+    /// The workflow run itself changed status: "running" | "waiting" |
+    /// "success" | "error" | "cancelled". Lets the editor update the run
+    /// banner/history live instead of only finding out on the next poll.
+    WorkflowRunStatus {
+        run_id: String,
+        workflow_id: String,
+        status: String,
+    },
 }
