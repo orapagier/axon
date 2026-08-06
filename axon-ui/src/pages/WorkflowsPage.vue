@@ -251,6 +251,14 @@ const MCP_SERVICE_META = {
   mscontacts: { label: 'MS Contacts', icon: '/icons/outlook.png', color: '#0078D4' }
 };
 
+// MCP service prefixes whose tools the Google backend handles, and which
+// therefore honour a per-node Google account. Mirrors `is_google` in
+// mcp/inprocess.rs — the routing that decides which service takes the call — so
+// the account picker only appears where selecting one actually has an effect.
+const GOOGLE_ACCOUNT_SERVICES = new Set([
+  'gmail', 'gcal', 'gdrive', 'gdocs', 'gsheets', 'gcon', 'gmeet', 'gslides', 'gchat',
+]);
+
 function schemaToProperties(tool, nodeConfig = {}) {
   const props = []
   const params = tool.parameters || {}
@@ -484,25 +492,41 @@ async function loadMcpTools() {
     for (const [prefix, tools] of Object.entries(groupedTools)) {
       const meta = MCP_SERVICE_META[prefix] || { label: prefix, icon: '🔌' }
       const nodeName = prefix.startsWith('mcp_') ? prefix : `mcp_${prefix}`
-      
+
+      const properties = [
+          {
+              displayName: 'Tool Action',
+              name: 'tool_name',
+              type: 'options',
+              // Keep value as registry tool name (execution-safe), but display MCP-native label.
+              options: tools.map(t => ({ name: formatToolActionLabel(t), value: t.name, description: t.tool_name || t.name })),
+              searchable: true,
+              default: tools.length > 0 ? tools[0].name : '',
+              required: true,
+              hint: `Select an action for ${meta.label}`,
+          },
+      ]
+
+      // Google-backed nodes can run as any connected Google account, so each one
+      // can target a different inbox/drive. Unset keeps the node on the account
+      // signed in on the Credentials page.
+      if (GOOGLE_ACCOUNT_SERVICES.has(prefix)) {
+        properties.push({
+          displayName: `${meta.label} Account`,
+          name: 'credential_id',
+          type: 'credential',
+          service: 'google',
+          default: '',
+          hint: `Which Google account this node acts as. Use Connect to add one. Leave as "None" to use the account signed in on the Credentials page.`,
+        })
+      }
+
       NODE_TYPES[nodeName] = {
         displayName: meta.label + ' Tool',
         name: nodeName,
         icon: meta.icon,
         description: `Execute actions from ${meta.label}`,
-        properties: [
-            {
-                displayName: 'Tool Action',
-                name: 'tool_name',
-                type: 'options',
-                // Keep value as registry tool name (execution-safe), but display MCP-native label.
-                options: tools.map(t => ({ name: formatToolActionLabel(t), value: t.name, description: t.tool_name || t.name })),
-                searchable: true,
-                default: tools.length > 0 ? tools[0].name : '',
-                required: true,
-                hint: `Select an action for ${meta.label}`,
-            },
-        ],
+        properties,
         dynamic: true,
       }
     }

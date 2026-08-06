@@ -1,6 +1,27 @@
 use crate::state::AppState;
 use serde_json::Value;
 
+/// Tool-name prefixes served by the Google backend. A node running one of these
+/// honours the Google account picked in its `credential_id`; everything else
+/// ignores the field (it stays plain workflow plumbing).
+///
+/// Mirrors `mcp::inprocess::is_google` — the routing that decides which service
+/// actually handles the call.
+const GOOGLE_TOOL_PREFIXES: &[&str] = &[
+    "google_", "gmail_", "gcal_", "gdrive_", "gdocs_", "gsheets_", "gcon_", "gmeet_", "gtasks_",
+    "gslides_", "gforms_", "gchat_",
+];
+
+fn is_google_tool(tool_name: &str) -> bool {
+    // Registry names can be namespaced (`server:gmail_send`); match the bare tail
+    // the same way the UI groups tools into per-service nodes.
+    let bare = tool_name
+        .rsplit([':', '.', '/'])
+        .next()
+        .unwrap_or(tool_name);
+    GOOGLE_TOOL_PREFIXES.iter().any(|p| bare.starts_with(p))
+}
+
 pub(crate) async fn execute(config: &Value, state: &AppState) -> Result<Value, String> {
     let tool_name = config
         .get("tool_name")
@@ -9,6 +30,23 @@ pub(crate) async fn execute(config: &Value, state: &AppState) -> Result<Value, S
     if tool_name.is_empty() {
         return Err("MCP node: tool_name is required".into());
     }
+
+    // A Gmail/Calendar/Drive node may run as a specific connected account; with
+    // none picked it stays on the globally signed-in one.
+    if is_google_tool(tool_name) {
+        let credential_id = crate::google_accounts::credential_id_of(config);
+        if !credential_id.is_empty() {
+            return crate::google_accounts::scoped(state, &credential_id, run(config, state)).await;
+        }
+    }
+    run(config, state).await
+}
+
+async fn run(config: &Value, state: &AppState) -> Result<Value, String> {
+    let tool_name = config
+        .get("tool_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
 
     let mut args = serde_json::Map::new();
     if let Some(obj) = config.as_object() {
@@ -80,5 +118,58 @@ pub(crate) async fn execute(config: &Value, state: &AppState) -> Result<Value, S
             }
             Err(e) => Err(e.to_string()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn google_backed_tools_are_recognised() {
+        for name in [
+            "gmail_send",
+            "gmail_list",
+            "gcal_create_event",
+            "gdrive_upload",
+            "gsheets_read",
+            "google_auth_status",
+        ] {
+            assert!(is_google_tool(name), "{name} should be Google-backed");
+        }
+    }
+
+    #[test]
+    fn namespaced_registry_names_still_match() {
+        for name in [
+            "axon-mcp:gmail_send",
+            "server.gmail_send",
+            "server/gmail_send",
+        ] {
+            assert!(is_google_tool(name), "{name} should be Google-backed");
+        }
+    }
+
+    #[test]
+    fn other_services_are_left_alone() {
+        // These reach a different backend, so a Google account selection on them
+        // would be a no-op — `is_google` in mcp/inprocess.rs does not route them
+        // to the Google service either.
+        for name in [
+            "outlook_send",
+            "facebook_post",
+            "crm_lead_create",
+            "gyoutube_activities_list",
+            "gplaces_search_text",
+            "",
+        ] {
+            assert!(!is_google_tool(name), "{name} should not be Google-backed");
+        }
+    }
+
+    #[test]
+    fn prefix_match_is_not_a_substring_match() {
+        // A tool that merely *contains* a Google prefix must not be captured.
+        assert!(!is_google_tool("send_gmail_summary"));
     }
 }

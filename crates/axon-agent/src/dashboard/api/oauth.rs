@@ -67,6 +67,15 @@ pub async fn get_facebook_connect_url(State(state): State<AppState>) -> Json<Val
     }
 }
 
+/// Gmail node "Connect account" button — returns the OAuth URL whose callback
+/// saves the chosen Google account as a credential (state=gcred).
+pub async fn get_google_connect_url(State(state): State<AppState>) -> Json<Value> {
+    match state.tools.run("google_connect_url", json!({})).await {
+        Ok(res) => Json(res),
+        Err(e) => Json(json!({ "error": format!("Failed to get Google connect URL: {e}") })),
+    }
+}
+
 /// Settings dashboard: read the current Facebook App credentials
 /// (app_id/page_id/verify_token, plus whether app_secret is set — the secret
 /// itself is never sent to the browser).
@@ -133,9 +142,17 @@ pub async fn oauth_callback(
     let connect_creds =
         service == "facebook" && params.get("state").map(String::as_str) == Some("fbcred");
 
+    // The Google equivalent (the Gmail node's Connect button): saves the account
+    // as its own credential and leaves the globally signed-in account alone.
+    let connect_google = service == "google"
+        && params.get("state").map(String::as_str) == Some(axon_google::auth::CONNECT_STATE);
+
     match (code, error) {
         (Some(code), _) if connect_creds => {
             return facebook_connect_callback(&state, &code).await;
+        }
+        (Some(code), _) if connect_google => {
+            return google_connect_callback(&state, &code).await;
         }
         (Some(code), _) => {
             let tool_name = format!("{}_exchange_code", service);
@@ -281,6 +298,70 @@ h1{{color:#16a34a;margin:0 0 12px}}p{{color:#6b7280;margin:0 0 8px;line-height:1
 <p>This tab will close automatically...</p></div></body></html>"#,
         saved.len(),
         list
+    ))
+}
+
+/// Google "Connect account" callback: exchanges the OAuth code for one extra
+/// account and saves it as a credential (service "google") that any Gmail /
+/// Calendar / Drive node can select. The globally signed-in account on the
+/// Credentials page is untouched and stays the default for nodes that pick none.
+///
+/// The credential id is derived from the account's email so reconnecting — to
+/// re-grant a scope or replace a revoked refresh token — updates that account in
+/// place instead of piling up duplicates.
+async fn google_connect_callback(state: &AppState, code: &str) -> axum::response::Html<String> {
+    let account = match state
+        .tools
+        .run("google_exchange_code_account", json!({ "code": code }))
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => return connect_error_html(&e.to_string()),
+    };
+
+    let field = |key: &str| account.get(key).and_then(|v| v.as_str()).unwrap_or("");
+    let email = field("email");
+    if email.is_empty() {
+        return connect_error_html("Google did not return an email address for this account.");
+    }
+    let name = Some(field("name"))
+        .filter(|s| !s.is_empty())
+        .unwrap_or(email);
+
+    let data = json!({
+        "email": email,
+        "name": name,
+        "access_token": field("access_token"),
+        "refresh_token": field("refresh_token"),
+        "expires_at": account.get("expires_at").cloned().unwrap_or(Value::Null),
+    });
+    // Encrypt the token blob at rest (the read seams decrypt).
+    let data_str = crate::crypto::encrypt_key(&data.to_string());
+
+    let conn = match state.db.get() {
+        Ok(c) => c,
+        Err(_) => return connect_error_html("Database unavailable while saving the account."),
+    };
+    // The dropdown shows `name`, so label it with the address — that is what
+    // tells two connected inboxes apart.
+    if let Err(e) = conn.execute(
+        "INSERT OR REPLACE INTO credentials (id, name, service, data, created_at)
+         VALUES (?1, ?2, 'google', ?3, datetime('now'))",
+        rusqlite::params![format!("google-{email}"), email, data_str],
+    ) {
+        tracing::error!("Google connect: failed to save credential for {email}: {e}");
+        return connect_error_html(&format!("Failed to save the account: {e}"));
+    }
+
+    axum::response::Html(format!(
+        r#"<!DOCTYPE html><html><head><meta charset="utf-8"><title>Axon</title>
+<style>body{{font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f0fdf4}}
+.card{{background:#fff;border-radius:16px;padding:48px;box-shadow:0 10px 25px rgba(0,0,0,.1);text-align:center;max-width:480px}}
+h1{{color:#16a34a;margin:0 0 12px}}p{{color:#6b7280;margin:0 0 8px;line-height:1.5}}code{{color:#374151}}</style>
+<script>setTimeout(()=>{{ window.close(); }}, 3500);</script></head>
+<body><div class="card"><h1>✅ Google account connected</h1>
+<p>Saved as a credential you can pick in any Gmail node:</p><p><code>{email}</code></p>
+<p>This tab will close automatically...</p></div></body></html>"#
     ))
 }
 

@@ -91,6 +91,7 @@ pub fn build_router(state: AppState) -> Router {
             "/api/facebook/app-credentials",
             get(api::get_facebook_app_credentials).put(api::update_facebook_app_credentials),
         )
+        .route("/api/google/connect-url", get(api::get_google_connect_url))
         .route(
             "/api/integrations/:platform/url",
             axum::routing::post(api::get_auth_url),

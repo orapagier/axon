@@ -129,6 +129,40 @@ pub async fn test_credential(State(state): State<AppState>, Path(id): Path<Strin
             }
         },
         "google" | "gmail" | "gsheets" | "google_sheets" | "google_drive" => {
+            // A connected Google account's access token lives about an hour, so
+            // the stored one is nearly always stale by the time anyone clicks
+            // Test. When the credential carries a refresh token, resolve it
+            // through the same path a node uses — which refreshes and writes
+            // back — so this reports whether the *account* still works rather
+            // than whether its last token happens to be current. Hand-entered
+            // credentials (an api_key, a lone access_token) have no refresh
+            // token and keep the plain probe below.
+            let refreshable = service.eq_ignore_ascii_case(crate::google_accounts::SERVICE)
+                && pick(&["refresh_token"]).is_some();
+            if refreshable {
+                return match crate::google_accounts::resolve(&state, &id).await {
+                    Ok(Some(tok)) => {
+                        probe_credential(
+                            &client,
+                            &format!(
+                                "https://www.googleapis.com/oauth2/v3/tokeninfo?access_token={}",
+                                urlencoding::encode(&tok)
+                            ),
+                            &[],
+                        )
+                        .await
+                    }
+                    // Refresh failed (access revoked, consent withdrawn): report
+                    // that reason rather than probing a token known to be stale.
+                    Err(e) => Json(json!({"ok": false, "tested": true, "error": e})),
+                    // Unreachable for a non-empty id, but treat it as untested
+                    // rather than inventing a verdict.
+                    Ok(None) => Json(json!({
+                        "ok": false, "tested": false,
+                        "error": "Could not resolve the Google account for this credential."
+                    })),
+                };
+            }
             match pick(&["access_token", "token", "api_key"]) {
                 Some(tok) => {
                     probe_credential(

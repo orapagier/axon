@@ -1,4 +1,5 @@
 pub mod flexidate;
+pub mod google_account;
 pub mod oauth;
 pub mod storage;
 

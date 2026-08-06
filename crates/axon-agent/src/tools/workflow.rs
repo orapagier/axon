@@ -262,7 +262,18 @@ pub(crate) async fn execute_gmail_trigger(
         return Ok(trigger_data);
     }
 
-    // Fallback: manual "Execute Step" click — do a live fetch of all unread emails
+    // Fallback: manual "Execute Step" click — do a live fetch of all unread emails.
+    // The Gmail account picked on the Stimulus node covers the whole fetch (list,
+    // per-message enrichment and mark-as-read alike); unset means the globally
+    // signed-in account, so this matches what the background poller will do.
+    let credential_id = crate::google_accounts::credential_id_of(config);
+    crate::google_accounts::scoped(state, &credential_id, gmail_trigger_fetch(config, state)).await
+}
+
+/// The live Gmail fetch behind a manual "Execute Step" on a Gmail Stimulus node.
+/// Split out from `execute_gmail_trigger` so the whole sequence of Gmail calls
+/// runs inside one selected-account scope.
+async fn gmail_trigger_fetch(config: &Value, state: &AppState) -> Result<Value, String> {
     let label = config
         .get("gmail_label")
         .and_then(|v| v.as_str())
@@ -4148,12 +4159,25 @@ async fn check_and_trigger_gmail(
         "max_results": max_results,
     });
 
+    // The Gmail account picked on the Stimulus node, resolved once and applied
+    // to each Gmail call below. Deliberately NOT wrapped around
+    // `run_with_trigger`: the nodes inside the workflow must keep choosing their
+    // own account, and inherit the global default when they pick none.
+    let account = crate::google_accounts::resolve(
+        state,
+        &crate::google_accounts::credential_id_of(trigger_config),
+    )
+    .await?;
+
     // Use ToolRegistry::run() — same proven path as the watcher engine
-    let data = state
-        .tools
-        .run("gmail_list", args)
-        .await
-        .map_err(|e| e.to_string())?;
+    let data = axon_core::google_account::scoped(account.clone(), async {
+        state
+            .tools
+            .run("gmail_list", args)
+            .await
+            .map_err(|e| e.to_string())
+    })
+    .await?;
 
     // Extract email entries from the response
     let emails = data
@@ -4256,7 +4280,11 @@ async fn check_and_trigger_gmail(
         })
         .unwrap_or(false);
     let new_owned: Vec<Value> = new_emails.iter().map(|e| (*e).clone()).collect();
-    let enriched = enrich_gmail_emails(state, new_owned, download).await;
+    let enriched = axon_core::google_account::scoped(
+        account.clone(),
+        enrich_gmail_emails(state, new_owned, download),
+    )
+    .await;
     let enriched_count = enriched.len();
 
     // Stage the new email data keyed by a pre-generated run id so THIS run's
@@ -4308,11 +4336,14 @@ async fn check_and_trigger_gmail(
             })
             .collect();
         if !ids.is_empty() {
-            if let Err(e) = state
-                .tools
-                .run("gmail_mark_read", json!({ "ids": ids }))
-                .await
-            {
+            let marked = axon_core::google_account::scoped(account, async {
+                state
+                    .tools
+                    .run("gmail_mark_read", json!({ "ids": ids }))
+                    .await
+            })
+            .await;
+            if let Err(e) = marked {
                 tracing::warn!(
                     "Gmail trigger '{}': mark-as-read failed: {}",
                     workflow_name,

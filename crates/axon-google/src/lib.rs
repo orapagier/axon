@@ -62,6 +62,8 @@ impl GoogleService {
             // Auth
             Tool::new("google_auth_url", "Get the Google OAuth2 URL. Open it in a browser to sign in.", schema!({}, [])),
             Tool::new("google_exchange_code", "Exchange the Google OAuth code for tokens after signing in.", schema!({"code":{"type":"string","description":"The code param from the redirect URL"}}, ["code"])),
+            Tool::new("google_connect_url", "Get the OAuth URL for connecting an extra Google account as a reusable credential (multi-account).", schema!({}, [])),
+            Tool::new("google_exchange_code_account", "Exchange a Google OAuth code for one extra account's tokens without changing the globally signed-in account.", schema!({"code":{"type":"string","description":"The code param from the redirect URL"}}, ["code"])),
             Tool::new("google_auth_status", "Check Google authentication status.", schema!({}, [])),
             Tool::new("google_revoke", "Revoke and delete stored Google tokens.", schema!({}, [])),
 
@@ -243,6 +245,10 @@ impl GoogleService {
             // Auth
             "google_auth_url" => auth::auth_url(&self.0).await,
             "google_exchange_code" => auth::exchange_code(&self.0, s("code")?).await,
+            "google_connect_url" => auth::connect_url(&self.0).await,
+            "google_exchange_code_account" => {
+                auth::exchange_code_account(&self.0, s("code")?).await
+            }
             "google_auth_status" => auth::auth_status(&self.0).await,
             "google_revoke" => auth::revoke(&self.0).await,
 

@@ -5,6 +5,7 @@ pub mod dashboard;
 pub mod db;
 pub mod error_reporting;
 pub mod files;
+pub mod google_accounts;
 pub mod http;
 pub mod maintenance;
 pub mod mcp;

@@ -143,33 +143,67 @@ async function loadCredentials() {
   }
 }
 
-// Facebook "Connect a Page" — opens the OAuth popup; its callback saves one
-// credential per managed Page. We poll /credentials so newly-connected Pages
-// appear in the dropdown without a manual refresh.
-const fbConnecting = ref(false)
-async function connectFacebook() {
+// Services whose credentials are created by an OAuth login rather than typed in
+// on the Credentials page. Each gets a "+ Connect" button beside its picker: the
+// popup's callback saves the connected account(s) as credentials, so a node can
+// act as an account other than the globally signed-in one.
+const OAUTH_CONNECT_SERVICES = {
+  facebook: {
+    label: 'Facebook',
+    url: '/facebook/connect-url',
+    // One credential per Page the account manages, so a single login can add several.
+    unit: 'Page account',
+    color: '#1877F2',
+    title: 'Log in with Facebook and save each Page you manage as a credential',
+  },
+  google: {
+    label: 'Google',
+    url: '/google/connect-url',
+    unit: 'Google account',
+    color: '#EA4335',
+    title: 'Log in with Google and save that account as a credential this node can use',
+  },
+}
+
+// Which service's connect flow is currently in flight (null when idle). Only one
+// popup runs at a time, so a single ref is enough to drive every button's state.
+const connectingService = ref(null)
+
+function isOauthConnectService(service) {
+  return !!OAUTH_CONNECT_SERVICES[service]
+}
+
+// Opens the OAuth popup, then polls /credentials so newly-connected accounts
+// appear in the dropdown without a manual refresh. The popup lands on the
+// server's callback page, which we can't read across origins — the credential
+// count is the observable signal that it succeeded.
+async function connectOauthService(service) {
+  const cfg = OAUTH_CONNECT_SERVICES[service]
+  if (!cfg || connectingService.value) return
   try {
-    const r = await get('/facebook/connect-url')
-    if (!r.url) { toast(r.error || 'Could not get Facebook connect URL', false); return }
+    const r = await get(cfg.url)
+    if (!r.url) { toast(r.error || `Could not get ${cfg.label} connect URL`, false); return }
     const popup = window.open(r.url, '_blank', 'width=600,height=720')
-    fbConnecting.value = true
-    toast('Complete the Facebook login in the popup…')
-    const before = getCredentialsForService('facebook').length
+    connectingService.value = service
+    toast(`Complete the ${cfg.label} login in the popup…`)
+    const before = getCredentialsForService(service).length
     let tries = 0
     const timer = setInterval(async () => {
       tries++
       await loadCredentials()
-      const now = getCredentialsForService('facebook').length
-      if (now > before) {
-        toast(`Connected ${now - before} Page account(s)`)
-        clearInterval(timer); fbConnecting.value = false
+      const added = getCredentialsForService(service).length - before
+      if (added > 0) {
+        toast(`Connected ${added} ${cfg.unit}${added === 1 ? '' : 's'}`)
+        clearInterval(timer); connectingService.value = null
       } else if (tries >= 60 || (popup && popup.closed && tries > 2)) {
-        clearInterval(timer); fbConnecting.value = false
+        // Reconnecting an already-saved account updates it in place, so the
+        // count never moves — end quietly rather than claiming a failure.
+        clearInterval(timer); connectingService.value = null
       }
     }, 2000)
   } catch (e) {
-    fbConnecting.value = false
-    toast('Facebook connect failed: ' + e, false)
+    connectingService.value = null
+    toast(`${cfg.label} connect failed: ` + e, false)
   }
 }
 
@@ -2480,15 +2514,20 @@ onUnmounted(() => {
                             </option>
                           </select>
                           <button
-                            v-if="prop.service === 'facebook'"
+                            v-if="isOauthConnectService(prop.service)"
                             type="button"
                             class="btn"
-                            :disabled="fbConnecting"
-                            style="flex-shrink:0; background:#1877F2 !important; border-color:#1877F2 !important; color:#fff !important;"
-                            title="Log in with Facebook and save each Page you manage as a credential"
-                            @click="connectFacebook"
+                            :disabled="!!connectingService"
+                            :style="{
+                              flexShrink: 0,
+                              background: OAUTH_CONNECT_SERVICES[prop.service].color + ' !important',
+                              borderColor: OAUTH_CONNECT_SERVICES[prop.service].color + ' !important',
+                              color: '#fff !important',
+                            }"
+                            :title="OAUTH_CONNECT_SERVICES[prop.service].title"
+                            @click="connectOauthService(prop.service)"
                           >
-                            {{ fbConnecting ? 'Connecting…' : '+ Connect' }}
+                            {{ connectingService === prop.service ? 'Connecting…' : '+ Connect' }}
                           </button>
                         </div>
                       </template>

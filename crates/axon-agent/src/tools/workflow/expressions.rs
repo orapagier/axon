@@ -1096,16 +1096,24 @@ pub(crate) fn interpolate_config(
         if let Some(cred_id) = map.get("credential_id").and_then(|v| v.as_str()) {
             if !cred_id.is_empty() {
                 if let Ok(conn) = state.db.get() {
-                    if let Ok(data_str) = conn.query_row(
-                        "SELECT data FROM credentials WHERE id = ?1",
+                    if let Ok((service, data_str)) = conn.query_row(
+                        "SELECT service, data FROM credentials WHERE id = ?1",
                         [cred_id],
-                        |r| r.get::<_, String>(0),
+                        |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
                     ) {
-                        // Encrypted at rest; decrypt_key passes legacy plaintext through.
-                        let data_str = crate::crypto::decrypt_key(&data_str);
-                        if let Ok(Value::Object(cred_map)) = serde_json::from_str(&data_str) {
-                            for (k, v) in cred_map {
-                                map.insert(k, v);
+                        // Google accounts are deliberately NOT merged. Their blob
+                        // holds a long-lived refresh token, and merging would put
+                        // it in `config` — which is forwarded as tool arguments and
+                        // persisted with the run. Those nodes resolve the account
+                        // through `google_accounts::scoped` from the id alone, so
+                        // the secret never leaves the credentials table.
+                        if !service.eq_ignore_ascii_case(crate::google_accounts::SERVICE) {
+                            // Encrypted at rest; decrypt_key passes legacy plaintext through.
+                            let data_str = crate::crypto::decrypt_key(&data_str);
+                            if let Ok(Value::Object(cred_map)) = serde_json::from_str(&data_str) {
+                                for (k, v) in cred_map {
+                                    map.insert(k, v);
+                                }
                             }
                         }
                     }
