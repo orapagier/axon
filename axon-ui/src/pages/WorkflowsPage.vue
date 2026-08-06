@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
 import { get, post, del } from '../lib/api.js'
+import { subscribe } from '../lib/ws.js'
 import { toast } from '../lib/toast.js'
 import { confirmDialog } from '../lib/confirm.js'
 import { promptDialog } from '../lib/prompt.js'
@@ -1683,62 +1684,102 @@ async function removeWorkflow() {
 }
 
 
-function startPolling(runId) {
-  if (pollTimer.value) clearInterval(pollTimer.value)
-  isExecuting.value = true
-  activeRunId.value = runId
+// Shared by the interval fallback and the WS push handler below, so a burst
+// of node-start/end events for the same run collapses into one in-flight
+// fetch instead of piling up requests.
+let isPolling = false
+let pollCount = 0
+let unsubscribeRunWs = null
 
-  let isPolling = false // In-flight guard
-  let pollCount = 0
+async function fetchRunUpdate(runId) {
+  if (isPolling) return // Skip if previous request hasn't returned yet
+  isPolling = true
+  pollCount++
 
-  console.log(`[Poll] Starting polling for runId=${runId}`)
+  try {
+    // Use the lightweight single-run endpoint (direct PK lookup) instead
+    // of GET /workflows/{id}/runs which fetches 10 runs with full JSON.
+    const targetRun = await get(`/workflow-runs/${runId}`)
 
-  pollTimer.value = setInterval(async () => {
-    if (isPolling) return // Skip if previous request hasn't returned yet
-    isPolling = true
-    pollCount++
-
-    try {
-      // Use the lightweight single-run endpoint (direct PK lookup) instead
-      // of GET /workflows/{id}/runs which fetches 10 runs with full JSON.
-      const targetRun = await get(`/workflow-runs/${runId}`)
-
-      if (pollCount <= 5 || pollCount % 10 === 0) {
-        const nResults = Array.isArray(targetRun?.node_results) ? targetRun.node_results.length : 0
-        console.log(`[Poll] #${pollCount} status=${targetRun?.status}, node_results=${nResults}`)
-      }
-
-      if (targetRun?.error) {
-        // Run not found yet — wait for next tick
-        if (pollCount <= 10 || pollCount % 20 === 0) {
-          console.warn(`[Poll] #${pollCount} Run not found yet: ${targetRun.error}`)
-        }
-        isPolling = false
-        return
-      }
-
-      lastRunResult.value = targetRun
-
-      if (targetRun.status !== 'running') {
-        const nResults = Array.isArray(targetRun.node_results) ? targetRun.node_results.length : 0
-        console.log(`[Poll] Backend done! status=${targetRun.status}, final node_results=${nResults}`)
-        clearInterval(pollTimer.value)
-        pollTimer.value = null
-        backendDone.value = true // Signal: all results are now in lastRunResult
-      }
-    } catch (e) {
-      console.error('[Poll] Polling error', e)
-    } finally {
-      isPolling = false
+    if (pollCount <= 5 || pollCount % 10 === 0) {
+      const nResults = Array.isArray(targetRun?.node_results) ? targetRun.node_results.length : 0
+      console.log(`[Run] #${pollCount} status=${targetRun?.status}, node_results=${nResults}`)
     }
-  }, 1500)
+
+    if (targetRun?.error) {
+      // Run not found yet — wait for the next signal.
+      if (pollCount <= 10 || pollCount % 20 === 0) {
+        console.warn(`[Run] #${pollCount} Run not found yet: ${targetRun.error}`)
+      }
+      return
+    }
+
+    lastRunResult.value = targetRun
+
+    if (targetRun.status !== 'running') {
+      const nResults = Array.isArray(targetRun.node_results) ? targetRun.node_results.length : 0
+      console.log(`[Run] Backend done! status=${targetRun.status}, final node_results=${nResults}`)
+      // Only stop the network refresh loop here — NOT isExecuting. Callers
+      // (runActive/executeNodeStep) drive isExecuting off runLivePlayback's
+      // own completion, which reads backendDone to know when to stop
+      // animating buffered node_results; flipping isExecuting here would cut
+      // that playback short before it finishes catching up.
+      stopRunWatch()
+      backendDone.value = true // Signal: all results are now in lastRunResult
+    }
+  } catch (e) {
+    console.error('[Run] Fetch error', e)
+  } finally {
+    isPolling = false
+  }
 }
 
-function stopPolling() {
+function startPolling(runId) {
+  if (pollTimer.value) clearInterval(pollTimer.value)
+  unsubscribeRunWs?.()
+  isExecuting.value = true
+  activeRunId.value = runId
+  isPolling = false
+  pollCount = 0
+
+  console.log(`[Run] Watching runId=${runId}`)
+
+  // Primary signal: the backend pushes a node_start/node_end/run_status event
+  // over the dashboard socket the instant something happens, so the canvas
+  // reacts immediately instead of waiting for the next tick — and fast nodes
+  // that finish inside one poll interval no longer get skipped over.
+  unsubscribeRunWs = subscribe((ev) => {
+    if (ev.run_id !== runId) return
+    if (
+      ev.type === 'workflow_node_start' ||
+      ev.type === 'workflow_node_end' ||
+      ev.type === 'workflow_run_status'
+    ) {
+      fetchRunUpdate(runId)
+    }
+  })
+
+  // Fallback only, in case the socket drops mid-run or a burst of events
+  // collapses into a single fetch that misses the very last one: a slow
+  // background safety net, not the primary update path anymore.
+  pollTimer.value = setInterval(() => fetchRunUpdate(runId), 4000)
+
+  // Kick off an immediate fetch rather than waiting out the first interval.
+  fetchRunUpdate(runId)
+}
+
+// Tears down the timer + WS subscription only — leaves isExecuting alone.
+function stopRunWatch() {
   if (pollTimer.value) {
     clearInterval(pollTimer.value)
     pollTimer.value = null
   }
+  unsubscribeRunWs?.()
+  unsubscribeRunWs = null
+}
+
+function stopPolling() {
+  stopRunWatch()
   isExecuting.value = false
 }
 
@@ -2351,8 +2392,9 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  // Without this, a run left mid-flight keeps the 1.5s status poll firing
-  // against the API for as long as the run lasts after leaving the page.
+  // Without this, a run left mid-flight keeps its fallback poll and WS
+  // subscription alive against the API for as long as the run lasts after
+  // leaving the page.
   stopPolling()
   window.removeEventListener('mousedown', handleClickOutside)
   window.removeEventListener('keydown', handleKeydown)
