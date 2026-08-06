@@ -771,7 +771,15 @@ pub(crate) async fn run_inner(
         mut messages,
         filtered_initial,
         tier_initial,
+        memory_hits,
     } = build_run_context(task, state, &ctx, &base_system, needs_time_context).await;
+
+    if memory_hits > 0 {
+        emit!(AgentEvent::MemoryHit {
+            run_id: run_id.clone(),
+            count: memory_hits
+        });
+    }
 
     let mut iters = 0u32;
     let mut tokens = 0u32;
@@ -1544,11 +1552,23 @@ pub(crate) async fn run_inner(
                             }
                         }
                         let text_lower = text.to_lowercase();
+                        // Self-reported inability is not a fact worth recalling.
+                        // Deliberately narrow: generic failure words ("failed",
+                        // "unfortunately") usually describe a REAL finding —
+                        // "the service failed to start" is exactly the kind of
+                        // result a monitoring agent should remember.
                         let is_useful = text.len() > 100
                             && !text_lower.contains("i'm unable")
+                            && !text_lower.contains("i am unable")
+                            && !text_lower.contains("i was unable")
                             && !text_lower.contains("i cannot")
+                            && !text_lower.contains("i'm not able")
+                            && !text_lower.contains("i am not able")
                             && !text_lower.contains("i don't have access")
+                            && !text_lower.contains("i do not have access")
+                            && !text_lower.contains("i don't have the ability")
                             && !text_lower.starts_with("i'm sorry")
+                            && !text_lower.starts_with("sorry, ")
                             && !text_lower.contains("all models exhausted")
                             && !text_lower.contains("max iterations")
                             && !text_lower.contains("router alert");
@@ -1560,27 +1580,42 @@ pub(crate) async fn run_inner(
                         // that node's main channel to remember beyond its
                         // short-term window.
                         if is_useful {
+                            // Store the whole exchange so recall stays readable,
+                            // but vectorize only the result. Embedding the task
+                            // text alongside it made retrieval match on how a
+                            // request happened to be worded, so unrelated
+                            // results from similarly-phrased tasks landed next
+                            // to each other in the vector space.
+                            let result_excerpt: String = text.chars().take(500).collect();
+                            let record = format!("Task: {task}\nResult: {result_excerpt}");
                             if let Some(scope) = ctx.memory_scope.as_deref() {
                                 let _ = state
                                     .memory
-                                    .remember_scoped(
-                                        &format!(
-                                            "Task: {task}\nResult: {}",
-                                            text.chars().take(500).collect::<String>()
-                                        ),
+                                    .remember_scoped_with_embed_text(
+                                        &record,
+                                        &result_excerpt,
                                         scope,
                                         &[],
                                     )
                                     .await;
                             } else if !ctx.isolated_memory && !tools_used.is_empty() {
+                                // Tag scheduler-driven runs distinctly so the
+                                // owner's recall can actually exclude them.
+                                // Autonomous jobs previously landed under
+                                // "task_result" alongside real chat results,
+                                // which left system_context's "scheduler"
+                                // exclusion matching nothing at all.
+                                let source = if ctx.job_id.is_some() {
+                                    "scheduler"
+                                } else {
+                                    "task_result"
+                                };
                                 let _ = state
                                     .memory
-                                    .remember(
-                                        &format!(
-                                            "Task: {task}\nResult: {}",
-                                            text.chars().take(500).collect::<String>()
-                                        ),
-                                        "task_result",
+                                    .remember_with_embed_text(
+                                        &record,
+                                        &result_excerpt,
+                                        source,
                                         &[],
                                     )
                                     .await;

@@ -163,6 +163,25 @@ Be gracious and respectful toward other faiths; never mock or condemn. If asked 
     pub fn long_term_top_k(&self) -> usize {
         self.get_int("memory.long_term_top_k", 5) as usize
     }
+    /// Minimum cosine similarity for a memory to be recalled into the agent's
+    /// context. Stored as a percentage so it fits the int-typed settings table.
+    /// Default 25% — low enough to keep loosely-worded matches, high enough to
+    /// stop unrelated rows filling the "[Relevant memories]" block.
+    pub fn memory_min_similarity(&self) -> f32 {
+        (self.get_int("memory.min_similarity_pct", 25).clamp(0, 100) as f32) / 100.0
+    }
+    /// Cosine similarity at which a new memory is folded into an existing one
+    /// from the same source instead of inserted. Default 95% — near-identical
+    /// only. 0 disables dedup.
+    pub fn memory_dedup_similarity(&self) -> f32 {
+        (self.get_int("memory.dedup_similarity_pct", 95).clamp(0, 100) as f32) / 100.0
+    }
+    /// How many recent embedded memories to cosine-scan per recall, on top of
+    /// whatever FTS matched. This is what lets recall find a memory that is on
+    /// point but worded differently; 0 reverts to FTS-only candidate selection.
+    pub fn memory_vector_scan_limit(&self) -> usize {
+        self.get_int("memory.vector_scan_limit", 2000).max(0) as usize
+    }
     // Database retention / housekeeping (see `crate::maintenance`).
     pub fn retention_enabled(&self) -> bool {
         self.get_bool("retention.enabled", true)

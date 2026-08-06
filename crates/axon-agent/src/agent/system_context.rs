@@ -18,6 +18,10 @@ pub(crate) struct RunSystemContext {
     pub(crate) messages: Vec<Message>,
     pub(crate) filtered_initial: Vec<ToolDefinition>,
     pub(crate) tier_initial: String,
+    /// How many long-term memories actually made it into the system prompt.
+    /// Surfaced to the client as `AgentEvent::MemoryHit` so recall quality is
+    /// observable per run instead of having to be inferred from behaviour.
+    pub(crate) memory_hits: usize,
 }
 
 pub(crate) async fn build_run_context(
@@ -132,7 +136,13 @@ pub(crate) async fn build_run_context(
                 if let Some(scope) = memory_scope {
                     state.memory.search_scoped(task, top_k, scope).await
                 } else {
-                    let exclude = if ctx.session_id == "owner" {
+                    // Autonomous job output is useful to other jobs, not to a
+                    // person mid-conversation: a nightly report shouldn't
+                    // surface as a "relevant memory" when someone asks about
+                    // something unrelated. Keyed on job_id (set for scheduler
+                    // runs) rather than the "owner" session id, which only ever
+                    // applies to API calls that omit a session entirely.
+                    let exclude = if ctx.job_id.is_none() {
                         Some("scheduler")
                     } else {
                         None
@@ -345,5 +355,6 @@ FILE HANDLING:\n\
         messages,
         filtered_initial,
         tier_initial,
+        memory_hits: memories.len(),
     }
 }

@@ -410,6 +410,9 @@ async fn main() -> anyhow::Result<()> {
         Arc::clone(&db),
         settings.get_int("memory.short_term_max_msgs", 50) as usize,
         Embedder::from_settings(&settings),
+        settings.memory_min_similarity(),
+        settings.memory_dedup_similarity(),
+        settings.memory_vector_scan_limit(),
     ));
 
     // A provider/model switch leaves persisted memory vectors in the old

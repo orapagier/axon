@@ -214,6 +214,12 @@ const MIGRATIONS: &[Migration] = &[
         sql: include_str!("migrations/0031_devices.sql"),
         tolerant_dup_column: false,
     },
+    Migration {
+        version: 32,
+        name: "long_term_fts_update",
+        sql: include_str!("migrations/0032_long_term_fts_update.sql"),
+        tolerant_dup_column: false,
+    },
 ];
 
 const SEED_SQL: &str = include_str!("seed.sql");

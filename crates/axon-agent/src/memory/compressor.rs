@@ -131,6 +131,24 @@ pub async fn compress_and_store(
     }
 }
 
+/// Build an FTS5 OR-query from free text, or `None` when nothing usable is
+/// left. Punctuation that FTS5 treats as a token separator is replaced with a
+/// space rather than deleted: dropping it outright fused terms together
+/// ("wf:build" became the single token "wfbuild"), which matched nothing.
+fn observation_fts_query(query: &str) -> Option<String> {
+    let terms: Vec<String> = query
+        .split_whitespace()
+        .map(|w| w.replace(['"', '*', '-', ':'], " ").trim().to_string())
+        .filter(|w| !w.is_empty())
+        .map(|w| format!("\"{}\"", w))
+        .collect();
+    if terms.is_empty() {
+        None
+    } else {
+        Some(terms.join(" OR "))
+    }
+}
+
 /// Retrieve compressed observations relevant to a query
 /// Used to inject into agent context at session start
 pub fn search_observations(
@@ -144,19 +162,10 @@ pub fn search_observations(
     };
 
     // FTS5 search across compressed observations
-    let fts_query = query
-        .split_whitespace()
-        .map(|w| {
-            format!(
-                "\"{}\"",
-                w.replace('"', "")
-                    .replace('*', "")
-                    .replace('-', " ")
-                    .replace(':', "")
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(" OR ");
+    let fts_query = match observation_fts_query(query) {
+        Some(q) => q,
+        None => return vec![],
+    };
 
     let mut stmt = match conn.prepare(
         "SELECT o.compressed, o.tool_name, o.created_at
@@ -240,19 +249,10 @@ pub fn search_recent_observations(
     };
 
     // FTS5 search across recent compressed observations (last 24 hours only)
-    let fts_query = query
-        .split_whitespace()
-        .map(|w| {
-            format!(
-                "\"{}\"",
-                w.replace('"', "")
-                    .replace('*', "")
-                    .replace('-', " ")
-                    .replace(':', "")
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(" OR ");
+    let fts_query = match observation_fts_query(query) {
+        Some(q) => q,
+        None => return vec![],
+    };
 
     let mut stmt = match conn.prepare(
         "SELECT o.compressed, o.tool_name, o.created_at
@@ -279,5 +279,34 @@ pub fn search_recent_observations(
     match results {
         Ok(iter) => iter.filter_map(|r| r.ok()).collect(),
         Err(_) => vec![],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn observation_fts_query_splits_on_punctuation_instead_of_fusing_terms() {
+        // Deleting ':' used to turn "wf:build" into the single token "wfbuild",
+        // which matches nothing the tokenizer ever indexed.
+        assert_eq!(
+            observation_fts_query("wf:build failed").as_deref(),
+            Some("\"wf build\" OR \"failed\"")
+        );
+    }
+
+    #[test]
+    fn observation_fts_query_is_none_when_only_punctuation() {
+        assert_eq!(observation_fts_query(""), None);
+        assert_eq!(observation_fts_query("  :  * "), None);
+    }
+
+    #[test]
+    fn observation_fts_query_keeps_ordinary_words() {
+        assert_eq!(
+            observation_fts_query("disk usage").as_deref(),
+            Some("\"disk\" OR \"usage\"")
+        );
     }
 }

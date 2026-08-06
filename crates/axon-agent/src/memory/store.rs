@@ -15,10 +15,19 @@ impl MemoryStore {
         db: Arc<Pool<SqliteConnectionManager>>,
         max_short: usize,
         embedder: Option<Embedder>,
+        min_similarity: f32,
+        dedup_similarity: f32,
+        vector_scan_limit: usize,
     ) -> Self {
         MemoryStore {
             short: ShortTermMemory::new(Arc::clone(&db), max_short),
-            long: LongTermMemory::new(db, embedder),
+            long: LongTermMemory::new(
+                db,
+                embedder,
+                min_similarity,
+                dedup_similarity,
+                vector_scan_limit,
+            ),
         }
     }
     pub fn add_user(&self, s: &str, t: &str) -> anyhow::Result<()> {
@@ -51,6 +60,20 @@ impl MemoryStore {
     pub async fn remember(&self, c: &str, src: &str, tags: &[&str]) -> anyhow::Result<i64> {
         self.long.store(c, Some(src), tags).await
     }
+    /// `remember`, but vectorizing only `embed_text`. Used for task results,
+    /// where the stored record keeps the request for readability but retrieval
+    /// should match on the fact that was learned, not the request's phrasing.
+    pub async fn remember_with_embed_text(
+        &self,
+        c: &str,
+        embed_text: &str,
+        src: &str,
+        tags: &[&str],
+    ) -> anyhow::Result<i64> {
+        self.long
+            .store_with_embed_text(c, embed_text, Some(src), tags)
+            .await
+    }
     /// Store into a node-private long-term partition (Cortex node with
     /// Long-term Memory enabled). Never surfaces in global recall.
     pub async fn remember_scoped(
@@ -60,6 +83,19 @@ impl MemoryStore {
         tags: &[&str],
     ) -> anyhow::Result<i64> {
         self.long.store_scoped(c, scope, tags).await
+    }
+    /// `remember_scoped`, but vectorizing only `embed_text` — see
+    /// `remember_with_embed_text`.
+    pub async fn remember_scoped_with_embed_text(
+        &self,
+        c: &str,
+        embed_text: &str,
+        scope: &str,
+        tags: &[&str],
+    ) -> anyhow::Result<i64> {
+        self.long
+            .store_scoped_with_embed_text(c, embed_text, scope, tags)
+            .await
     }
     pub async fn search(
         &self,
