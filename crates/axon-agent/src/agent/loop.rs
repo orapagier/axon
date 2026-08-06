@@ -1612,12 +1612,7 @@ pub(crate) async fn run_inner(
                                 };
                                 let _ = state
                                     .memory
-                                    .remember_with_embed_text(
-                                        &record,
-                                        &result_excerpt,
-                                        source,
-                                        &[],
-                                    )
+                                    .remember_with_embed_text(&record, &result_excerpt, source, &[])
                                     .await;
                             }
                         }
@@ -2540,7 +2535,10 @@ mod tests {
     fn image_send_file_renders_inline_and_keeps_download() {
         let out = resolve_send_file_links("Here: <send_file>data/files/shot.png</send_file>");
         // Inline preview first, so the user sees the picture without clicking.
-        assert!(out.contains("![shot.png](/api/download?path="), "got: {out}");
+        assert!(
+            out.contains("![shot.png](/api/download?path="),
+            "got: {out}"
+        );
         // ...and the full-size file is still one click away.
         assert!(out.contains("[Download shot.png]"), "got: {out}");
         assert!(!out.contains("<send_file>"));
@@ -2549,7 +2547,10 @@ mod tests {
     #[test]
     fn non_image_send_file_stays_a_plain_download() {
         let out = resolve_send_file_links("<send_file>data/files/report.pdf</send_file>");
-        assert!(!out.contains("!["), "PDFs must not be emitted as images: {out}");
+        assert!(
+            !out.contains("!["),
+            "PDFs must not be emitted as images: {out}"
+        );
         assert!(out.contains("[Download report.pdf]"), "got: {out}");
     }
 

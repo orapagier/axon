@@ -1390,11 +1390,13 @@ async fn execute_node_by_type(
     // loop-body iterations, single-node runs) funnels through this function,
     // so instrumenting here covers all of them in one place. Best-effort: no
     // connected socket is the common case and must never slow node execution.
-    state.notify.broadcast(crate::agent::AgentEvent::WorkflowNodeStart {
-        run_id: run_id.to_string(),
-        workflow_id: workflow_id.to_string(),
-        node_id: node.id.clone(),
-    });
+    state
+        .notify
+        .broadcast(crate::agent::AgentEvent::WorkflowNodeStart {
+            run_id: run_id.to_string(),
+            workflow_id: workflow_id.to_string(),
+            node_id: node.id.clone(),
+        });
     let node_start = std::time::Instant::now();
 
     // `attempt` is the 0-based retry index; `attempts_made` counts every dispatch
@@ -1417,28 +1419,32 @@ async fn execute_node_by_type(
         .await
         {
             Ok(v) => {
-                state.notify.broadcast(crate::agent::AgentEvent::WorkflowNodeEnd {
-                    run_id: run_id.to_string(),
-                    workflow_id: workflow_id.to_string(),
-                    node_id: node.id.clone(),
-                    ok: true,
-                    duration_ms: node_start.elapsed().as_millis() as u64,
-                    attempts: attempts_made,
-                    error: None,
-                });
+                state
+                    .notify
+                    .broadcast(crate::agent::AgentEvent::WorkflowNodeEnd {
+                        run_id: run_id.to_string(),
+                        workflow_id: workflow_id.to_string(),
+                        node_id: node.id.clone(),
+                        ok: true,
+                        duration_ms: node_start.elapsed().as_millis() as u64,
+                        attempts: attempts_made,
+                        error: None,
+                    });
                 return (Ok(v), attempts_made);
             }
             Err(e) => {
                 if attempt >= max_attempts {
-                    state.notify.broadcast(crate::agent::AgentEvent::WorkflowNodeEnd {
-                        run_id: run_id.to_string(),
-                        workflow_id: workflow_id.to_string(),
-                        node_id: node.id.clone(),
-                        ok: false,
-                        duration_ms: node_start.elapsed().as_millis() as u64,
-                        attempts: attempts_made,
-                        error: Some(e.clone()),
-                    });
+                    state
+                        .notify
+                        .broadcast(crate::agent::AgentEvent::WorkflowNodeEnd {
+                            run_id: run_id.to_string(),
+                            workflow_id: workflow_id.to_string(),
+                            node_id: node.id.clone(),
+                            ok: false,
+                            duration_ms: node_start.elapsed().as_millis() as u64,
+                            attempts: attempts_made,
+                            error: Some(e.clone()),
+                        });
                     return (Err(e), attempts_made);
                 }
                 attempt += 1;
@@ -1469,15 +1475,17 @@ async fn execute_node_by_type(
                         c.contains(workflow_id) || c.contains(run_id)
                     };
                     if cancelled {
-                        state.notify.broadcast(crate::agent::AgentEvent::WorkflowNodeEnd {
-                            run_id: run_id.to_string(),
-                            workflow_id: workflow_id.to_string(),
-                            node_id: node.id.clone(),
-                            ok: false,
-                            duration_ms: node_start.elapsed().as_millis() as u64,
-                            attempts: attempts_made,
-                            error: Some("Workflow cancelled during retry backoff".to_string()),
-                        });
+                        state
+                            .notify
+                            .broadcast(crate::agent::AgentEvent::WorkflowNodeEnd {
+                                run_id: run_id.to_string(),
+                                workflow_id: workflow_id.to_string(),
+                                node_id: node.id.clone(),
+                                ok: false,
+                                duration_ms: node_start.elapsed().as_millis() as u64,
+                                attempts: attempts_made,
+                                error: Some("Workflow cancelled during retry backoff".to_string()),
+                            });
                         return (
                             Err("Workflow cancelled during retry backoff".to_string()),
                             attempts_made,

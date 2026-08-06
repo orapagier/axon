@@ -16,8 +16,7 @@ impl DeviceTool {
         name: &str,
     ) -> Result<DeviceDetails> {
         if let Ok(conn) = state.db.get() {
-            let mut s =
-                conn.prepare("SELECT base_url, bearer_token FROM devices WHERE name=?1")?;
+            let mut s = conn.prepare("SELECT base_url, bearer_token FROM devices WHERE name=?1")?;
             let mut rows = s.query(rusqlite::params![name])?;
             if let Some(r) = rows.next()? {
                 let base_url: String = r.get(0)?;
@@ -109,7 +108,9 @@ impl DeviceTool {
         state: crate::state::AppState,
     ) -> Result<Value> {
         if tool.is_empty() {
-            anyhow::bail!("tool is required for action=call (see action=list_tools for valid names)");
+            anyhow::bail!(
+                "tool is required for action=call (see action=list_tools for valid names)"
+            );
         }
         let d = Self::get_device_details(&state, name).await?;
         let body = json!({ "tool": tool, "params": params });

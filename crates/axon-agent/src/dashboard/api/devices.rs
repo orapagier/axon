@@ -88,7 +88,10 @@ pub async fn test_device(State(state): State<AppState>, Path(name): Path<String>
 }
 
 // Server-side proxy of GET {base_url}/agent/tools — the frontend never sees the raw token.
-pub async fn get_device_tools(State(state): State<AppState>, Path(name): Path<String>) -> Json<Value> {
+pub async fn get_device_tools(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Json<Value> {
     match crate::tools::DeviceTool::list_device_tools(&name, state).await {
         Ok(v) => Json(v),
         Err(e) => Json(json!({"ok": false, "error": e.to_string()})),

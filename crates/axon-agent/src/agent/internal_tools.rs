@@ -836,7 +836,10 @@ async fn handle_ssh(args: serde_json::Value, state: AppState) -> anyhow::Result<
     }
 }
 
-async fn handle_device(args: serde_json::Value, state: AppState) -> anyhow::Result<serde_json::Value> {
+async fn handle_device(
+    args: serde_json::Value,
+    state: AppState,
+) -> anyhow::Result<serde_json::Value> {
     let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("");
     let device_name = args
         .get("device_name")

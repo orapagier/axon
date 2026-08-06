@@ -124,10 +124,7 @@ impl LongTermMemory {
         tags: &[&str],
     ) -> anyhow::Result<(i64, Option<Vec<u8>>)> {
         let emb_vec: Option<Vec<f32>> = if let Some(e) = &self.embedder {
-            e.embed_one(embed_text)
-                .await
-                .ok()
-                .filter(|v| !v.is_empty())
+            e.embed_one(embed_text).await.ok().filter(|v| !v.is_empty())
         } else {
             None
         };
@@ -207,7 +204,10 @@ impl LongTermMemory {
         scope: &str,
         tags: &[&str],
     ) -> anyhow::Result<i64> {
-        Ok(self.insert_row(content, content, Some(scope), tags).await?.0)
+        Ok(self
+            .insert_row(content, content, Some(scope), tags)
+            .await?
+            .0)
     }
 
     /// `store_scoped`, but vectorizing only `embed_text` — see `insert_row`.
@@ -263,11 +263,7 @@ impl LongTermMemory {
                 // datetime('now') default produces.
                 payload.insert(
                     "created_at".to_string(),
-                    Value::from(
-                        chrono::Utc::now()
-                            .format("%Y-%m-%d %H:%M:%S")
-                            .to_string(),
-                    ),
+                    Value::from(chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()),
                 );
 
                 // Upsert is by id, so a dedup hit (which returns the existing
@@ -516,17 +512,15 @@ impl LongTermMemory {
             if fts_q.is_empty() {
                 Vec::new()
             } else {
-
-            // Node-private partitions (source "wf:…", see `store_scoped`) never
-            // surface in global recall — only `search_scoped` can read them.
-            let sql = if source_exclude.is_some() {
-                "SELECT lt.id,lt.content,lt.source,lt.tags,lt.created_at FROM long_term lt JOIN long_term_fts fts ON lt.id=fts.rowid WHERE long_term_fts MATCH ?1 AND (lt.source IS NULL OR (lt.source != ?2 AND lt.source NOT LIKE 'wf:%')) ORDER BY rank LIMIT ?3"
-            } else {
-                "SELECT lt.id,lt.content,lt.source,lt.tags,lt.created_at FROM long_term lt JOIN long_term_fts fts ON lt.id=fts.rowid WHERE long_term_fts MATCH ?1 AND (lt.source IS NULL OR lt.source NOT LIKE 'wf:%') ORDER BY rank LIMIT ?2"
-            };
-            let mut s = conn.prepare(sql)?;
-            let mapped: Vec<Candidate> =
-                if let Some(exc) = source_exclude {
+                // Node-private partitions (source "wf:…", see `store_scoped`) never
+                // surface in global recall — only `search_scoped` can read them.
+                let sql = if source_exclude.is_some() {
+                    "SELECT lt.id,lt.content,lt.source,lt.tags,lt.created_at FROM long_term lt JOIN long_term_fts fts ON lt.id=fts.rowid WHERE long_term_fts MATCH ?1 AND (lt.source IS NULL OR (lt.source != ?2 AND lt.source NOT LIKE 'wf:%')) ORDER BY rank LIMIT ?3"
+                } else {
+                    "SELECT lt.id,lt.content,lt.source,lt.tags,lt.created_at FROM long_term lt JOIN long_term_fts fts ON lt.id=fts.rowid WHERE long_term_fts MATCH ?1 AND (lt.source IS NULL OR lt.source NOT LIKE 'wf:%') ORDER BY rank LIMIT ?2"
+                };
+                let mut s = conn.prepare(sql)?;
+                let mapped: Vec<Candidate> = if let Some(exc) = source_exclude {
                     s.query_map(rusqlite::params![fts_q, exc, (top_k * 3) as i64], |r| {
                         Ok(Candidate {
                             id: r.get(0)?,
@@ -553,7 +547,7 @@ impl LongTermMemory {
                     .filter_map(|r| r.ok())
                     .collect()
                 };
-            mapped
+                mapped
             }
         };
 
@@ -901,9 +895,8 @@ impl LongTermMemory {
                         .partition(|(score, _)| score.is_some());
 
                     scored.retain(|(score, _)| score.unwrap_or(0.0) >= self.min_similarity);
-                    scored.sort_by(|a, b| {
-                        b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal)
-                    });
+                    scored
+                        .sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
                     let ranked = scored
                         .into_iter()
@@ -1129,16 +1122,27 @@ mod tests {
     async fn search_returns_nothing_rather_than_recent_rows_on_a_miss() {
         let (db, _p) = temp_db();
         let m = mem(Arc::clone(&db));
-        m.store("the tunnel supervisor restarted twice", Some("task_result"), &[])
-            .await
-            .unwrap();
-        m.store("disk usage on the media volume is 71%", Some("task_result"), &[])
-            .await
-            .unwrap();
+        m.store(
+            "the tunnel supervisor restarted twice",
+            Some("task_result"),
+            &[],
+        )
+        .await
+        .unwrap();
+        m.store(
+            "disk usage on the media volume is 71%",
+            Some("task_result"),
+            &[],
+        )
+        .await
+        .unwrap();
 
         // Nothing lexically matches. The old recency fallback would have handed
         // back the newest rows under a "[Relevant memories]" header regardless.
-        let hits = m.search("photosynthesis chlorophyll", 5, None).await.unwrap();
+        let hits = m
+            .search("photosynthesis chlorophyll", 5, None)
+            .await
+            .unwrap();
         assert!(
             hits.is_empty(),
             "unrelated query must not fall back to recent memories, got {hits:?}"
@@ -1157,11 +1161,18 @@ mod tests {
         m.store("nightly backup completed", Some("scheduler"), &[])
             .await
             .unwrap();
-        m.store("nightly backup question from chat", Some("task_result"), &[])
+        m.store(
+            "nightly backup question from chat",
+            Some("task_result"),
+            &[],
+        )
+        .await
+        .unwrap();
+
+        let hits = m
+            .search("nightly backup", 5, Some("scheduler"))
             .await
             .unwrap();
-
-        let hits = m.search("nightly backup", 5, Some("scheduler")).await.unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].source.as_deref(), Some("task_result"));
     }
@@ -1267,8 +1278,20 @@ mod tests {
         // the query and the content have no token in common.
         let (db, _p) = temp_db();
         let m = mem(Arc::clone(&db));
-        let wanted = insert_vec_row(&db, "the kettle boils", "task_result", "m1", &[1.0, 0.0, 0.0]);
-        insert_vec_row(&db, "unrelated content", "task_result", "m1", &[0.0, 1.0, 0.0]);
+        let wanted = insert_vec_row(
+            &db,
+            "the kettle boils",
+            "task_result",
+            "m1",
+            &[1.0, 0.0, 0.0],
+        );
+        insert_vec_row(
+            &db,
+            "unrelated content",
+            "task_result",
+            "m1",
+            &[0.0, 1.0, 0.0],
+        );
 
         let ids = m
             .vector_candidate_ids(&[1.0, 0.0, 0.0], "m1", None, None, 10)
@@ -1281,12 +1304,21 @@ mod tests {
         let (db, _p) = temp_db();
         let m = mem(Arc::clone(&db));
         // ~0.196 cosine against the query — real but well under the 0.25 floor.
-        insert_vec_row(&db, "faintly related", "task_result", "m1", &[0.2, 1.0, 0.0]);
+        insert_vec_row(
+            &db,
+            "faintly related",
+            "task_result",
+            "m1",
+            &[0.2, 1.0, 0.0],
+        );
 
         let ids = m
             .vector_candidate_ids(&[1.0, 0.0, 0.0], "m1", None, None, 10)
             .unwrap();
-        assert!(ids.is_empty(), "sub-floor matches must not become candidates");
+        assert!(
+            ids.is_empty(),
+            "sub-floor matches must not become candidates"
+        );
     }
 
     #[test]
@@ -1295,7 +1327,13 @@ mod tests {
         // them is meaningless even when the arithmetic succeeds.
         let (db, _p) = temp_db();
         let m = mem(Arc::clone(&db));
-        insert_vec_row(&db, "perfect match", "task_result", "old-model", &[1.0, 0.0, 0.0]);
+        insert_vec_row(
+            &db,
+            "perfect match",
+            "task_result",
+            "old-model",
+            &[1.0, 0.0, 0.0],
+        );
 
         let ids = m
             .vector_candidate_ids(&[1.0, 0.0, 0.0], "m1", None, None, 10)

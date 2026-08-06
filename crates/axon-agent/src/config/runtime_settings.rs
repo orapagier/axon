@@ -174,7 +174,10 @@ Be gracious and respectful toward other faiths; never mock or condemn. If asked 
     /// from the same source instead of inserted. Default 95% — near-identical
     /// only. 0 disables dedup.
     pub fn memory_dedup_similarity(&self) -> f32 {
-        (self.get_int("memory.dedup_similarity_pct", 95).clamp(0, 100) as f32) / 100.0
+        (self
+            .get_int("memory.dedup_similarity_pct", 95)
+            .clamp(0, 100) as f32)
+            / 100.0
     }
     /// How many recent embedded memories to cosine-scan per recall, on top of
     /// whatever FTS matched. This is what lets recall find a memory that is on
