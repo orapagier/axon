@@ -24,6 +24,38 @@ const GOOGLE_TOOL_PREFIXES: &[&str] = &[
     "gplaces_",
 ];
 
+/// Turn a node's stored config into the tool's argument map.
+///
+/// A service node (YouTube, Gmail, …) keeps one config map across every action
+/// it can run, so switching action — Videos insert → Channels list, say — leaves
+/// the previous action's keys behind. Sending those makes the backend reject an
+/// otherwise valid call ("does not support media upload" from a leftover
+/// `upload_file_path`), so anything the selected tool doesn't declare is dropped.
+///
+/// `declared` is the tool's schema properties. A tool that publishes none is left
+/// alone: there is nothing to filter against, and its args are passed through.
+fn tool_args(
+    config: &Value,
+    declared: Option<&serde_json::Map<String, Value>>,
+) -> serde_json::Map<String, Value> {
+    let declared = declared.filter(|props| !props.is_empty());
+    let mut args = serde_json::Map::new();
+    let Some(obj) = config.as_object() else {
+        return args;
+    };
+    for (k, v) in obj {
+        // Workflow plumbing, not tool arguments.
+        if k == "tool_name" || k == "mcp_server" || k == "credential_id" {
+            continue;
+        }
+        if declared.is_some_and(|props| !props.contains_key(k)) {
+            continue;
+        }
+        args.insert(k.clone(), v.clone());
+    }
+    args
+}
+
 fn is_google_tool(tool_name: &str) -> bool {
     // Registry names can be namespaced (`server:gmail_send`); match the bare tail
     // the same way the UI groups tools into per-service nodes.
@@ -60,25 +92,17 @@ async fn run(config: &Value, state: &AppState) -> Result<Value, String> {
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
-    let mut args = serde_json::Map::new();
-    if let Some(obj) = config.as_object() {
-        for (k, v) in obj {
-            // credential_id is workflow plumbing, not a tool argument
-            if k != "tool_name" && k != "mcp_server" && k != "credential_id" {
-                args.insert(k.clone(), v.clone());
-            }
-        }
-    }
-
     let server = config
         .get("mcp_server")
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
     let all_tools = state.tools.all().await;
-    let is_internal = all_tools
-        .iter()
-        .find(|t| t.name == tool_name)
+    let tool = all_tools.iter().find(|t| t.name == tool_name);
+
+    let args = tool_args(config, tool.and_then(|t| t.parameters.as_object()));
+
+    let is_internal = tool
         .map(|t| t.source == crate::tools::schema::ToolSource::Internal)
         .unwrap_or(false);
 
@@ -97,16 +121,13 @@ async fn run(config: &Value, state: &AppState) -> Result<Value, String> {
         let server_name = if !server.is_empty() {
             server.to_string()
         } else {
-            all_tools
-                .iter()
-                .find(|t| t.name == tool_name)
-                .and_then(|t| match &t.source {
-                    crate::tools::schema::ToolSource::Mcp { server_name, .. } => {
-                        Some(server_name.clone())
-                    }
-                    _ => None,
-                })
-                .unwrap_or_else(|| "axon-mcp".to_string())
+            tool.and_then(|t| match &t.source {
+                crate::tools::schema::ToolSource::Mcp { server_name, .. } => {
+                    Some(server_name.clone())
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| "axon-mcp".to_string())
         };
 
         match state
@@ -136,6 +157,61 @@ async fn run(config: &Value, state: &AppState) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    fn props(keys: &[&str]) -> serde_json::Map<String, Value> {
+        keys.iter()
+            .map(|k| ((*k).to_string(), json!({ "type": "string" })))
+            .collect()
+    }
+
+    #[test]
+    fn workflow_plumbing_is_never_sent_as_an_argument() {
+        let config = json!({
+            "tool_name": "gyoutube_channels_list",
+            "mcp_server": "axon-mcp",
+            "credential_id": "cred-1",
+            "part": ["snippet"],
+        });
+        let args = tool_args(&config, Some(&props(&["part"])));
+        assert_eq!(args.len(), 1);
+        assert_eq!(args["part"], json!(["snippet"]));
+    }
+
+    #[test]
+    fn keys_from_a_previously_selected_action_are_dropped() {
+        // The node was on Videos insert, then switched to Channels list; the
+        // leftover upload field used to reach the API and fail the call.
+        let config = json!({
+            "tool_name": "gyoutube_channels_list",
+            "part": ["snippet"],
+            "upload_file_path": "",
+            "title": "an old draft title",
+        });
+        let args = tool_args(&config, Some(&props(&["part", "params"])));
+        assert!(!args.contains_key("upload_file_path"));
+        assert!(!args.contains_key("title"));
+        assert!(args.contains_key("part"));
+    }
+
+    #[test]
+    fn declared_fields_survive_even_when_blank() {
+        // Blank is meaningful for some tools (clearing a value); only *undeclared*
+        // keys are filtered here.
+        let config = json!({ "tool_name": "t", "description": "" });
+        let args = tool_args(&config, Some(&props(&["description"])));
+        assert_eq!(args["description"], json!(""));
+    }
+
+    #[test]
+    fn a_tool_without_a_published_schema_passes_everything_through() {
+        let config = json!({ "tool_name": "t", "anything": 1 });
+        assert_eq!(tool_args(&config, None)["anything"], json!(1));
+        assert_eq!(
+            tool_args(&config, Some(&serde_json::Map::new()))["anything"],
+            json!(1)
+        );
+    }
 
     #[test]
     fn google_backed_tools_are_recognised() {

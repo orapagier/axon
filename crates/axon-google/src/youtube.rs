@@ -998,8 +998,8 @@ async fn call_action(
     let mut body = parse_json_value_arg(args, "body")?;
 
     if spec.tool == "gyoutube_videos_insert" || spec.tool == "gyoutube_videos_update" {
-        let title = opt_string_arg(args, "title");
-        let desc = opt_string_arg(args, "description");
+        let title = non_empty_string_arg(args, "title");
+        let desc = non_empty_string_arg(args, "description");
         if title.is_some() || desc.is_some() {
             let mut body_obj = match body {
                 Some(Value::Object(m)) => m,
@@ -1020,7 +1020,7 @@ async fn call_action(
         }
     }
 
-    let upload_path = opt_string_arg(args, "upload_file_path");
+    let upload_path = non_empty_string_arg(args, "upload_file_path");
     if upload_path.is_some() && !spec.supports_upload {
         bail!("{} does not support media upload", spec.tool);
     }
@@ -1117,8 +1117,7 @@ async fn call_action(
     };
 
     if spec.returns_binary {
-        let filename = opt_string_arg(args, "download_filename")
-            .filter(|s| !s.trim().is_empty())
+        let filename = non_empty_string_arg(args, "download_filename")
             .unwrap_or_else(|| format!("{}_download.bin", spec.tool));
         let download_dir = axon_core::data_files_dir();
         tokio::fs::create_dir_all(&download_dir).await?;
@@ -1262,6 +1261,13 @@ fn required_string_arg<'a>(args: &'a Map<String, Value>, key: &str) -> Result<&'
         .ok_or_else(|| anyhow!("missing required argument '{key}'"))
 }
 
+/// A blank field is an unset field. The workflow form seeds every declared
+/// property, so an untouched box arrives as `""` — treating that as a supplied
+/// value turns optional arguments into spurious failures.
+fn non_empty_string_arg(args: &Map<String, Value>, key: &str) -> Option<String> {
+    opt_string_arg(args, key).filter(|s| !s.trim().is_empty())
+}
+
 fn opt_string_arg(args: &Map<String, Value>, key: &str) -> Option<String> {
     args.get(key).and_then(|v| match v {
         Value::String(s) => Some(s.clone()),
@@ -1377,6 +1383,21 @@ mod tests {
             .as_str()
             .unwrap_or_default()
             .is_empty());
+    }
+
+    #[test]
+    fn blank_optional_arguments_count_as_unset() {
+        // The form seeds every declared property, so untouched boxes arrive as "".
+        // Treating those as supplied made read actions fail the upload guard.
+        let blank = args(json!({ "upload_file_path": "  ", "title": "" }));
+        assert!(non_empty_string_arg(&blank, "upload_file_path").is_none());
+        assert!(non_empty_string_arg(&blank, "title").is_none());
+
+        let filled = args(json!({ "title": "Real" }));
+        assert_eq!(
+            non_empty_string_arg(&filled, "title").as_deref(),
+            Some("Real")
+        );
     }
 
     #[test]
