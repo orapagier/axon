@@ -767,10 +767,6 @@ fn query_enums(tool: &str) -> &'static [(&'static str, &'static [&'static str])]
             &["published", "heldForReview", "rejected"],
         )],
         "gyoutube_videos_rate" => &[("rating", &["like", "dislike", "none"])],
-        "gyoutube_videos_list" => &[
-            ("chart", &["mostPopular"]),
-            ("myRating", &["like", "dislike"]),
-        ],
         "gyoutube_search_list" => &[
             ("type", &["video", "channel", "playlist"]),
             (
@@ -802,13 +798,254 @@ fn query_enums(tool: &str) -> &'static [(&'static str, &'static [&'static str])]
     }
 }
 
+/// One of the mutually-exclusive filters a list endpoint selects rows by.
+struct Filter {
+    key: &'static str,
+    /// Field title in the form.
+    label: &'static str,
+    /// What to enter, shown as the hint and beside the choice in the dropdown.
+    hint: &'static str,
+    /// Fixed value set; empty means free text.
+    values: &'static [&'static str],
+    /// A flag filter carries no value of its own — it is sent as `key=true`.
+    flag: bool,
+}
+
+const fn by_value(key: &'static str, label: &'static str, hint: &'static str) -> Filter {
+    Filter {
+        key,
+        label,
+        hint,
+        values: &[],
+        flag: false,
+    }
+}
+
+const fn by_flag(key: &'static str, label: &'static str, hint: &'static str) -> Filter {
+    Filter {
+        key,
+        label,
+        hint,
+        values: &[],
+        flag: true,
+    }
+}
+
+const fn by_choice(
+    key: &'static str,
+    label: &'static str,
+    hint: &'static str,
+    values: &'static [&'static str],
+) -> Filter {
+    Filter {
+        key,
+        label,
+        hint,
+        values,
+        flag: false,
+    }
+}
+
+const ACTIVITY_FILTERS: &[Filter] = &[
+    by_flag("mine", "Mine", "Your own channel's activity."),
+    by_value("channelId", "Channel ID", "Channel ID, starts with UC…"),
+];
+
+const CHANNEL_FILTERS: &[Filter] = &[
+    by_flag("mine", "Mine", "Your own channel."),
+    by_value(
+        "id",
+        "Channel ID",
+        "Channel ID, starts with UC… Comma-separate for several.",
+    ),
+    by_value("forHandle", "Handle", "Channel handle, e.g. @SomeChannel."),
+    by_value("forUsername", "Username", "Legacy YouTube username."),
+    by_flag(
+        "managedByMe",
+        "Managed by me",
+        "Channels managed by your content owner (CMS accounts).",
+    ),
+];
+
+const CHANNEL_SECTION_FILTERS: &[Filter] = &[
+    by_flag("mine", "Mine", "Sections on your own channel."),
+    by_value("channelId", "Channel ID", "Channel ID, starts with UC…"),
+    by_value(
+        "id",
+        "Section ID",
+        "Channel section ID. Comma-separate for several.",
+    ),
+];
+
+const COMMENT_FILTERS: &[Filter] = &[
+    by_value(
+        "parentId",
+        "Parent Comment ID",
+        "Top-level comment whose replies to list.",
+    ),
+    by_value(
+        "id",
+        "Comment ID",
+        "Comment ID. Comma-separate for several.",
+    ),
+];
+
+const COMMENT_THREAD_FILTERS: &[Filter] = &[
+    by_value(
+        "videoId",
+        "Video ID",
+        "Video whose comment threads to list.",
+    ),
+    by_value(
+        "allThreadsRelatedToChannelId",
+        "Channel ID",
+        "Every thread on the channel and on its videos.",
+    ),
+    by_value(
+        "id",
+        "Thread ID",
+        "Comment thread ID. Comma-separate for several.",
+    ),
+];
+
+const PLAYLIST_ITEM_FILTERS: &[Filter] = &[
+    by_value("playlistId", "Playlist ID", "Playlist whose items to list."),
+    by_value(
+        "id",
+        "Item ID",
+        "Playlist item ID. Comma-separate for several.",
+    ),
+];
+
+const PLAYLIST_FILTERS: &[Filter] = &[
+    by_flag("mine", "Mine", "Your own playlists."),
+    by_value("channelId", "Channel ID", "Channel ID, starts with UC…"),
+    by_value(
+        "id",
+        "Playlist ID",
+        "Playlist ID. Comma-separate for several.",
+    ),
+];
+
+const SUBSCRIPTION_FILTERS: &[Filter] = &[
+    by_flag("mine", "Mine", "Channels you subscribe to."),
+    by_value(
+        "channelId",
+        "Channel ID",
+        "Channel whose subscriptions to list.",
+    ),
+    by_value(
+        "id",
+        "Subscription ID",
+        "Subscription ID. Comma-separate for several.",
+    ),
+    by_flag(
+        "mySubscribers",
+        "My subscribers",
+        "Channels subscribed to you.",
+    ),
+    by_flag(
+        "myRecentSubscribers",
+        "My recent subscribers",
+        "Your most recent subscribers.",
+    ),
+];
+
+const VIDEO_CATEGORY_FILTERS: &[Filter] = &[
+    by_value(
+        "regionCode",
+        "Region Code",
+        "ISO 3166-1 country code, e.g. US.",
+    ),
+    by_value(
+        "id",
+        "Category ID",
+        "Video category ID. Comma-separate for several.",
+    ),
+];
+
+const VIDEO_FILTERS: &[Filter] = &[
+    by_value("id", "Video ID", "Video ID. Comma-separate for several."),
+    by_choice("chart", "Chart", "A YouTube chart.", &["mostPopular"]),
+    by_choice(
+        "myRating",
+        "My Rating",
+        "Videos you rated.",
+        &["like", "dislike"],
+    ),
+];
+
+/// The mutually-exclusive filters a list action selects rows by.
+///
+/// YouTube rejects these endpoints outright when none is given ("No filter
+/// selected. Expected one of: …") and again when two are given, so an action that
+/// declares filters here always requires exactly one. Modelling the choice as a
+/// single `filter_by` field makes picking two structurally impossible, and lets
+/// the node ask for the value up front instead of failing at the API.
+fn filters(tool: &str) -> &'static [Filter] {
+    match tool {
+        "gyoutube_activities_list" => ACTIVITY_FILTERS,
+        "gyoutube_channels_list" => CHANNEL_FILTERS,
+        "gyoutube_channel_sections_list" => CHANNEL_SECTION_FILTERS,
+        "gyoutube_comments_list" => COMMENT_FILTERS,
+        "gyoutube_comment_threads_list" => COMMENT_THREAD_FILTERS,
+        "gyoutube_playlist_items_list" => PLAYLIST_ITEM_FILTERS,
+        "gyoutube_playlists_list" => PLAYLIST_FILTERS,
+        "gyoutube_subscriptions_list" => SUBSCRIPTION_FILTERS,
+        "gyoutube_video_categories_list" => VIDEO_CATEGORY_FILTERS,
+        "gyoutube_videos_list" => VIDEO_FILTERS,
+        _ => &[],
+    }
+}
+
+/// List actions that page. The fixed-catalogue endpoints (i18n languages and
+/// regions, video categories, abuse reasons) return everything at once and reject
+/// paging parameters, so they are deliberately absent.
+fn supports_paging(tool: &str) -> bool {
+    matches!(
+        tool,
+        "gyoutube_activities_list"
+            | "gyoutube_channels_list"
+            | "gyoutube_comments_list"
+            | "gyoutube_comment_threads_list"
+            | "gyoutube_members_list"
+            | "gyoutube_memberships_levels_list"
+            | "gyoutube_playlist_images_list"
+            | "gyoutube_playlist_items_list"
+            | "gyoutube_playlists_list"
+            | "gyoutube_search_list"
+            | "gyoutube_subscriptions_list"
+            | "gyoutube_videos_list"
+    )
+}
+
+/// Free-text query parameters common enough to deserve their own field.
+fn text_query_keys(tool: &str) -> &'static [(&'static str, &'static str, &'static str)] {
+    match tool {
+        "gyoutube_search_list" => &[(
+            "q",
+            "Search Terms",
+            "What to search for. Optional — you can also search by channel, order or date alone.",
+        )],
+        _ => &[],
+    }
+}
+
 /// Query keys this action exposes as their own field rather than through `params`.
+/// Filter keys are excluded: `resolve_filter` owns those.
 fn dedicated_query_keys(spec: &ActionSpec) -> Vec<&'static str> {
     let mut keys: Vec<&'static str> = spec.required_query.to_vec();
     for (key, _) in query_enums(spec.tool) {
         if !keys.contains(key) {
             keys.push(key);
         }
+    }
+    for (key, _, _) in text_query_keys(spec.tool) {
+        keys.push(key);
+    }
+    if supports_paging(spec.tool) {
+        keys.push("maxResults");
+        keys.push("pageToken");
     }
     keys
 }
@@ -852,6 +1089,69 @@ fn tool_from_spec(spec: &ActionSpec) -> Tool {
                 "description": "Resource sections to return. Only the listed values are accepted; \
                                 anything else is rejected by the API."
             }),
+        );
+    }
+
+    // The list filter: one choice, plus a value field per filter that takes one.
+    // Each value field is gated on the choice, so exactly one is ever visible and
+    // the user cannot express the "two filters" the API also rejects.
+    let action_filters = filters(spec.tool);
+    if !action_filters.is_empty() {
+        let keys: Vec<&str> = action_filters.iter().map(|f| f.key).collect();
+        let hints: Map<String, Value> = action_filters
+            .iter()
+            .map(|f| (f.key.to_string(), Value::String(f.hint.to_string())))
+            .collect();
+        properties.insert(
+            "filter_by".to_string(),
+            json!({
+                "type": "string",
+                "title": "Filter By",
+                "enum": keys,
+                "enumDescriptions": hints,
+                "description": "Which filter to list by. This endpoint requires exactly one.",
+            }),
+        );
+        for filter in action_filters.iter().filter(|f| !f.flag) {
+            let mut schema = json!({
+                "type": "string",
+                "title": filter.label,
+                "description": filter.hint,
+                "displayOptions": { "show": { "filter_by": [filter.key] } },
+            });
+            if !filter.values.is_empty() {
+                schema["enum"] = json!(filter.values);
+                // Safe to preselect: a filter that was not chosen never reaches
+                // the query, so this only ever fills in the field you opened.
+                schema["default"] = json!(filter.values[0]);
+            }
+            properties.insert(filter.key.to_string(), schema);
+        }
+    }
+
+    if supports_paging(spec.tool) {
+        properties.insert(
+            "maxResults".to_string(),
+            json!({
+                "type": "integer",
+                "title": "Max Results",
+                "description": "Results per page (1–50). Blank uses the API default.",
+            }),
+        );
+        properties.insert(
+            "pageToken".to_string(),
+            json!({
+                "type": "string",
+                "title": "Page Token",
+                "description": "The nextPageToken from a previous response, to fetch the next page.",
+            }),
+        );
+    }
+
+    for (key, label, description) in text_query_keys(spec.tool) {
+        properties.insert(
+            (*key).to_string(),
+            json!({ "type": "string", "title": label, "description": description }),
         );
     }
 
@@ -974,6 +1274,9 @@ fn tool_from_spec(spec: &ActionSpec) -> Tool {
     }
     for key in spec.required_query {
         required.push((*key).to_string());
+    }
+    if !filters(spec.tool).is_empty() {
+        required.push("filter_by".to_string());
     }
 
     let schema = json!({
@@ -1157,6 +1460,12 @@ fn build_query(spec: &ActionSpec, args: &Map<String, Value>) -> Result<Vec<(Stri
         query.push(("part".to_string(), part));
     }
 
+    let params = parse_json_object_arg(args, "params")?;
+
+    if let Some((key, value)) = resolve_filter(spec, args, &params)? {
+        query.push((key.to_string(), value));
+    }
+
     // A dedicated field wins over the same key inside `params`.
     for key in dedicated_query_keys(spec) {
         let Some(value) = args.get(key) else { continue };
@@ -1167,9 +1476,15 @@ fn build_query(spec: &ActionSpec, args: &Map<String, Value>) -> Result<Vec<(Stri
         query.push((key.to_string(), rendered));
     }
 
-    let params = parse_json_object_arg(args, "params")?;
+    // Whatever else the caller wants to pass through. Filter keys are skipped —
+    // the endpoint takes exactly one and `resolve_filter` already chose it, so
+    // letting a leftover second filter through here would earn a 400.
+    let filter_keys: Vec<&str> = filters(spec.tool).iter().map(|f| f.key).collect();
     for (k, v) in params {
-        if !v.is_null() && !query.iter().any(|(qk, _)| qk == &k) {
+        if v.is_null() || k == "filter_by" || filter_keys.contains(&k.as_str()) {
+            continue;
+        }
+        if !query.iter().any(|(qk, _)| qk == &k) {
             query.push((k, value_to_query(&v)));
         }
     }
@@ -1189,6 +1504,115 @@ fn build_query(spec: &ActionSpec, args: &Map<String, Value>) -> Result<Vec<(Stri
     }
 
     Ok(query)
+}
+
+/// Pick the single list filter the endpoint requires.
+///
+/// Prefers the dedicated `filter_by` choice. Nodes and agent calls written before
+/// that field existed passed the filter straight through `params`, so a lone
+/// filter key there is still honoured — but two are refused here rather than at
+/// the API, where the message is far less clear.
+fn resolve_filter(
+    spec: &ActionSpec,
+    args: &Map<String, Value>,
+    params: &Map<String, Value>,
+) -> Result<Option<(&'static str, String)>> {
+    let action_filters = filters(spec.tool);
+    if action_filters.is_empty() {
+        return Ok(None);
+    }
+
+    let choices = || {
+        action_filters
+            .iter()
+            .map(|f| f.key)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+
+    let chosen = non_empty_string_arg(args, "filter_by").or_else(|| {
+        params
+            .get("filter_by")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+    });
+
+    let filter = match chosen {
+        Some(key) => action_filters
+            .iter()
+            .find(|f| f.key == key)
+            .ok_or_else(|| {
+                anyhow!(
+                    "{} cannot filter by '{}'. Choose one of: {}",
+                    spec.tool,
+                    key,
+                    choices()
+                )
+            })?,
+        None => {
+            let supplied: Vec<&Filter> = action_filters
+                .iter()
+                .filter(|f| filter_value(f, args, params).is_some())
+                .collect();
+            match supplied.as_slice() {
+                [only] => *only,
+                [] => bail!(
+                    "{} needs one filter. Set 'filter_by' to one of: {}",
+                    spec.tool,
+                    choices()
+                ),
+                more => bail!(
+                    "{} takes exactly one filter but {} are set ({}). Set 'filter_by' to the one you want.",
+                    spec.tool,
+                    more.len(),
+                    more.iter().map(|f| f.key).collect::<Vec<_>>().join(", ")
+                ),
+            }
+        }
+    };
+
+    if filter.flag {
+        return Ok(Some((filter.key, "true".to_string())));
+    }
+
+    let value = filter_value(filter, args, params).ok_or_else(|| {
+        anyhow!(
+            "{} filter '{}' needs a value — {}",
+            spec.tool,
+            filter.key,
+            filter.hint
+        )
+    })?;
+
+    if !filter.values.is_empty() && !filter.values.contains(&value.as_str()) {
+        bail!(
+            "{} filter '{}' must be one of: {}",
+            spec.tool,
+            filter.key,
+            filter.values.join(", ")
+        );
+    }
+
+    Ok(Some((filter.key, value)))
+}
+
+/// The value a filter carries, from its own field or the `params` fallback.
+fn filter_value(
+    filter: &Filter,
+    args: &Map<String, Value>,
+    params: &Map<String, Value>,
+) -> Option<String> {
+    let raw = args.get(filter.key).or_else(|| params.get(filter.key))?;
+    if filter.flag {
+        // A flag is a checkbox: only an explicit true means "filter by this".
+        return match raw {
+            Value::Bool(true) => Some("true".to_string()),
+            Value::String(s) if s.trim().eq_ignore_ascii_case("true") => Some("true".to_string()),
+            _ => None,
+        };
+    }
+    let rendered = value_to_query(raw);
+    (!rendered.trim().is_empty()).then_some(rendered)
 }
 
 /// `part` arrives as a comma-separated string from agent calls and as an array
@@ -1308,34 +1732,218 @@ mod tests {
     fn part_accepts_the_multi_select_array() {
         let query = build_query(
             spec("gyoutube_channels_list"),
-            &args(json!({ "part": ["snippet", "statistics"] })),
+            &args(json!({ "part": ["snippet", "statistics"], "filter_by": "mine" })),
         )
         .expect("query");
-        assert_eq!(
-            query,
-            vec![("part".to_string(), "snippet,statistics".to_string())]
-        );
+        assert!(query.contains(&("part".to_string(), "snippet,statistics".to_string())));
     }
 
     #[test]
     fn part_still_accepts_a_comma_string() {
         let query = build_query(
             spec("gyoutube_channels_list"),
-            &args(json!({ "part": "snippet, statistics" })),
+            &args(json!({ "part": "snippet, statistics", "filter_by": "mine" })),
         )
         .expect("query");
-        assert_eq!(
-            query,
-            vec![("part".to_string(), "snippet,statistics".to_string())]
-        );
+        assert!(query.contains(&("part".to_string(), "snippet,statistics".to_string())));
     }
 
     #[test]
     fn missing_part_names_the_valid_sections() {
-        let err = build_query(spec("gyoutube_channels_list"), &args(json!({ "part": [] })))
-            .expect_err("part is required")
-            .to_string();
+        let err = build_query(
+            spec("gyoutube_channels_list"),
+            &args(json!({ "part": [], "filter_by": "mine" })),
+        )
+        .expect_err("part is required")
+        .to_string();
         assert!(err.contains("brandingSettings"), "{err}");
+    }
+
+    // ── List filters ────────────────────────────────────────────────────────
+    // YouTube requires exactly one filter on these endpoints and answers with a
+    // 400 "No filter selected" otherwise. Every case below is caught here first.
+
+    #[test]
+    fn a_list_endpoint_without_a_filter_is_caught_before_the_api() {
+        let err = build_query(
+            spec("gyoutube_channels_list"),
+            &args(json!({ "part": ["snippet"] })),
+        )
+        .expect_err("a filter is required")
+        .to_string();
+        assert!(err.contains("filter_by"), "{err}");
+        assert!(err.contains("forHandle"), "{err}");
+    }
+
+    #[test]
+    fn a_flag_filter_is_sent_as_true() {
+        let query = build_query(
+            spec("gyoutube_channels_list"),
+            &args(json!({ "part": ["snippet"], "filter_by": "mine" })),
+        )
+        .expect("query");
+        assert!(query.contains(&("mine".to_string(), "true".to_string())));
+    }
+
+    #[test]
+    fn a_value_filter_reads_its_own_field() {
+        let query = build_query(
+            spec("gyoutube_channels_list"),
+            &args(json!({ "part": ["snippet"], "filter_by": "forHandle", "forHandle": "@axon" })),
+        )
+        .expect("query");
+        assert!(query.contains(&("forHandle".to_string(), "@axon".to_string())));
+    }
+
+    #[test]
+    fn a_value_filter_with_nothing_entered_names_what_it_wants() {
+        let err = build_query(
+            spec("gyoutube_channels_list"),
+            &args(json!({ "part": ["snippet"], "filter_by": "id", "id": "" })),
+        )
+        .expect_err("the filter needs a value")
+        .to_string();
+        assert!(err.contains("'id'"), "{err}");
+        assert!(err.contains("UC"), "{err}");
+    }
+
+    #[test]
+    fn unchosen_filters_never_reach_the_query() {
+        // The form seeds every declared field, and older nodes left filters in
+        // `params`. Sending a second one is the 400 this whole model prevents.
+        let query = build_query(
+            spec("gyoutube_channels_list"),
+            &args(json!({
+                "part": ["snippet"],
+                "filter_by": "id",
+                "id": "UC123",
+                "forHandle": "",
+                "params": { "mine": true },
+            })),
+        )
+        .expect("query");
+        assert!(query.contains(&("id".to_string(), "UC123".to_string())));
+        assert!(!query.iter().any(|(k, _)| k == "mine"));
+        assert!(!query.iter().any(|(k, _)| k == "forHandle"));
+        assert!(!query.iter().any(|(k, _)| k == "filter_by"));
+    }
+
+    #[test]
+    fn a_filter_left_in_params_by_an_older_node_still_works() {
+        let query = build_query(
+            spec("gyoutube_playlists_list"),
+            &args(json!({ "part": ["snippet"], "params": { "channelId": "UC123" } })),
+        )
+        .expect("query");
+        assert!(query.contains(&("channelId".to_string(), "UC123".to_string())));
+    }
+
+    #[test]
+    fn two_filters_with_no_choice_made_is_refused_clearly() {
+        let err = build_query(
+            spec("gyoutube_playlists_list"),
+            &args(json!({ "part": ["snippet"], "params": { "channelId": "UC1", "mine": true } })),
+        )
+        .expect_err("ambiguous")
+        .to_string();
+        assert!(err.contains("exactly one"), "{err}");
+        assert!(err.contains("filter_by"), "{err}");
+    }
+
+    #[test]
+    fn a_filter_the_endpoint_does_not_have_is_rejected() {
+        let err = build_query(
+            spec("gyoutube_channels_list"),
+            &args(json!({ "part": ["snippet"], "filter_by": "playlistId" })),
+        )
+        .expect_err("not a channels filter")
+        .to_string();
+        assert!(err.contains("cannot filter by 'playlistId'"), "{err}");
+    }
+
+    #[test]
+    fn a_fixed_value_filter_validates_its_value() {
+        let ok = build_query(
+            spec("gyoutube_videos_list"),
+            &args(json!({ "part": ["snippet"], "filter_by": "chart", "chart": "mostPopular" })),
+        )
+        .expect("query");
+        assert!(ok.contains(&("chart".to_string(), "mostPopular".to_string())));
+
+        let err = build_query(
+            spec("gyoutube_videos_list"),
+            &args(json!({ "part": ["snippet"], "filter_by": "chart", "chart": "trending" })),
+        )
+        .expect_err("not a chart")
+        .to_string();
+        assert!(err.contains("mostPopular"), "{err}");
+    }
+
+    #[test]
+    fn actions_without_filters_are_untouched() {
+        // search.list needs no filter; requiring one would break every search.
+        let query = build_query(
+            spec("gyoutube_search_list"),
+            &args(json!({ "part": ["snippet"], "q": "rust" })),
+        )
+        .expect("query");
+        assert!(query.contains(&("q".to_string(), "rust".to_string())));
+    }
+
+    #[test]
+    fn filter_fields_are_gated_on_the_choice() {
+        let tool = tool_from_spec(spec("gyoutube_channels_list"));
+        let properties = tool.input_schema.get("properties").expect("properties");
+
+        // The choice itself lists every filter, flags included.
+        let choices = properties["filter_by"]["enum"].as_array().expect("enum");
+        assert!(choices.iter().any(|v| v == "mine"));
+        assert!(choices.iter().any(|v| v == "forHandle"));
+
+        // A value filter gets a field, shown only when it is the one chosen.
+        assert_eq!(
+            properties["forHandle"]["displayOptions"]["show"]["filter_by"],
+            json!(["forHandle"])
+        );
+        assert_eq!(properties["forHandle"]["title"], "Handle");
+
+        // A flag filter carries no value, so it gets no field of its own.
+        assert!(properties.get("mine").is_none());
+    }
+
+    #[test]
+    fn paging_fields_only_appear_where_the_endpoint_pages() {
+        let paged = tool_from_spec(spec("gyoutube_playlist_items_list"));
+        let paged = paged.input_schema.get("properties").expect("properties");
+        assert!(paged.get("maxResults").is_some());
+        assert!(paged.get("pageToken").is_some());
+
+        // i18nLanguages returns its whole catalogue at once and rejects paging.
+        let whole = tool_from_spec(spec("gyoutube_i18n_languages_list"));
+        let whole = whole.input_schema.get("properties").expect("properties");
+        assert!(whole.get("maxResults").is_none());
+    }
+
+    #[test]
+    fn filter_keys_never_collide_with_the_actions_other_fields() {
+        // A key owned by two mechanisms would be emitted twice and sent twice.
+        for spec in ACTIONS {
+            let filter_keys: Vec<&str> = filters(spec.tool).iter().map(|f| f.key).collect();
+            for key in dedicated_query_keys(spec) {
+                assert!(
+                    !filter_keys.contains(&key),
+                    "{}: '{key}' is both a filter and a dedicated query field",
+                    spec.tool
+                );
+            }
+            if !filter_keys.is_empty() {
+                assert!(
+                    spec.method == "GET",
+                    "{}: filters only make sense on reads",
+                    spec.tool
+                );
+            }
+        }
     }
 
     #[test]
