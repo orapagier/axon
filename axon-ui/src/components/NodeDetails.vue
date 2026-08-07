@@ -1709,6 +1709,21 @@ function normalizeConfig() {
     )
   })
 
+  // multiOptions migration: a field that is now a picker (e.g. the YouTube
+  // `part` sections) may have been saved as comma-separated text. Split it so
+  // the tags render and the remove button has a real array to splice. An
+  // expression is left alone — it stays in ƒx mode.
+  nodeDefinition.value.properties.forEach(p => {
+    if (p.type !== 'multiOptions') return
+    const v = props.node.data.config[p.name]
+    if (Array.isArray(v) || hasExpression(v)) return
+    if (typeof v === 'string' && v.trim()) {
+      props.node.data.config[p.name] = v.split(',').map(s => s.trim()).filter(Boolean)
+    } else if (v === undefined || v === null || v === '') {
+      props.node.data.config[p.name] = Array.isArray(p.default) ? [...p.default] : []
+    }
+  })
+
   // Backward compatibility for Circadian/Stimulus nodes using legacy cron_nl
   if ((props.node.data.node_type === 'circadian' || props.node.data.node_type === 'stimulus') && props.node.data.config.schedules?.parameters) {
     props.node.data.config.schedules.parameters.forEach(p => {

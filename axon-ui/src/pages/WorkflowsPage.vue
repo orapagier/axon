@@ -260,6 +260,20 @@ const GOOGLE_ACCOUNT_SERVICES = new Set([
   'gyoutube', 'gplaces',
 ]);
 
+// A schema enum may carry per-value blurbs under `enumDescriptions` (e.g. the
+// YouTube `part` sections), so a picker can explain what each API value returns
+// instead of listing bare strings.
+function enumOptions(schema, values) {
+  const descriptions = (schema.enumDescriptions && typeof schema.enumDescriptions === 'object')
+    ? schema.enumDescriptions
+    : {}
+  return values.map(v => ({
+    name: v === '' ? '— Any —' : String(v),
+    value: v,
+    description: descriptions[v] || '',
+  }))
+}
+
 function schemaToProperties(tool, nodeConfig = {}) {
   const props = []
   const params = tool.parameters || {}
@@ -365,14 +379,27 @@ function schemaToProperties(tool, nodeConfig = {}) {
       prop.type = 'dateTime'
     } else if (schemaEnum.length > 0) {
       prop.type = 'options'
-      prop.options = schemaEnum.map(v => ({ name: String(v), value: v }))
+      prop.options = enumOptions(schema, schemaEnum)
+      // A required select with nothing stored renders blank and looks broken;
+      // give it a visible "pick one" row.
+      if (prop.required && !schemaEnum.includes('') && schema.default === undefined) {
+        prop.options.unshift({ name: '— Select —', value: '', description: '' })
+      }
     } else if (schema.type === 'boolean') {
       prop.type = 'boolean'
     } else if (schema.type === 'number' || schema.type === 'integer') {
       prop.type = 'number'
     } else if (schema.type === 'array') {
       const itemType = schema.items?.type
-      if (itemType === 'object' && schema.items?.properties) {
+      const itemEnum = Array.isArray(schema.items?.enum) ? schema.items.enum : []
+      if (itemEnum.length > 0) {
+        // Fixed value set (YouTube `part`, …): pick the sections from a list
+        // instead of hand-typing the comma-separated API strings.
+        prop.type = 'multiOptions'
+        prop.options = enumOptions(schema, itemEnum)
+        prop.default = Array.isArray(schema.default) ? [...schema.default] : []
+        prop.placeholder = `Add ${prop.displayName.toLowerCase()}…`
+      } else if (itemType === 'object' && schema.items?.properties) {
         prop.type = 'fixedCollection'
         prop.options = Object.entries(schema.items.properties).map(([subKey, subSchema]) => ({
           name: subKey,
