@@ -2,7 +2,10 @@ use anyhow::Result;
 use axon_core::{oauth, AppState};
 use serde_json::{json, Value};
 
-const SCOPES: &[&str] = &[
+/// Every scope a Google token here is granted. Read by `youtube::missing_scope`
+/// to tell an action whose scope is absent apart from one that is merely
+/// failing, so adding a scope here is all it takes to enable that action.
+pub(crate) const SCOPES: &[&str] = &[
     "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/calendar",
     "https://www.googleapis.com/auth/drive",

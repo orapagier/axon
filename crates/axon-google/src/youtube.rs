@@ -670,15 +670,14 @@ fn part_options(tool: &str) -> &'static [&'static str] {
             "id",
         ],
         "gyoutube_channels_update" => &["brandingSettings", "localizations", "invideoPromotion"],
-        "gyoutube_channel_sections_list" => &[
-            "snippet",
-            "contentDetails",
-            "localizations",
-            "targeting",
-            "id",
-        ],
+        // `localizations` and `targeting` are channelSection *resource* properties
+        // but not `part` values on any channelSections method — list, insert and
+        // update all document exactly id, snippet and contentDetails. Naming one
+        // 400s the call, and because a read asks for every option, leaving them
+        // here broke channel_sections_list on every run.
+        "gyoutube_channel_sections_list" => &["snippet", "contentDetails", "id"],
         "gyoutube_channel_sections_insert" | "gyoutube_channel_sections_update" => {
-            &["snippet", "contentDetails", "localizations", "targeting"]
+            &["snippet", "contentDetails"]
         }
         "gyoutube_comments_list" => &["snippet", "id"],
         "gyoutube_comments_insert" | "gyoutube_comments_update" => &["snippet"],
@@ -833,13 +832,86 @@ fn query_enums(tool: &str) -> &'static [(&'static str, &'static [&'static str])]
         "gyoutube_subscriptions_list" => &[("order", &["relevance", "alphabetical", "unread"])],
         "gyoutube_comment_threads_list" => &[
             ("order", &["time", "relevance"]),
+            // No `rejected` here: comments.setModerationStatus writes that state
+            // but commentThreads.list cannot read it back, and offering it as a
+            // filter only ever produced a 400.
             (
                 "moderationStatus",
-                &["published", "heldForReview", "likelySpam", "rejected"],
+                &["published", "heldForReview", "likelySpam"],
             ),
             ("textFormat", &["html", "plainText"]),
         ],
         "gyoutube_comments_list" => &[("textFormat", &["html", "plainText"])],
+        _ => &[],
+    }
+}
+
+/// A query parameter the API accepts only while a companion field holds one of a
+/// set of values — the cross-field version of the "exactly one filter" rule.
+///
+/// Sending one outside its window is a 400 that names neither field clearly, so
+/// the form hides it until the companion is set and `build_query` refuses it
+/// before the call goes out.
+struct Companion {
+    key: &'static str,
+    /// Field it rides on. `filter_by` means the chosen list filter.
+    depends_on: &'static str,
+    allowed: &'static [&'static str],
+    /// Why, phrased to drop into the error message after an em dash.
+    reason: &'static str,
+}
+
+/// search.list documents these one by one as "If you specify a value for this
+/// parameter, you must also set the type parameter's value to video."
+const SEARCH_COMPANIONS: &[Companion] = &[
+    Companion {
+        key: "eventType",
+        depends_on: "type",
+        allowed: &["video"],
+        reason: "search.list only applies live-event filtering to videos",
+    },
+    Companion {
+        key: "videoDuration",
+        depends_on: "type",
+        allowed: &["video"],
+        reason: "search.list only applies duration filtering to videos",
+    },
+];
+
+/// commentThreads.list serves `moderationStatus` on a channel- or video-wide
+/// listing, but rejects it beside the `id` filter — ids already name the threads.
+const COMMENT_THREAD_COMPANIONS: &[Companion] = &[Companion {
+    key: "moderationStatus",
+    depends_on: "filter_by",
+    allowed: &["videoId", "allThreadsRelatedToChannelId"],
+    reason: "the API refuses it alongside the 'id' filter",
+}];
+
+/// The scope an action needs on top of the ones `auth::SCOPES` asks for, or
+/// `None` when nothing is missing.
+///
+/// Checked against that list rather than against the token, so it is exact: a
+/// scope absent there was never consented to. It also means the guard removes
+/// itself — add the scope in `auth.rs` and this returns `None` on its own.
+fn missing_scope(tool: &str) -> Option<&'static str> {
+    let needed = match tool {
+        // members.list and membershipsLevels.list are served only under this
+        // scope, and only to a channel in the YouTube Partner Program with
+        // channel memberships switched on. Requesting it unconditionally would
+        // put a "see your channel members" line on the consent screen of every
+        // account connected here, Gmail-only ones included, so it stays opt-in.
+        "gyoutube_members_list" | "gyoutube_memberships_levels_list" => {
+            "https://www.googleapis.com/auth/youtube.channel-memberships.creator"
+        }
+        _ => return None,
+    };
+    (!crate::auth::SCOPES.contains(&needed)).then_some(needed)
+}
+
+fn companions(tool: &str) -> &'static [Companion] {
+    match tool {
+        "gyoutube_search_list" => SEARCH_COMPANIONS,
+        "gyoutube_comment_threads_list" => COMMENT_THREAD_COMPANIONS,
         _ => &[],
     }
 }
@@ -963,6 +1035,15 @@ const PLAYLIST_ITEM_FILTERS: &[Filter] = &[
     ),
 ];
 
+const PLAYLIST_IMAGE_FILTERS: &[Filter] = &[
+    by_value("playlistId", "Playlist ID", "Playlist whose images to list."),
+    by_value(
+        "id",
+        "Image ID",
+        "Playlist image ID. Comma-separate for several.",
+    ),
+];
+
 const PLAYLIST_FILTERS: &[Filter] = &[
     by_flag("mine", "Mine", "Your own playlists."),
     by_value("channelId", "Channel ID", "Channel ID, starts with UC…"),
@@ -1035,6 +1116,7 @@ fn filters(tool: &str) -> &'static [Filter] {
         "gyoutube_channel_sections_list" => CHANNEL_SECTION_FILTERS,
         "gyoutube_comments_list" => COMMENT_FILTERS,
         "gyoutube_comment_threads_list" => COMMENT_THREAD_FILTERS,
+        "gyoutube_playlist_images_list" => PLAYLIST_IMAGE_FILTERS,
         "gyoutube_playlist_items_list" => PLAYLIST_ITEM_FILTERS,
         "gyoutube_playlists_list" => PLAYLIST_FILTERS,
         "gyoutube_subscriptions_list" => SUBSCRIPTION_FILTERS,
@@ -1212,15 +1294,26 @@ fn tool_from_spec(spec: &ActionSpec) -> Tool {
         // The leading "" keeps the filter optional — the UI renders it as "Any".
         let mut choices = vec![""];
         choices.extend_from_slice(values);
-        properties.insert(
-            (*key).to_string(),
-            json!({
-                "type": "string",
-                "enum": choices,
-                "default": "",
-                "description": format!("Optional '{key}' filter."),
-            }),
-        );
+        let mut schema = json!({
+            "type": "string",
+            "enum": choices,
+            "default": "",
+            "description": format!("Optional '{key}' filter."),
+        });
+        // A parameter the API only accepts beside another one stays out of the
+        // form until that other one is set, the same way a filter's value field
+        // waits on `filter_by`.
+        if let Some(companion) = companions(spec.tool).iter().find(|c| c.key == *key) {
+            schema["description"] = json!(format!(
+                "Optional '{key}' filter. Needs {} set to {} — {}.",
+                companion.depends_on,
+                companion.allowed.join(" or "),
+                companion.reason
+            ));
+            schema["displayOptions"] =
+                json!({ "show": { companion.depends_on: companion.allowed } });
+        }
+        properties.insert((*key).to_string(), schema);
     }
 
     if !spec.required_query.is_empty() || spec.method == "GET" || spec.method == "DELETE" {
@@ -1338,6 +1431,16 @@ async fn call_action(
     spec: &ActionSpec,
     args: &Map<String, Value>,
 ) -> Result<Value> {
+    if let Some(scope) = missing_scope(spec.tool) {
+        bail!(
+            "{} needs the '{scope}' scope, which this app does not request — the call would come \
+             back 403 whatever you pass it. To enable it, add that scope to SCOPES in \
+             crates/axon-google/src/auth.rs and reconnect the Google account; note the channel \
+             must also be in the YouTube Partner Program with channel memberships turned on.",
+            spec.tool
+        );
+    }
+
     let token = access_token(state).await?;
     let path = build_path(spec, args)?;
 
@@ -1512,7 +1615,9 @@ fn build_query(spec: &ActionSpec, args: &Map<String, Value>) -> Result<Vec<(Stri
         query.push(("part".to_string(), part));
     }
 
-    if let Some((key, value)) = resolve_filter(spec, args, &params)? {
+    let chosen_filter = resolve_filter(spec, args, &params)?;
+    let filter_key = chosen_filter.as_ref().map(|(key, _)| *key);
+    if let Some((key, value)) = chosen_filter {
         query.push((key.to_string(), value));
     }
 
@@ -1545,7 +1650,53 @@ fn build_query(spec: &ActionSpec, args: &Map<String, Value>) -> Result<Vec<(Stri
         }
     }
 
+    reject_orphan_companions(spec, &query, filter_key)?;
+
     Ok(query)
+}
+
+/// Refuse a parameter whose companion field is unset or holds a value the API
+/// will not pair it with. The form hides these, but an agent call or a node
+/// saved before the rule existed can still carry one, and the API's own answer
+/// ("invalid combination of search filters") names neither field.
+fn reject_orphan_companions(
+    spec: &ActionSpec,
+    query: &[(String, String)],
+    filter_key: Option<&'static str>,
+) -> Result<()> {
+    for companion in companions(spec.tool) {
+        let sent = query
+            .iter()
+            .find(|(k, _)| k == companion.key)
+            .map(|(_, v)| v.as_str());
+        let Some(sent) = sent.filter(|v| !v.trim().is_empty()) else {
+            continue;
+        };
+
+        let current = if companion.depends_on == "filter_by" {
+            filter_key
+        } else {
+            query
+                .iter()
+                .find(|(k, _)| k == companion.depends_on)
+                .map(|(_, v)| v.as_str())
+        };
+        if current.is_some_and(|value| companion.allowed.contains(&value)) {
+            continue;
+        }
+
+        bail!(
+            "{} cannot send '{}={}' here — {}. Set '{}' to {}, or leave '{}' unset.",
+            spec.tool,
+            companion.key,
+            sent,
+            companion.reason,
+            companion.depends_on,
+            companion.allowed.join(" or "),
+            companion.key,
+        );
+    }
+    Ok(())
 }
 
 /// Pick the single list filter the endpoint requires.
@@ -1900,6 +2051,24 @@ mod tests {
     }
 
     #[test]
+    fn channel_sections_reads_only_the_parts_that_endpoint_serves() {
+        // `localizations` and `targeting` are channelSection resource properties
+        // but not part values, so the old "everything" read 400'd every time.
+        let part = part_of("gyoutube_channel_sections_list", json!({ "filter_by": "mine" }));
+        assert_eq!(part, "snippet,contentDetails");
+
+        for tool in [
+            "gyoutube_channel_sections_list",
+            "gyoutube_channel_sections_insert",
+            "gyoutube_channel_sections_update",
+        ] {
+            let options = part_options(tool);
+            assert!(!options.contains(&"localizations"), "{tool}: {options:?}");
+            assert!(!options.contains(&"targeting"), "{tool}: {options:?}");
+        }
+    }
+
+    #[test]
     fn a_write_with_nothing_to_go_on_falls_back_to_the_first_section() {
         assert_eq!(
             part_of("gyoutube_playlists_insert", json!({})),
@@ -2049,6 +2218,154 @@ mod tests {
         .to_string();
         assert!(err.contains("cannot filter by 'managedByMe'"), "{err}");
         assert!(err.contains("forHandle"), "{err}");
+    }
+
+    #[test]
+    fn playlist_images_asks_which_playlist() {
+        // playlistImages.list takes exactly one of playlistId/id like its
+        // siblings. Declaring none sent a bare `part` and earned a 400.
+        let err = build_query(spec("gyoutube_playlist_images_list"), &args(json!({})))
+            .expect_err("a filter is required")
+            .to_string();
+        assert!(err.contains("playlistId"), "{err}");
+
+        let query = build_query(
+            spec("gyoutube_playlist_images_list"),
+            &args(json!({ "filter_by": "playlistId", "playlistId": "PL123" })),
+        )
+        .expect("query");
+        assert!(query.contains(&("playlistId".to_string(), "PL123".to_string())));
+    }
+
+    // ── Cross-field rules ───────────────────────────────────────────────────
+    // Parameters the API takes only beside another one. The form hides them
+    // until the companion is set; these pin the check that backs that up.
+
+    #[test]
+    fn a_video_only_search_filter_needs_type_video() {
+        let err = build_query(
+            spec("gyoutube_search_list"),
+            &args(json!({ "q": "rust", "videoDuration": "long" })),
+        )
+        .expect_err("videoDuration needs type=video")
+        .to_string();
+        assert!(err.contains("videoDuration"), "{err}");
+        assert!(err.contains("type"), "{err}");
+
+        // The same call with the companion set goes through untouched.
+        let query = build_query(
+            spec("gyoutube_search_list"),
+            &args(json!({ "q": "rust", "type": "video", "videoDuration": "long" })),
+        )
+        .expect("query");
+        assert!(query.contains(&("videoDuration".to_string(), "long".to_string())));
+
+        // Searching channels without touching the video-only boxes still works —
+        // the form seeds them as "", which must not read as "supplied".
+        let query = build_query(
+            spec("gyoutube_search_list"),
+            &args(json!({ "q": "rust", "type": "channel", "videoDuration": "", "eventType": "" })),
+        )
+        .expect("query");
+        assert!(query.contains(&("type".to_string(), "channel".to_string())));
+    }
+
+    #[test]
+    fn moderation_status_is_refused_beside_the_id_filter() {
+        let err = build_query(
+            spec("gyoutube_comment_threads_list"),
+            &args(json!({
+                "filter_by": "id",
+                "id": "thread1",
+                "moderationStatus": "heldForReview",
+            })),
+        )
+        .expect_err("not allowed with the id filter")
+        .to_string();
+        assert!(err.contains("moderationStatus"), "{err}");
+
+        let query = build_query(
+            spec("gyoutube_comment_threads_list"),
+            &args(json!({
+                "filter_by": "videoId",
+                "videoId": "vid1",
+                "moderationStatus": "heldForReview",
+            })),
+        )
+        .expect("query");
+        assert!(query.contains(&(
+            "moderationStatus".to_string(),
+            "heldForReview".to_string()
+        )));
+    }
+
+    #[test]
+    fn the_memberships_actions_name_the_scope_they_are_missing() {
+        // Neither can work until `auth::SCOPES` asks for the creator scope, so
+        // they say so up front instead of spending a call on a 403.
+        let scope = missing_scope("gyoutube_members_list").expect("scope is not requested");
+        assert!(scope.ends_with("youtube.channel-memberships.creator"), "{scope}");
+        assert!(missing_scope("gyoutube_memberships_levels_list").is_some());
+
+        // Every other action runs on scopes the token already carries — a stray
+        // guard here would take a working action offline.
+        for spec in ACTIONS.iter().filter(|s| {
+            s.tool != "gyoutube_members_list" && s.tool != "gyoutube_memberships_levels_list"
+        }) {
+            assert!(missing_scope(spec.tool).is_none(), "{}", spec.tool);
+        }
+    }
+
+    #[test]
+    fn a_companion_gated_field_is_hidden_until_its_companion_is_set() {
+        let tool = tool_from_spec(spec("gyoutube_search_list"));
+        let properties = tool.input_schema.get("properties").expect("properties");
+        assert_eq!(
+            properties["videoDuration"]["displayOptions"]["show"]["type"],
+            json!(["video"])
+        );
+        // `order` pairs with nothing, so it stays unconditional.
+        assert!(properties["order"].get("displayOptions").is_none());
+    }
+
+    #[test]
+    fn every_companion_names_fields_the_action_really_has() {
+        // A typo'd key or companion would silently never fire.
+        for spec in ACTIONS {
+            let enum_keys: Vec<&str> = query_enums(spec.tool).iter().map(|(k, _)| *k).collect();
+            for companion in companions(spec.tool) {
+                assert!(
+                    enum_keys.contains(&companion.key),
+                    "{}: companion '{}' is not one of its fields",
+                    spec.tool,
+                    companion.key
+                );
+                if companion.depends_on == "filter_by" {
+                    let filter_keys: Vec<&str> =
+                        filters(spec.tool).iter().map(|f| f.key).collect();
+                    for allowed in companion.allowed {
+                        assert!(
+                            filter_keys.contains(allowed),
+                            "{}: '{allowed}' is not one of its filters",
+                            spec.tool
+                        );
+                    }
+                } else {
+                    let (_, values) = query_enums(spec.tool)
+                        .iter()
+                        .find(|(k, _)| *k == companion.depends_on)
+                        .unwrap_or_else(|| panic!("{}: no '{}'", spec.tool, companion.depends_on));
+                    for allowed in companion.allowed {
+                        assert!(
+                            values.contains(allowed),
+                            "{}: '{}' cannot be '{allowed}'",
+                            spec.tool,
+                            companion.depends_on
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]
