@@ -260,22 +260,15 @@ const GOOGLE_ACCOUNT_SERVICES = new Set([
   'gyoutube', 'gplaces',
 ]);
 
-// Sentinel enum values that would otherwise render as bare punctuation. Keyed on
-// a null-prototype object so an enum value like "constructor" stays itself.
-const ENUM_VALUE_LABELS = Object.assign(Object.create(null), {
-  '': '— Any —',
-  '*': 'All sections',
-})
-
 // A schema enum may carry per-value blurbs under `enumDescriptions` (e.g. the
-// YouTube `part` sections), so a picker can explain what each API value returns
+// YouTube list filters), so a picker can explain what each API value means
 // instead of listing bare strings.
 function enumOptions(schema, values) {
   const descriptions = (schema.enumDescriptions && typeof schema.enumDescriptions === 'object')
     ? schema.enumDescriptions
     : {}
   return values.map(v => ({
-    name: ENUM_VALUE_LABELS[v] ?? String(v),
+    name: v === '' ? '— Any —' : String(v),
     value: v,
     description: descriptions[v] || '',
   }))
