@@ -1059,7 +1059,11 @@ const PLAYLIST_IMAGE_FILTERS: &[Filter] = &[
 ];
 
 const PLAYLIST_FILTERS: &[Filter] = &[
-    by_flag("mine", "Mine", "Your own playlists — the usual way to find a playlist ID."),
+    by_flag(
+        "mine",
+        "Mine",
+        "Your own playlists — the usual way to find a playlist ID.",
+    ),
     by_value("channelId", "Channel ID", CHANNEL_ID_HINT),
     by_value(
         "id",
@@ -2068,7 +2072,10 @@ mod tests {
     fn channel_sections_reads_only_the_parts_that_endpoint_serves() {
         // `localizations` and `targeting` are channelSection resource properties
         // but not part values, so the old "everything" read 400'd every time.
-        let part = part_of("gyoutube_channel_sections_list", json!({ "filter_by": "mine" }));
+        let part = part_of(
+            "gyoutube_channel_sections_list",
+            json!({ "filter_by": "mine" }),
+        );
         assert_eq!(part, "snippet,contentDetails");
 
         for tool in [
@@ -2307,10 +2314,7 @@ mod tests {
             })),
         )
         .expect("query");
-        assert!(query.contains(&(
-            "moderationStatus".to_string(),
-            "heldForReview".to_string()
-        )));
+        assert!(query.contains(&("moderationStatus".to_string(), "heldForReview".to_string())));
     }
 
     #[test]
@@ -2318,7 +2322,10 @@ mod tests {
         // Neither can work until `auth::SCOPES` asks for the creator scope, so
         // they say so up front instead of spending a call on a 403.
         let scope = missing_scope("gyoutube_members_list").expect("scope is not requested");
-        assert!(scope.ends_with("youtube.channel-memberships.creator"), "{scope}");
+        assert!(
+            scope.ends_with("youtube.channel-memberships.creator"),
+            "{scope}"
+        );
         assert!(missing_scope("gyoutube_memberships_levels_list").is_some());
 
         // Every other action runs on scopes the token already carries — a stray
@@ -2355,8 +2362,7 @@ mod tests {
                     companion.key
                 );
                 if companion.depends_on == "filter_by" {
-                    let filter_keys: Vec<&str> =
-                        filters(spec.tool).iter().map(|f| f.key).collect();
+                    let filter_keys: Vec<&str> = filters(spec.tool).iter().map(|f| f.key).collect();
                     for allowed in companion.allowed {
                         assert!(
                             filter_keys.contains(allowed),
