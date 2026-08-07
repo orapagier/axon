@@ -964,9 +964,14 @@ const fn by_choice(
     }
 }
 
+/// Where a channel ID comes from. A handle (@name) is not one, and pasting a
+/// handle here is the mistake this hint exists to head off.
+const CHANNEL_ID_HINT: &str = "Channel ID, starts with UC… — not an @handle. Run 'Channels list' \
+     with Filter By: Handle to turn an @handle into one, or Mine for your own.";
+
 const ACTIVITY_FILTERS: &[Filter] = &[
     by_flag("mine", "Mine", "Your own channel's activity."),
-    by_value("channelId", "Channel ID", "Channel ID, starts with UC…"),
+    by_value("channelId", "Channel ID", CHANNEL_ID_HINT),
 ];
 
 // `managedByMe` is deliberately absent. It is a content-partner filter: YouTube
@@ -987,11 +992,11 @@ const CHANNEL_FILTERS: &[Filter] = &[
 
 const CHANNEL_SECTION_FILTERS: &[Filter] = &[
     by_flag("mine", "Mine", "Sections on your own channel."),
-    by_value("channelId", "Channel ID", "Channel ID, starts with UC…"),
+    by_value("channelId", "Channel ID", CHANNEL_ID_HINT),
     by_value(
         "id",
         "Section ID",
-        "Channel section ID. Comma-separate for several.",
+        "Channel section ID, from 'Channel sections list'. Comma-separate for several.",
     ),
 ];
 
@@ -999,12 +1004,13 @@ const COMMENT_FILTERS: &[Filter] = &[
     by_value(
         "parentId",
         "Parent Comment ID",
-        "Top-level comment whose replies to list.",
+        "Top-level comment whose replies to list. Run 'Comment threads list' first and use a \
+         thread's 'id'.",
     ),
     by_value(
         "id",
         "Comment ID",
-        "Comment ID. Comma-separate for several.",
+        "Comment ID, from 'Comment threads list'. Comma-separate for several.",
     ),
 ];
 
@@ -1026,31 +1032,39 @@ const COMMENT_THREAD_FILTERS: &[Filter] = &[
     ),
 ];
 
+/// Where a playlist ID comes from. Repeated on every field that wants one,
+/// because it is the id least likely to be to hand: unlike a channel or video
+/// it has no handle and no obvious place in the YouTube UI to read it off.
+const PLAYLIST_ID_HINT: &str = "The playlist to read, starting PL/UU/LL. Run 'Playlists list' \
+     (Filter By: Mine) first and use an item's 'id', or take the ?list= value from a playlist URL. \
+     For a channel's uploads, run 'Channels list' and use contentDetails.relatedPlaylists.uploads.";
+
 const PLAYLIST_ITEM_FILTERS: &[Filter] = &[
-    by_value("playlistId", "Playlist ID", "Playlist whose items to list."),
+    by_value("playlistId", "Playlist ID", PLAYLIST_ID_HINT),
     by_value(
         "id",
         "Item ID",
-        "Playlist item ID. Comma-separate for several.",
+        "Playlist item ID — the item's own id from 'Playlist items list', not the video id. \
+         Comma-separate for several.",
     ),
 ];
 
 const PLAYLIST_IMAGE_FILTERS: &[Filter] = &[
-    by_value("playlistId", "Playlist ID", "Playlist whose images to list."),
+    by_value("playlistId", "Playlist ID", PLAYLIST_ID_HINT),
     by_value(
         "id",
         "Image ID",
-        "Playlist image ID. Comma-separate for several.",
+        "Playlist image ID, from 'Playlist images list'. Comma-separate for several.",
     ),
 ];
 
 const PLAYLIST_FILTERS: &[Filter] = &[
-    by_flag("mine", "Mine", "Your own playlists."),
-    by_value("channelId", "Channel ID", "Channel ID, starts with UC…"),
+    by_flag("mine", "Mine", "Your own playlists — the usual way to find a playlist ID."),
+    by_value("channelId", "Channel ID", CHANNEL_ID_HINT),
     by_value(
         "id",
         "Playlist ID",
-        "Playlist ID. Comma-separate for several.",
+        "Playlist ID, starting PL/UU/LL. Comma-separate for several.",
     ),
 ];
 
@@ -1059,12 +1073,12 @@ const SUBSCRIPTION_FILTERS: &[Filter] = &[
     by_value(
         "channelId",
         "Channel ID",
-        "Channel whose subscriptions to list.",
+        "Channel whose subscriptions to list. Starts UC… — not an @handle.",
     ),
     by_value(
         "id",
         "Subscription ID",
-        "Subscription ID. Comma-separate for several.",
+        "Subscription ID, from 'Subscriptions list'. Comma-separate for several.",
     ),
     by_flag(
         "mySubscribers",
