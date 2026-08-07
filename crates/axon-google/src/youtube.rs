@@ -897,6 +897,11 @@ const ACTIVITY_FILTERS: &[Filter] = &[
     by_value("channelId", "Channel ID", "Channel ID, starts with UC…"),
 ];
 
+// `managedByMe` is deliberately absent. It is a content-partner filter: YouTube
+// serves it only when the request also carries `onBehalfOfContentOwner` under a
+// token holding the `youtubepartner` scope. We send neither, so it answers 403
+// every time — the same reason `owner_only_part` sections stay out of "All
+// sections", applied to a filter instead of a part.
 const CHANNEL_FILTERS: &[Filter] = &[
     by_flag("mine", "Mine", "Your own channel."),
     by_value(
@@ -906,11 +911,6 @@ const CHANNEL_FILTERS: &[Filter] = &[
     ),
     by_value("forHandle", "Handle", "Channel handle, e.g. @SomeChannel."),
     by_value("forUsername", "Username", "Legacy YouTube username."),
-    by_flag(
-        "managedByMe",
-        "Managed by me",
-        "Channels managed by your content owner (CMS accounts).",
-    ),
 ];
 
 const CHANNEL_SECTION_FILTERS: &[Filter] = &[
@@ -2026,6 +2026,29 @@ mod tests {
         .expect_err("not a channels filter")
         .to_string();
         assert!(err.contains("cannot filter by 'playlistId'"), "{err}");
+    }
+
+    #[test]
+    fn the_content_partner_filter_is_not_offered() {
+        // `managedByMe` is served only alongside `onBehalfOfContentOwner` under a
+        // `youtubepartner` token. We send neither, so it answered 403 every time.
+        let tool = tool_from_spec(spec("gyoutube_channels_list"));
+        let choices = tool.input_schema["properties"]["filter_by"]["enum"]
+            .as_array()
+            .expect("enum")
+            .clone();
+        assert!(!choices.iter().any(|v| v == "managedByMe"), "{choices:?}");
+
+        // A node saved while it was still on the list now stops here, with a
+        // message naming the filters that work, instead of at the API with a 403.
+        let err = build_query(
+            spec("gyoutube_channels_list"),
+            &args(json!({ "part": ["snippet"], "filter_by": "managedByMe" })),
+        )
+        .expect_err("no longer a channels filter")
+        .to_string();
+        assert!(err.contains("cannot filter by 'managedByMe'"), "{err}");
+        assert!(err.contains("forHandle"), "{err}");
     }
 
     #[test]
