@@ -731,10 +731,49 @@ fn part_options(tool: &str) -> &'static [&'static str] {
     }
 }
 
+/// Sentinel `part` value meaning "every section this action returns". Expanded
+/// to the real list before the request goes out — the API itself has no such
+/// value.
+const ALL_PARTS: &str = "*";
+
+/// Only read actions offer "All sections". On insert/update the part list names
+/// the sections being written, so it has to match the body actually sent.
+fn offers_all_parts(tool: &str) -> bool {
+    tool.ends_with("_list")
+}
+
+/// Sections the API serves only to the resource's owner (or a CMS-linked
+/// account). "All sections" leaves them out: asking for one on someone else's
+/// video fails the *whole* request with a 403, which no amount of extra data is
+/// worth. They stay individually selectable for your own resources.
+fn owner_only_part(part: &str) -> bool {
+    matches!(
+        part,
+        "fileDetails" | "processingDetails" | "suggestions" | "contentOwnerDetails"
+    )
+}
+
+/// What `*` stands for on a given action. `id` is dropped because every response
+/// carries the resource id regardless of the part list — asking for it alongside
+/// other sections adds nothing.
+fn all_parts(tool: &str) -> Vec<&'static str> {
+    let expanded: Vec<&'static str> = part_options(tool)
+        .iter()
+        .copied()
+        .filter(|p| *p != "id" && !owner_only_part(p))
+        .collect();
+    if expanded.is_empty() {
+        part_options(tool).to_vec()
+    } else {
+        expanded
+    }
+}
+
 /// What each `part` section actually returns, so the picker can explain itself
 /// instead of listing bare API strings.
 fn part_description(part: &str) -> &'static str {
     match part {
+        ALL_PARTS => "Every section below in one call, except owner-only ones.",
         "snippet" => "Title, description, thumbnails and other basic details.",
         "contentDetails" => "Content info — durations, item counts, related playlists.",
         "statistics" => "View, like, comment and subscriber counts.",
@@ -1069,7 +1108,14 @@ fn tool_from_spec(spec: &ActionSpec) -> Tool {
     let mut properties = Map::new();
 
     if spec.requires_part {
-        let options = part_options(spec.tool);
+        // Reads lead with "All sections" and default to it: picking sections one
+        // by one is busywork when the usual answer is "give me everything".
+        let all = offers_all_parts(spec.tool);
+        let mut options: Vec<&str> = Vec::new();
+        if all {
+            options.push(ALL_PARTS);
+        }
+        options.extend(part_options(spec.tool).iter().copied());
         let descriptions: Map<String, Value> = options
             .iter()
             .map(|p| {
@@ -1079,6 +1125,16 @@ fn tool_from_spec(spec: &ActionSpec) -> Tool {
                 )
             })
             .collect();
+        let description = if all {
+            format!(
+                "Resource sections to return. '{ALL_PARTS}' fetches them all at once; \
+                 otherwise pick the sections you need. Only the listed values are accepted."
+            )
+        } else {
+            "Resource sections to write. Only the listed values are accepted; anything \
+             else is rejected by the API."
+                .to_string()
+        };
         properties.insert(
             "part".to_string(),
             json!({
@@ -1086,8 +1142,7 @@ fn tool_from_spec(spec: &ActionSpec) -> Tool {
                 "items": { "type": "string", "enum": options },
                 "enumDescriptions": descriptions,
                 "default": [options[0]],
-                "description": "Resource sections to return. Only the listed values are accepted; \
-                                anything else is rejected by the API."
+                "description": description,
             }),
         );
     }
@@ -1456,7 +1511,7 @@ fn build_path(spec: &ActionSpec, args: &Map<String, Value>) -> Result<String> {
 fn build_query(spec: &ActionSpec, args: &Map<String, Value>) -> Result<Vec<(String, String)>> {
     let mut query: Vec<(String, String)> = Vec::new();
 
-    if let Some(part) = part_arg(args) {
+    if let Some(part) = part_arg(spec, args) {
         query.push(("part".to_string(), part));
     }
 
@@ -1490,9 +1545,15 @@ fn build_query(spec: &ActionSpec, args: &Map<String, Value>) -> Result<Vec<(Stri
     }
 
     if spec.requires_part && !query.iter().any(|(k, _)| k == "part") {
+        let all_hint = if offers_all_parts(spec.tool) {
+            format!("'{ALL_PARTS}' for every section, or ")
+        } else {
+            String::new()
+        };
         bail!(
-            "{} requires 'part'. Choose one or more of: {}",
+            "{} requires 'part'. Choose {}one or more of: {}",
             spec.tool,
+            all_hint,
             part_options(spec.tool).join(", ")
         );
     }
@@ -1617,7 +1678,12 @@ fn filter_value(
 
 /// `part` arrives as a comma-separated string from agent calls and as an array
 /// from the workflow multi-select; normalise both to the comma list the API wants.
-fn part_arg(args: &Map<String, Value>) -> Option<String> {
+///
+/// The "all sections" sentinel expands here rather than at the picker, so a saved
+/// node keeps fetching everything even after a section is added to the action.
+/// Duplicates are dropped — `*` alongside a hand-picked section is a fair thing
+/// to select, and the API 400s on a repeated part.
+fn part_arg(spec: &ActionSpec, args: &Map<String, Value>) -> Option<String> {
     let raw: Vec<String> = match args.get("part")? {
         Value::String(s) => vec![s.clone()],
         Value::Array(items) => items
@@ -1626,14 +1692,29 @@ fn part_arg(args: &Map<String, Value>) -> Option<String> {
             .collect(),
         _ => return None,
     };
-    let joined = raw
-        .iter()
-        .flat_map(|s| s.split(','))
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join(",");
-    (!joined.is_empty()).then_some(joined)
+
+    let mut parts: Vec<String> = Vec::new();
+    for token in raw.iter().flat_map(|s| s.split(',')).map(str::trim) {
+        if token.is_empty() {
+            continue;
+        }
+        // "all" is what a model reaches for when the schema says '*'.
+        let expanded: Vec<String> = if token == ALL_PARTS || token.eq_ignore_ascii_case("all") {
+            all_parts(spec.tool)
+                .iter()
+                .map(|p| (*p).to_string())
+                .collect()
+        } else {
+            vec![token.to_string()]
+        };
+        for part in expanded {
+            if !parts.contains(&part) {
+                parts.push(part);
+            }
+        }
+    }
+
+    (!parts.is_empty()).then(|| parts.join(","))
 }
 
 fn parse_json_object_arg(args: &Map<String, Value>, key: &str) -> Result<Map<String, Value>> {
@@ -1746,6 +1827,64 @@ mod tests {
         )
         .expect("query");
         assert!(query.contains(&("part".to_string(), "snippet,statistics".to_string())));
+    }
+
+    #[test]
+    fn the_all_sentinel_expands_to_every_readable_section() {
+        let query = build_query(
+            spec("gyoutube_channels_list"),
+            &args(json!({ "part": ["*"], "filter_by": "mine" })),
+        )
+        .expect("query");
+        let part = query
+            .iter()
+            .find(|(k, _)| k == "part")
+            .map(|(_, v)| v.clone())
+            .expect("part");
+        assert_eq!(
+            part,
+            "snippet,contentDetails,statistics,status,brandingSettings,topicDetails,localizations"
+        );
+    }
+
+    #[test]
+    fn all_sections_leaves_out_owner_only_ones() {
+        let query = build_query(
+            spec("gyoutube_videos_list"),
+            &args(json!({ "part": "all", "filter_by": "id", "id": "abc" })),
+        )
+        .expect("query");
+        let part = query
+            .iter()
+            .find(|(k, _)| k == "part")
+            .map(|(_, v)| v.clone())
+            .expect("part");
+        // These 403 the whole request on a video you do not own.
+        for owner_only in ["fileDetails", "processingDetails", "suggestions"] {
+            assert!(!part.contains(owner_only), "{part}");
+        }
+        assert!(part.contains("statistics"), "{part}");
+    }
+
+    #[test]
+    fn all_sections_next_to_a_hand_picked_one_does_not_repeat_it() {
+        let query = build_query(
+            spec("gyoutube_channels_list"),
+            &args(json!({ "part": ["*", "snippet"], "filter_by": "mine" })),
+        )
+        .expect("query");
+        let part = query
+            .iter()
+            .find(|(k, _)| k == "part")
+            .map(|(_, v)| v.clone())
+            .expect("part");
+        assert_eq!(part.matches("snippet").count(), 1, "{part}");
+    }
+
+    #[test]
+    fn writes_do_not_offer_all_sections() {
+        assert!(!offers_all_parts("gyoutube_videos_update"));
+        assert!(offers_all_parts("gyoutube_videos_list"));
     }
 
     #[test]
@@ -1985,12 +2124,27 @@ mod tests {
         let properties = tool.input_schema.get("properties").expect("properties");
         let part = &properties["part"];
         assert_eq!(part["type"], "array");
-        assert_eq!(part["items"]["enum"][0], "snippet");
-        assert_eq!(part["default"], json!(["snippet"]));
-        assert!(!part["enumDescriptions"]["statistics"]
-            .as_str()
-            .unwrap_or_default()
-            .is_empty());
+        // Reads lead with "all sections" and start there; the individual
+        // sections stay selectable behind it.
+        assert_eq!(part["items"]["enum"][0], ALL_PARTS);
+        assert_eq!(part["items"]["enum"][1], "snippet");
+        assert_eq!(part["default"], json!([ALL_PARTS]));
+        for described in [ALL_PARTS, "statistics"] {
+            assert!(
+                !part["enumDescriptions"][described]
+                    .as_str()
+                    .unwrap_or_default()
+                    .is_empty(),
+                "{described} has no blurb"
+            );
+        }
+
+        // A write still starts on a real section — "all" would name sections the
+        // request body does not carry.
+        let write = tool_from_spec(spec("gyoutube_videos_update"));
+        let write_part = &write.input_schema["properties"]["part"];
+        assert_eq!(write_part["items"]["enum"][0], "snippet");
+        assert_eq!(write_part["default"], json!(["snippet"]));
     }
 
     #[test]
