@@ -79,8 +79,11 @@ class ChatSocket(
         ws = http.newWebSocket(req, object : WebSocketListener() {
 
             /** One drop report per socket: [onClosing] completes the handshake,
-             *  which makes OkHttp deliver [onClosed] for the same death. */
-            private var reported = false
+             *  which makes OkHttp deliver [onClosed] for the same death. Atomic
+             *  because the three callbacks below do not all arrive on the same
+             *  thread — OkHttp raises a write failure from the writer, not the
+             *  reader — and a double report would schedule two reconnects. */
+            private val reported = java.util.concurrent.atomic.AtomicBoolean(false)
 
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 if (gen.get() != myGen) return
@@ -117,8 +120,7 @@ class ChatSocket(
                 dropped()
 
             private fun dropped() {
-                if (reported) return
-                reported = true
+                if (!reported.compareAndSet(false, true)) return
                 if (gen.get() != myGen) return
                 connected = false
                 listener.onWsDisconnected()
