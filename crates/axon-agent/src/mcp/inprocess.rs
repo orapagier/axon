@@ -112,10 +112,26 @@ impl InProcessMcp {
     }
 }
 
-fn is_google(name: &str) -> bool {
+pub(crate) fn is_google(name: &str) -> bool {
+    // `gyoutube_`/`gplaces_` are served by GoogleService too (its `call` tries
+    // `youtube::try_call` and `places::try_call` first, and `tool_list` publishes
+    // them). They were missing here, so every YouTube/Places tool fell through to
+    // the business service and came back "Unknown Business tool".
     const PREFIXES: &[&str] = &[
-        "google_", "gmail_", "gcal_", "gdrive_", "gdocs_", "gsheets_", "gcon_", "gmeet_",
-        "gtasks_", "gslides_", "gforms_", "gchat_",
+        "google_",
+        "gmail_",
+        "gcal_",
+        "gdrive_",
+        "gdocs_",
+        "gsheets_",
+        "gcon_",
+        "gmeet_",
+        "gtasks_",
+        "gslides_",
+        "gforms_",
+        "gchat_",
+        "gyoutube_",
+        "gplaces_",
     ];
     PREFIXES.iter().any(|p| name.starts_with(p))
 }

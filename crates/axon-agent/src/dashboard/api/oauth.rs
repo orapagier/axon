@@ -209,15 +209,44 @@ h1{color:#dc2626;margin:0 0 12px}p{color:#6b7280;margin:0;line-height:1.5}</styl
     }
 }
 
+/// Run a connect-flow tool and surface the real failure reason.
+///
+/// `ToolRegistry::run` only returns `Err` when the tool could not be *invoked*;
+/// a tool that ran and failed comes back as `Ok({error: true, message: …})`
+/// (see `normalize_mcp_output`). Without unwrapping that, a failed OAuth
+/// exchange reaches the caller as a success-shaped value whose fields are all
+/// missing, and the user is shown "no data returned" instead of what Google or
+/// Meta actually said.
+async fn run_connect_tool(
+    state: &AppState,
+    tool: &str,
+    code: &str,
+) -> Result<serde_json::Value, String> {
+    let value = state
+        .tools
+        .run(tool, json!({ "code": code }))
+        .await
+        .map_err(|e| e.to_string())?;
+    if value
+        .get("error")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        return Err(value
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("the OAuth exchange failed")
+            .to_string());
+    }
+    Ok(value)
+}
+
 /// Facebook "Connect a Page" callback: exchanges the OAuth code for every Page
 /// the user manages and saves each as its own credential (service "facebook").
 /// The credential id is derived from the Page id so reconnecting refreshes the
 /// token in place instead of creating duplicates.
 async fn facebook_connect_callback(state: &AppState, code: &str) -> axum::response::Html<String> {
-    let result = state
-        .tools
-        .run("facebook_exchange_code_pages", json!({ "code": code }))
-        .await;
+    let result = run_connect_tool(state, "facebook_exchange_code_pages", code).await;
 
     let pages = match result {
         Ok(v) => v
@@ -225,7 +254,7 @@ async fn facebook_connect_callback(state: &AppState, code: &str) -> axum::respon
             .and_then(|p| p.as_array())
             .cloned()
             .unwrap_or_default(),
-        Err(e) => return connect_error_html(&e.to_string()),
+        Err(e) => return connect_error_html(&e),
     };
 
     if pages.is_empty() {
@@ -310,13 +339,9 @@ h1{{color:#16a34a;margin:0 0 12px}}p{{color:#6b7280;margin:0 0 8px;line-height:1
 /// re-grant a scope or replace a revoked refresh token — updates that account in
 /// place instead of piling up duplicates.
 async fn google_connect_callback(state: &AppState, code: &str) -> axum::response::Html<String> {
-    let account = match state
-        .tools
-        .run("google_exchange_code_account", json!({ "code": code }))
-        .await
-    {
+    let account = match run_connect_tool(state, "google_exchange_code_account", code).await {
         Ok(v) => v,
-        Err(e) => return connect_error_html(&e.to_string()),
+        Err(e) => return connect_error_html(&e),
     };
 
     let field = |key: &str| account.get(key).and_then(|v| v.as_str()).unwrap_or("");

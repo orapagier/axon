@@ -257,6 +257,7 @@ const MCP_SERVICE_META = {
 // the account picker only appears where selecting one actually has an effect.
 const GOOGLE_ACCOUNT_SERVICES = new Set([
   'gmail', 'gcal', 'gdrive', 'gdocs', 'gsheets', 'gcon', 'gmeet', 'gslides', 'gchat',
+  'gyoutube', 'gplaces',
 ]);
 
 function schemaToProperties(tool, nodeConfig = {}) {

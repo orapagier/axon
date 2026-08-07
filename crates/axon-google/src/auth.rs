@@ -19,6 +19,8 @@ const SCOPES: &[&str] = &[
 
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const USERINFO_URL: &str = "https://www.googleapis.com/oauth2/v3/userinfo";
+/// Fallback identity source when the userinfo scopes were not granted.
+const GMAIL_PROFILE_URL: &str = "https://gmail.googleapis.com/gmail/v1/users/me/profile";
 
 /// Marks the "connect an extra account as a credential" leg of the OAuth dance
 /// so the shared callback can tell it apart from the Services-page sign-in and
@@ -123,20 +125,36 @@ pub async fn exchange_code_account(state: &AppState, code: &str) -> Result<Value
         .get(&token.access_token, USERINFO_URL)
         .await
         .unwrap_or_else(|_| json!({}));
-    let email = profile
-        .get("email")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Could not read the account's email address. Make sure the \
-                 userinfo.email scope was granted."
-            )
-        })?;
+    let email = match profile.get("email").and_then(|v| v.as_str()) {
+        Some(e) if !e.is_empty() => e.to_string(),
+        // The consent screen lets the user withhold individual scopes, and
+        // userinfo.email is easy to miss. Gmail's own profile endpoint reports
+        // the same address off the gmail scope this flow can't work without, so
+        // fall back to it rather than failing a login that is otherwise fine.
+        _ => state
+            .get(&token.access_token, GMAIL_PROFILE_URL)
+            .await
+            .ok()
+            .and_then(|p| {
+                p.get("emailAddress")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+            })
+            .filter(|e| !e.is_empty())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Could not read this account's email address. Re-run the connect flow \
+                     and leave every requested permission checked."
+                )
+            })?,
+    };
 
     Ok(json!({
         "email": email,
-        "name": profile.get("name").and_then(|v| v.as_str()).unwrap_or(email),
+        "name": profile
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&email),
         "access_token": token.access_token,
         "refresh_token": refresh_token,
         "expires_at": token.expires_at,

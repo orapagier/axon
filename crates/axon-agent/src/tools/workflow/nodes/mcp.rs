@@ -8,8 +8,20 @@ use serde_json::Value;
 /// Mirrors `mcp::inprocess::is_google` — the routing that decides which service
 /// actually handles the call.
 const GOOGLE_TOOL_PREFIXES: &[&str] = &[
-    "google_", "gmail_", "gcal_", "gdrive_", "gdocs_", "gsheets_", "gcon_", "gmeet_", "gtasks_",
-    "gslides_", "gforms_", "gchat_",
+    "google_",
+    "gmail_",
+    "gcal_",
+    "gdrive_",
+    "gdocs_",
+    "gsheets_",
+    "gcon_",
+    "gmeet_",
+    "gtasks_",
+    "gslides_",
+    "gforms_",
+    "gchat_",
+    "gyoutube_",
+    "gplaces_",
 ];
 
 fn is_google_tool(tool_name: &str) -> bool {
@@ -134,6 +146,8 @@ mod tests {
             "gdrive_upload",
             "gsheets_read",
             "google_auth_status",
+            "gyoutube_activities_list",
+            "gplaces_search_text",
         ] {
             assert!(is_google_tool(name), "{name} should be Google-backed");
         }
@@ -155,15 +169,23 @@ mod tests {
         // These reach a different backend, so a Google account selection on them
         // would be a no-op — `is_google` in mcp/inprocess.rs does not route them
         // to the Google service either.
-        for name in [
-            "outlook_send",
-            "facebook_post",
-            "crm_lead_create",
-            "gyoutube_activities_list",
-            "gplaces_search_text",
-            "",
-        ] {
+        for name in ["outlook_send", "facebook_post", "crm_lead_create", ""] {
             assert!(!is_google_tool(name), "{name} should not be Google-backed");
+        }
+    }
+
+    /// This list must not drift from the routing in `mcp::inprocess::is_google`:
+    /// a prefix here that is not routed to Google would show an account picker
+    /// that does nothing, and one missing here would silently ignore the
+    /// account the user picked.
+    #[test]
+    fn prefixes_match_the_inprocess_google_routing() {
+        for name in GOOGLE_TOOL_PREFIXES {
+            let sample = format!("{name}probe");
+            assert!(
+                crate::mcp::inprocess::is_google(&sample),
+                "{sample} is offered an account picker but is not routed to Google"
+            );
         }
     }
 
