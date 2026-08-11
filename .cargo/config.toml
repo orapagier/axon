@@ -1,2 +1,5 @@
 [build]
-jobs = 1
+# Was jobs = 1, which serialised every build. 6 keeps peak RSS comfortably
+# inside the 8GB .wslconfig cap on a 12-core host while giving real
+# parallelism; raise it if the memory ceiling is ever lifted.
+jobs = 6
