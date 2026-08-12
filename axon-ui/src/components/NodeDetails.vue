@@ -1634,7 +1634,15 @@ function getHostnameSafe(url) {
 }
 function normalizeConfig() {
   if (!props.node?.data?.config || !nodeDefinition.value) return
-  nodeDefinition.value.properties.forEach(p => {
+  // An inlineGroup is a layout wrapper, not a field: its own name is a group id
+  // with nothing behind it, while the real parameters are its options. Flatten
+  // it so those get seeded like any other property — otherwise a grouped field
+  // with a default (the free-slot working hours, 09:00–17:00) renders blank and
+  // silently searches around the clock.
+  const properties = nodeDefinition.value.properties.flatMap(
+    p => p.type === 'inlineGroup' ? (p.options || []) : [p]
+  )
+  properties.forEach(p => {
     if (props.node.data.config[p.name] === undefined) {
       if (p.type === 'collection') {
         // Seed the collection's option defaults so booleans (e.g. Follow
@@ -1660,7 +1668,7 @@ function normalizeConfig() {
   // the Sheets batch-read `ranges`, once a JSON-array textarea) may be stored
   // as a string or bare array. Wrap it in the {parameters: [...]} envelope so
   // saved rows render and the Add button works.
-  nodeDefinition.value.properties.forEach(p => {
+  properties.forEach(p => {
     if (p.type !== 'fixedCollection') return
     const v = props.node.data.config[p.name]
     if (v === undefined || (v && typeof v === 'object' && !Array.isArray(v))) return

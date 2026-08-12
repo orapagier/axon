@@ -1154,13 +1154,15 @@ pub async fn find_free_slots(
         }
     }
 
+    let (open, close) = working_hours(day_start, day_end)?;
+
     let window = SlotWindow {
         from: search_start,
         to: search_end,
         duration,
         offset,
-        open: day_start.map(parse_clock).transpose()?,
-        close: day_end.map(parse_clock).transpose()?,
+        open,
+        close,
         skip_weekends,
         max_slots,
     };
@@ -1300,6 +1302,30 @@ fn parse_instant(v: &str) -> Result<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(&normalized)
         .map(|t| t.with_timezone(&Utc))
         .map_err(|_| anyhow::anyhow!("Could not read '{v}' as a date and time."))
+}
+
+/// The daily open/close pair for a free-slot search.
+///
+/// [`SlotWindow::carve`] walks one local day at a time, so an overnight range
+/// ("22:00" to "06:00") describes a day that shuts before it opens and matches
+/// nothing at all. Left to itself that returns an empty slot list, which reads
+/// as "every court is booked" rather than "those hours can't be searched".
+fn working_hours(
+    day_start: Option<&str>,
+    day_end: Option<&str>,
+) -> Result<(Option<NaiveTime>, Option<NaiveTime>)> {
+    let open = day_start.map(parse_clock).transpose()?;
+    let close = day_end.map(parse_clock).transpose()?;
+    if let (Some(o), Some(c)) = (open, close) {
+        if o >= c {
+            anyhow::bail!(
+                "The earliest time of day ({o}) is not before the latest ({c}), so no day has any \
+                 bookable hours. An overnight range isn't supported — search a single daytime \
+                 range, or leave both blank to search around the clock."
+            );
+        }
+    }
+    Ok((open, close))
 }
 
 /// A wall-clock time of day: "09:00", "9:00", "17:30:00".
@@ -1607,6 +1633,23 @@ mod tests {
         assert_eq!(slots[1]["availableMinutes"], json!(120));
         assert_eq!(slots[2]["availableMinutes"], json!(150));
         assert_eq!(slots[0]["weekday"], json!("Monday"));
+    }
+
+    #[test]
+    fn an_overnight_working_day_is_refused_rather_than_returning_nothing() {
+        let err = working_hours(Some("22:00"), Some("06:00"))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("overnight") || err.contains("earliest"),
+            "got: {err}"
+        );
+        // Equal times leave a zero-length day — same silent-empty trap.
+        assert!(working_hours(Some("09:00"), Some("09:00")).is_err());
+        // The ordinary cases still pass through, including one-sided limits.
+        assert!(working_hours(Some("09:00"), Some("17:00")).is_ok());
+        assert!(working_hours(None, Some("17:00")).is_ok());
+        assert!(working_hours(None, None).unwrap() == (None, None));
     }
 
     #[test]

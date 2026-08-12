@@ -355,9 +355,17 @@ function schemaToProperties(tool, nodeConfig = {}) {
   const googleAccountId = nodeConfig?.credential_id || ''
 
   // The backend serializes schema keys alphabetically, which inverts natural
-  // pairs (time_max before time_min, end before start). Pin them back.
+  // pairs (time_max before time_min, end before start). Pin them back. Every
+  // pair that shares an inlineGroup belongs here, or the group renders its two
+  // halves the wrong way round — "Latest time of day" ahead of "Earliest".
   const paramEntries = Object.entries(params)
-  for (const [first, second] of [['time_min', 'time_max'], ['start', 'end']]) {
+  for (const [first, second] of [
+    ['time_min', 'time_max'],
+    ['start', 'end'],
+    ['start_datetime', 'end_datetime'],
+    ['day_start', 'day_end'],
+    ['reminder_minutes', 'reminder_method'],
+  ]) {
     const fi = paramEntries.findIndex(([k]) => k === first)
     const si = paramEntries.findIndex(([k]) => k === second)
     if (fi > -1 && si > -1 && si < fi) {
