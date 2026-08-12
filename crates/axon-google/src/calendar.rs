@@ -48,19 +48,49 @@ pub(crate) fn send_updates_or_all(v: Option<&str>) -> &'static str {
 // ── Calendars ─────────────────────────────────────────────────────────────────
 
 /// List all calendars in the user's calendar list.
+///
+/// `showHidden=true` matters: calendars subscribed to under "Other calendars"
+/// arrive with `hidden: true` until they're ticked in Google's own sidebar, and
+/// the API's default (`false`) would silently drop them from the picker. Pages
+/// are followed to the end so the result is the whole list rather than Google's
+/// first 100 entries.
 pub async fn list_calendars(state: &AppState) -> Result<Value> {
     let tok = access_token(state).await?;
-    let resp: Value = state
-        .client
-        .get(format!("{BASE}/users/me/calendarList"))
-        .bearer_auth(&tok)
-        .send()
-        .await?
-        .ensure_ok()
-        .await?
-        .json()
-        .await?;
-    Ok(resp)
+    let mut items: Vec<Value> = Vec::new();
+    let mut page_token: Option<String> = None;
+
+    loop {
+        let mut params = vec![
+            ("maxResults", "250".to_string()),
+            ("showHidden", "true".to_string()),
+        ];
+        if let Some(pt) = &page_token {
+            params.push(("pageToken", pt.clone()));
+        }
+
+        let resp: Value = state
+            .client
+            .get(format!("{BASE}/users/me/calendarList"))
+            .bearer_auth(&tok)
+            .query(&params)
+            .send()
+            .await?
+            .ensure_ok()
+            .await?
+            .json()
+            .await?;
+
+        if let Some(page) = resp.get("items").and_then(|v| v.as_array()) {
+            items.extend(page.iter().cloned());
+        }
+
+        match resp.get("nextPageToken").and_then(|v| v.as_str()) {
+            Some(pt) => page_token = Some(pt.to_string()),
+            None => break,
+        }
+    }
+
+    Ok(json!({ "kind": "calendar#calendarList", "items": items }))
 }
 
 // ── Events ────────────────────────────────────────────────────────────────────
