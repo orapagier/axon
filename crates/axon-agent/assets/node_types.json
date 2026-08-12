@@ -29,6 +29,10 @@
       "value": "gmail"
      },
      {
+      "name": "Google Calendar",
+      "value": "gcal"
+     },
+     {
       "name": "Webhook",
       "value": "webhook"
      },
@@ -578,6 +582,116 @@
      }
     },
     "hint": "Save every attachment & inline image to data/files and attach their paths (email.files[]). The full decoded body, signature/quote split, parsed sender, links and contacts are always included on each email."
+   },
+   {
+    "displayName": "Google Calendar Account",
+    "name": "credential_id",
+    "type": "credential",
+    "service": "google",
+    "default": "",
+    "displayOptions": {
+     "show": {
+      "type": [
+       "gcal"
+      ]
+     }
+    },
+    "hint": "Which account’s calendar to watch. Use Connect to add another Google account. Leave as \"None\" to watch the account signed in on the Credentials page."
+   },
+   {
+    "displayName": "Watch For",
+    "name": "gcal_event",
+    "type": "options",
+    "options": [
+     {
+      "name": "Any change (added, edited or cancelled)",
+      "value": "any_change"
+     },
+     {
+      "name": "New event added",
+      "value": "event_created"
+     },
+     {
+      "name": "Event changed",
+      "value": "event_updated"
+     },
+     {
+      "name": "Event cancelled or deleted",
+      "value": "event_cancelled"
+     },
+     {
+      "name": "Event about to start",
+      "value": "event_starting_soon"
+     }
+    ],
+    "default": "any_change",
+    "displayOptions": {
+     "show": {
+      "type": [
+       "gcal"
+      ]
+     }
+    },
+    "hint": "What has to happen for this workflow to run."
+   },
+   {
+    "displayName": "Calendar",
+    "name": "gcal_calendar_id",
+    "type": "string",
+    "default": "primary",
+    "displayOptions": {
+     "show": {
+      "type": [
+       "gcal"
+      ]
+     }
+    },
+    "hint": "Which calendar to watch. Leave as \"primary\" for your main calendar, or paste a calendar ID (often an email address) from the List Calendars action."
+   },
+   {
+    "displayName": "Minutes Before Start",
+    "name": "gcal_minutes_before",
+    "type": "number",
+    "default": 15,
+    "displayOptions": {
+     "show": {
+      "type": [
+       "gcal"
+      ],
+      "gcal_event": [
+       "event_starting_soon"
+      ]
+     }
+    },
+    "hint": "How far ahead to fire, in minutes. 15 means the workflow runs a quarter of an hour before each event begins. Each occurrence fires once. Maximum 1440 (a day)."
+   },
+   {
+    "displayName": "Poll Interval (minutes)",
+    "name": "poll_interval",
+    "type": "number",
+    "default": 5,
+    "displayOptions": {
+     "show": {
+      "type": [
+       "gcal"
+      ]
+     }
+    },
+    "hint": "How often to check the calendar (in minutes). Minimum: 1. For \"Event about to start\", set this well below the lead time above, or a booking can slip past the window between checks."
+   },
+   {
+    "displayName": "Only Events Matching",
+    "name": "gcal_query",
+    "type": "string",
+    "default": "",
+    "displayOptions": {
+     "show": {
+      "type": [
+       "gcal"
+      ]
+     }
+    },
+    "hint": "Optional free text. Only events whose title, description, location or guests contain this fire the workflow. Leave empty for every event. Plain text (no {{ }} expressions — this is a trigger)."
    },
    {
     "displayName": "Feed URL",

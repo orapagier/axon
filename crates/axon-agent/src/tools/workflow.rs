@@ -453,6 +453,124 @@ fn rss_entry_key(entry: &Value) -> Option<String> {
     None
 }
 
+// ── Google Calendar trigger ───────────────────────────────────────────────────
+
+/// What the Google Calendar Stimulus node was set to watch for.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum GcalWatch {
+    /// A booking appears on the calendar.
+    Created,
+    /// An existing booking is edited (moved, renamed, guests changed).
+    Updated,
+    /// A booking is deleted or cancelled.
+    Cancelled,
+    /// Any of the above.
+    AnyChange,
+    /// An event is about to start — the reminder case, which is not a change
+    /// to the calendar at all and so is polled a different way entirely.
+    StartingSoon,
+}
+
+impl GcalWatch {
+    fn from_config(config: &Value) -> Self {
+        match config.get("gcal_event").and_then(|v| v.as_str()) {
+            Some("event_created") => Self::Created,
+            Some("event_updated") => Self::Updated,
+            Some("event_cancelled") => Self::Cancelled,
+            Some("event_starting_soon") => Self::StartingSoon,
+            // Default matches the node's default so a half-configured node
+            // behaves the way its dropdown reads.
+            _ => Self::AnyChange,
+        }
+    }
+
+    /// Does a row from `gcal_changes_since` belong to this watch?
+    fn accepts(self, change_type: &str) -> bool {
+        match self {
+            Self::AnyChange => true,
+            Self::Created => change_type == "created",
+            Self::Updated => change_type == "updated",
+            Self::Cancelled => change_type == "cancelled",
+            // Never fed from the change feed.
+            Self::StartingSoon => false,
+        }
+    }
+}
+
+/// The calendar, text filter and lead time a Google Calendar trigger polls with.
+fn gcal_trigger_cfg(config: &Value) -> (String, Option<String>, i64) {
+    let calendar_id = config
+        .get("gcal_calendar_id")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("primary")
+        .to_string();
+    let query = config
+        .get("gcal_query")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    // How far ahead "starting soon" looks. Clamped low so a mistyped 10000 can't
+    // fire the workflow for every booking in the next week.
+    let minutes_before = cfg_usize(config, "gcal_minutes_before")
+        .unwrap_or(15)
+        .clamp(1, 1440) as i64;
+    (calendar_id, query, minutes_before)
+}
+
+/// The start instant of an event row, whether it is timed (`start.dateTime`) or
+/// all-day (`start.date`). All-day events anchor to local midnight, which is
+/// what "starting soon" should mean for them.
+fn gcal_event_start(event: &Value) -> Option<chrono::DateTime<chrono::Utc>> {
+    let start = event.get("start")?;
+    if let Some(dt) = start.get("dateTime").and_then(|v| v.as_str()) {
+        return chrono::DateTime::parse_from_rfc3339(dt)
+            .ok()
+            .map(|t| t.with_timezone(&chrono::Utc));
+    }
+    let date = start.get("date").and_then(|v| v.as_str())?;
+    let offset = axon_core::flexidate::default_tz_offset();
+    chrono::DateTime::parse_from_rfc3339(&format!("{date}T00:00:00{offset}"))
+        .ok()
+        .map(|t| t.with_timezone(&chrono::Utc))
+}
+
+/// Events starting inside the lead-time window, i.e. the ones a "starting soon"
+/// trigger should fire for on this poll.
+///
+/// Split out from the poller so the window arithmetic can be checked without a
+/// calendar: the edges are what matter (an event that already started must not
+/// fire, one past the window must wait for a later poll).
+fn gcal_starting_within(
+    events: &[Value],
+    now: chrono::DateTime<chrono::Utc>,
+    minutes_before: i64,
+) -> Vec<Value> {
+    let horizon = now + chrono::Duration::minutes(minutes_before);
+    events
+        .iter()
+        .filter(|ev| {
+            // A cancelled booking is not about to start.
+            if ev.get("status").and_then(|v| v.as_str()) == Some("cancelled") {
+                return false;
+            }
+            gcal_event_start(ev).is_some_and(|s| s >= now && s <= horizon)
+        })
+        .cloned()
+        .collect()
+}
+
+/// Per-occurrence idempotency key. Keyed on the start time as well as the id so
+/// that each occurrence of a repeating booking fires once, while a poll overlap
+/// or an agent restart within the same window does not fire twice.
+fn gcal_soon_key(workflow_id: &str, event: &Value) -> Option<String> {
+    let id = event.get("id").and_then(|v| v.as_str())?;
+    let start = gcal_event_start(event)?.to_rfc3339();
+    Some(format!("{workflow_id}:{id}:{start}"))
+}
+
 pub(crate) async fn execute_rss_trigger(
     config: &Value,
     workflow_id: &str,
@@ -2026,7 +2144,7 @@ impl WorkflowEngine {
         // (narrowed separately by the pin below) — starts from every trigger node.
         let entry_trigger_type: Option<&str> = match trigger_source {
             "telegram" | "gmail" | "whatsapp" | "webhook" | "github" | "facebook" | "cron"
-            | "crm" | "rss" => Some(trigger_source),
+            | "crm" | "rss" | "gcal" => Some(trigger_source),
             // An error run (A3) starts ONLY from error-type trigger nodes; a normal
             // run never does (handled by `is_error_trigger` exclusion below).
             "error" => Some("error"),
@@ -3535,7 +3653,7 @@ impl WorkflowEngine {
 
     fn trigger_priority(trigger_type: &str) -> u8 {
         match trigger_type {
-            "gmail" | "crm" | "rss" => 3,
+            "gmail" | "crm" | "rss" | "gcal" => 3,
             "cron" | "watcher" => 2,
             _ => 1,
         }
@@ -3935,7 +4053,7 @@ impl WorkflowEngine {
                          FROM workflows w
                          LEFT JOIN workflow_nodes wn ON wn.workflow_id = w.id AND wn.node_type IN ('trigger', 'circadian', 'stimulus')
                          WHERE w.enabled = 1
-                    ) WHERE trigger_type IN ('cron', 'watcher', 'gmail', 'crm', 'rss')"
+                    ) WHERE trigger_type IN ('cron', 'watcher', 'gmail', 'crm', 'rss', 'gcal')"
                 )
                     .and_then(|mut s| s.query_map([], |r| Ok(Workflow {
                         id: r.get(0)?, name: r.get(1)?, description: String::new(), enabled: true,
@@ -4039,6 +4157,40 @@ impl WorkflowEngine {
                                 tracing::debug!("RSS trigger '{}': no new items", wf_name)
                             }
                             Err(e) => tracing::warn!("RSS trigger '{}' failed: {}", wf_name, e),
+                        }
+                    });
+                } else if wf.trigger_type == "gcal" {
+                    // Google Calendar trigger: same poll-first watcher pattern —
+                    // fire on genuine calendar changes, or on bookings about to
+                    // start, never on a poll that found nothing new.
+                    if !should_trigger(&wf, state.settings.agent_utc_offset_hours()) {
+                        continue;
+                    }
+                    if Self::is_workflow_run_active(state.as_ref(), &wf.id) {
+                        tracing::info!(
+                            "Workflow '{}' ({}) already running; skip duplicate calendar trigger",
+                            wf.name,
+                            wf.id
+                        );
+                        continue;
+                    }
+
+                    let s = state.clone();
+                    let wf_id = wf.id.clone();
+                    let wf_name = wf.name.clone();
+                    tokio::spawn(async move {
+                        match check_and_trigger_gcal(&wf_id, &wf_name, &wf.trigger_config, &s).await
+                        {
+                            Ok(true) => tracing::info!(
+                                "Calendar trigger '{}': events found, workflow triggered",
+                                wf_name
+                            ),
+                            Ok(false) => {
+                                tracing::debug!("Calendar trigger '{}': nothing new", wf_name)
+                            }
+                            Err(e) => {
+                                tracing::warn!("Calendar trigger '{}' failed: {}", wf_name, e)
+                            }
                         }
                     });
                 } else if wf.trigger_type == "crm" {
@@ -4804,6 +4956,460 @@ pub(crate) async fn execute_crm_trigger(
     }))
 }
 
+/// Google Calendar watcher. Two quite different questions share one node:
+///
+///   * "did the calendar change?" — polled against `gcal_changes_since` with a
+///     stored cursor, the same shape as the CRM watcher.
+///   * "is something about to start?" — polled against the upcoming events in a
+///     short forward window, deduped per occurrence. There is no change to
+///     detect here; the event simply gets closer, so a cursor is meaningless.
+///
+/// Both paths baseline silently on the first poll: switching a workflow on
+/// should not fire it once for every booking already in the calendar.
+async fn check_and_trigger_gcal(
+    workflow_id: &str,
+    workflow_name: &str,
+    trigger_config: &Value,
+    state: &AppState,
+) -> Result<bool, String> {
+    let watch = GcalWatch::from_config(trigger_config);
+    let (calendar_id, query, minutes_before) = gcal_trigger_cfg(trigger_config);
+
+    // The Google account picked on the Stimulus node. As with gmail, this scopes
+    // only the trigger's own calls — nodes inside the workflow keep choosing
+    // their own account.
+    let account = crate::google_accounts::resolve(
+        state,
+        &crate::google_accounts::credential_id_of(trigger_config),
+    )
+    .await?;
+
+    if watch == GcalWatch::StartingSoon {
+        return gcal_check_starting_soon(
+            workflow_id,
+            workflow_name,
+            state,
+            account,
+            &calendar_id,
+            query.as_deref(),
+            minutes_before,
+        )
+        .await;
+    }
+
+    // Trigger state lives on the workflows row, not the (read-only snapshot of
+    // the) Stimulus node config — same as the CRM watcher.
+    let cursor: Option<String> = {
+        let conn = state.db.get().map_err(|e| e.to_string())?;
+        conn.query_row(
+            "SELECT json_extract(trigger_config, '$.gcal_cursor') FROM workflows WHERE id = ?1",
+            rusqlite::params![workflow_id],
+            |r| r.get::<_, Option<String>>(0),
+        )
+        .map_err(|e| e.to_string())?
+    };
+
+    let persist = |cursor: &str| -> Result<(), String> {
+        let conn = state.db.get().map_err(|e| e.to_string())?;
+        conn.execute(
+            "UPDATE workflows SET trigger_config = json_set(COALESCE(trigger_config, '{}'),
+                 '$.gcal_cursor', ?1) WHERE id = ?2",
+            rusqlite::params![cursor, workflow_id],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    };
+
+    let Some(cursor) = cursor else {
+        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        persist(&now)?;
+        tracing::info!(
+            "Calendar trigger '{}': first poll — baseline cursor stored (silent)",
+            workflow_name
+        );
+        return Ok(false);
+    };
+
+    let args = json!({
+        "calendar_id": calendar_id,
+        "since": cursor,
+        "query": query,
+        "max_results": 250,
+    });
+    let data = axon_core::google_account::scoped(account, async {
+        state
+            .tools
+            .run("gcal_changes_since", args)
+            .await
+            .map_err(|e| e.to_string())
+    })
+    .await?;
+
+    let changes = data
+        .get("changes")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let next_cursor = data
+        .get("cursor")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&cursor)
+        .to_string();
+
+    let hits: Vec<Value> = changes
+        .iter()
+        .filter(|c| {
+            watch.accepts(
+                c.get("changeType")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("updated"),
+            )
+        })
+        .cloned()
+        .collect();
+
+    // Advance the cursor BEFORE firing, matching gmail and CRM: a crash mid-run
+    // must not replay the same changes on every poll thereafter.
+    persist(&next_cursor)?;
+
+    if hits.is_empty() {
+        return Ok(false);
+    }
+
+    tracing::info!(
+        "Calendar trigger '{}': {} matching change(s) (out of {} since cursor)",
+        workflow_name,
+        hits.len(),
+        changes.len()
+    );
+
+    let run_id = uuid::Uuid::new_v4().to_string();
+    trigger_data::stage(
+        &run_id,
+        json!({
+            "trigger": "gcal",
+            "calendar_id": calendar_id,
+            "event": trigger_config.get("gcal_event").and_then(|v| v.as_str()).unwrap_or("any_change"),
+            "event_count": hits.len(),
+            "events": hits,
+        }),
+    );
+
+    // Cursor is already committed, so a queue-full shed would silently drop these
+    // changes — run unbounded instead, exactly as gmail and CRM do.
+    let _slot = acquire_run_slot(state).await;
+    if _slot.is_none() {
+        tracing::warn!(
+            "Calendar trigger '{}': run queue full; running unbounded to avoid dropping {} change(s)",
+            workflow_name,
+            hits.len()
+        );
+    }
+    WorkflowEngine::run_with_trigger(workflow_id, state, "gcal", None, false, Some(run_id))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(true)
+}
+
+/// The "starting soon" half of the calendar watcher.
+///
+/// Dedup is per occurrence rather than by cursor: the same booking sits in the
+/// lead-time window for several consecutive polls, and firing once per poll
+/// would send a reminder every minute until the meeting began.
+#[allow(clippy::too_many_arguments)]
+async fn gcal_check_starting_soon(
+    workflow_id: &str,
+    workflow_name: &str,
+    state: &AppState,
+    account: Option<String>,
+    calendar_id: &str,
+    query: Option<&str>,
+    minutes_before: i64,
+) -> Result<bool, String> {
+    let now = chrono::Utc::now();
+    // Ask for a slightly wider window than the lead time so an event that slips
+    // in between polls is still caught; `gcal_starting_within` trims it back.
+    let horizon = now + chrono::Duration::minutes(minutes_before + 5);
+    let args = json!({
+        "calendar_id": calendar_id,
+        "time_min": now.to_rfc3339(),
+        "time_max": horizon.to_rfc3339(),
+        "query": query,
+        "max_results": 250,
+        "single_events": true,
+    });
+    let data = axon_core::google_account::scoped(account, async {
+        state
+            .tools
+            .run("gcal_list_events", args)
+            .await
+            .map_err(|e| e.to_string())
+    })
+    .await?;
+
+    let events = data
+        .get("items")
+        .or_else(|| data.get("events"))
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let due = gcal_starting_within(&events, now, minutes_before);
+
+    // Drop the ones already announced. `trigger_dedup_seen` records as it checks,
+    // so this both filters and marks in one pass.
+    let fresh: Vec<Value> = due
+        .into_iter()
+        .filter(|ev| match gcal_soon_key(workflow_id, ev) {
+            Some(key) => !trigger_dedup_seen(state, "gcal_soon", &key),
+            // No id or no start: can't dedup it, so don't risk a reminder loop.
+            None => false,
+        })
+        .collect();
+
+    if fresh.is_empty() {
+        return Ok(false);
+    }
+
+    tracing::info!(
+        "Calendar trigger '{}': {} event(s) starting within {} minutes",
+        workflow_name,
+        fresh.len(),
+        minutes_before
+    );
+
+    let run_id = uuid::Uuid::new_v4().to_string();
+    trigger_data::stage(
+        &run_id,
+        json!({
+            "trigger": "gcal",
+            "calendar_id": calendar_id,
+            "event": "event_starting_soon",
+            "minutes_before": minutes_before,
+            "event_count": fresh.len(),
+            "events": fresh,
+        }),
+    );
+
+    let _slot = acquire_run_slot(state).await;
+    if _slot.is_none() {
+        tracing::warn!(
+            "Calendar trigger '{}': run queue full; running unbounded to avoid missing {} reminder(s)",
+            workflow_name,
+            fresh.len()
+        );
+    }
+    WorkflowEngine::run_with_trigger(workflow_id, state, "gcal", None, false, Some(run_id))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(true)
+}
+
+/// Google Calendar Stimulus executor. Background fires consume the payload
+/// staged by `check_and_trigger_gcal`; a manual "Execute Step" live-fetches
+/// recent activity so the user has real rows to map fields against — the same
+/// spirit as the Gmail and CRM manual fetches, and deliberately without dedup
+/// so pressing the button twice still shows data.
+pub(crate) async fn execute_gcal_trigger(
+    config: &Value,
+    state: &AppState,
+    workflow_id: &str,
+    run_id: &str,
+) -> Result<Value, String> {
+    if let Some(trigger_data) = trigger_data::take(run_id) {
+        tracing::info!(
+            "Calendar trigger: using pre-fetched event data for workflow {}",
+            workflow_id
+        );
+        return Ok(trigger_data);
+    }
+
+    let watch = GcalWatch::from_config(config);
+    let (calendar_id, query, minutes_before) = gcal_trigger_cfg(config);
+    let credential_id = crate::google_accounts::credential_id_of(config);
+    let event_label = config
+        .get("gcal_event")
+        .and_then(|v| v.as_str())
+        .unwrap_or("any_change")
+        .to_string();
+
+    let cal = calendar_id.clone();
+    let q = query.clone();
+    let events: Vec<Value> = crate::google_accounts::scoped(state, &credential_id, async move {
+        if watch == GcalWatch::StartingSoon {
+            let now = chrono::Utc::now();
+            let data = state
+                .tools
+                .run(
+                    "gcal_list_events",
+                    json!({
+                        "calendar_id": cal,
+                        "time_min": now.to_rfc3339(),
+                        "time_max": (now + chrono::Duration::minutes(minutes_before)).to_rfc3339(),
+                        "query": q,
+                        "max_results": 10,
+                        "single_events": true,
+                    }),
+                )
+                .await
+                .map_err(|e| format!("Calendar trigger fetch failed: {}", e))?;
+            return Ok(data
+                .get("items")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default());
+        }
+
+        // A quiet calendar has nothing in the last day, which makes the test
+        // fetch look broken. Widen once rather than leaving the user staring at
+        // an empty payload — same trick as the CRM manual fetch.
+        for hours in [24i64, 720] {
+            let since = (chrono::Utc::now() - chrono::Duration::hours(hours)).to_rfc3339();
+            let data = state
+                .tools
+                .run(
+                    "gcal_changes_since",
+                    json!({
+                        "calendar_id": cal,
+                        "since": since,
+                        "query": q,
+                        "max_results": 10,
+                    }),
+                )
+                .await
+                .map_err(|e| format!("Calendar trigger fetch failed: {}", e))?;
+            let hits: Vec<Value> = data
+                .get("changes")
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten()
+                .filter(|c| {
+                    watch.accepts(
+                        c.get("changeType")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("updated"),
+                    )
+                })
+                .cloned()
+                .collect();
+            if !hits.is_empty() {
+                return Ok(hits);
+            }
+        }
+        Ok(Vec::new())
+    })
+    .await?;
+
+    Ok(json!({
+        "trigger": "gcal",
+        "calendar_id": calendar_id,
+        "event": event_label,
+        "event_count": events.len(),
+        "events": events,
+    }))
+}
+
+#[cfg(test)]
+mod gcal_trigger_tests {
+    use super::{gcal_starting_within, gcal_trigger_cfg, GcalWatch};
+    use serde_json::{json, Value};
+
+    fn at(s: &str) -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::parse_from_rfc3339(s)
+            .unwrap()
+            .with_timezone(&chrono::Utc)
+    }
+
+    fn timed(id: &str, start: &str) -> Value {
+        json!({ "id": id, "status": "confirmed", "start": { "dateTime": start } })
+    }
+
+    #[test]
+    fn each_watch_takes_only_its_own_changes() {
+        assert!(GcalWatch::AnyChange.accepts("created"));
+        assert!(GcalWatch::AnyChange.accepts("cancelled"));
+        assert!(GcalWatch::Created.accepts("created"));
+        assert!(!GcalWatch::Created.accepts("updated"));
+        assert!(!GcalWatch::Cancelled.accepts("created"));
+        assert!(GcalWatch::Cancelled.accepts("cancelled"));
+        // The reminder watch never reads the change feed at all.
+        assert!(!GcalWatch::StartingSoon.accepts("created"));
+    }
+
+    #[test]
+    fn an_unset_or_unknown_event_falls_back_to_any_change() {
+        assert_eq!(GcalWatch::from_config(&json!({})), GcalWatch::AnyChange);
+        assert_eq!(
+            GcalWatch::from_config(&json!({ "gcal_event": "nonsense" })),
+            GcalWatch::AnyChange
+        );
+        assert_eq!(
+            GcalWatch::from_config(&json!({ "gcal_event": "event_cancelled" })),
+            GcalWatch::Cancelled
+        );
+    }
+
+    #[test]
+    fn only_events_inside_the_lead_time_are_due() {
+        let now = at("2026-08-12T09:00:00Z");
+        let events = vec![
+            timed("already-started", "2026-08-12T08:55:00Z"),
+            timed("due-now", "2026-08-12T09:00:00Z"),
+            timed("due-in-10", "2026-08-12T09:10:00Z"),
+            timed("edge-of-window", "2026-08-12T09:15:00Z"),
+            timed("too-far-off", "2026-08-12T09:16:00Z"),
+        ];
+        let due = gcal_starting_within(&events, now, 15);
+        let ids: Vec<String> = due
+            .iter()
+            .map(|e| e["id"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(ids, ["due-now", "due-in-10", "edge-of-window"]);
+    }
+
+    #[test]
+    fn a_cancelled_booking_is_never_about_to_start() {
+        let now = at("2026-08-12T09:00:00Z");
+        let mut ev = timed("scrapped", "2026-08-12T09:05:00Z");
+        ev["status"] = json!("cancelled");
+        assert!(gcal_starting_within(&[ev], now, 15).is_empty());
+    }
+
+    #[test]
+    fn an_all_day_booking_starts_at_local_midnight() {
+        // With the default +08:00 offset, 2026-08-13 all-day begins at 16:00Z
+        // on the 12th — a reminder set the evening before must catch it.
+        let now = at("2026-08-12T15:50:00Z");
+        let all_day = json!({ "id": "holiday", "start": { "date": "2026-08-13" } });
+        assert_eq!(gcal_starting_within(&[all_day], now, 15).len(), 1);
+    }
+
+    #[test]
+    fn lead_time_is_clamped_to_something_a_poll_can_serve() {
+        let (cal, query, mins) = gcal_trigger_cfg(&json!({}));
+        assert_eq!(cal, "primary");
+        assert_eq!(query, None);
+        assert_eq!(mins, 15);
+
+        // A mistyped lead time can't turn one poll into a week of reminders.
+        let (_, _, mins) = gcal_trigger_cfg(&json!({ "gcal_minutes_before": 10_000 }));
+        assert_eq!(mins, 1440);
+        let (_, _, mins) = gcal_trigger_cfg(&json!({ "gcal_minutes_before": 0 }));
+        assert_eq!(mins, 1);
+        // Numbers arriving as strings from the node config still parse.
+        let (_, _, mins) = gcal_trigger_cfg(&json!({ "gcal_minutes_before": "30" }));
+        assert_eq!(mins, 30);
+
+        // Blank text fields mean "no filter", not a filter matching "".
+        let (cal, query, _) =
+            gcal_trigger_cfg(&json!({ "gcal_calendar_id": "  ", "gcal_query": "  " }));
+        assert_eq!(cal, "primary");
+        assert_eq!(query, None);
+    }
+}
+
 #[cfg(test)]
 mod crm_trigger_tests {
     use super::filter_crm_hits;
@@ -5054,8 +5660,11 @@ fn should_trigger(wf: &Workflow, utc_offset_hours: i32) -> bool {
     }
 
     // 2. Fallback to legacy interval-based polling
-    let mut mins = if matches!(wf.trigger_type.as_str(), "gmail" | "crm" | "rss") {
-        // Gmail/CRM/RSS triggers use poll_interval from config (default 5 min)
+    let mut mins = if matches!(wf.trigger_type.as_str(), "gmail" | "crm" | "rss" | "gcal") {
+        // Gmail/CRM/RSS/Calendar triggers use poll_interval from config
+        // (default 5 min). A watcher missing from this list silently falls to
+        // the 60-minute default below, which for "event about to start" would
+        // mean the reminder never lands inside its own lead-time window.
         wf.trigger_config
             .get("poll_interval")
             .and_then(|v| {

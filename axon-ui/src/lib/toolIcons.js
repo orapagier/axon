@@ -51,6 +51,7 @@ export function getToolIcon(type, parameters) {
     if (type === 'stimulus' && parameters?.type) {
         const triggerType = parameters.type.toLowerCase();
         if (triggerType === 'gmail') return TOOL_ICONS.gmail;
+        if (triggerType === 'gcal') return TOOL_ICONS.gcal;
         if (triggerType === 'telegram') return TOOL_ICONS.telegram;
         if (triggerType === 'whatsapp') return TOOL_ICONS.whatsapp;
     }
