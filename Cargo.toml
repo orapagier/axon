@@ -5,9 +5,14 @@ members = ["crates/*"]
 # Profiles are honored only at the workspace root, so they live here rather
 # than in the individual member crates.
 [profile.dev]
+# codegen-units and incremental are pinned to cargo's own dev defaults rather
+# than left implicit, because they were previously forced to 1/false -- which
+# turned every inner-loop rebuild of axon-agent into a full single-threaded
+# codegen pass (84s for a one-line edit, vs 7s now). The release profile below
+# still pins codegen-units = 1, which is where it actually buys anything.
 debug         = 0
-codegen-units = 1
-incremental   = false
+incremental   = true
+codegen-units = 256
 
 [profile.release]
 opt-level     = 3

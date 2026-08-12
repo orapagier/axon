@@ -1,11 +1,11 @@
 use crate::auth::access_token;
 use anyhow::Result;
 use axon_core::flexidate::{
-    annotate_slot_weekday, default_tz, fix_all_day_end, normalize_rfc3339, parse_flexible,
-    retain_events_on_day, single_day_window_for, stamp_day_window, FlexiDateTime,
+    annotate_slot_weekday, default_tz, default_tz_offset, fix_all_day_end, normalize_rfc3339,
+    parse_flexible, retain_events_on_day, single_day_window_for, stamp_day_window, FlexiDateTime,
 };
 use axon_core::{AppState, EnsureOk};
-use chrono::{DateTime, SecondsFormat, Utc};
+use chrono::{DateTime, Datelike, FixedOffset, NaiveTime, SecondsFormat, TimeZone, Utc, Weekday};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -45,15 +45,344 @@ pub(crate) fn send_updates_or_all(v: Option<&str>) -> &'static str {
     }
 }
 
+/// The event fields nobody sets on most events — colour, reminders, how the
+/// time shows to others, what guests are allowed to do.
+///
+/// They live in a struct rather than as parameters because `create_event` and
+/// `update_event` would otherwise take twenty-odd positional arguments, where a
+/// single transposed `Option<&str>` compiles fine and silently writes the
+/// location into the visibility field. Every field is `Option`: `None` means
+/// "let Google decide" on create and "leave untouched" on update, so the same
+/// struct serves both.
+#[derive(Default)]
+pub struct EventExtras<'a> {
+    /// Google's palette index, "1".."11" (see `EVENT_COLORS`).
+    pub color_id: Option<&'a str>,
+    /// Minutes before the event to alert. `Some(0)` means "at start time".
+    pub reminder_minutes: Option<i64>,
+    /// "popup" (default) or "email".
+    pub reminder_method: Option<&'a str>,
+    /// True restores the calendar's own default reminders and drops any
+    /// per-event override.
+    pub use_default_reminders: Option<bool>,
+    /// "default", "public" or "private".
+    pub visibility: Option<&'a str>,
+    /// Google's `transparency`: "opaque" shows the time as busy,
+    /// "transparent" leaves it bookable.
+    pub transparency: Option<&'a str>,
+    pub guests_can_invite_others: Option<bool>,
+    pub guests_can_modify: Option<bool>,
+    pub guests_can_see_other_guests: Option<bool>,
+}
+
+/// Google's fixed event palette. Exposed so the node can offer colour names
+/// instead of asking a non-technical user for the number "6".
+pub const EVENT_COLORS: &[(&str, &str)] = &[
+    ("1", "Lavender"),
+    ("2", "Sage"),
+    ("3", "Grape"),
+    ("4", "Flamingo"),
+    ("5", "Banana"),
+    ("6", "Tangerine"),
+    ("7", "Peacock"),
+    ("8", "Graphite"),
+    ("9", "Blueberry"),
+    ("10", "Basil"),
+    ("11", "Tomato"),
+];
+
+impl EventExtras<'_> {
+    /// Write the set fields onto an event body (a create payload or a PATCH).
+    fn apply(&self, body: &mut Value) {
+        if let Some(c) = self.color_id.filter(|c| !c.is_empty()) {
+            body["colorId"] = json!(c);
+        }
+        if let Some(v) = self.visibility.filter(|v| !v.is_empty()) {
+            body["visibility"] = json!(v);
+        }
+        if let Some(t) = self.transparency.filter(|t| !t.is_empty()) {
+            body["transparency"] = json!(t);
+        }
+        if let Some(b) = self.guests_can_invite_others {
+            body["guestsCanInviteOthers"] = json!(b);
+        }
+        if let Some(b) = self.guests_can_modify {
+            body["guestsCanModify"] = json!(b);
+        }
+        if let Some(b) = self.guests_can_see_other_guests {
+            body["guestsCanSeeOtherGuests"] = json!(b);
+        }
+
+        // `reminders` is a single object, so an explicit override and "use the
+        // calendar's defaults" are mutually exclusive — a payload carrying
+        // overrides *and* useDefault:true is rejected by Google.
+        match (self.use_default_reminders, self.reminder_minutes) {
+            (Some(true), _) => body["reminders"] = json!({ "useDefault": true }),
+            (_, Some(mins)) => {
+                let method = match self.reminder_method {
+                    Some("email") => "email",
+                    _ => "popup",
+                };
+                body["reminders"] = json!({
+                    "useDefault": false,
+                    "overrides": [{ "method": method, "minutes": mins.clamp(0, 40_320) }],
+                });
+            }
+            (Some(false), None) => body["reminders"] = json!({ "useDefault": false }),
+            (None, None) => {}
+        }
+    }
+}
+
 // ── Calendars ─────────────────────────────────────────────────────────────────
 
 /// List all calendars in the user's calendar list.
+///
+/// `showHidden=true` matters: calendars subscribed to under "Other calendars"
+/// arrive with `hidden: true` until they're ticked in Google's own sidebar, and
+/// the API's default (`false`) would silently drop them from the picker. Pages
+/// are followed to the end so the result is the whole list rather than Google's
+/// first 100 entries.
 pub async fn list_calendars(state: &AppState) -> Result<Value> {
     let tok = access_token(state).await?;
+    let mut items: Vec<Value> = Vec::new();
+    let mut page_token: Option<String> = None;
+
+    loop {
+        let mut params = vec![
+            ("maxResults", "250".to_string()),
+            ("showHidden", "true".to_string()),
+        ];
+        if let Some(pt) = &page_token {
+            params.push(("pageToken", pt.clone()));
+        }
+
+        let resp: Value = state
+            .client
+            .get(format!("{BASE}/users/me/calendarList"))
+            .bearer_auth(&tok)
+            .query(&params)
+            .send()
+            .await?
+            .ensure_ok()
+            .await?
+            .json()
+            .await?;
+
+        if let Some(page) = resp.get("items").and_then(|v| v.as_array()) {
+            items.extend(page.iter().cloned());
+        }
+
+        match resp.get("nextPageToken").and_then(|v| v.as_str()) {
+            Some(pt) => page_token = Some(pt.to_string()),
+            None => break,
+        }
+    }
+
+    Ok(json!({ "kind": "calendar#calendarList", "items": items }))
+}
+
+/// Create a new secondary calendar and return its `calendarList` entry.
+///
+/// `calendars.insert` creates the calendar but answers with the bare
+/// `Calendar` resource, which carries no `accessRole`/`selected`/colour — the
+/// fields the picker groups and renders by. Re-reading the `calendarList` entry
+/// means a freshly created calendar looks exactly like every other one there,
+/// so the UI needs no special case for "created a moment ago".
+pub async fn create_calendar(
+    state: &AppState,
+    summary: &str,
+    description: Option<&str>,
+    time_zone: Option<&str>,
+) -> Result<Value> {
+    let tok = access_token(state).await?;
+    let default_tz = default_tz();
+    let mut body = json!({ "summary": summary, "timeZone": time_zone.unwrap_or(&default_tz) });
+    if let Some(d) = description {
+        body["description"] = json!(d);
+    }
+
+    let created: Value = state
+        .client
+        .post(format!("{BASE}/calendars"))
+        .bearer_auth(&tok)
+        .json(&body)
+        .send()
+        .await?
+        .ensure_ok()
+        .await?
+        .json()
+        .await?;
+
+    let id = created["id"].as_str().unwrap_or_default().to_owned();
+    // Best-effort: the calendar exists either way, so a hiccup reading the list
+    // entry must not read back as "creation failed".
+    match get_calendar_list_entry(state, &tok, &id).await {
+        Ok(entry) => Ok(entry),
+        Err(_) => Ok(created),
+    }
+}
+
+/// Rename a calendar or change its description, timezone, colour or
+/// show-in-list flag.
+///
+/// Google splits these across two resources: `summary`/`description`/`timeZone`
+/// belong to the calendar itself and are shared with everyone it's shared with,
+/// while the nickname, colour and visibility are per-subscriber and live on the
+/// `calendarList` entry. A user renaming a calendar doesn't care which is which,
+/// so this patches whichever resources the supplied fields touch.
+#[allow(clippy::too_many_arguments)]
+pub async fn update_calendar(
+    state: &AppState,
+    calendar_id: &str,
+    summary: Option<&str>,
+    description: Option<&str>,
+    time_zone: Option<&str>,
+    nickname: Option<&str>,
+    color: Option<&str>,
+    show_in_list: Option<bool>,
+) -> Result<Value> {
+    let tok = access_token(state).await?;
+    let cal = urlenc(calendar_id);
+
+    let mut shared = json!({});
+    for (key, val) in [
+        ("summary", summary),
+        ("description", description),
+        ("timeZone", time_zone),
+    ] {
+        if let Some(v) = val.filter(|v| !v.is_empty()) {
+            shared[key] = json!(v);
+        }
+    }
+    if shared.as_object().is_some_and(|o| !o.is_empty()) {
+        state
+            .client
+            .patch(format!("{BASE}/calendars/{cal}"))
+            .bearer_auth(&tok)
+            .json(&shared)
+            .send()
+            .await?
+            .ensure_ok()
+            .await?;
+    }
+
+    let mut personal = json!({});
+    if let Some(n) = nickname.filter(|n| !n.is_empty()) {
+        personal["summaryOverride"] = json!(n);
+    }
+    if let Some(b) = show_in_list {
+        // "Show in list" is the single switch a user means; Google splits it
+        // into `selected` (ticked in the sidebar) and `hidden` (present in the
+        // list at all), and leaving `hidden` set would keep the calendar out of
+        // the picker no matter what `selected` says.
+        personal["selected"] = json!(b);
+        personal["hidden"] = json!(!b);
+    }
+    let rgb = color.filter(|c| c.starts_with('#'));
+    if let Some(hex) = rgb {
+        personal["backgroundColor"] = json!(hex);
+        personal["foregroundColor"] = json!("#000000");
+    } else if let Some(c) = color.filter(|c| !c.is_empty()) {
+        personal["colorId"] = json!(c);
+    }
+
+    if personal.as_object().is_some_and(|o| !o.is_empty()) {
+        let mut req = state
+            .client
+            .patch(format!("{BASE}/users/me/calendarList/{cal}"))
+            .bearer_auth(&tok);
+        // Hex colours are rejected unless the request opts into RGB format.
+        if rgb.is_some() {
+            req = req.query(&[("colorRgbFormat", "true")]);
+        }
+        req.json(&personal).send().await?.ensure_ok().await?;
+    }
+
+    get_calendar_list_entry(state, &tok, calendar_id).await
+}
+
+/// Permanently delete a secondary calendar, along with every event on it.
+///
+/// Refuses the primary calendar: Google answers that request with a bare 403,
+/// and "you cannot delete your main calendar" is the thing the user needs to
+/// read. Deleting a calendar you don't own isn't possible either — use
+/// [`unsubscribe_calendar`] to remove it from your list instead.
+pub async fn delete_calendar(state: &AppState, calendar_id: &str) -> Result<Value> {
+    if calendar_id.trim().eq_ignore_ascii_case("primary") {
+        anyhow::bail!(
+            "Your primary calendar cannot be deleted. To remove a calendar you subscribed to, \
+             use 'Remove calendar from my list' instead."
+        );
+    }
+    let tok = access_token(state).await?;
+    let cal = urlenc(calendar_id);
+    state
+        .client
+        .delete(format!("{BASE}/calendars/{cal}"))
+        .bearer_auth(&tok)
+        .send()
+        .await?
+        .ensure_ok()
+        .await?;
+    Ok(json!({ "success": true, "deletedCalendarId": calendar_id }))
+}
+
+/// Subscribe to an existing calendar by ID, adding it under "Other calendars".
+///
+/// This is the API half of Google's "Subscribe to calendar" box, and the
+/// counterpart to [`unsubscribe_calendar`]. The calendar has to already exist
+/// and be readable by this account.
+pub async fn subscribe_calendar(
+    state: &AppState,
+    calendar_id: &str,
+    nickname: Option<&str>,
+) -> Result<Value> {
+    let tok = access_token(state).await?;
+    let mut body = json!({ "id": calendar_id, "selected": true });
+    if let Some(n) = nickname.filter(|n| !n.is_empty()) {
+        body["summaryOverride"] = json!(n);
+    }
     let resp: Value = state
         .client
-        .get(format!("{BASE}/users/me/calendarList"))
+        .post(format!("{BASE}/users/me/calendarList"))
         .bearer_auth(&tok)
+        .json(&body)
+        .send()
+        .await?
+        .ensure_ok()
+        .await?
+        .json()
+        .await?;
+    Ok(resp)
+}
+
+/// Remove a calendar from this account's list without deleting the calendar
+/// itself. The inverse of [`subscribe_calendar`].
+pub async fn unsubscribe_calendar(state: &AppState, calendar_id: &str) -> Result<Value> {
+    if calendar_id.trim().eq_ignore_ascii_case("primary") {
+        anyhow::bail!("Your primary calendar cannot be removed from your calendar list.");
+    }
+    let tok = access_token(state).await?;
+    let cal = urlenc(calendar_id);
+    state
+        .client
+        .delete(format!("{BASE}/users/me/calendarList/{cal}"))
+        .bearer_auth(&tok)
+        .send()
+        .await?
+        .ensure_ok()
+        .await?;
+    Ok(json!({ "success": true, "removedCalendarId": calendar_id }))
+}
+
+/// One `calendarList` entry, which is the shape the calendar picker reads.
+async fn get_calendar_list_entry(state: &AppState, tok: &str, calendar_id: &str) -> Result<Value> {
+    let cal = urlenc(calendar_id);
+    let resp: Value = state
+        .client
+        .get(format!("{BASE}/users/me/calendarList/{cal}"))
+        .bearer_auth(tok)
         .send()
         .await?
         .ensure_ok()
@@ -227,6 +556,7 @@ pub async fn create_event(
     calendar_id: &str,
     recurrence: Option<Vec<String>>,
     send_updates: &str,
+    extras: &EventExtras<'_>,
 ) -> Result<Value> {
     let tok = access_token(state).await?;
     let cal = urlenc(calendar_id);
@@ -239,6 +569,7 @@ pub async fn create_event(
         "start":   event_time(start, tz),
         "end":     event_time(&end, tz),
     });
+    extras.apply(&mut body);
     if let Some(d) = description {
         body["description"] = json!(d);
     }
@@ -298,12 +629,14 @@ pub async fn update_event(
     attendees: Option<Vec<&str>>,
     recurrence: Option<Vec<String>>,
     send_updates: &str,
+    extras: &EventExtras<'_>,
 ) -> Result<Value> {
     let tok = access_token(state).await?;
     let cal = urlenc(calendar_id);
     let enc_event = urlenc(event_id);
 
     let mut patch = json!({});
+    extras.apply(&mut patch);
     if let Some(s) = summary {
         patch["summary"] = json!(s);
     }
@@ -467,6 +800,231 @@ pub async fn quick_add(
     Ok(resp)
 }
 
+/// List the individual occurrences of a recurring event.
+///
+/// `gcal_list_events` with `single_events=false` finds the series master; this
+/// expands that master back into its dated instances, which is what you need to
+/// cancel or move one occurrence without touching the rest of the series.
+pub async fn list_event_instances(
+    state: &AppState,
+    event_id: &str,
+    calendar_id: &str,
+    max_results: u32,
+    time_min: Option<&str>,
+    time_max: Option<&str>,
+) -> Result<Value> {
+    let tok = access_token(state).await?;
+    let cal = urlenc(calendar_id);
+    let enc_event = urlenc(event_id);
+
+    let mut params = vec![("maxResults", max_results.to_string())];
+    if let Some(t) = time_min {
+        params.push(("timeMin", normalize_rfc3339(t)));
+    }
+    if let Some(t) = time_max {
+        params.push(("timeMax", normalize_rfc3339(t)));
+    }
+
+    let mut resp: Value = state
+        .client
+        .get(format!(
+            "{BASE}/calendars/{cal}/events/{enc_event}/instances"
+        ))
+        .bearer_auth(&tok)
+        .query(&params)
+        .send()
+        .await?
+        .ensure_ok()
+        .await?
+        .json()
+        .await?;
+    if let Some(items) = resp.get_mut("items").and_then(Value::as_array_mut) {
+        for ev in items.iter_mut() {
+            annotate_event_weekdays(ev);
+        }
+    }
+    Ok(resp)
+}
+
+// ── Attendees & RSVP ──────────────────────────────────────────────────────────
+
+/// Read an event, hand its attendee list to `edit`, and PATCH the result back.
+///
+/// Google's events API has no add/remove-one-attendee call: `attendees` is
+/// replaced wholesale by whatever a PATCH carries, so an "add Bob" that sends
+/// only Bob silently uninvites everyone else. Every attendee-shaped operation
+/// therefore has to read-modify-write, and doing it in one place keeps the RSVP
+/// path from drifting away from the add/remove paths.
+async fn edit_attendees<F>(
+    state: &AppState,
+    event_id: &str,
+    calendar_id: &str,
+    send_updates: &str,
+    edit: F,
+) -> Result<Value>
+where
+    F: FnOnce(Vec<Value>) -> Result<Vec<Value>>,
+{
+    let tok = access_token(state).await?;
+    let cal = urlenc(calendar_id);
+    let enc_event = urlenc(event_id);
+
+    let event: Value = state
+        .client
+        .get(format!("{BASE}/calendars/{cal}/events/{enc_event}"))
+        .bearer_auth(&tok)
+        .send()
+        .await?
+        .ensure_ok()
+        .await?
+        .json()
+        .await?;
+
+    let current = event
+        .get("attendees")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let updated = edit(current)?;
+
+    let mut resp: Value = state
+        .client
+        .patch(format!("{BASE}/calendars/{cal}/events/{enc_event}"))
+        .bearer_auth(&tok)
+        .query(&[("sendUpdates", send_updates)])
+        .json(&json!({ "attendees": updated }))
+        .send()
+        .await?
+        .ensure_ok()
+        .await?
+        .json()
+        .await?;
+    annotate_event_weekdays(&mut resp);
+    Ok(resp)
+}
+
+/// Invite more people to an existing event, keeping the current guest list.
+/// Emails already invited are left as they are, so their RSVP isn't reset.
+pub async fn add_attendees(
+    state: &AppState,
+    event_id: &str,
+    calendar_id: &str,
+    emails: Vec<String>,
+    send_updates: &str,
+) -> Result<Value> {
+    edit_attendees(
+        state,
+        event_id,
+        calendar_id,
+        send_updates,
+        move |mut list| {
+            for email in emails {
+                let email = email.trim();
+                if email.is_empty() {
+                    continue;
+                }
+                let already = list.iter().any(|a| {
+                    a.get("email")
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|e| e.eq_ignore_ascii_case(email))
+                });
+                if !already {
+                    list.push(json!({ "email": email }));
+                }
+            }
+            Ok(list)
+        },
+    )
+    .await
+}
+
+/// Uninvite people from an event, leaving the rest of the guest list intact.
+pub async fn remove_attendees(
+    state: &AppState,
+    event_id: &str,
+    calendar_id: &str,
+    emails: Vec<String>,
+    send_updates: &str,
+) -> Result<Value> {
+    edit_attendees(state, event_id, calendar_id, send_updates, move |list| {
+        let drop: Vec<String> = emails
+            .iter()
+            .map(|e| e.trim().to_lowercase())
+            .filter(|e| !e.is_empty())
+            .collect();
+        Ok(list
+            .into_iter()
+            .filter(|a| {
+                let email = a
+                    .get("email")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_lowercase();
+                !drop.contains(&email)
+            })
+            .collect())
+    })
+    .await
+}
+
+/// RSVP to an invitation as this account.
+///
+/// The attendee to update is the one Google flags `self: true` — matching on the
+/// signed-in email would miss invitations sent to an alias or a group the
+/// account belongs to, which are exactly the invitations people forget to answer.
+pub async fn respond_to_event(
+    state: &AppState,
+    event_id: &str,
+    calendar_id: &str,
+    response: &str,
+    comment: Option<&str>,
+    send_updates: &str,
+) -> Result<Value> {
+    let status = rsvp_status(response)?;
+    let comment = comment.map(str::to_owned);
+
+    edit_attendees(
+        state,
+        event_id,
+        calendar_id,
+        send_updates,
+        move |mut list| {
+            let me = list
+                .iter_mut()
+                .find(|a| a.get("self").and_then(|v| v.as_bool()).unwrap_or(false));
+            let Some(me) = me else {
+                anyhow::bail!(
+                    "You are not on this event's guest list, so there is nothing to RSVP to. \
+                 Events you created yourself don't need a response."
+                );
+            };
+            me["responseStatus"] = json!(status);
+            if let Some(c) = comment.filter(|c| !c.is_empty()) {
+                me["comment"] = json!(c);
+            }
+            Ok(list)
+        },
+    )
+    .await
+}
+
+/// Google's `responseStatus` value for an RSVP.
+///
+/// The everyday words are accepted alongside the API's own, because "yes" and
+/// "no" are what a workflow author types into the field and what a model reaches
+/// for. An unrecognised answer is an error rather than a default: silently
+/// accepting a meeting the user meant to decline is not a recoverable mistake.
+fn rsvp_status(response: &str) -> Result<&'static str> {
+    match response.trim().to_lowercase().as_str() {
+        "accepted" | "accept" | "yes" => Ok("accepted"),
+        "declined" | "decline" | "no" => Ok("declined"),
+        "tentative" | "maybe" => Ok("tentative"),
+        other => {
+            anyhow::bail!("Unknown RSVP '{other}'. Use 'accepted', 'declined' or 'tentative'.")
+        }
+    }
+}
+
 // ── Free/Busy ─────────────────────────────────────────────────────────────────
 
 /// Query free/busy blocks for one or more calendars over a time range.
@@ -496,7 +1054,281 @@ pub async fn get_freebusy(
     Ok(resp)
 }
 
+/// Find open time slots of at least `duration_minutes` across one or more
+/// calendars — "when could we all meet for an hour next week?".
+///
+/// [`get_freebusy`] answers the opposite question (when is everyone *busy*), and
+/// leaves the caller to invert a merged list of overlapping intervals across a
+/// timezone boundary. That inversion is exactly the arithmetic a language model
+/// gets subtly wrong — an off-by-one day, a slot that starts in the past, a
+/// meeting proposed at 3am — so it happens here in code and the model only ever
+/// sees a list of concrete, bookable slots.
+///
+/// `day_start`/`day_end` ("09:00", "17:00") clip every day to working hours in
+/// the default timezone; omitting them searches around the clock.
+#[allow(clippy::too_many_arguments)]
+pub async fn find_free_slots(
+    state: &AppState,
+    calendar_ids: Vec<String>,
+    time_min: Option<&str>,
+    time_max: Option<&str>,
+    duration_minutes: i64,
+    day_start: Option<&str>,
+    day_end: Option<&str>,
+    skip_weekends: bool,
+    max_slots: usize,
+) -> Result<Value> {
+    let offset = parse_offset(&default_tz_offset());
+    let duration = chrono::Duration::minutes(duration_minutes.max(1));
+
+    // Never propose a slot that has already passed: a search window starting
+    // "today" means the rest of today, not 00:00 this morning.
+    let now = Utc::now();
+    let search_start = time_min
+        .map(parse_instant)
+        .transpose()?
+        .unwrap_or(now)
+        .max(now);
+    let search_end = time_max
+        .map(parse_instant)
+        .transpose()?
+        .unwrap_or_else(|| search_start + chrono::Duration::days(7));
+    if search_end <= search_start {
+        anyhow::bail!("The search window ends before it starts. Check 'time_min' and 'time_max'.");
+    }
+
+    let ids = if calendar_ids.is_empty() {
+        vec!["primary".to_string()]
+    } else {
+        calendar_ids
+    };
+    let freebusy = get_freebusy(
+        state,
+        ids.clone(),
+        &search_start.to_rfc3339(),
+        &search_end.to_rfc3339(),
+    )
+    .await?;
+
+    // Google reports per-calendar problems (no access, unknown id) inside a 200
+    // response, so an unreadable calendar would otherwise read as "wide open".
+    let mut unavailable: Vec<Value> = Vec::new();
+    let mut busy: Vec<(DateTime<Utc>, DateTime<Utc>)> = Vec::new();
+    if let Some(cals) = freebusy.get("calendars").and_then(|v| v.as_object()) {
+        for (id, entry) in cals {
+            if let Some(errs) = entry.get("errors").and_then(|v| v.as_array()) {
+                let reason = errs
+                    .first()
+                    .and_then(|e| e.get("reason"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                unavailable.push(json!({ "calendarId": id, "reason": reason }));
+            }
+            for slot in entry
+                .get("busy")
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten()
+            {
+                let (Some(s), Some(e)) = (
+                    slot.get("start").and_then(|v| v.as_str()),
+                    slot.get("end").and_then(|v| v.as_str()),
+                ) else {
+                    continue;
+                };
+                if let (Ok(s), Ok(e)) = (parse_instant(s), parse_instant(e)) {
+                    busy.push((s, e));
+                }
+            }
+        }
+    }
+
+    // Merge overlapping busy blocks so a gap between two calendars' meetings
+    // isn't mistaken for free time.
+    busy.sort_by_key(|(s, _)| *s);
+    let mut merged: Vec<(DateTime<Utc>, DateTime<Utc>)> = Vec::new();
+    for (start, end) in busy {
+        match merged.last_mut() {
+            Some((_, prev_end)) if start <= *prev_end => *prev_end = (*prev_end).max(end),
+            _ => merged.push((start, end)),
+        }
+    }
+
+    let window = SlotWindow {
+        from: search_start,
+        to: search_end,
+        duration,
+        offset,
+        open: day_start.map(parse_clock).transpose()?,
+        close: day_end.map(parse_clock).transpose()?,
+        skip_weekends,
+        max_slots,
+    };
+    let slots = window.carve(&merged);
+
+    Ok(json!({
+        "slots": slots,
+        "slotCount": slots.len(),
+        "durationMinutes": duration.num_minutes(),
+        "searchedCalendars": ids,
+        "searchedFrom": search_start.to_rfc3339_opts(SecondsFormat::Secs, true),
+        "searchedTo": search_end.to_rfc3339_opts(SecondsFormat::Secs, true),
+        "timeZone": default_tz(),
+        "unavailableCalendars": unavailable,
+    }))
+}
+
+/// The shape of the free-slot search: a window, a minimum length, and the local
+/// working hours to clip each day to.
+///
+/// Split out from [`find_free_slots`] so the interval arithmetic can be tested
+/// against fixed busy blocks — the network half has nothing to do with whether
+/// a gap that straddles midnight, or one that ends exactly when a meeting
+/// starts, comes out right.
+struct SlotWindow {
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    duration: chrono::Duration,
+    offset: FixedOffset,
+    open: Option<NaiveTime>,
+    close: Option<NaiveTime>,
+    skip_weekends: bool,
+    max_slots: usize,
+}
+
+impl SlotWindow {
+    /// Subtract `busy` (sorted and already merged) from the window, one local
+    /// day at a time, keeping the gaps long enough to hold the meeting.
+    fn carve(&self, busy: &[(DateTime<Utc>, DateTime<Utc>)]) -> Vec<Value> {
+        let mut slots: Vec<Value> = Vec::new();
+        let mut day = self.from.with_timezone(&self.offset).date_naive();
+        let last_day = self.to.with_timezone(&self.offset).date_naive();
+        let (search_start, search_end, duration, offset, max_slots) = (
+            self.from,
+            self.to,
+            self.duration,
+            self.offset,
+            self.max_slots,
+        );
+        let (open, close, skip_weekends) = (self.open, self.close, self.skip_weekends);
+
+        'days: while day <= last_day {
+            if skip_weekends && matches!(day.weekday(), Weekday::Sat | Weekday::Sun) {
+                day = match day.succ_opt() {
+                    Some(d) => d,
+                    None => break,
+                };
+                continue;
+            }
+
+            // The bookable part of this day, in local time, clipped to the
+            // search window. `local_instant` only returns None for a wall-clock
+            // time that doesn't exist, which a fixed offset never produces.
+            let day_open = match local_instant(&offset, day, open.unwrap_or(NaiveTime::MIN)) {
+                Some(t) => t.max(search_start),
+                None => break,
+            };
+            let day_close = match close {
+                Some(c) => local_instant(&offset, day, c),
+                // No closing time means "until midnight" — the next day's 00:00,
+                // not 23:59, so an evening slot isn't cut a minute short.
+                None => day
+                    .succ_opt()
+                    .and_then(|d| local_instant(&offset, d, NaiveTime::MIN)),
+            };
+            let day_close = match day_close {
+                Some(t) => t.min(search_end),
+                None => break,
+            };
+
+            let mut cursor = day_open;
+            for (busy_start, busy_end) in busy {
+                if *busy_end <= cursor {
+                    continue;
+                }
+                if *busy_start >= day_close {
+                    break;
+                }
+                let gap_end = (*busy_start).min(day_close);
+                if gap_end - cursor >= duration {
+                    slots.push(free_slot(cursor, gap_end, &offset));
+                    if slots.len() >= max_slots {
+                        break 'days;
+                    }
+                }
+                cursor = cursor.max(*busy_end);
+                if cursor >= day_close {
+                    break;
+                }
+            }
+            if day_close - cursor >= duration {
+                slots.push(free_slot(cursor, day_close, &offset));
+                if slots.len() >= max_slots {
+                    break;
+                }
+            }
+
+            day = match day.succ_opt() {
+                Some(d) => d,
+                None => break,
+            };
+        }
+
+        slots
+    }
+}
+
+/// One free window, reported in local time with its weekday spelled out so the
+/// answer can be read back to the user without further date arithmetic.
+fn free_slot(start: DateTime<Utc>, end: DateTime<Utc>, offset: &FixedOffset) -> Value {
+    let local_start = start.with_timezone(offset);
+    let local_end = end.with_timezone(offset);
+    json!({
+        "start": local_start.to_rfc3339_opts(SecondsFormat::Secs, false),
+        "end": local_end.to_rfc3339_opts(SecondsFormat::Secs, false),
+        "weekday": local_start.format("%A").to_string(),
+        "date": local_start.format("%Y-%m-%d").to_string(),
+        "availableMinutes": (end - start).num_minutes(),
+    })
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Absolute instant for any [`normalize_rfc3339`]-shaped value.
+fn parse_instant(v: &str) -> Result<DateTime<Utc>> {
+    let normalized = normalize_rfc3339(v);
+    DateTime::parse_from_rfc3339(&normalized)
+        .map(|t| t.with_timezone(&Utc))
+        .map_err(|_| anyhow::anyhow!("Could not read '{v}' as a date and time."))
+}
+
+/// A wall-clock time of day: "09:00", "9:00", "17:30:00".
+fn parse_clock(v: &str) -> Result<NaiveTime> {
+    let v = v.trim();
+    NaiveTime::parse_from_str(v, "%H:%M:%S")
+        .or_else(|_| NaiveTime::parse_from_str(v, "%H:%M"))
+        .or_else(|_| NaiveTime::parse_from_str(v, "%l:%M %p"))
+        .or_else(|_| NaiveTime::parse_from_str(v, "%l%p"))
+        .map_err(|_| anyhow::anyhow!("Could not read '{v}' as a time of day (try '09:00')."))
+}
+
+/// The configured local offset, falling back to UTC if it's malformed.
+fn parse_offset(v: &str) -> FixedOffset {
+    DateTime::parse_from_rfc3339(&format!("1970-01-01T00:00:00{v}"))
+        .map(|t| *t.offset())
+        .unwrap_or_else(|_| FixedOffset::east_opt(0).expect("UTC is a valid offset"))
+}
+
+fn local_instant(
+    offset: &FixedOffset,
+    date: chrono::NaiveDate,
+    time: NaiveTime,
+) -> Option<DateTime<Utc>> {
+    offset
+        .from_local_datetime(&date.and_time(time))
+        .single()
+        .map(|t| t.with_timezone(&Utc))
+}
 
 /// Percent-encode a URL *path* segment. form_urlencoded emits "+" for spaces,
 /// which is only a space in query strings — in a path it's a literal plus, so
@@ -640,6 +1472,221 @@ mod tests {
         assert_eq!(send_updates_or_all(Some("externalOnly")), "externalOnly");
         assert_eq!(send_updates_or_all(Some("bogus")), "all");
         assert_eq!(send_updates_or_all(None), "all");
+    }
+
+    #[test]
+    fn rsvp_accepts_everyday_words_and_rejects_guesses() {
+        assert_eq!(rsvp_status("yes").unwrap(), "accepted");
+        assert_eq!(rsvp_status(" Accepted ").unwrap(), "accepted");
+        assert_eq!(rsvp_status("no").unwrap(), "declined");
+        assert_eq!(rsvp_status("maybe").unwrap(), "tentative");
+        // An ambiguous answer must fail rather than default to "accepted".
+        assert!(rsvp_status("probably").is_err());
+        assert!(rsvp_status("").is_err());
+    }
+
+    #[test]
+    fn extras_write_only_the_fields_that_were_set() {
+        let mut body = json!({ "summary": "Standup" });
+        EventExtras::default().apply(&mut body);
+        assert_eq!(body, json!({ "summary": "Standup" }));
+
+        let mut body = json!({});
+        EventExtras {
+            // Blank strings are what a workflow node sends for an untouched
+            // dropdown; writing them through would blank the real value.
+            color_id: Some(""),
+            transparency: Some("transparent"),
+            guests_can_modify: Some(false),
+            ..Default::default()
+        }
+        .apply(&mut body);
+        assert_eq!(
+            body,
+            json!({ "transparency": "transparent", "guestsCanModify": false })
+        );
+    }
+
+    #[test]
+    fn reminder_override_wins_over_calendar_defaults() {
+        let mut body = json!({});
+        EventExtras {
+            reminder_minutes: Some(15),
+            reminder_method: Some("email"),
+            ..Default::default()
+        }
+        .apply(&mut body);
+        assert_eq!(
+            body["reminders"],
+            json!({ "useDefault": false, "overrides": [{ "method": "email", "minutes": 15 }] })
+        );
+
+        // Google rejects a payload carrying overrides *and* useDefault:true, so
+        // asking for the defaults must drop the override entirely.
+        let mut body = json!({});
+        EventExtras {
+            reminder_minutes: Some(15),
+            use_default_reminders: Some(true),
+            ..Default::default()
+        }
+        .apply(&mut body);
+        assert_eq!(body["reminders"], json!({ "useDefault": true }));
+
+        // 0 means "alert at the start time", not "no reminder".
+        let mut body = json!({});
+        EventExtras {
+            reminder_minutes: Some(0),
+            ..Default::default()
+        }
+        .apply(&mut body);
+        assert_eq!(body["reminders"]["overrides"][0]["minutes"], json!(0));
+        assert_eq!(body["reminders"]["overrides"][0]["method"], json!("popup"));
+    }
+
+    #[test]
+    fn times_of_day_parse_in_the_shapes_people_type() {
+        assert_eq!(
+            parse_clock("09:00").unwrap(),
+            NaiveTime::from_hms_opt(9, 0, 0).unwrap()
+        );
+        assert_eq!(
+            parse_clock(" 9:30 ").unwrap(),
+            NaiveTime::from_hms_opt(9, 30, 0).unwrap()
+        );
+        assert_eq!(
+            parse_clock("17:15:30").unwrap(),
+            NaiveTime::from_hms_opt(17, 15, 30).unwrap()
+        );
+        assert!(parse_clock("lunchtime").is_err());
+    }
+
+    #[test]
+    fn offsets_fall_back_to_utc_when_malformed() {
+        assert_eq!(parse_offset("+08:00").local_minus_utc(), 8 * 3600);
+        assert_eq!(parse_offset("-05:00").local_minus_utc(), -5 * 3600);
+        assert_eq!(parse_offset("nonsense").local_minus_utc(), 0);
+    }
+
+    /// A slot search over one +08:00 day, 09:00–17:00, wanting 60 minutes.
+    fn carve_one_day(busy: &[(&str, &str)], duration_mins: i64) -> Vec<Value> {
+        let offset = parse_offset("+08:00");
+        let at = |s: &str| DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc);
+        let window = SlotWindow {
+            from: at("2026-08-17T00:00:00+08:00"),
+            to: at("2026-08-18T00:00:00+08:00"),
+            duration: chrono::Duration::minutes(duration_mins),
+            offset,
+            open: Some(NaiveTime::from_hms_opt(9, 0, 0).unwrap()),
+            close: Some(NaiveTime::from_hms_opt(17, 0, 0).unwrap()),
+            skip_weekends: false,
+            max_slots: 10,
+        };
+        let merged: Vec<_> = busy.iter().map(|(s, e)| (at(s), at(e))).collect();
+        window.carve(&merged)
+    }
+
+    #[test]
+    fn free_slots_are_the_gaps_between_meetings() {
+        let slots = carve_one_day(
+            &[
+                ("2026-08-17T10:00:00+08:00", "2026-08-17T11:00:00+08:00"),
+                ("2026-08-17T13:00:00+08:00", "2026-08-17T14:30:00+08:00"),
+            ],
+            60,
+        );
+        let times: Vec<&str> = slots.iter().map(|s| s["start"].as_str().unwrap()).collect();
+        assert_eq!(
+            times,
+            vec![
+                "2026-08-17T09:00:00+08:00",
+                "2026-08-17T11:00:00+08:00",
+                "2026-08-17T14:30:00+08:00",
+            ]
+        );
+        // 11:00–13:00 is the longest gap; the day closes at 17:00.
+        assert_eq!(slots[1]["availableMinutes"], json!(120));
+        assert_eq!(slots[2]["availableMinutes"], json!(150));
+        assert_eq!(slots[0]["weekday"], json!("Monday"));
+    }
+
+    #[test]
+    fn gaps_shorter_than_the_meeting_are_not_offered() {
+        // 30 free minutes between the two meetings, but an hour was asked for.
+        let slots = carve_one_day(
+            &[
+                ("2026-08-17T09:00:00+08:00", "2026-08-17T11:00:00+08:00"),
+                ("2026-08-17T11:30:00+08:00", "2026-08-17T17:00:00+08:00"),
+            ],
+            60,
+        );
+        assert!(slots.is_empty(), "expected no slots, got {slots:?}");
+
+        // The same day does offer that gap to a 30-minute meeting.
+        let slots = carve_one_day(
+            &[
+                ("2026-08-17T09:00:00+08:00", "2026-08-17T11:00:00+08:00"),
+                ("2026-08-17T11:30:00+08:00", "2026-08-17T17:00:00+08:00"),
+            ],
+            30,
+        );
+        assert_eq!(slots.len(), 1);
+        assert_eq!(slots[0]["start"], json!("2026-08-17T11:00:00+08:00"));
+    }
+
+    #[test]
+    fn busy_blocks_outside_working_hours_do_not_shrink_the_day() {
+        // An overnight block ending at 08:00 and an evening one starting at
+        // 19:00 both sit outside 09:00-17:00 and must leave the day whole.
+        let slots = carve_one_day(
+            &[
+                ("2026-08-16T22:00:00+08:00", "2026-08-17T08:00:00+08:00"),
+                ("2026-08-17T19:00:00+08:00", "2026-08-17T21:00:00+08:00"),
+            ],
+            60,
+        );
+        assert_eq!(slots.len(), 1);
+        assert_eq!(slots[0]["start"], json!("2026-08-17T09:00:00+08:00"));
+        assert_eq!(slots[0]["availableMinutes"], json!(480));
+    }
+
+    #[test]
+    fn weekends_are_skipped_and_each_day_is_searched() {
+        let offset = parse_offset("+08:00");
+        let at = |s: &str| DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc);
+        let window = SlotWindow {
+            // Friday 2026-08-14 through Tuesday 2026-08-18.
+            from: at("2026-08-14T00:00:00+08:00"),
+            to: at("2026-08-19T00:00:00+08:00"),
+            duration: chrono::Duration::minutes(60),
+            offset,
+            open: Some(NaiveTime::from_hms_opt(9, 0, 0).unwrap()),
+            close: Some(NaiveTime::from_hms_opt(17, 0, 0).unwrap()),
+            skip_weekends: true,
+            max_slots: 10,
+        };
+        let slots = window.carve(&[]);
+        let days: Vec<&str> = slots
+            .iter()
+            .map(|s| s["weekday"].as_str().unwrap())
+            .collect();
+        assert_eq!(days, vec!["Friday", "Monday", "Tuesday"]);
+    }
+
+    #[test]
+    fn max_slots_caps_the_answer() {
+        let offset = parse_offset("+08:00");
+        let at = |s: &str| DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc);
+        let window = SlotWindow {
+            from: at("2026-08-17T00:00:00+08:00"),
+            to: at("2026-08-31T00:00:00+08:00"),
+            duration: chrono::Duration::minutes(30),
+            offset,
+            open: None,
+            close: None,
+            skip_weekends: false,
+            max_slots: 3,
+        };
+        assert_eq!(window.carve(&[]).len(), 3);
     }
 
     #[test]

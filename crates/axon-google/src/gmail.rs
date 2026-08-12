@@ -129,6 +129,11 @@ pub async fn list(state: &AppState, max_results: u32, query: Option<&str>) -> Re
         .filter_map(|m| m["id"].as_str().map(str::to_owned))
         .collect();
 
+    // The token is resolved once above and moved into each task. That matters:
+    // `access_token` may be answering from a per-node account scope
+    // (`axon_core::google_account`), and a task-local scope does not cross
+    // `tokio::spawn`. Calling `access_token` *inside* one of these tasks would
+    // silently fetch as the global account instead.
     let mut handles = Vec::new();
     for id in ids {
         let c = state.client.clone();

@@ -384,6 +384,15 @@ export const NODE_TYPES = {
             },
             // ── Gmail Trigger Fields ──
             {
+                displayName: 'Gmail Account',
+                name: 'credential_id',
+                type: 'credential',
+                service: 'google',
+                default: '',
+                displayOptions: { show: { type: ['gmail'] } },
+                hint: 'Which inbox to watch. Use Connect to add another Google account. Leave as "None" to watch the account signed in on the Credentials page.',
+            },
+            {
                 displayName: 'Poll Interval (minutes)',
                 name: 'poll_interval',
                 type: 'number',

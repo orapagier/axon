@@ -4,6 +4,7 @@ import Pill from './Pill.vue'
 import SearchableSelect from './SearchableSelect.vue'
 import ExprInput from './ExprInput.vue'
 import DataTreeNode from './DataTreeNode.vue'
+import RecurrenceEditor from './RecurrenceEditor.vue'
 import { NODE_TYPES } from '../lib/nodes.js'
 import { renameNodeInExpressions, applyAccessPatterns } from '../lib/expressionUpdates.js'
 import { get, post, del } from '../lib/api.js'
@@ -143,33 +144,67 @@ async function loadCredentials() {
   }
 }
 
-// Facebook "Connect a Page" — opens the OAuth popup; its callback saves one
-// credential per managed Page. We poll /credentials so newly-connected Pages
-// appear in the dropdown without a manual refresh.
-const fbConnecting = ref(false)
-async function connectFacebook() {
+// Services whose credentials are created by an OAuth login rather than typed in
+// on the Credentials page. Each gets a "+ Connect" button beside its picker: the
+// popup's callback saves the connected account(s) as credentials, so a node can
+// act as an account other than the globally signed-in one.
+const OAUTH_CONNECT_SERVICES = {
+  facebook: {
+    label: 'Facebook',
+    url: '/facebook/connect-url',
+    // One credential per Page the account manages, so a single login can add several.
+    unit: 'Page account',
+    color: '#1877F2',
+    title: 'Log in with Facebook and save each Page you manage as a credential',
+  },
+  google: {
+    label: 'Google',
+    url: '/google/connect-url',
+    unit: 'Google account',
+    color: '#EA4335',
+    title: 'Log in with Google and save that account as a credential this node can use',
+  },
+}
+
+// Which service's connect flow is currently in flight (null when idle). Only one
+// popup runs at a time, so a single ref is enough to drive every button's state.
+const connectingService = ref(null)
+
+function isOauthConnectService(service) {
+  return !!OAUTH_CONNECT_SERVICES[service]
+}
+
+// Opens the OAuth popup, then polls /credentials so newly-connected accounts
+// appear in the dropdown without a manual refresh. The popup lands on the
+// server's callback page, which we can't read across origins — the credential
+// count is the observable signal that it succeeded.
+async function connectOauthService(service) {
+  const cfg = OAUTH_CONNECT_SERVICES[service]
+  if (!cfg || connectingService.value) return
   try {
-    const r = await get('/facebook/connect-url')
-    if (!r.url) { toast(r.error || 'Could not get Facebook connect URL', false); return }
+    const r = await get(cfg.url)
+    if (!r.url) { toast(r.error || `Could not get ${cfg.label} connect URL`, false); return }
     const popup = window.open(r.url, '_blank', 'width=600,height=720')
-    fbConnecting.value = true
-    toast('Complete the Facebook login in the popup…')
-    const before = getCredentialsForService('facebook').length
+    connectingService.value = service
+    toast(`Complete the ${cfg.label} login in the popup…`)
+    const before = getCredentialsForService(service).length
     let tries = 0
     const timer = setInterval(async () => {
       tries++
       await loadCredentials()
-      const now = getCredentialsForService('facebook').length
-      if (now > before) {
-        toast(`Connected ${now - before} Page account(s)`)
-        clearInterval(timer); fbConnecting.value = false
+      const added = getCredentialsForService(service).length - before
+      if (added > 0) {
+        toast(`Connected ${added} ${cfg.unit}${added === 1 ? '' : 's'}`)
+        clearInterval(timer); connectingService.value = null
       } else if (tries >= 60 || (popup && popup.closed && tries > 2)) {
-        clearInterval(timer); fbConnecting.value = false
+        // Reconnecting an already-saved account updates it in place, so the
+        // count never moves — end quietly rather than claiming a failure.
+        clearInterval(timer); connectingService.value = null
       }
     }, 2000)
   } catch (e) {
-    fbConnecting.value = false
-    toast('Facebook connect failed: ' + e, false)
+    connectingService.value = null
+    toast(`${cfg.label} connect failed: ` + e, false)
   }
 }
 
@@ -1613,7 +1648,7 @@ function normalizeConfig() {
         props.node.data.config[p.name] = { parameters: [] }
       } else if (p.type === 'multiOptions') {
         props.node.data.config[p.name] = p.default || []
-      } else if (p.type === 'stringList') {
+      } else if (p.type === 'stringList' || p.type === 'recurrence') {
         props.node.data.config[p.name] = Array.isArray(p.default) ? [...p.default] : []
       } else {
         props.node.data.config[p.name] = p.default
@@ -1649,15 +1684,23 @@ function normalizeConfig() {
   })
 
   // stringList migration: a field that is now a repeatable list may have been
-  // saved earlier as a single JSON-array textarea (a string). Split it into a
-  // real array so each entry gets its own row. A JSON-array literal is parsed
-  // and spread; any other non-empty value becomes a single row.
+  // saved earlier as a single JSON-array textarea (a string), or as a
+  // fixedCollection of one-field rows (Google Calendar's `attendees` was
+  // [{email}] before it became a plain list of addresses). Both are flattened
+  // into a real array of strings, so an existing workflow keeps its values
+  // instead of showing one row of stringified JSON — which would then be sent
+  // upstream as if it were an email address.
   nodeDefinition.value.properties.forEach(p => {
     if (p.type !== 'stringList') return
     const v = props.node.data.config[p.name]
-    if (Array.isArray(v)) return
+    if (Array.isArray(v) && !v.some(x => x && typeof x === 'object')) return
+
     let items = []
-    if (typeof v === 'string' && v.trim()) {
+    if (Array.isArray(v)) {
+      items = v
+    } else if (v && typeof v === 'object' && Array.isArray(v.parameters)) {
+      items = v.parameters
+    } else if (typeof v === 'string' && v.trim()) {
       const t = v.trim()
       if (t.startsWith('[')) {
         try {
@@ -1670,9 +1713,31 @@ function normalizeConfig() {
     } else if (v !== undefined && v !== null && v !== '') {
       items = [v]
     }
-    props.node.data.config[p.name] = items.map(x =>
-      (x === null || x === undefined) ? '' : (typeof x === 'object' ? JSON.stringify(x) : String(x))
-    )
+
+    props.node.data.config[p.name] = items
+      .map(x => {
+        if (x === null || x === undefined) return ''
+        if (typeof x !== 'object') return String(x)
+        // A one-field row ({email: "a@b.com"}): the row *is* its value.
+        const first = Object.values(x).find(val => typeof val === 'string' && val.trim())
+        return first !== undefined ? first : JSON.stringify(x)
+      })
+      .filter(s => s !== '')
+  })
+
+  // multiOptions migration: a field that is now a picker (e.g. the YouTube
+  // `part` sections) may have been saved as comma-separated text. Split it so
+  // the tags render and the remove button has a real array to splice. An
+  // expression is left alone — it stays in ƒx mode.
+  nodeDefinition.value.properties.forEach(p => {
+    if (p.type !== 'multiOptions') return
+    const v = props.node.data.config[p.name]
+    if (Array.isArray(v) || hasExpression(v)) return
+    if (typeof v === 'string' && v.trim()) {
+      props.node.data.config[p.name] = v.split(',').map(s => s.trim()).filter(Boolean)
+    } else if (v === undefined || v === null || v === '') {
+      props.node.data.config[p.name] = Array.isArray(p.default) ? [...p.default] : []
+    }
   })
 
   // Backward compatibility for Circadian/Stimulus nodes using legacy cron_nl
@@ -2447,6 +2512,7 @@ onUnmounted(() => {
                             <SearchableSelect
                               :model-value="''"
                               :options="(prop.options || []).filter(o => !(node.data.config[prop.name] || []).includes(o.value))"
+                              :allow-custom-value="!!prop.allowCustomValue"
                               :placeholder="prop.placeholder || `Search ${prop.displayName.toLowerCase()}...`"
                               @update:model-value="(v) => { if (v) { if (!node.data.config[prop.name]) node.data.config[prop.name] = []; node.data.config[prop.name].push(v); } }"
                             />
@@ -2480,15 +2546,20 @@ onUnmounted(() => {
                             </option>
                           </select>
                           <button
-                            v-if="prop.service === 'facebook'"
+                            v-if="isOauthConnectService(prop.service)"
                             type="button"
                             class="btn"
-                            :disabled="fbConnecting"
-                            style="flex-shrink:0; background:#1877F2 !important; border-color:#1877F2 !important; color:#fff !important;"
-                            title="Log in with Facebook and save each Page you manage as a credential"
-                            @click="connectFacebook"
+                            :disabled="!!connectingService"
+                            :style="{
+                              flexShrink: 0,
+                              background: OAUTH_CONNECT_SERVICES[prop.service].color + ' !important',
+                              borderColor: OAUTH_CONNECT_SERVICES[prop.service].color + ' !important',
+                              color: '#fff !important',
+                            }"
+                            :title="OAUTH_CONNECT_SERVICES[prop.service].title"
+                            @click="connectOauthService(prop.service)"
                           >
-                            {{ fbConnecting ? 'Connecting…' : '+ Connect' }}
+                            {{ connectingService === prop.service ? 'Connecting…' : '+ Connect' }}
                           </button>
                         </div>
                       </template>
@@ -3144,6 +3215,30 @@ onUnmounted(() => {
                             v-if="node.data.config[prop.name]"
                             class="datetime-iso-hint"
                           >{{ node.data.config[prop.name] }}</span>
+                        </div>
+                      </template>
+                      <template v-else-if="prop.type === 'recurrence'">
+                        <label>{{ prop.displayName }}</label>
+                        <ExprInput
+                          v-if="isExprMode('p:'+prop.name, node.data.config[prop.name])"
+                          v-model="node.data.config[prop.name]"
+                          :resolve="resolveExpression"
+                          placeholder="Expression returning RRULE strings…"
+                          @revert="exitExprMode('p:'+prop.name, () => node.data.config[prop.name] = [])"
+                        />
+                        <div
+                          v-else
+                          class="field-with-fx"
+                        >
+                          <RecurrenceEditor v-model="node.data.config[prop.name]" />
+                          <button
+                            type="button"
+                            class="btn-fx-toggle"
+                            title="Use an expression"
+                            @click="enterExprMode('p:'+prop.name, () => node.data.config[prop.name] = '')"
+                          >
+                            ƒx
+                          </button>
                         </div>
                       </template>
                       <template v-else-if="prop.type === 'stringList'">

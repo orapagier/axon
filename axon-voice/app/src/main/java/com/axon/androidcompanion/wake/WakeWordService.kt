@@ -119,6 +119,21 @@ class WakeWordService : Service(), ChatSocket.Listener {
     private var replyError: String? = null
     private var replyStream: StreamingTts? = null
 
+    /** Everything the finished reply's stream actually spoke. The server ends a
+     *  cancelled, superseded or errored run with an empty `full_text`, so
+     *  [replyText] alone would throw away a reply the user has already heard —
+     *  and with it the turn, the saved message, and the follow-up window. */
+    @Volatile
+    private var replySpoken: String = ""
+
+    /** True when the turn failed because the server could not be reached, as
+     *  opposed to failing on the server. Its spoken notice then goes straight to
+     *  the on-device engine: a round-trip to the server's TTS is exactly what
+     *  just failed, and trying it first would spend a 10s connect timeout of
+     *  dead air before saying anything. */
+    @Volatile
+    private var replyOffline = false
+
     /** True while a reply's barge monitor thread should keep watching the mic;
      *  cleared once the reply's latch releases so the monitor unwinds. Only one
      *  reply is ever in flight (single wake worker), so one flag suffices. */
@@ -456,6 +471,11 @@ class WakeWordService : Service(), ChatSocket.Listener {
         var first = true
         var firstTask = true // gates the one-time hint
         var lastReply = ""
+        // Consecutive turns whose capture produced nothing usable. One is an
+        // ordinary misheard command and gets another try; a second in a row
+        // means the transcriber (or the network to it) is down, and reopening
+        // the mic forever would just keep failing.
+        var misses = 0
         // A spoken interruption confirmed while the last reply played: it IS the
         // next command, so the loop below skips the ack + mic capture and feeds
         // it straight to the agent. Null on a normal turn.
@@ -516,8 +536,29 @@ class WakeWordService : Service(), ChatSocket.Listener {
 
                 notify(getString(R.string.status_thinking))
                 setPhase(VoiceOverlay.Phase.THINKING)
-                val heard = runCatching { client.transcribe(wav) }.getOrNull()
-                if (heard.isNullOrBlank()) break
+                val attempt = runCatching { client.transcribe(wav) }
+                val heard = attempt.getOrNull()
+                if (heard.isNullOrBlank()) {
+                    // Never die in silence here. The user is hands-free and
+                    // cannot see that the turn went nowhere — before this, the
+                    // thinking shimmer simply stopped and the conversation was
+                    // over with no explanation. Say what happened, then reopen
+                    // the follow-up window so they can just repeat themselves.
+                    // A thrown attempt means the server was unreachable; a
+                    // successful-but-blank one means it heard no words.
+                    misses++
+                    val reached = attempt.isSuccess
+                    val notice = if (reached) "Sorry, I didn't catch that."
+                    else "I couldn't reach Axon just then."
+                    speakNotice(notice, preferLocal = !reached)
+                    if (misses >= 2) break
+                    // The retry window has to know we just said this, or the
+                    // notice echoing back off the speaker becomes the command.
+                    lastReply = notice
+                    first = false
+                    continue
+                }
+                misses = 0
                 // A capture that is just our own voice bounced back (ack phrase
                 // or the last full reply) must not become the next command: with
                 // session history the agent would re-answer its own words,
@@ -550,17 +591,29 @@ class WakeWordService : Service(), ChatSocket.Listener {
             val (reply, err) = synchronized(replyLock) { (replyText ?: "") to replyError }
             // On a barge the reply was cut off before "done" arrived, so save the
             // partial that had actually been spoken; otherwise the full reply.
+            // A run the server cancelled, superseded or errored out of ends with
+            // an empty full_text, so fall back to what the stream actually said
+            // rather than dropping a reply the user just heard.
             val spoken = when {
                 reply.isNotBlank() -> reply
                 barge != null -> barge.partial.trim()
-                else -> ""
+                else -> replySpoken
             }
             if (spoken.isNotBlank()) {
                 ChatFeed.post(this, sessionId, "assistant", spoken)
                 turns.add(text to spoken)
                 lastReply = spoken
-            } else if (err != null) {
+            }
+            if (err != null) {
                 ChatFeed.post(this, sessionId, "error", "Sorry — $err")
+                // The ChatFeed entry is invisible to someone who isn't holding
+                // the phone, which is the whole point of hands-free. Say it too,
+                // then end the exchange — a failed turn the user can hear is a
+                // conversation that ended, not one that mysteriously dropped.
+                notify(getString(R.string.status_speaking))
+                setPhase(VoiceOverlay.Phase.SPEAKING)
+                speakNotice(spokenFailure(err), preferLocal = replyOffline)
+                break
             }
             first = false // reopen as the follow-up window, raised speech bar
             // A call was dialed on this device during this turn ("call Mom"), so
@@ -576,7 +629,16 @@ class WakeWordService : Service(), ChatSocket.Listener {
                 pending = barge.command
                 continue
             }
-            if (spoken.isBlank()) break
+            if (spoken.isBlank()) {
+                // A terminal event with nothing in it and no error to explain
+                // it — a run the server ended empty. Rare, but it looked exactly
+                // like the failures above from where the user is standing, so it
+                // gets the same courtesy of being audible.
+                notify(getString(R.string.status_speaking))
+                setPhase(VoiceOverlay.Phase.SPEAKING)
+                speakNotice("Sorry, I didn't get an answer for that one.")
+                break
+            }
         }
         // Carry this conversation's last two completed turns forward as the next
         // wake's optional hint.
@@ -712,10 +774,28 @@ class WakeWordService : Service(), ChatSocket.Listener {
         sessionId: String,
         rec: AudioRecord?,
     ): BargeSlot? {
+        // Clear the previous turn's outcome up front. An early return below must
+        // not leave the caller reading the *last* reply as this turn's.
+        synchronized(replyLock) {
+            replyText = null
+            replyError = null
+        }
+        replySpoken = ""
+        replyOffline = false
         val p = player ?: return null
         val c = chat ?: return null
+        // Give a socket that dropped while nobody was talking a real chance to
+        // come back: nudge the reconnect rather than only sleeping through its
+        // retry timer, and wait long enough to cover a couple of attempts.
         var waits = 0
-        while (!c.connected && waits++ < 10 && alive) Thread.sleep(500)
+        while (!c.connected && waits++ < 16 && alive && !cancelExchange) {
+            if (waits % 4 == 0) c.reconnectNow()
+            Thread.sleep(500)
+        }
+        if (!c.connected) {
+            failReply("I can't reach Axon right now.", offline = true)
+            return null
+        }
 
         // Deliberately DON'T flip to SPEAKING here: the reply is still an
         // agent-think plus a first-sentence synth round-trip away from any
@@ -744,13 +824,15 @@ class WakeWordService : Service(), ChatSocket.Listener {
         }
         synchronized(replyLock) {
             replyLatch = latch
-            replyText = null
-            replyError = null
             replyStream = stream
         }
         if (!c.sendTask(task, sessionId, voice = true)) {
             stream.abort()
-            synchronized(replyLock) { replyStream = null }
+            synchronized(replyLock) {
+                replyStream = null
+                replyLatch = null
+            }
+            failReply("I can't reach Axon right now.", offline = true)
             return null
         }
 
@@ -767,12 +849,72 @@ class WakeWordService : Service(), ChatSocket.Listener {
         } else {
             null
         }
-        latch.await(310, TimeUnit.SECONDS)
+        val finished = latch.await(310, TimeUnit.SECONDS)
         // Stop the monitor (normal completion) and let it unwind; on a barge it
         // has already exited on its own.
         bargeMonitorAlive = false
         monitor?.join(500)
+        // Whatever was actually spoken, for the caller's save/hint bookkeeping
+        // when the terminal event carried no text of its own.
+        replySpoken = stream.accumulated().trim()
+        if (!finished && slot.command == null) {
+            // The backstop fired: no terminal event ever arrived for this run.
+            // Tear the stream down and say so instead of dropping back to idle
+            // in silence after five minutes of nothing.
+            stream.abort()
+            synchronized(replyLock) {
+                replyStream = null
+                replyLatch = null
+            }
+            failReply("That one took too long, so I've stopped waiting.", offline = false)
+        }
         return if (slot.command != null) slot else null
+    }
+
+    /** Record why this turn failed, for [interact] to save and speak. Keeps a
+     *  reason already set by an "error" frame or a dropped socket — the first
+     *  cause is the real one. */
+    private fun failReply(message: String, offline: Boolean) {
+        replyOffline = offline
+        synchronized(replyLock) { if (replyError == null) replyError = message }
+    }
+
+    /** A failure reason trimmed to something worth hearing out loud. Server
+     *  errors can be long and technical; the transcript keeps the full text. */
+    private fun spokenFailure(err: String): String {
+        val t = err.trim().removePrefix("Agent error:").trim().trimEnd('.')
+        return if (t.isNotEmpty() && t.length <= 140) "Sorry — $t."
+        else "Sorry — something went wrong with that one."
+    }
+
+    /**
+     * Say [phrase] out loud and block until it has been said, through the same
+     * 3-tier "never silent" chain as [playAckBlocking]: server TTS, then the
+     * built-in Android engine, then a chime.
+     *
+     * [preferLocal] skips the server tier for failures that are *about* the
+     * server being unreachable — asking it to synthesize the apology would just
+     * spend another connect timeout of dead air first.
+     */
+    private fun speakNotice(phrase: String, preferLocal: Boolean = false) {
+        val p = player ?: return
+        if (!preferLocal) {
+            val f = File(cacheDir, "notice_${phrase.hashCode().toString(16)}.audio")
+            val ok = f.exists() && f.length() > 0 ||
+                runCatching { client.speech(phrase, f) }.getOrDefault(false)
+            if (ok && f.length() > 0) {
+                val latch = CountDownLatch(1)
+                p.play(f) { latch.countDown() }
+                if (latch.await(10, TimeUnit.SECONDS)) return
+            } else {
+                f.delete() // retry the fetch next time rather than cache a dud
+            }
+        }
+        val spoke = CountDownLatch(1)
+        p.speakFallback(phrase) { spoke.countDown() }
+        if (spoke.await(10, TimeUnit.SECONDS)) return
+        Sound.chime()
+        Thread.sleep(400)
     }
 
     /**
@@ -823,8 +965,12 @@ class WakeWordService : Service(), ChatSocket.Listener {
             val now = System.currentTimeMillis()
             if (now - lastDiag > 250) {
                 lastDiag = now
+                // logcat, not the notification: this is threshold-tuning
+                // telemetry, and pushing it to the ongoing notification four
+                // times a second replaced the user-facing status ("Speaking…")
+                // with debug text for the whole length of every reply.
                 val tag = if (armed) "" else " (waiting for play)"
-                notify("barge: mic=%.4f thr=%.4f%s".format(rms, onset, tag))
+                Log.d(LOG_TAG, "barge: mic=%.4f thr=%.4f%s".format(rms, onset, tag))
             }
 
             if (!armed) {
@@ -994,10 +1140,13 @@ class WakeWordService : Service(), ChatSocket.Listener {
     override fun onWsDisconnected() {
         synchronized(replyLock) {
             if (replyLatch == null) return // idle: nothing to unstick
-            if (replyError == null) replyError = "Connection lost before the reply finished."
+            if (replyError == null) replyError = "I lost the connection before that finished."
             replyStream?.abort()
             replyStream = null
         }
+        // The notice for this one is spoken on-device: the server we would ask
+        // to synthesize it is the one we just lost.
+        replyOffline = true
         player?.stop()
         synchronized(replyLock) {
             replyLatch?.countDown()
