@@ -147,7 +147,11 @@ const spreadsheetOptions = ref([])
 const spreadsheetTabsById = ref({})
 const spreadsheetTabIdMapsById = ref({})
 const loadingSpreadsheetTabsById = ref({})
-const calendarOptions = ref([])
+// Calendars are cached per Google account: a node acting as a second account
+// must offer that account's calendars, not the globally signed-in one's.
+// Keyed by credential_id, with '' meaning "the account on the Credentials page".
+const calendarsByAccount = ref({})
+const calendarLoadState = ref({})
 
 async function loadSpreadsheets() {
   try {
@@ -159,18 +163,71 @@ async function loadSpreadsheets() {
   }
 }
 
-async function loadCalendars() {
+/**
+ * Fetch the calendars visible to one Google account.
+ *
+ * The failure path deliberately records the error rather than a one-entry
+ * fallback list: a previous version stored `[{Primary Calendar}]` on failure and
+ * then used "the list is non-empty" as its did-we-load-it check, so a single
+ * failed request pinned every calendar picker to "Primary Calendar" for the rest
+ * of the session with nothing on screen to say why.
+ */
+async function loadCalendars(credentialId = '', force = false) {
+  const key = credentialId || ''
+  const state = calendarLoadState.value[key]
+  if (!force && (state === 'loading' || state === 'ok')) return
+
+  calendarLoadState.value = { ...calendarLoadState.value, [key]: 'loading' }
   try {
-    const d = await get('/google/calendars')
-    const cals = d.calendars || []
-    calendarOptions.value = [
-      { name: 'Primary Calendar', value: 'primary' },
-      ...cals.filter(c => c.value !== 'primary').map(c => ({ name: c.name, value: c.value }))
-    ]
+    const qs = key ? `?credential_id=${encodeURIComponent(key)}` : ''
+    const d = await get(`/google/calendars${qs}`)
+    if (d.error) throw new Error(d.error)
+    calendarsByAccount.value = { ...calendarsByAccount.value, [key]: d.calendars || [] }
+    calendarLoadState.value = { ...calendarLoadState.value, [key]: 'ok' }
   } catch (e) {
     console.error('Failed to load Google Calendars', e)
-    calendarOptions.value = [{ name: 'Primary Calendar', value: 'primary' }]
+    const message = String(e?.message || e)
+    calendarLoadState.value = { ...calendarLoadState.value, [key]: message }
   }
+}
+
+/**
+ * Calendar picker options for one account.
+ *
+ * The real primary calendar is dropped in favour of the literal `primary` alias
+ * that heads the list — Google returns both under the same events, and offering
+ * them side by side (once as "Primary Calendar", once as the account's email)
+ * reads as two different calendars.
+ */
+function calendarPickerOptions(credentialId = '') {
+  const cals = calendarsByAccount.value[credentialId || ''] || []
+  const primary = cals.find(c => c.primary)
+  const options = [{
+    name: primary ? `Primary calendar (${primary.name})` : 'Primary calendar',
+    value: 'primary',
+    description: 'The main calendar of the account this node runs as.',
+  }]
+  for (const c of cals) {
+    if (c.primary) continue
+    const notes = [c.group]
+    if (c.hidden) notes.push('hidden in Google')
+    if (c.canEdit === false) notes.push('read-only')
+    options.push({ name: c.name, value: c.value, description: notes.join(' · ') })
+  }
+  return options
+}
+
+/** Hint text under a calendar field: how many were found, or why none were. */
+function calendarPickerHint(credentialId = '') {
+  const key = credentialId || ''
+  const state = calendarLoadState.value[key]
+  if (state === 'loading') return 'Loading your calendars…'
+  if (state && state !== 'ok') {
+    return `Could not load your calendars: ${state}. Check the Google connection on the Credentials page, then reopen this node.`
+  }
+  const count = (calendarsByAccount.value[key] || []).length
+  if (count === 0) return 'No calendars found for this account yet.'
+  return `${count} calendar${count === 1 ? '' : 's'} found, including any under "Other calendars". You can also type a calendar ID or an email address.`
 }
 
 function getSpreadsheetIdFromConfig(nodeConfig = {}) {
@@ -262,13 +319,18 @@ const GOOGLE_ACCOUNT_SERVICES = new Set([
 
 // A schema enum may carry per-value blurbs under `enumDescriptions` (e.g. the
 // YouTube list filters), so a picker can explain what each API value means
-// instead of listing bare strings.
+// instead of listing bare strings. `enumLabels` goes a step further and replaces
+// the label outright, for enums whose API values are jargon — Google Calendar's
+// `transparency` is "opaque"/"transparent" where the user means "Busy"/"Free".
 function enumOptions(schema, values) {
   const descriptions = (schema.enumDescriptions && typeof schema.enumDescriptions === 'object')
     ? schema.enumDescriptions
     : {}
+  const labels = (schema.enumLabels && typeof schema.enumLabels === 'object')
+    ? schema.enumLabels
+    : {}
   return values.map(v => ({
-    name: v === '' ? '— Any —' : String(v),
+    name: labels[v] !== undefined ? labels[v] : (v === '' ? '— Any —' : String(v)),
     value: v,
     description: descriptions[v] || '',
   }))
@@ -287,23 +349,10 @@ function schemaToProperties(tool, nodeConfig = {}) {
   }
 
   // ── Google Calendar specific ─────────────────────────────────────────────
-  const RECURRENCE_LABELS = {
-    '': 'Does not repeat',
-    'RRULE:FREQ=DAILY': 'Every day',
-    'RRULE:FREQ=WEEKLY': 'Every week',
-    'RRULE:FREQ=MONTHLY': 'Every month',
-    'RRULE:FREQ=YEARLY': 'Every year',
-    'RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR': 'Every weekday (Mon–Fri)',
-    'RRULE:FREQ=WEEKLY;BYDAY=MO': 'Every Monday',
-    'RRULE:FREQ=WEEKLY;BYDAY=TU': 'Every Tuesday',
-    'RRULE:FREQ=WEEKLY;BYDAY=WE': 'Every Wednesday',
-    'RRULE:FREQ=WEEKLY;BYDAY=TH': 'Every Thursday',
-    'RRULE:FREQ=WEEKLY;BYDAY=FR': 'Every Friday',
-    'RRULE:FREQ=WEEKLY;BYDAY=SA': 'Every Saturday',
-    'RRULE:FREQ=WEEKLY;BYDAY=SU': 'Every Sunday',
-  }
-
-  const isCalendarEvent = ['gcal_create_event', 'gcal_update_event'].includes(tool.name || tool.tool_name || '')
+  // Any field naming a single calendar becomes a picker over the calendars of
+  // the account this node acts as.
+  const calendarIdKeys = new Set(['calendar_id', 'source_calendar_id', 'destination_calendar_id'])
+  const googleAccountId = nodeConfig?.credential_id || ''
 
   // The backend serializes schema keys alphabetically, which inverts natural
   // pairs (time_max before time_min, end before start). Pin them back.
@@ -346,27 +395,32 @@ function schemaToProperties(tool, nodeConfig = {}) {
       prop.type = 'options'
       prop.searchable = true
       prop.options = spreadsheetOptions.value
-    } else if (key === 'calendar_id' || key === 'source_calendar_id' || key === 'destination_calendar_id') {
-      // Calendar dropdown — load from API or fall back to schemaEnum
+    } else if (calendarIdKeys.has(key)) {
+      // Calendar picker. Custom values stay allowed so a calendar shared after
+      // the list was cached — or one belonging to someone else entirely — can
+      // still be typed in rather than blocking the node.
+      loadCalendars(googleAccountId)
       prop.type = 'options'
       prop.searchable = true
-      prop.displayName = 'Calendar'
-      prop.hint = 'Select which Google Calendar to use.'
-      if (calendarOptions.value.length > 0) {
-        prop.options = calendarOptions.value
-      } else {
-        // Load asynchonously and fall back to a generic primary option
-        loadCalendars()
-        prop.options = [{ name: 'Primary Calendar', value: 'primary' }]
-      }
-      prop.default = 'primary'
-    } else if (key === 'recurrence' && isCalendarEvent) {
-      // Recurrence dropdown with human-readable labels
-      prop.type = 'options'
-      prop.displayName = 'Recurrence'
-      prop.hint = 'How often should this event repeat?'
-      prop.options = Object.entries(RECURRENCE_LABELS).map(([value, name]) => ({ name, value }))
-      prop.default = ''
+      prop.allowCustomValue = true
+      prop.options = calendarPickerOptions(googleAccountId)
+      prop.hint = calendarPickerHint(googleAccountId)
+      prop.default = schema.default !== undefined ? schema.default : 'primary'
+    } else if (schema.displayOptions?.widget === 'calendarMulti') {
+      // "Which calendars have to be free" — same list, many at once, and free
+      // text so a colleague's email address can be added.
+      loadCalendars(googleAccountId)
+      prop.type = 'multiOptions'
+      prop.searchable = true
+      prop.allowCustomValue = true
+      prop.options = calendarPickerOptions(googleAccountId)
+      prop.hint = calendarPickerHint(googleAccountId)
+      prop.default = Array.isArray(schema.default) ? [...schema.default] : []
+      prop.placeholder = 'Pick a calendar, or type an email address…'
+    } else if (schema.displayOptions?.widget === 'recurrence') {
+      // Guided repeat builder; writes the RFC 5545 RRULE strings itself.
+      prop.type = 'recurrence'
+      prop.default = []
     } else if (key === 'time_zone' && schemaEnum.length > 0) {
       // Timezone dropdown with search
       prop.type = 'options'
@@ -474,14 +528,60 @@ function schemaToProperties(tool, nodeConfig = {}) {
   return finalProps
 }
 
+// Tool names read as jargon once the service prefix is stripped ("list events",
+// "get freebusy"), so the handful that matter get a label written for someone
+// who has never seen the Google Calendar API. Everything else is humanised from
+// the name below.
+const TOOL_ACTION_LABELS = {
+  gcal_list_events: 'Find events',
+  gcal_get_event: 'Get one event',
+  gcal_create_event: 'Create an event',
+  gcal_quick_add: 'Create an event from a sentence',
+  gcal_update_event: 'Change an event',
+  gcal_delete_event: 'Delete an event',
+  gcal_move_event: 'Move an event to another calendar',
+  gcal_list_event_instances: 'List occurrences of a repeating event',
+  gcal_add_attendees: 'Invite people to an event',
+  gcal_remove_attendees: 'Remove people from an event',
+  gcal_respond_to_event: 'RSVP to an invitation',
+  gcal_find_free_slots: 'Find a free time slot',
+  gcal_get_freebusy: 'Check when calendars are busy',
+  gcal_list_calendars: 'List my calendars',
+  gcal_create_calendar: 'Create a calendar',
+  gcal_update_calendar: 'Rename or restyle a calendar',
+  gcal_delete_calendar: 'Delete a calendar',
+  gcal_subscribe_calendar: 'Add someone else’s calendar to my list',
+  gcal_unsubscribe_calendar: 'Remove a calendar from my list',
+}
+
+/**
+ * Short label for one action in a service node's "Tool Action" dropdown.
+ *
+ * This used to return `tool.description` whenever there was one, which turned
+ * each option into the whole model-facing description — several hundred
+ * characters of markdown, time-window rules and pagination notes, rendered as a
+ * single dropdown row. The description is still shown, as the smaller second
+ * line under the label, where its length costs nothing.
+ */
 function formatToolActionLabel(tool) {
   const rawName = String(tool?.tool_name || tool?.name || '')
-  const rawDesc = String(tool?.description || '').trim()
-  if (rawDesc.length > 0) return rawDesc
-
   const bare = rawName.split(/[.:/]/).pop() || rawName
-  const human = bare.replace(/_/g, ' ')
+  if (TOOL_ACTION_LABELS[bare]) return TOOL_ACTION_LABELS[bare]
+
+  // Drop the service prefix ("gcal_", "gsheets_") so the verb leads.
+  const words = bare.split('_')
+  const withoutPrefix = words.length > 1 ? words.slice(1) : words
+  const human = withoutPrefix.join(' ').trim() || bare.replace(/_/g, ' ')
   return human.charAt(0).toUpperCase() + human.slice(1)
+}
+
+/** First sentence of a tool description — enough to disambiguate two actions. */
+function formatToolActionDescription(tool) {
+  const raw = String(tool?.description || '').trim()
+  if (!raw) return String(tool?.tool_name || tool?.name || '')
+  const firstLine = raw.split('\n')[0].trim()
+  const sentence = firstLine.split(/(?<=\.)\s/)[0].trim()
+  return sentence.length > 160 ? `${sentence.slice(0, 157)}…` : sentence
 }
 
 async function loadMcpTools() {
@@ -527,7 +627,11 @@ async function loadMcpTools() {
               name: 'tool_name',
               type: 'options',
               // Keep value as registry tool name (execution-safe), but display MCP-native label.
-              options: tools.map(t => ({ name: formatToolActionLabel(t), value: t.name, description: t.tool_name || t.name })),
+              options: tools.map(t => ({
+                name: formatToolActionLabel(t),
+                value: t.name,
+                description: formatToolActionDescription(t),
+              })),
               searchable: true,
               default: tools.length > 0 ? tools[0].name : '',
               required: true,

@@ -92,45 +92,159 @@ impl GoogleService {
             Tool::new("gmail_delete_draft", "Delete a Gmail draft.", schema!({"draft_id":{"type":"string"}}, ["draft_id"])),
 
 
-            // Calendar
-            // Calendar
-            Tool::new("gcal_list_calendars", "List all Google calendars in the user's account. Use this to discover calendar IDs.", schema!({}, [])),
-            Tool::new("gcal_list_events", "List Google Calendar events. Use this when asked about the calendar, schedule, agenda, or upcoming events. Supports free-text search via 'query' parameter. Set 'single_events' to false to discover master events of recurring series (required for series deletion).\n\n**Time windows:**\n- Passing a date-only `time_min` (e.g. '2026-07-20') with no `time_max` lists ONLY that single calendar day and filters events to that day (see `_axon_requested_day` in the response). Applies only when `single_events` is true (the default).\n- For a range or far-future dates, pass BOTH `time_min` and `time_max`.\n- With no window at all, listing covers now through the next 30 days.\n\nResponses with more events than 'max_results' include a nextPageToken — pass it back as 'page_token' for the next page.", schema!({"max_results":{"type":"integer","default":10,"maximum":2500},"time_min":{"type":"string","description":"Window start. Any common datetime format works: ISO 8601, '2026-07-05 09:00', 'July 5, 2026 3pm', or a Unix timestamp. A bare date (e.g. '2026-07-20') scopes to that exact day only.","displayOptions":{"inlineGroup":"time_window"}},"time_max":{"type":"string","description":"Window end. Accepts the same flexible formats as time_min.","displayOptions":{"inlineGroup":"time_window"}},"query":{"type":"string","description":"Free-text search terms"},"calendar_id":{"type":"string","default":"primary"},"single_events":{"type":"boolean","default":true},"page_token":{"type":"string","description":"nextPageToken from a previous response, to fetch the next page"}}, [])),
-            Tool::new("gcal_get_event", "Get a single Google Calendar event by ID.", schema!({"event_id":{"type":"string"},"calendar_id":{"type":"string","default":"primary"}}, ["event_id"])),
-            Tool::new("gcal_create_event", "Create a Google Calendar event. Defaults to 'Asia/Manila' timezone. Set 'create_meet_link' to true to generate a Google Meet link. For recurring events, provide RRULE strings in the 'recurrence' array (e.g. ['RRULE:FREQ=WEEKLY;BYDAY=FR']). For an ALL-DAY event pass dates only (e.g. start '2025-06-15', end '2025-06-15').", schema!({
-                    "summary":         { "type": "string",  "description": "Event title / name (SUMMARY). What the event is called, e.g. 'Team Standup' or 'Doctor Appointment'." },
-                    "start":           { "type": "string",  "description": "Start date and time, e.g. '2025-06-15T09:00:00'. Any common format works: ISO 8601, '2025-06-15 09:00', 'June 15, 2025 9am', '06/15/2025 9:00 AM', or a Unix timestamp. A date alone ('2025-06-15') makes an all-day event.", "displayOptions": { "inlineGroup": "event_time" } },
-                    "end":             { "type": "string",  "description": "End date and time, e.g. '2025-06-15T10:00:00'. Accepts the same flexible formats as start. Must be after start. For all-day events use a date; same date as start means a one-day event.", "displayOptions": { "inlineGroup": "event_time" } },
-                    "description":     { "type": "string",  "description": "Optional notes or agenda for the event (DESCRIPTION). Supports plain text details about what this event is about." },
-                    "location":        { "type": "string",  "description": "Physical or virtual place where the event occurs (LOCATION), e.g. 'Zoom', 'Conference Room A', or a full address." },
-                    "attendees":       { "type": "array",   "description": "List of people to invite to this event. Each item is an attendee with their email address.", "items": { "type": "object", "properties": { "email": { "type": "string", "description": "Attendee email address, e.g. john@example.com" } } } },
-                    "time_zone":       { "type": "string",  "description": "Timezone for the event times, e.g. 'Asia/Manila', 'America/New_York'.", "default": "Asia/Manila",
-                        "enum": ["Asia/Manila","Asia/Singapore","Asia/Tokyo","Asia/Hong_Kong","Asia/Seoul","Asia/Bangkok","Asia/Kolkata","Asia/Dubai","Asia/Karachi","Asia/Jakarta","Asia/Shanghai","Australia/Sydney","Australia/Melbourne","Europe/London","Europe/Paris","Europe/Berlin","Europe/Rome","Europe/Madrid","Europe/Amsterdam","Europe/Moscow","America/New_York","America/Chicago","America/Denver","America/Los_Angeles","America/Toronto","America/Vancouver","America/Sao_Paulo","America/Buenos_Aires","America/Mexico_City","America/Bogota","Africa/Cairo","Africa/Lagos","Africa/Nairobi","Pacific/Auckland","Pacific/Honolulu","UTC"]
-                    },
-                    "create_meet_link": { "type": "boolean", "description": "Set to true to automatically generate a Google Meet video conference link for this event.", "default": false },
-                    "calendar_id":     { "type": "string",  "description": "Which calendar to add this event to. Use 'primary' for your main calendar, or select from your available calendars.", "default": "primary" },
-                    "recurrence":      { "type": "array",   "description": "Recurrence rules as RFC 5545 RRULE strings, e.g. 'RRULE:FREQ=WEEKLY;BYDAY=FR' (every Friday), 'RRULE:FREQ=WEEKLY;BYDAY=FR;COUNT=10' (10 occurrences), 'RRULE:FREQ=WEEKLY;BYDAY=FR;UNTIL=20261231T000000Z' (until a date), 'RRULE:FREQ=MONTHLY;BYMONTHDAY=1' (1st of each month).", "items": { "type": "string" } },
-                    "send_updates":    { "type": "string",  "description": "Who receives notification emails: 'all' attendees, 'externalOnly' (only attendees outside your Google Workspace), or 'none'.", "enum": ["all","externalOnly","none"], "default": "all" }
-                }, ["summary","start","end"])),
-            Tool::new("gcal_update_event", "Update a Google Calendar event. Only the provided fields change — blank fields are left untouched. Defaults to 'Asia/Manila' timezone. To edit an entire recurring series, provide the master ID (found via 'gcal_list_events' with single_events=false). You can also update the 'recurrence' rules for a series.", schema!({
-                    "event_id":    { "type": "string", "description": "ID of the event to update." },
-                    "summary":     { "type": "string", "description": "New event title / name (SUMMARY)." },
-                    "start":       { "type": "string", "description": "New start time, e.g. '2025-06-15T09:00:00'. Any common datetime format or a Unix timestamp works. A date alone ('2025-06-15') switches the event to all-day." },
-                    "end":         { "type": "string", "description": "New end time, e.g. '2025-06-15T10:00:00'. Accepts the same flexible formats as start. For all-day events use a date." },
-                    "description": { "type": "string", "description": "New event notes / agenda (DESCRIPTION)." },
-                    "location":    { "type": "string", "description": "New event location (LOCATION)." },
-                    "attendees":   { "type": "array",  "description": "Updated attendee list. Each item is an attendee with their email.", "items": { "type": "object", "properties": { "email": { "type": "string", "description": "Attendee email address" } } } },
-                    "time_zone":   { "type": "string", "description": "Timezone for the updated event times.", "default": "Asia/Manila",
-                        "enum": ["Asia/Manila","Asia/Singapore","Asia/Tokyo","Asia/Hong_Kong","Asia/Seoul","Asia/Bangkok","Asia/Kolkata","Asia/Dubai","Asia/Karachi","Asia/Jakarta","Asia/Shanghai","Australia/Sydney","Australia/Melbourne","Europe/London","Europe/Paris","Europe/Berlin","Europe/Rome","Europe/Madrid","Europe/Amsterdam","Europe/Moscow","America/New_York","America/Chicago","America/Denver","America/Los_Angeles","America/Toronto","America/Vancouver","America/Sao_Paulo","America/Buenos_Aires","America/Mexico_City","America/Bogota","Africa/Cairo","Africa/Lagos","Africa/Nairobi","Pacific/Auckland","Pacific/Honolulu","UTC"]
-                    },
-                    "calendar_id": { "type": "string", "description": "Calendar containing the event.", "default": "primary" },
-                    "recurrence":  { "type": "array",  "description": "Updated recurrence rules as RFC 5545 RRULE strings, e.g. 'RRULE:FREQ=WEEKLY;BYDAY=FR' or 'RRULE:FREQ=WEEKLY;BYDAY=FR;COUNT=10'.", "items": { "type": "string" } },
-                    "send_updates": { "type": "string", "description": "Who receives notification emails: 'all' attendees, 'externalOnly' (only attendees outside your Google Workspace), or 'none'.", "enum": ["all","externalOnly","none"], "default": "all" }
+            // ── Calendar ──────────────────────────────────────────────────
+            // Ordered the way the node's action picker reads them: everyday
+            // event work first, then availability, then calendar management.
+            //
+            // Every field carries a `title` (the label the node shows) and
+            // `enumLabels` where the API's own values are jargon — "opaque" is
+            // Google's word for "shows me as busy", and no one picking a
+            // meeting time should have to know that.
+            Tool::new("gcal_list_events", "Find Google Calendar events. Use this when asked about the calendar, schedule, agenda, or upcoming events. Supports free-text search via 'query' parameter. Set 'single_events' to false to discover master events of recurring series (required for series deletion).\n\n**Time windows:**\n- Passing a date-only `time_min` (e.g. '2026-07-20') with no `time_max` lists ONLY that single calendar day and filters events to that day (see `_axon_requested_day` in the response). Applies only when `single_events` is true (the default).\n- For a range or far-future dates, pass BOTH `time_min` and `time_max`.\n- With no window at all, listing covers now through the next 30 days.\n\nResponses with more events than 'max_results' include a nextPageToken — pass it back as 'page_token' for the next page.", schema!({
+                    "calendar_id":   { "type": "string",  "title": "Calendar", "description": "Which calendar to look in. Leave as primary for your main calendar, or pick any other calendar you have.", "default": "primary" },
+                    "time_min":      { "type": "string",  "title": "From", "description": "Start of the period to search. Any common format works: 2026-07-05, July 5 2026 3pm, or 2026-07-05T09:00:00. A date on its own searches just that one day.", "displayOptions": { "inlineGroup": "time_window" } },
+                    "time_max":      { "type": "string",  "title": "Until", "description": "End of the period to search. Leave blank to search 30 days ahead of the start.", "displayOptions": { "inlineGroup": "time_window" } },
+                    "query":         { "type": "string",  "title": "Search for", "description": "Only return events matching these words, e.g. standup. Leave blank for all events." },
+                    "max_results":   { "type": "integer", "title": "Maximum events", "description": "How many events to return at most.", "default": 10, "maximum": 2500 },
+                    "single_events": { "type": "boolean", "title": "Expand repeating events", "description": "On: list each occurrence of a repeating event separately. Off: list the repeating event once as a series, which is what you need in order to change or delete the whole series.", "default": true },
+                    "page_token":    { "type": "string",  "title": "Next page token", "description": "Leave blank. Only used to fetch a further page of a previous result." }
+                }, [])),
+            Tool::new("gcal_get_event", "Get the full details of one Google Calendar event by its ID.", schema!({
+                    "event_id":    { "type": "string", "title": "Event ID", "description": "ID of the event, as returned by gcal_list_events." },
+                    "calendar_id": { "type": "string", "title": "Calendar", "description": "Calendar the event lives on.", "default": "primary" }
                 }, ["event_id"])),
-            Tool::new("gcal_delete_event", "Delete a Google Calendar event. Attendees are notified unless 'send_updates' says otherwise. Set 'all_events' to true to delete all instances of a recurring event.", schema!({"event_id":{"type":"string"},"calendar_id":{"type":"string","default":"primary"},"all_events":{"type":"boolean","default":false},"send_updates":{"type":"string","description":"Who receives cancellation emails: 'all', 'externalOnly', or 'none'.","enum":["all","externalOnly","none"],"default":"all"}}, ["event_id"])),
-            Tool::new("gcal_move_event", "Move an event from one Google calendar to another.", schema!({"event_id":{"type":"string"},"source_calendar_id":{"type":"string","default":"primary"},"destination_calendar_id":{"type":"string"},"send_updates":{"type":"string","description":"Who receives notification emails: 'all', 'externalOnly', or 'none'.","enum":["all","externalOnly","none"],"default":"all"}}, ["event_id","destination_calendar_id"])),
-            Tool::new("gcal_quick_add", "Quick-add a calendar event from natural language, e.g. 'Team standup tomorrow 10am'.", schema!({"text":{"type":"string"},"calendar_id":{"type":"string","default":"primary"},"send_updates":{"type":"string","description":"Who receives notification emails: 'all', 'externalOnly', or 'none'.","enum":["all","externalOnly","none"],"default":"all"}}, ["text"])),
-            Tool::new("gcal_get_freebusy", "Check free/busy time for a list of calendars.", schema!({"calendar_ids":{"type":"array","items":{"type":"string"}},"time_min":{"type":"string","description":"Window start; any common datetime format or Unix timestamp"},"time_max":{"type":"string","description":"Window end; same flexible formats as time_min"}}, ["calendar_ids","time_min","time_max"])),
+            Tool::new("gcal_create_event", "Create a Google Calendar event. Defaults to 'Asia/Manila' timezone. Set 'create_meet_link' to true to generate a Google Meet link. For recurring events, provide RRULE strings in the 'recurrence' array (e.g. ['RRULE:FREQ=WEEKLY;BYDAY=FR']). For an ALL-DAY event pass dates only (e.g. start '2025-06-15', end '2025-06-15').", schema!({
+                    "summary":         { "type": "string",  "title": "Title", "description": "What the event is called, e.g. Team Standup or Dentist." },
+                    "start":           { "type": "string",  "title": "Starts", "description": "When the event starts, e.g. 2025-06-15T09:00:00. Any common format works: 2025-06-15 09:00, June 15 2025 9am, 06/15/2025 9:00 AM. A date on its own makes it an all-day event.", "displayOptions": { "inlineGroup": "event_time" } },
+                    "end":             { "type": "string",  "title": "Ends", "description": "When the event ends. Must be after the start. For an all-day event use a date; the same date as the start means a single day.", "displayOptions": { "inlineGroup": "event_time" } },
+                    "calendar_id":     { "type": "string",  "title": "Calendar", "description": "Which calendar to add this event to.", "default": "primary" },
+                    "description":     { "type": "string",  "title": "Notes", "description": "Optional agenda or details shown in the event body." },
+                    "location":        { "type": "string",  "title": "Location", "description": "Where it happens, e.g. Conference Room A, an address, or Zoom." },
+                    "attendees":       { "type": "array",   "title": "Guests", "description": "Email addresses of the people to invite.", "items": { "type": "string", "description": "name@example.com" } },
+                    "time_zone":       { "type": "string",  "title": "Time zone", "description": "Time zone the start and end times are given in.", "default": "Asia/Manila",
+                        "enum": ["Asia/Manila","Asia/Singapore","Asia/Tokyo","Asia/Hong_Kong","Asia/Seoul","Asia/Bangkok","Asia/Kolkata","Asia/Dubai","Asia/Karachi","Asia/Jakarta","Asia/Shanghai","Australia/Sydney","Australia/Melbourne","Europe/London","Europe/Paris","Europe/Berlin","Europe/Rome","Europe/Madrid","Europe/Amsterdam","Europe/Moscow","America/New_York","America/Chicago","America/Denver","America/Los_Angeles","America/Toronto","America/Vancouver","America/Sao_Paulo","America/Buenos_Aires","America/Mexico_City","America/Bogota","Africa/Cairo","Africa/Lagos","Africa/Nairobi","Pacific/Auckland","Pacific/Honolulu","UTC"]
+                    },
+                    "create_meet_link": { "type": "boolean", "title": "Add a Google Meet link", "description": "Generates a video call link and puts it on the invitation.", "default": false },
+                    "recurrence":      { "type": "array",   "title": "Repeat", "description": "How often the event repeats, as RFC 5545 RRULE strings, e.g. RRULE:FREQ=WEEKLY;BYDAY=FR (every Friday), RRULE:FREQ=WEEKLY;BYDAY=FR;COUNT=10 (10 times), RRULE:FREQ=WEEKLY;BYDAY=FR;UNTIL=20261231T000000Z (until a date), RRULE:FREQ=MONTHLY;BYMONTHDAY=1 (1st of each month). Leave empty for a one-off event.", "items": { "type": "string" }, "displayOptions": { "widget": "recurrence" } },
+                    "color_id":        { "type": "string",  "title": "Colour", "description": "Colour of the event in the calendar grid.", "enum": ["","1","2","3","4","5","6","7","8","9","10","11"],
+                        "enumLabels": { "": "Calendar default", "1": "Lavender", "2": "Sage", "3": "Grape", "4": "Flamingo", "5": "Banana", "6": "Tangerine", "7": "Peacock", "8": "Graphite", "9": "Blueberry", "10": "Basil", "11": "Tomato" }
+                    },
+                    "reminder_minutes": { "type": "integer", "title": "Remind me (minutes before)", "description": "Minutes before the start to send an alert, e.g. 10. Use 0 to alert at the start time. Leave blank to use the calendar default reminders.", "displayOptions": { "inlineGroup": "reminder" } },
+                    "reminder_method": { "type": "string",  "title": "Reminder type", "description": "How the reminder is delivered.", "enum": ["popup","email"], "enumLabels": { "popup": "Notification", "email": "Email" }, "default": "popup", "displayOptions": { "inlineGroup": "reminder" } },
+                    "transparency":    { "type": "string",  "title": "Show me as", "description": "Whether this event blocks out your time for other people scheduling with you.", "enum": ["","opaque","transparent"], "enumLabels": { "": "Calendar default", "opaque": "Busy", "transparent": "Free" } },
+                    "visibility":      { "type": "string",  "title": "Who can see the details", "description": "Visibility of this event to people who can see your calendar.", "enum": ["","default","public","private"], "enumLabels": { "": "Calendar default", "default": "Same as calendar", "public": "Anyone who can see my calendar", "private": "Only me and the guests" } },
+                    "guests_can_invite_others":   { "type": "boolean", "title": "Guests can invite others", "description": "Let invited people add more guests." },
+                    "guests_can_modify":          { "type": "boolean", "title": "Guests can edit the event", "description": "Let invited people change the time, title or details." },
+                    "guests_can_see_other_guests": { "type": "boolean", "title": "Guests can see the guest list", "description": "Turn off to hide who else is invited." },
+                    "send_updates":    { "type": "string",  "title": "Notify guests", "description": "Who gets an email about this event.", "enum": ["all","externalOnly","none"], "enumLabels": { "all": "Everyone invited", "externalOnly": "Only guests outside my organisation", "none": "Nobody" }, "default": "all" }
+                }, ["summary","start","end"])),
+            Tool::new("gcal_quick_add", "Create an event from a plain-English sentence, letting Google work out the date and time, e.g. 'Team standup tomorrow 10am' or 'Lunch with Sam Friday noon'. Use this when the request is a single simple sentence; use gcal_create_event when guests, notes, recurrence or a specific calendar are involved.", schema!({
+                    "text":         { "type": "string", "title": "Describe the event", "description": "The event in plain English, e.g. Coffee with Alex Tuesday 3pm." },
+                    "calendar_id":  { "type": "string", "title": "Calendar", "description": "Which calendar to add it to.", "default": "primary" },
+                    "send_updates": { "type": "string", "title": "Notify guests", "description": "Who gets an email about this event.", "enum": ["all","externalOnly","none"], "enumLabels": { "all": "Everyone invited", "externalOnly": "Only guests outside my organisation", "none": "Nobody" }, "default": "all" }
+                }, ["text"])),
+            Tool::new("gcal_update_event", "Update a Google Calendar event. Only the provided fields change — blank fields are left untouched. Defaults to 'Asia/Manila' timezone. To edit an entire recurring series, provide the master ID (found via 'gcal_list_events' with single_events=false). You can also update the 'recurrence' rules for a series. NOTE: 'attendees' REPLACES the whole guest list — use gcal_add_attendees or gcal_remove_attendees to change it without disturbing everyone else's RSVP.", schema!({
+                    "event_id":    { "type": "string", "title": "Event ID", "description": "ID of the event to change, as returned by gcal_list_events." },
+                    "calendar_id": { "type": "string", "title": "Calendar", "description": "Calendar the event lives on.", "default": "primary" },
+                    "summary":     { "type": "string", "title": "New title", "description": "Leave blank to keep the current title." },
+                    "start":       { "type": "string", "title": "New start", "description": "Leave blank to keep the current start. A date on its own turns it into an all-day event.", "displayOptions": { "inlineGroup": "event_time" } },
+                    "end":         { "type": "string", "title": "New end", "description": "Leave blank to keep the current end.", "displayOptions": { "inlineGroup": "event_time" } },
+                    "description": { "type": "string", "title": "New notes", "description": "Leave blank to keep the current notes." },
+                    "location":    { "type": "string", "title": "New location", "description": "Leave blank to keep the current location." },
+                    "attendees":   { "type": "array",  "title": "Replace guest list with", "description": "Replaces the entire guest list and resets everyone's RSVP. Leave empty unless you really mean to overwrite it.", "items": { "type": "string", "description": "name@example.com" } },
+                    "time_zone":   { "type": "string", "title": "Time zone", "description": "Time zone the new times are given in.", "default": "Asia/Manila",
+                        "enum": ["Asia/Manila","Asia/Singapore","Asia/Tokyo","Asia/Hong_Kong","Asia/Seoul","Asia/Bangkok","Asia/Kolkata","Asia/Dubai","Asia/Karachi","Asia/Jakarta","Asia/Shanghai","Australia/Sydney","Australia/Melbourne","Europe/London","Europe/Paris","Europe/Berlin","Europe/Rome","Europe/Madrid","Europe/Amsterdam","Europe/Moscow","America/New_York","America/Chicago","America/Denver","America/Los_Angeles","America/Toronto","America/Vancouver","America/Sao_Paulo","America/Buenos_Aires","America/Mexico_City","America/Bogota","Africa/Cairo","Africa/Lagos","Africa/Nairobi","Pacific/Auckland","Pacific/Honolulu","UTC"]
+                    },
+                    "recurrence":  { "type": "array",  "title": "Repeat", "description": "New repeat rules as RFC 5545 RRULE strings, e.g. RRULE:FREQ=WEEKLY;BYDAY=FR. Leave empty to keep the current pattern.", "items": { "type": "string" }, "displayOptions": { "widget": "recurrence" } },
+                    "color_id":    { "type": "string", "title": "Colour", "description": "Colour of the event in the calendar grid.", "enum": ["","1","2","3","4","5","6","7","8","9","10","11"],
+                        "enumLabels": { "": "Leave unchanged", "1": "Lavender", "2": "Sage", "3": "Grape", "4": "Flamingo", "5": "Banana", "6": "Tangerine", "7": "Peacock", "8": "Graphite", "9": "Blueberry", "10": "Basil", "11": "Tomato" }
+                    },
+                    "reminder_minutes": { "type": "integer", "title": "Remind me (minutes before)", "description": "Minutes before the start to send an alert. Leave blank to keep the current reminders.", "displayOptions": { "inlineGroup": "reminder" } },
+                    "reminder_method": { "type": "string", "title": "Reminder type", "description": "How the reminder is delivered.", "enum": ["popup","email"], "enumLabels": { "popup": "Notification", "email": "Email" }, "default": "popup", "displayOptions": { "inlineGroup": "reminder" } },
+                    "transparency": { "type": "string", "title": "Show me as", "description": "Whether this event blocks out your time for other people scheduling with you.", "enum": ["","opaque","transparent"], "enumLabels": { "": "Leave unchanged", "opaque": "Busy", "transparent": "Free" } },
+                    "visibility":  { "type": "string", "title": "Who can see the details", "description": "Visibility of this event to people who can see your calendar.", "enum": ["","default","public","private"], "enumLabels": { "": "Leave unchanged", "default": "Same as calendar", "public": "Anyone who can see my calendar", "private": "Only me and the guests" } },
+                    "send_updates": { "type": "string", "title": "Notify guests", "description": "Who gets an email about the change.", "enum": ["all","externalOnly","none"], "enumLabels": { "all": "Everyone invited", "externalOnly": "Only guests outside my organisation", "none": "Nobody" }, "default": "all" }
+                }, ["event_id"])),
+            Tool::new("gcal_delete_event", "Delete a Google Calendar event. Attendees are notified unless 'send_updates' says otherwise. Set 'all_events' to true to delete every occurrence of a repeating event rather than the single one named.", schema!({
+                    "event_id":     { "type": "string",  "title": "Event ID", "description": "ID of the event to delete." },
+                    "calendar_id":  { "type": "string",  "title": "Calendar", "description": "Calendar the event lives on.", "default": "primary" },
+                    "all_events":   { "type": "boolean", "title": "Delete the whole repeating series", "description": "On: remove every occurrence, past and future. Off: remove only the one occurrence named above.", "default": false },
+                    "send_updates": { "type": "string",  "title": "Notify guests", "description": "Who gets a cancellation email.", "enum": ["all","externalOnly","none"], "enumLabels": { "all": "Everyone invited", "externalOnly": "Only guests outside my organisation", "none": "Nobody" }, "default": "all" }
+                }, ["event_id"])),
+            Tool::new("gcal_move_event", "Move an event from one Google calendar to another, keeping its details and guests.", schema!({
+                    "event_id":                { "type": "string", "title": "Event ID", "description": "ID of the event to move." },
+                    "source_calendar_id":      { "type": "string", "title": "Move from calendar", "description": "Calendar the event is on now.", "default": "primary" },
+                    "destination_calendar_id": { "type": "string", "title": "Move to calendar", "description": "Calendar to move the event to." },
+                    "send_updates":            { "type": "string", "title": "Notify guests", "description": "Who gets an email about the move.", "enum": ["all","externalOnly","none"], "enumLabels": { "all": "Everyone invited", "externalOnly": "Only guests outside my organisation", "none": "Nobody" }, "default": "all" }
+                }, ["event_id","destination_calendar_id"])),
+            Tool::new("gcal_list_event_instances", "List the individual occurrences of a repeating Google Calendar event. Give it the series master ID (from gcal_list_events with single_events=false) to get each dated occurrence, which is what you need in order to move or cancel one occurrence without touching the rest.", schema!({
+                    "event_id":    { "type": "string",  "title": "Repeating event ID", "description": "ID of the repeating event series." },
+                    "calendar_id": { "type": "string",  "title": "Calendar", "description": "Calendar the series lives on.", "default": "primary" },
+                    "time_min":    { "type": "string",  "title": "From", "description": "Only list occurrences on or after this date. Leave blank for all of them.", "displayOptions": { "inlineGroup": "time_window" } },
+                    "time_max":    { "type": "string",  "title": "Until", "description": "Only list occurrences before this date.", "displayOptions": { "inlineGroup": "time_window" } },
+                    "max_results": { "type": "integer", "title": "Maximum occurrences", "description": "How many occurrences to return at most.", "default": 25, "maximum": 2500 }
+                }, ["event_id"])),
+            Tool::new("gcal_add_attendees", "Invite extra people to an existing event without disturbing the guests already on it. Prefer this over gcal_update_event, whose 'attendees' field replaces the whole guest list and resets everyone's RSVP.", schema!({
+                    "event_id":     { "type": "string", "title": "Event ID", "description": "ID of the event to invite people to." },
+                    "attendees":    { "type": "array",  "title": "People to invite", "description": "Email addresses to add to the guest list.", "items": { "type": "string", "description": "name@example.com" } },
+                    "calendar_id":  { "type": "string", "title": "Calendar", "description": "Calendar the event lives on.", "default": "primary" },
+                    "send_updates": { "type": "string", "title": "Notify guests", "description": "Who gets the invitation email.", "enum": ["all","externalOnly","none"], "enumLabels": { "all": "Everyone invited", "externalOnly": "Only guests outside my organisation", "none": "Nobody" }, "default": "all" }
+                }, ["event_id","attendees"])),
+            Tool::new("gcal_remove_attendees", "Uninvite people from an event, leaving the rest of the guest list untouched.", schema!({
+                    "event_id":     { "type": "string", "title": "Event ID", "description": "ID of the event to remove people from." },
+                    "attendees":    { "type": "array",  "title": "People to remove", "description": "Email addresses to take off the guest list.", "items": { "type": "string", "description": "name@example.com" } },
+                    "calendar_id":  { "type": "string", "title": "Calendar", "description": "Calendar the event lives on.", "default": "primary" },
+                    "send_updates": { "type": "string", "title": "Notify guests", "description": "Who gets told about the change.", "enum": ["all","externalOnly","none"], "enumLabels": { "all": "Everyone invited", "externalOnly": "Only guests outside my organisation", "none": "Nobody" }, "default": "all" }
+                }, ["event_id","attendees"])),
+            Tool::new("gcal_respond_to_event", "RSVP to an invitation as the signed-in account: accept, decline, or mark it as maybe. Only works for events you were invited to, not ones you created.", schema!({
+                    "event_id":     { "type": "string", "title": "Event ID", "description": "ID of the invitation to answer." },
+                    "response":     { "type": "string", "title": "Your answer", "description": "Whether you are going.", "enum": ["accepted","tentative","declined"], "enumLabels": { "accepted": "Yes, I will be there", "tentative": "Maybe", "declined": "No, I cannot make it" }, "default": "accepted" },
+                    "comment":      { "type": "string", "title": "Note to the organiser", "description": "Optional message sent along with your answer." },
+                    "calendar_id":  { "type": "string", "title": "Calendar", "description": "Calendar the invitation is on.", "default": "primary" },
+                    "send_updates": { "type": "string", "title": "Notify", "description": "Who gets told about your answer.", "enum": ["all","externalOnly","none"], "enumLabels": { "all": "Everyone invited", "externalOnly": "Only guests outside my organisation", "none": "Nobody" }, "default": "all" }
+                }, ["event_id","response"])),
+            Tool::new("gcal_find_free_slots", "Find open time slots of a given length across one or more calendars — the tool to use for 'when am I free?' or 'find us an hour next week'. It returns concrete bookable slots in local time, already merged across every calendar given and never in the past. Prefer this over gcal_get_freebusy, which returns raw busy blocks that still have to be inverted.", schema!({
+                    "duration_minutes": { "type": "integer", "title": "Meeting length (minutes)", "description": "How long the slot needs to be, e.g. 30 or 60.", "default": 30 },
+                    "calendar_ids":     { "type": "array",   "title": "Calendars to check", "description": "Every calendar that has to be free. Add colleagues by email address to find a time that suits everyone.", "items": { "type": "string", "description": "A calendar ID or an email address" }, "default": ["primary"], "displayOptions": { "widget": "calendarMulti" } },
+                    "time_min":         { "type": "string",  "title": "Search from", "description": "Start looking from this date and time. Defaults to now.", "displayOptions": { "inlineGroup": "time_window" } },
+                    "time_max":         { "type": "string",  "title": "Search until", "description": "Stop looking at this date and time. Defaults to seven days after the start.", "displayOptions": { "inlineGroup": "time_window" } },
+                    "day_start":        { "type": "string",  "title": "Earliest time of day", "description": "Only suggest slots after this time each day, e.g. 09:00. Leave blank to search around the clock.", "default": "09:00", "displayOptions": { "inlineGroup": "working_hours" } },
+                    "day_end":          { "type": "string",  "title": "Latest time of day", "description": "Only suggest slots ending by this time each day, e.g. 17:00.", "default": "17:00", "displayOptions": { "inlineGroup": "working_hours" } },
+                    "skip_weekends":    { "type": "boolean", "title": "Skip Saturdays and Sundays", "description": "Leave weekends out of the suggestions.", "default": true },
+                    "max_slots":        { "type": "integer", "title": "How many suggestions", "description": "Stop after this many slots.", "default": 10, "maximum": 200 }
+                }, [])),
+            Tool::new("gcal_get_freebusy", "Return the raw busy blocks for a list of calendars over a time range. Use gcal_find_free_slots instead when the question is when someone is free — this returns the opposite, and the gaps still have to be worked out.", schema!({
+                    "calendar_ids": { "type": "array",  "title": "Calendars to check", "description": "Calendar IDs or email addresses to look up.", "items": { "type": "string", "description": "A calendar ID or an email address" }, "displayOptions": { "widget": "calendarMulti" } },
+                    "time_min":     { "type": "string", "title": "From", "description": "Start of the period to check.", "displayOptions": { "inlineGroup": "time_window" } },
+                    "time_max":     { "type": "string", "title": "Until", "description": "End of the period to check.", "displayOptions": { "inlineGroup": "time_window" } }
+                }, ["calendar_ids","time_min","time_max"])),
+            Tool::new("gcal_list_calendars", "List every calendar in this Google account, including ones subscribed to under Other calendars. Use this to discover calendar IDs.", schema!({}, [])),
+            Tool::new("gcal_create_calendar", "Create a new, empty Google calendar owned by this account, e.g. a separate one for Travel or Invoices.", schema!({
+                    "summary":     { "type": "string", "title": "Calendar name", "description": "What to call the new calendar, e.g. Travel." },
+                    "description": { "type": "string", "title": "Description", "description": "Optional note about what this calendar is for." },
+                    "time_zone":   { "type": "string", "title": "Time zone", "description": "Time zone the new calendar runs on.", "default": "Asia/Manila",
+                        "enum": ["Asia/Manila","Asia/Singapore","Asia/Tokyo","Asia/Hong_Kong","Asia/Seoul","Asia/Bangkok","Asia/Kolkata","Asia/Dubai","Asia/Karachi","Asia/Jakarta","Asia/Shanghai","Australia/Sydney","Australia/Melbourne","Europe/London","Europe/Paris","Europe/Berlin","Europe/Rome","Europe/Madrid","Europe/Amsterdam","Europe/Moscow","America/New_York","America/Chicago","America/Denver","America/Los_Angeles","America/Toronto","America/Vancouver","America/Sao_Paulo","America/Buenos_Aires","America/Mexico_City","America/Bogota","Africa/Cairo","Africa/Lagos","Africa/Nairobi","Pacific/Auckland","Pacific/Honolulu","UTC"]
+                    }
+                }, ["summary"])),
+            Tool::new("gcal_update_calendar", "Rename a calendar or change its description, time zone, colour, or whether it shows in the calendar list. Renaming a calendar you own changes the name for everyone it is shared with; setting a nickname changes it only for you.", schema!({
+                    "calendar_id":  { "type": "string",  "title": "Calendar", "description": "Which calendar to change.", "default": "primary" },
+                    "summary":      { "type": "string",  "title": "New name", "description": "Renames the calendar for everyone it is shared with. Only works on calendars you own. Leave blank to keep the current name." },
+                    "nickname":     { "type": "string",  "title": "Nickname (just for me)", "description": "Shows this name in your own calendar list without renaming it for anyone else. Useful for subscribed calendars." },
+                    "description":  { "type": "string",  "title": "New description", "description": "Leave blank to keep the current description." },
+                    "time_zone":    { "type": "string",  "title": "Time zone", "description": "Leave blank to keep the current time zone." },
+                    "color":        { "type": "string",  "title": "Colour", "description": "A hex colour such as #F4511E, or one of Google's colour numbers 1 to 24." },
+                    "show_in_list": { "type": "boolean", "title": "Show in my calendar list", "description": "Turn off to hide the calendar from the sidebar and the calendar pickers." }
+                }, ["calendar_id"])),
+            Tool::new("gcal_delete_calendar", "Permanently delete a calendar this account owns, along with every event on it. Cannot delete the primary calendar. To remove a calendar you merely subscribed to, use gcal_unsubscribe_calendar instead.", schema!({
+                    "calendar_id": { "type": "string", "title": "Calendar to delete", "description": "The calendar to delete permanently. This cannot be undone." }
+                }, ["calendar_id"])),
+            Tool::new("gcal_subscribe_calendar", "Subscribe to an existing calendar by ID or email address, adding it under Other calendars. The calendar must already exist and be shared with this account.", schema!({
+                    "calendar_id": { "type": "string", "title": "Calendar ID to add", "description": "The ID of the calendar to subscribe to, often a colleague's email address or an address ending in group.calendar.google.com." },
+                    "nickname":    { "type": "string", "title": "Nickname", "description": "Optional name to show it under in your own list." }
+                }, ["calendar_id"])),
+            Tool::new("gcal_unsubscribe_calendar", "Remove a calendar from this account's list without deleting it. The calendar and its events carry on existing for everyone else.", schema!({
+                    "calendar_id": { "type": "string", "title": "Calendar to remove", "description": "The calendar to take off your list." }
+                }, ["calendar_id"])),
 
             // Drive
             Tool::new("gdrive_list", "List Google Drive files/folders. Use this when asked what files or folders are in Drive.", schema!({"max_results":{"type":"integer","default":10},"folder_id":{"type":"string"},"mime_type":{"type":"string"}}, [])),
@@ -376,7 +490,6 @@ impl GoogleService {
             // Calendar. Optional params go through opt_str/opt_bool so the
             // blank strings workflow nodes send for untouched fields read as
             // "not provided" instead of empty values.
-            "gcal_list_calendars" => calendar::list_calendars(&self.0).await,
             "gcal_list_events" => {
                 let time_min = opt_dt(a, "time_min");
                 let time_max = opt_dt(a, "time_max");
@@ -389,6 +502,14 @@ impl GoogleService {
                     opt_str(a, "calendar_id").unwrap_or("primary"),
                     opt_bool(a, "single_events"),
                     opt_str(a, "page_token"),
+                )
+                .await
+            }
+            "gcal_get_event" => {
+                calendar::get_event(
+                    &self.0,
+                    req_str(a, "event_id")?,
+                    opt_str(a, "calendar_id").unwrap_or("primary"),
                 )
                 .await
             }
@@ -408,14 +529,16 @@ impl GoogleService {
                     opt_str(a, "calendar_id").unwrap_or("primary"),
                     json_arr_opt(a, "recurrence"),
                     calendar::send_updates_or_all(opt_str(a, "send_updates")),
+                    &event_extras(a),
                 )
                 .await
             }
-            "gcal_get_event" => {
-                calendar::get_event(
+            "gcal_quick_add" => {
+                calendar::quick_add(
                     &self.0,
-                    req_str(a, "event_id")?,
+                    req_str(a, "text")?,
                     opt_str(a, "calendar_id").unwrap_or("primary"),
+                    calendar::send_updates_or_all(opt_str(a, "send_updates")),
                 )
                 .await
             }
@@ -435,6 +558,7 @@ impl GoogleService {
                     extract_attendees(a, "attendees"),
                     json_arr_opt(a, "recurrence"),
                     calendar::send_updates_or_all(opt_str(a, "send_updates")),
+                    &event_extras(a),
                 )
                 .await
             }
@@ -458,12 +582,63 @@ impl GoogleService {
                 )
                 .await
             }
-            "gcal_quick_add" => {
-                calendar::quick_add(
+            "gcal_list_event_instances" => {
+                let time_min = opt_dt(a, "time_min");
+                let time_max = opt_dt(a, "time_max");
+                calendar::list_event_instances(
                     &self.0,
-                    req_str(a, "text")?,
+                    req_str(a, "event_id")?,
                     opt_str(a, "calendar_id").unwrap_or("primary"),
+                    n("max_results", 25.0).clamp(1.0, 2500.0) as u32,
+                    time_min.as_deref(),
+                    time_max.as_deref(),
+                )
+                .await
+            }
+            "gcal_add_attendees" => {
+                calendar::add_attendees(
+                    &self.0,
+                    req_str(a, "event_id")?,
+                    opt_str(a, "calendar_id").unwrap_or("primary"),
+                    json_arr(a, "attendees")?,
                     calendar::send_updates_or_all(opt_str(a, "send_updates")),
+                )
+                .await
+            }
+            "gcal_remove_attendees" => {
+                calendar::remove_attendees(
+                    &self.0,
+                    req_str(a, "event_id")?,
+                    opt_str(a, "calendar_id").unwrap_or("primary"),
+                    json_arr(a, "attendees")?,
+                    calendar::send_updates_or_all(opt_str(a, "send_updates")),
+                )
+                .await
+            }
+            "gcal_respond_to_event" => {
+                calendar::respond_to_event(
+                    &self.0,
+                    req_str(a, "event_id")?,
+                    opt_str(a, "calendar_id").unwrap_or("primary"),
+                    req_str(a, "response")?,
+                    opt_str(a, "comment"),
+                    calendar::send_updates_or_all(opt_str(a, "send_updates")),
+                )
+                .await
+            }
+            "gcal_find_free_slots" => {
+                let time_min = opt_dt(a, "time_min");
+                let time_max = opt_dt(a, "time_max");
+                calendar::find_free_slots(
+                    &self.0,
+                    json_arr_opt(a, "calendar_ids").unwrap_or_default(),
+                    time_min.as_deref(),
+                    time_max.as_deref(),
+                    n("duration_minutes", 30.0) as i64,
+                    opt_str(a, "day_start"),
+                    opt_str(a, "day_end"),
+                    opt_bool(a, "skip_weekends").unwrap_or(false),
+                    n("max_slots", 10.0).clamp(1.0, 200.0) as usize,
                 )
                 .await
             }
@@ -472,6 +647,43 @@ impl GoogleService {
                 let time_max = req_dt(a, "time_max")?;
                 calendar::get_freebusy(&self.0, json_arr(a, "calendar_ids")?, &time_min, &time_max)
                     .await
+            }
+            "gcal_list_calendars" => calendar::list_calendars(&self.0).await,
+            "gcal_create_calendar" => {
+                calendar::create_calendar(
+                    &self.0,
+                    req_str(a, "summary")?,
+                    opt_str(a, "description"),
+                    opt_str(a, "time_zone"),
+                )
+                .await
+            }
+            "gcal_update_calendar" => {
+                calendar::update_calendar(
+                    &self.0,
+                    req_str(a, "calendar_id")?,
+                    opt_str(a, "summary"),
+                    opt_str(a, "description"),
+                    opt_str(a, "time_zone"),
+                    opt_str(a, "nickname"),
+                    opt_str(a, "color"),
+                    opt_bool(a, "show_in_list"),
+                )
+                .await
+            }
+            "gcal_delete_calendar" => {
+                calendar::delete_calendar(&self.0, req_str(a, "calendar_id")?).await
+            }
+            "gcal_subscribe_calendar" => {
+                calendar::subscribe_calendar(
+                    &self.0,
+                    req_str(a, "calendar_id")?,
+                    opt_str(a, "nickname"),
+                )
+                .await
+            }
+            "gcal_unsubscribe_calendar" => {
+                calendar::unsubscribe_calendar(&self.0, req_str(a, "calendar_id")?).await
             }
 
             // Contacts
@@ -1073,6 +1285,33 @@ fn json_arr(args: &Map<String, Value>, key: &str) -> Result<Vec<String>> {
 fn json_arr_opt(args: &Map<String, Value>, key: &str) -> Option<Vec<String>> {
     let items = args.get(key).map(coerce_str_vec).unwrap_or_default();
     (!items.is_empty()).then_some(items)
+}
+
+/// Optional integer that tolerates the strings workflow nodes send for numeric
+/// fields. A blank field must read as "unset" rather than 0, or leaving the
+/// reminder box empty would silently mean "alert exactly at the start time".
+fn opt_i64(args: &Map<String, Value>, key: &str) -> Option<i64> {
+    match args.get(key)? {
+        Value::Null => None,
+        Value::Number(n) => n.as_i64().or_else(|| n.as_f64().map(|f| f as i64)),
+        Value::String(s) => s.trim().parse().ok(),
+        _ => None,
+    }
+}
+
+/// Gather the optional event fields shared by create and update.
+fn event_extras(a: &Map<String, Value>) -> calendar::EventExtras<'_> {
+    calendar::EventExtras {
+        color_id: opt_str(a, "color_id"),
+        reminder_minutes: opt_i64(a, "reminder_minutes"),
+        reminder_method: opt_str(a, "reminder_method"),
+        use_default_reminders: opt_bool(a, "use_default_reminders"),
+        visibility: opt_str(a, "visibility"),
+        transparency: opt_str(a, "transparency"),
+        guests_can_invite_others: opt_bool(a, "guests_can_invite_others"),
+        guests_can_modify: opt_bool(a, "guests_can_modify"),
+        guests_can_see_other_guests: opt_bool(a, "guests_can_see_other_guests"),
+    }
 }
 
 /// Extract attendee emails from either:

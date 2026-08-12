@@ -4,6 +4,7 @@ import Pill from './Pill.vue'
 import SearchableSelect from './SearchableSelect.vue'
 import ExprInput from './ExprInput.vue'
 import DataTreeNode from './DataTreeNode.vue'
+import RecurrenceEditor from './RecurrenceEditor.vue'
 import { NODE_TYPES } from '../lib/nodes.js'
 import { renameNodeInExpressions, applyAccessPatterns } from '../lib/expressionUpdates.js'
 import { get, post, del } from '../lib/api.js'
@@ -1647,7 +1648,7 @@ function normalizeConfig() {
         props.node.data.config[p.name] = { parameters: [] }
       } else if (p.type === 'multiOptions') {
         props.node.data.config[p.name] = p.default || []
-      } else if (p.type === 'stringList') {
+      } else if (p.type === 'stringList' || p.type === 'recurrence') {
         props.node.data.config[p.name] = Array.isArray(p.default) ? [...p.default] : []
       } else {
         props.node.data.config[p.name] = p.default
@@ -1683,15 +1684,23 @@ function normalizeConfig() {
   })
 
   // stringList migration: a field that is now a repeatable list may have been
-  // saved earlier as a single JSON-array textarea (a string). Split it into a
-  // real array so each entry gets its own row. A JSON-array literal is parsed
-  // and spread; any other non-empty value becomes a single row.
+  // saved earlier as a single JSON-array textarea (a string), or as a
+  // fixedCollection of one-field rows (Google Calendar's `attendees` was
+  // [{email}] before it became a plain list of addresses). Both are flattened
+  // into a real array of strings, so an existing workflow keeps its values
+  // instead of showing one row of stringified JSON — which would then be sent
+  // upstream as if it were an email address.
   nodeDefinition.value.properties.forEach(p => {
     if (p.type !== 'stringList') return
     const v = props.node.data.config[p.name]
-    if (Array.isArray(v)) return
+    if (Array.isArray(v) && !v.some(x => x && typeof x === 'object')) return
+
     let items = []
-    if (typeof v === 'string' && v.trim()) {
+    if (Array.isArray(v)) {
+      items = v
+    } else if (v && typeof v === 'object' && Array.isArray(v.parameters)) {
+      items = v.parameters
+    } else if (typeof v === 'string' && v.trim()) {
       const t = v.trim()
       if (t.startsWith('[')) {
         try {
@@ -1704,9 +1713,16 @@ function normalizeConfig() {
     } else if (v !== undefined && v !== null && v !== '') {
       items = [v]
     }
-    props.node.data.config[p.name] = items.map(x =>
-      (x === null || x === undefined) ? '' : (typeof x === 'object' ? JSON.stringify(x) : String(x))
-    )
+
+    props.node.data.config[p.name] = items
+      .map(x => {
+        if (x === null || x === undefined) return ''
+        if (typeof x !== 'object') return String(x)
+        // A one-field row ({email: "a@b.com"}): the row *is* its value.
+        const first = Object.values(x).find(val => typeof val === 'string' && val.trim())
+        return first !== undefined ? first : JSON.stringify(x)
+      })
+      .filter(s => s !== '')
   })
 
   // multiOptions migration: a field that is now a picker (e.g. the YouTube
@@ -2496,6 +2512,7 @@ onUnmounted(() => {
                             <SearchableSelect
                               :model-value="''"
                               :options="(prop.options || []).filter(o => !(node.data.config[prop.name] || []).includes(o.value))"
+                              :allow-custom-value="!!prop.allowCustomValue"
                               :placeholder="prop.placeholder || `Search ${prop.displayName.toLowerCase()}...`"
                               @update:model-value="(v) => { if (v) { if (!node.data.config[prop.name]) node.data.config[prop.name] = []; node.data.config[prop.name].push(v); } }"
                             />
@@ -3198,6 +3215,30 @@ onUnmounted(() => {
                             v-if="node.data.config[prop.name]"
                             class="datetime-iso-hint"
                           >{{ node.data.config[prop.name] }}</span>
+                        </div>
+                      </template>
+                      <template v-else-if="prop.type === 'recurrence'">
+                        <label>{{ prop.displayName }}</label>
+                        <ExprInput
+                          v-if="isExprMode('p:'+prop.name, node.data.config[prop.name])"
+                          v-model="node.data.config[prop.name]"
+                          :resolve="resolveExpression"
+                          placeholder="Expression returning RRULE strings…"
+                          @revert="exitExprMode('p:'+prop.name, () => node.data.config[prop.name] = [])"
+                        />
+                        <div
+                          v-else
+                          class="field-with-fx"
+                        >
+                          <RecurrenceEditor v-model="node.data.config[prop.name]" />
+                          <button
+                            type="button"
+                            class="btn-fx-toggle"
+                            title="Use an expression"
+                            @click="enterExprMode('p:'+prop.name, () => node.data.config[prop.name] = '')"
+                          >
+                            ƒx
+                          </button>
                         </div>
                       </template>
                       <template v-else-if="prop.type === 'stringList'">
