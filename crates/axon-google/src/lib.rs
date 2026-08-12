@@ -218,6 +218,12 @@ impl GoogleService {
                     "time_min":     { "type": "string", "title": "From", "description": "Start of the period to check.", "displayOptions": { "inlineGroup": "time_window" } },
                     "time_max":     { "type": "string", "title": "Until", "description": "End of the period to check.", "displayOptions": { "inlineGroup": "time_window" } }
                 }, ["calendar_ids","time_min","time_max"])),
+            Tool::new("gcal_changes_since", "List events created, edited or cancelled on a calendar since a given moment — 'what changed on my calendar today?'. Each row carries a changeType of created, updated or cancelled, and the response's 'cursor' can be passed as the next call's 'since'. Cancellations only appear here, not in gcal_list_events.", schema!({
+                    "calendar_id": { "type": "string",  "title": "Calendar", "description": "Which calendar to watch for changes.", "default": "primary" },
+                    "since":       { "type": "string",  "title": "Changed since", "description": "Only report changes made after this moment, e.g. '2026-08-12T09:00:00+08:00' or 'yesterday'." },
+                    "query":       { "type": "string",  "title": "Only events matching", "description": "Optional free text; only changed events matching it are reported." },
+                    "max_results": { "type": "integer", "title": "Most changes to return", "description": "Cap on how many changed events come back.", "default": 50 }
+                }, ["since"])),
             Tool::new("gcal_list_calendars", "List every calendar in this Google account, including ones subscribed to under Other calendars. Use this to discover calendar IDs.", schema!({}, [])),
             Tool::new("gcal_create_calendar", "Create a new, empty Google calendar owned by this account, e.g. a separate one for Travel or Invoices.", schema!({
                     "summary":     { "type": "string", "title": "Calendar name", "description": "What to call the new calendar, e.g. Travel." },
@@ -245,6 +251,19 @@ impl GoogleService {
             Tool::new("gcal_unsubscribe_calendar", "Remove a calendar from this account's list without deleting it. The calendar and its events carry on existing for everyone else.", schema!({
                     "calendar_id": { "type": "string", "title": "Calendar to remove", "description": "The calendar to take off your list." }
                 }, ["calendar_id"])),
+            Tool::new("gcal_list_acl", "List who a calendar is shared with and what each person is allowed to do. Requires owner access to the calendar. Use this before changing or withdrawing someone's access, to see the current state.", schema!({
+                    "calendar_id": { "type": "string", "title": "Calendar", "description": "Which calendar's sharing list to read.", "default": "primary" }
+                }, ["calendar_id"])),
+            Tool::new("gcal_share_calendar", "Give someone access to a calendar, or change the access they already have — the API half of Google's 'Share with specific people'. Re-sharing with a different level updates it. Do not confuse with gcal_subscribe_calendar, which adds an already-shared calendar to your own sidebar.", schema!({
+                    "calendar_id":       { "type": "string",  "title": "Calendar", "description": "The calendar to share. You must own it.", "default": "primary" },
+                    "email":             { "type": "string",  "title": "Share with", "description": "Email address of the person to give access to. 'default' shares with anyone (read-only)." },
+                    "role":              { "type": "string",  "title": "What they can do", "description": "The level of access to grant.", "enum": ["freeBusyReader","reader","writer","owner"], "enumLabels": { "freeBusyReader": "See only when I am busy", "reader": "See all event details", "writer": "Add and edit events", "owner": "Full control, including sharing" }, "default": "reader" },
+                    "send_notifications": { "type": "boolean", "title": "Email them about it", "description": "Send Google's notification telling them the calendar was shared.", "default": true }
+                }, ["calendar_id","email"])),
+            Tool::new("gcal_unshare_calendar", "Withdraw someone's access to a calendar. They lose the ability to see or change it immediately, though a stale entry may linger in their sidebar until they dismiss it.", schema!({
+                    "calendar_id": { "type": "string", "title": "Calendar", "description": "The calendar to withdraw access to.", "default": "primary" },
+                    "email":       { "type": "string", "title": "Whose access to remove", "description": "Email address of the person who should lose access." }
+                }, ["calendar_id","email"])),
 
             // Drive
             Tool::new("gdrive_list", "List Google Drive files/folders. Use this when asked what files or folders are in Drive.", schema!({"max_results":{"type":"integer","default":10},"folder_id":{"type":"string"},"mime_type":{"type":"string"}}, [])),
@@ -637,7 +656,10 @@ impl GoogleService {
                     n("duration_minutes", 30.0) as i64,
                     opt_str(a, "day_start"),
                     opt_str(a, "day_end"),
-                    opt_bool(a, "skip_weekends").unwrap_or(false),
+                    // Schema documents this as default-true, so an omitted value
+                    // must mean "skip them" — otherwise a model that trusts the
+                    // declared default proposes Saturday slots.
+                    opt_bool(a, "skip_weekends").unwrap_or(true),
                     n("max_slots", 10.0).clamp(1.0, 200.0) as usize,
                 )
                 .await
@@ -684,6 +706,36 @@ impl GoogleService {
             }
             "gcal_unsubscribe_calendar" => {
                 calendar::unsubscribe_calendar(&self.0, req_str(a, "calendar_id")?).await
+            }
+            "gcal_changes_since" => {
+                let since = req_dt(a, "since")?;
+                calendar::changes_since(
+                    &self.0,
+                    opt_str(a, "calendar_id").unwrap_or("primary"),
+                    &since,
+                    opt_str(a, "query"),
+                    n("max_results", 50.0).clamp(1.0, 2500.0) as u32,
+                )
+                .await
+            }
+            "gcal_list_acl" => calendar::list_acl(&self.0, req_str(a, "calendar_id")?).await,
+            "gcal_share_calendar" => {
+                calendar::share_calendar(
+                    &self.0,
+                    req_str(a, "calendar_id")?,
+                    req_str(a, "email")?,
+                    opt_str(a, "role").unwrap_or("reader"),
+                    opt_bool(a, "send_notifications").unwrap_or(true),
+                )
+                .await
+            }
+            "gcal_unshare_calendar" => {
+                calendar::unshare_calendar(
+                    &self.0,
+                    req_str(a, "calendar_id")?,
+                    req_str(a, "email")?,
+                )
+                .await
             }
 
             // Contacts

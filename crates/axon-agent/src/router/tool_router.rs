@@ -109,6 +109,7 @@ static STATIC_ROUTES: Lazy<Vec<StaticRoute>> = Lazy::new(|| {
                 "gcal_list_event_instances",
                 "gcal_find_free_slots",
                 "gcal_get_freebusy",
+                "gcal_list_acl",
             ],
             write_tools: vec![
                 "gcal_create_event",
@@ -124,6 +125,8 @@ static STATIC_ROUTES: Lazy<Vec<StaticRoute>> = Lazy::new(|| {
                 "gcal_delete_calendar",
                 "gcal_subscribe_calendar",
                 "gcal_unsubscribe_calendar",
+                "gcal_share_calendar",
+                "gcal_unshare_calendar",
             ],
         },
         // ── OneDrive ──

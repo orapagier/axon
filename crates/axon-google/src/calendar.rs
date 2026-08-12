@@ -11,6 +11,10 @@ use uuid::Uuid;
 
 const BASE: &str = "https://www.googleapis.com/calendar/v3";
 
+/// Google's `calendarExpansionMax` ceiling for a single free/busy query.
+/// Calendars past this point are dropped from the response without an error.
+const FREEBUSY_MAX_CALENDARS: usize = 50;
+
 // ── Time handling ─────────────────────────────────────────────────────────────
 // default_tz / normalize_rfc3339 / date_only / fix_all_day_end live in
 // axon_core::flexidate, shared with the Microsoft calendar adapter.
@@ -376,6 +380,213 @@ pub async fn unsubscribe_calendar(state: &AppState, calendar_id: &str) -> Result
     Ok(json!({ "success": true, "removedCalendarId": calendar_id }))
 }
 
+// ── Sharing (ACL) ─────────────────────────────────────────────────────────────
+//
+// Subscribing and sharing are different things and are easy to confuse.
+// `subscribe_calendar` adds a calendar to *this* account's sidebar, and only
+// works if access was already granted. The rules below are what grants it: they
+// decide who else in the world can see or edit a calendar.
+
+/// The access levels Google's ACL accepts, paired with what each one actually
+/// permits. Exposed so the node can offer "See when I'm busy (no details)"
+/// rather than the API's `freeBusyReader`.
+pub const ACL_ROLES: &[(&str, &str)] = &[
+    (
+        "freeBusyReader",
+        "Can only see when I am busy, not what the events are",
+    ),
+    (
+        "reader",
+        "Can see every event and its details, but not change anything",
+    ),
+    ("writer", "Can add, edit and delete events"),
+    (
+        "owner",
+        "Full control, including sharing the calendar with others",
+    ),
+];
+
+/// Google's rule id for granting access to one person: `user:<email>`. Groups
+/// and domains use their own prefixes, and `default` means the whole public.
+fn acl_rule_id(email: &str) -> String {
+    let email = email.trim();
+    if email.eq_ignore_ascii_case("default") || email.eq_ignore_ascii_case("public") {
+        return "default".to_string();
+    }
+    // Already a fully-formed scope ("group:team@x.com", "domain:x.com"): leave
+    // it alone rather than producing "user:group:team@x.com".
+    if let Some((prefix, _)) = email.split_once(':') {
+        if matches!(prefix, "user" | "group" | "domain" | "default") {
+            return email.to_string();
+        }
+    }
+    format!("user:{email}")
+}
+
+/// List who has access to a calendar, and at what level.
+///
+/// Requires owner access on the calendar — Google returns 403 otherwise, which
+/// is worth knowing before reading the error: an empty-looking failure here
+/// usually means "this calendar isn't yours", not "nobody has access".
+pub async fn list_acl(state: &AppState, calendar_id: &str) -> Result<Value> {
+    let tok = access_token(state).await?;
+    let cal = urlenc(calendar_id);
+    let resp: Value = state
+        .client
+        .get(format!("{BASE}/calendars/{cal}/acl"))
+        .bearer_auth(&tok)
+        .send()
+        .await?
+        .ensure_ok()
+        .await?
+        .json()
+        .await?;
+
+    // The raw rules read as `{scope: {type, value}, role}`, which takes a moment
+    // to parse into "who". Flatten it, keeping the original alongside.
+    let people: Vec<Value> = resp
+        .get("items")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .map(|rule| {
+            let scope = rule.get("scope");
+            let scope_type = scope
+                .and_then(|s| s.get("type"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("user");
+            let who = scope
+                .and_then(|s| s.get("value"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(if scope_type == "default" {
+                    "Anyone with the link"
+                } else {
+                    "unknown"
+                });
+            let role = rule.get("role").and_then(|v| v.as_str()).unwrap_or("");
+            json!({
+                "who": who,
+                "scopeType": scope_type,
+                "role": role,
+                "access": ACL_ROLES
+                    .iter()
+                    .find(|(r, _)| *r == role)
+                    .map(|(_, label)| *label)
+                    .unwrap_or(role),
+                "ruleId": rule.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+            })
+        })
+        .collect();
+
+    Ok(json!({
+        "calendarId": calendar_id,
+        "sharedWithCount": people.len(),
+        "sharedWith": people,
+        "rules": resp.get("items").cloned().unwrap_or_else(|| json!([])),
+    }))
+}
+
+/// Share a calendar with someone, or change the access they already have.
+///
+/// `acl.insert` is an upsert on the rule id, so re-sharing with a different
+/// role updates it rather than erroring — which is what "change their access"
+/// needs, and why there's no separate update tool.
+pub async fn share_calendar(
+    state: &AppState,
+    calendar_id: &str,
+    email: &str,
+    role: &str,
+    send_notifications: bool,
+) -> Result<Value> {
+    let email = email.trim();
+    if email.is_empty() {
+        anyhow::bail!("Give an email address to share the calendar with.");
+    }
+    if !ACL_ROLES.iter().any(|(r, _)| *r == role) {
+        let names = ACL_ROLES
+            .iter()
+            .map(|(r, _)| *r)
+            .collect::<Vec<_>>()
+            .join(", ");
+        anyhow::bail!("'{role}' is not an access level. Use one of: {names}.");
+    }
+    // "owner" on the public scope would hand the calendar to the entire
+    // internet; Google rejects it, but late and unhelpfully.
+    let rule_id = acl_rule_id(email);
+    if rule_id == "default" && role != "freeBusyReader" && role != "reader" {
+        anyhow::bail!(
+            "Sharing publicly is limited to read access. Use 'reader' or 'freeBusyReader', or \
+             name a specific person instead."
+        );
+    }
+
+    let tok = access_token(state).await?;
+    let cal = urlenc(calendar_id);
+    let (scope_type, scope_value) = match rule_id.split_once(':') {
+        Some((t, v)) => (t, Some(v)),
+        None => ("default", None),
+    };
+    let mut scope = json!({ "type": scope_type });
+    if let Some(v) = scope_value {
+        scope["value"] = json!(v);
+    }
+
+    let resp: Value = state
+        .client
+        .post(format!("{BASE}/calendars/{cal}/acl"))
+        .bearer_auth(&tok)
+        .query(&[("sendNotifications", send_notifications.to_string())])
+        .json(&json!({ "scope": scope, "role": role }))
+        .send()
+        .await?
+        .ensure_ok()
+        .await?
+        .json()
+        .await?;
+
+    Ok(json!({
+        "success": true,
+        "calendarId": calendar_id,
+        "sharedWith": scope_value.unwrap_or("Anyone with the link"),
+        "role": role,
+        "access": ACL_ROLES
+            .iter()
+            .find(|(r, _)| *r == role)
+            .map(|(_, label)| *label)
+            .unwrap_or(role),
+        "notified": send_notifications,
+        "rule": resp,
+    }))
+}
+
+/// Withdraw someone's access to a calendar.
+///
+/// Deleting the rule doesn't remove the calendar from their sidebar — Google
+/// leaves the stale entry there until they dismiss it — but they lose the
+/// ability to read or change anything immediately.
+pub async fn unshare_calendar(state: &AppState, calendar_id: &str, email: &str) -> Result<Value> {
+    let email = email.trim();
+    if email.is_empty() {
+        anyhow::bail!("Give the email address whose access should be withdrawn.");
+    }
+    let tok = access_token(state).await?;
+    let cal = urlenc(calendar_id);
+    let rule = urlenc(&acl_rule_id(email));
+    state
+        .client
+        .delete(format!("{BASE}/calendars/{cal}/acl/{rule}"))
+        .bearer_auth(&tok)
+        .send()
+        .await?
+        .ensure_ok()
+        .await?;
+    Ok(json!({
+        "success": true,
+        "calendarId": calendar_id,
+        "removedAccessFor": email,
+    }))
+}
+
 /// One `calendarList` entry, which is the shape the calendar picker reads.
 async fn get_calendar_list_entry(state: &AppState, tok: &str, calendar_id: &str) -> Result<Value> {
     let cal = urlenc(calendar_id);
@@ -498,6 +709,105 @@ pub async fn list_events(
         stamp_day_window(&mut resp, dw, kept);
     }
     Ok(resp)
+}
+
+/// Which way an event changed, worked out from the event body rather than left
+/// to the caller to infer.
+///
+/// Google reports a change as "this event now looks like *this*"; nothing in the
+/// payload says "created" or "cancelled" outright. `status: cancelled` marks a
+/// deletion, and an event whose `created` stamp is itself after the cursor has
+/// to be new — everything else is an edit to something that already existed.
+fn change_type(event: &Value, since: DateTime<Utc>) -> &'static str {
+    if event.get("status").and_then(|v| v.as_str()) == Some("cancelled") {
+        return "cancelled";
+    }
+    let created = event
+        .get("created")
+        .and_then(|v| v.as_str())
+        .and_then(|s| parse_instant(s).ok());
+    match created {
+        Some(c) if c >= since => "created",
+        _ => "updated",
+    }
+}
+
+/// Events on a calendar that were created, edited or cancelled since `since`.
+///
+/// The counterpart to `crm_changes_since`, and the feed the Google Calendar
+/// trigger polls. `updatedMin` is the only way to ask Google "what moved?" —
+/// listing by start time and diffing client-side would miss an edit to an event
+/// whose start didn't change, which for a booking calendar is most of them.
+///
+/// `showDeleted` is on because a cancellation is the change people most want to
+/// react to, and it is invisible without it.
+pub async fn changes_since(
+    state: &AppState,
+    calendar_id: &str,
+    since: &str,
+    query: Option<&str>,
+    max_results: u32,
+) -> Result<Value> {
+    let tok = access_token(state).await?;
+    let cal = urlenc(calendar_id);
+    let since_rfc = normalize_rfc3339(since);
+    let since_instant = parse_instant(&since_rfc)?;
+
+    let mut params = vec![
+        ("updatedMin", since_rfc.clone()),
+        ("showDeleted", "true".to_string()),
+        ("singleEvents", "true".to_string()),
+        ("orderBy", "updated".to_string()),
+        ("maxResults", max_results.clamp(1, 2500).to_string()),
+    ];
+    if let Some(q) = query.filter(|q| !q.is_empty()) {
+        params.push(("q", q.to_owned()));
+    }
+
+    let resp: Value = state
+        .client
+        .get(format!("{BASE}/calendars/{cal}/events"))
+        .bearer_auth(&tok)
+        .query(&params)
+        .send()
+        .await?
+        .ensure_ok()
+        .await?
+        .json()
+        .await?;
+
+    let mut changes: Vec<Value> = Vec::new();
+    let mut newest = since_instant;
+    for ev in resp
+        .get("items")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+    {
+        let mut ev = ev.clone();
+        annotate_event_weekdays(&mut ev);
+        let kind = change_type(&ev, since_instant);
+        if let Some(u) = ev
+            .get("updated")
+            .and_then(|v| v.as_str())
+            .and_then(|s| parse_instant(s).ok())
+        {
+            newest = newest.max(u);
+        }
+        ev["changeType"] = json!(kind);
+        changes.push(ev);
+    }
+
+    Ok(json!({
+        "calendarId": calendar_id,
+        "since": since_rfc,
+        // Advance past the newest change seen. `updatedMin` is inclusive, so
+        // reusing the raw stamp would replay that last event on every poll.
+        "cursor": (newest + chrono::Duration::milliseconds(1))
+            .to_rfc3339_opts(SecondsFormat::Millis, true),
+        "changeCount": changes.len(),
+        "changes": changes,
+    }))
 }
 
 /// Fetch a single event by ID.
@@ -1034,10 +1344,24 @@ pub async fn get_freebusy(
     time_min: &str,
     time_max: &str,
 ) -> Result<Value> {
+    // Google expands at most 50 calendars per query and silently drops the rest,
+    // which would read as "those calendars are wide open". Refuse instead: a
+    // wrong free/busy answer is worse than no answer.
+    if calendar_ids.len() > FREEBUSY_MAX_CALENDARS {
+        anyhow::bail!(
+            "Google checks at most {FREEBUSY_MAX_CALENDARS} calendars at once, and {} were given. \
+             Split them across separate steps — beyond the limit the extra calendars are dropped \
+             and would look completely free.",
+            calendar_ids.len()
+        );
+    }
     let tok = access_token(state).await?;
     let body = json!({
         "timeMin": normalize_rfc3339(time_min),
         "timeMax": normalize_rfc3339(time_max),
+        // Explicit rather than relying on the API default, so the cap the guard
+        // above enforces and the cap Google applies can't drift apart.
+        "calendarExpansionMax": FREEBUSY_MAX_CALENDARS,
         "items":   calendar_ids.iter().map(|id| json!({"id": id})).collect::<Vec<_>>(),
     });
     let resp: Value = state
@@ -1633,6 +1957,54 @@ mod tests {
         assert_eq!(slots[1]["availableMinutes"], json!(120));
         assert_eq!(slots[2]["availableMinutes"], json!(150));
         assert_eq!(slots[0]["weekday"], json!("Monday"));
+    }
+
+    #[test]
+    fn a_change_is_classified_from_the_event_itself() {
+        let at = |s: &str| DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc);
+        let since = at("2026-08-12T09:00:00+08:00");
+
+        // Cancelled wins outright: a deleted event still carries its old
+        // created stamp, so checking `created` first would call it "updated".
+        let cancelled = json!({ "status": "cancelled", "created": "2026-08-01T10:00:00Z" });
+        assert_eq!(change_type(&cancelled, since), "cancelled");
+
+        // Created after the cursor → genuinely new.
+        let fresh = json!({ "status": "confirmed", "created": "2026-08-12T10:30:00+08:00" });
+        assert_eq!(change_type(&fresh, since), "created");
+
+        // Created before the cursor but modified since → an edit.
+        let edited = json!({ "status": "confirmed", "created": "2026-07-30T08:00:00+08:00" });
+        assert_eq!(change_type(&edited, since), "updated");
+
+        // No created stamp at all is an edit, not a spurious "created".
+        assert_eq!(change_type(&json!({}), since), "updated");
+    }
+
+    #[test]
+    fn sharing_scopes_are_built_from_plain_email_addresses() {
+        assert_eq!(acl_rule_id("sam@example.com"), "user:sam@example.com");
+        assert_eq!(acl_rule_id("  sam@example.com  "), "user:sam@example.com");
+        // "Everyone" has its own scope with no value attached.
+        assert_eq!(acl_rule_id("default"), "default");
+        assert_eq!(acl_rule_id("public"), "default");
+        // An already-qualified scope is left alone rather than double-prefixed.
+        assert_eq!(
+            acl_rule_id("group:team@example.com"),
+            "group:team@example.com"
+        );
+        assert_eq!(acl_rule_id("domain:example.com"), "domain:example.com");
+        // A colon that isn't a scope prefix is still just an address.
+        assert_eq!(acl_rule_id("weird:name@x.com"), "user:weird:name@x.com");
+    }
+
+    #[test]
+    fn every_offered_access_level_is_one_google_accepts() {
+        // The node's dropdown is built from ACL_ROLES, so a typo here would ship
+        // a choice the API rejects only once someone picks it.
+        let names: Vec<&str> = ACL_ROLES.iter().map(|(r, _)| *r).collect();
+        assert_eq!(names, vec!["freeBusyReader", "reader", "writer", "owner"]);
+        assert!(ACL_ROLES.iter().all(|(_, label)| !label.is_empty()));
     }
 
     #[test]

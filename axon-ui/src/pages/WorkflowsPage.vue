@@ -560,6 +560,9 @@ const TOOL_ACTION_LABELS = {
   gcal_delete_calendar: 'Delete a calendar',
   gcal_subscribe_calendar: 'Add someone else’s calendar to my list',
   gcal_unsubscribe_calendar: 'Remove a calendar from my list',
+  gcal_list_acl: 'See who a calendar is shared with',
+  gcal_share_calendar: 'Share a calendar with someone',
+  gcal_unshare_calendar: 'Stop sharing a calendar with someone',
 }
 
 /**
