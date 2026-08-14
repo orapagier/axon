@@ -12,6 +12,16 @@ const MIN_COMPRESS_BYTES: usize = 150;
 // Maximum raw content sent to compressor — trim before sending
 const MAX_RAW_SEND: usize = 1500;
 
+/// Truncate to `max` *characters*, never bytes, so multibyte input can't panic.
+fn truncate_chars(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let kept: String = s.chars().take(max).collect();
+    let dropped = s.chars().count() - max;
+    format!("{kept}... [trimmed {dropped} chars]")
+}
+
 pub async fn compress_and_store(
     run_id: &str,
     tool_name: &str,
@@ -66,16 +76,13 @@ pub async fn compress_and_store(
     // Build a concise args summary for context
     let args_summary = summarize_args(tool_args);
 
-    // Trim raw result to avoid over-spending tokens on the compressor
-    let raw_trimmed = if raw.len() > MAX_RAW_SEND {
-        format!(
-            "{}... [trimmed {} chars]",
-            &raw[..MAX_RAW_SEND],
-            raw.len() - MAX_RAW_SEND
-        )
-    } else {
-        raw.clone()
-    };
+    // Trim raw result to avoid over-spending tokens on the compressor.
+    // Counted in characters, not bytes: `raw` is a serialized tool result, so
+    // any non-ASCII payload (search results, email bodies, emoji) puts multibyte
+    // characters in it, and byte-slicing at a fixed offset panics whenever the
+    // cut lands mid-character. This runs inside a spawned task, so that panic
+    // was invisible — the observation was simply never stored.
+    let raw_trimmed = truncate_chars(&raw, MAX_RAW_SEND);
 
     let msgs = [Message::user(&format!(
         "Extract only the key facts worth remembering from this tool result.\n\
@@ -308,5 +315,33 @@ mod tests {
             observation_fts_query("disk usage").as_deref(),
             Some("\"disk\" OR \"usage\"")
         );
+    }
+
+    /// A serialized tool result is arbitrary UTF-8. Byte-slicing it at a fixed
+    /// offset panicked whenever the cut landed inside a multibyte character —
+    /// and because compression runs in a spawned task, the panic was silent and
+    /// the observation was simply lost.
+    #[test]
+    fn truncate_chars_survives_a_multibyte_cut() {
+        // Byte 1500 falls inside the 'é'; the old `&raw[..1500]` panicked here.
+        let raw = format!("{}é{}", "a".repeat(MAX_RAW_SEND - 1), "b".repeat(50));
+        assert!(!raw.is_char_boundary(MAX_RAW_SEND));
+
+        let out = truncate_chars(&raw, MAX_RAW_SEND);
+        assert!(out.starts_with(&"a".repeat(MAX_RAW_SEND - 1)));
+        assert!(out.contains("[trimmed 50 chars]"), "got: {}", &out[out.len() - 40..]);
+    }
+
+    #[test]
+    fn truncate_chars_is_a_noop_under_the_limit() {
+        assert_eq!(truncate_chars("héllo 🌍", 100), "héllo 🌍");
+    }
+
+    #[test]
+    fn truncate_chars_counts_characters_not_bytes() {
+        // 10 emoji = 40 bytes; a 10-char limit must keep all of them.
+        let s = "🌍".repeat(10);
+        assert_eq!(truncate_chars(&s, 10), s);
+        assert!(truncate_chars(&s, 4).starts_with(&"🌍".repeat(4)));
     }
 }

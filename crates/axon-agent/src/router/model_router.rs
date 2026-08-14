@@ -170,6 +170,26 @@ impl RouterState {
             alerts: Arc::new(Mutex::new(Vec::new())),
         }
     }
+    /// Resolve a model by `name` — the `models` table primary key, and the only
+    /// stable identifier a router entry has.
+    ///
+    /// Routing picks its candidates under one lock and then makes the (slow)
+    /// provider call with the lock released, so a positional index goes stale
+    /// the moment the model set changes underneath it: `update_models` replaces
+    /// the whole vector and re-sorts it by priority, and the dashboard calls it
+    /// on every add/update/delete. A stale index panics outright once the list
+    /// has shrunk, and silently books one model's success/error stats onto
+    /// another once the list has merely been re-ordered. Every access made after
+    /// the lock is re-acquired therefore goes through the name instead, and
+    /// treats "no longer present" as an ordinary failure to fail over from.
+    fn find(&self, name: &str) -> Option<&ModelRecord> {
+        self.models.iter().find(|m| m.name == name)
+    }
+
+    fn find_mut(&mut self, name: &str) -> Option<&mut ModelRecord> {
+        self.models.iter_mut().find(|m| m.name == name)
+    }
+
     fn pool_indices(&self, role: &str) -> Vec<usize> {
         self.models
             .iter()
@@ -236,7 +256,17 @@ fn build_priority_order(models: &[ModelRecord], pool: &[usize], start: usize) ->
         let mut round = 0usize;
         while emitted < target {
             for offset in 0..bucket_count {
-                let key = &bucket_keys[(start + offset) % bucket_count];
+                // `start` is reduced BEFORE the add, not after. It is a
+                // full-width FNV-1a hash of the run id (see
+                // `agent::loop::stable_route_seed`), so it is uniform over all
+                // of usize: a plain `start + offset` overflows (a panic under
+                // the overflow checks dev and test builds enable), and a
+                // `wrapping_add` silently stops being a permutation near the
+                // boundary — with 3 buckets and `start = usize::MAX`, offsets 0
+                // and 1 both land on bucket 0, so one model is tried twice and
+                // another never at all. Reducing first keeps the sum below
+                // `2 * bucket_count`, so it is exact and cannot overflow.
+                let key = &bucket_keys[(start % bucket_count + offset) % bucket_count];
                 if let Some(bucket) = buckets.get(key) {
                     if round < bucket.len() {
                         // Rotate the starting key *within* the bucket too, keyed
@@ -246,7 +276,7 @@ fn build_priority_order(models: &[ModelRecord], pool: &[usize], start: usize) ->
                         // while the others sit idle. `(start + round) % len` is a
                         // permutation over the bucket, so all keys are still
                         // covered with no duplicates.
-                        order.push(bucket[(start + round) % bucket.len()]);
+                        order.push(bucket[(start % bucket.len() + round) % bucket.len()]);
                         emitted += 1;
                     }
                 }
@@ -311,9 +341,11 @@ pub async fn call_llm_with_options(
 ) -> anyhow::Result<(UnifiedResponse, String, String)> {
     let threshold = settings.error_threshold();
     let timeout_secs = settings.model_call_timeout_secs();
-    // Tracks every model index actually attempted across all passes.
-    // Fed to the sweep pass (1.5) for precise dedup.
-    let mut attempted_indices: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    // Tracks every model actually attempted across all passes, by name.
+    // Fed to the sweep pass (1.5) for precise dedup. Keyed on the name rather
+    // than the position because the model set can be replaced between passes
+    // (see `RouterState::find`), which would re-point every stored index.
+    let mut attempted: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     // Use the caller-supplied deterministic seed when available.
     // This removes mutex contention and makes routing reproducible per (run, iteration).
@@ -330,20 +362,19 @@ pub async fn call_llm_with_options(
 
     // Pass -1: preferred model (user-selected, e.g. from Axon node)
     if let Some(pref_name) = options.preferred_model_name.as_deref() {
-        let preferred_models: Vec<(usize, String, u32)> = {
+        let preferred_models: Vec<(String, u32)> = {
             let g = router.lock().await;
             g.models
                 .iter()
-                .enumerate()
-                .filter(|(_, m)| m.name == pref_name && m.enabled && m.is_available())
-                .map(|(i, m)| (i, m.name.clone(), max_tokens.unwrap_or(m.max_tokens)))
+                .filter(|m| m.name == pref_name && m.enabled && m.is_available())
+                .map(|m| (m.name.clone(), max_tokens.unwrap_or(m.max_tokens)))
                 .collect()
         };
 
-        for (mi, name, tokens) in preferred_models {
-            attempted_indices.insert(mi);
+        for (name, tokens) in preferred_models {
+            attempted.insert(name.clone());
             match try_call(
-                mi,
+                &name,
                 messages,
                 system,
                 tools,
@@ -408,20 +439,19 @@ pub async fn call_llm_with_options(
         }
 
         if !already_tried && !shadowed_by_role {
-            let sticky_models: Vec<(usize, String, u32)> = {
+            let sticky_models: Vec<(String, u32)> = {
                 let g = router.lock().await;
                 g.models
                     .iter()
-                    .enumerate()
-                    .filter(|(_, m)| m.name == sticky_name && m.enabled && m.is_available())
-                    .map(|(i, m)| (i, m.name.clone(), max_tokens.unwrap_or(m.max_tokens)))
+                    .filter(|m| m.name == sticky_name && m.enabled && m.is_available())
+                    .map(|m| (m.name.clone(), max_tokens.unwrap_or(m.max_tokens)))
                     .collect()
             };
 
-            for (mi, name, tokens) in sticky_models {
-                attempted_indices.insert(mi);
+            for (name, tokens) in sticky_models {
+                attempted.insert(name.clone());
                 match try_call(
-                    mi,
+                    &name,
                     messages,
                     system,
                     tools,
@@ -452,26 +482,26 @@ pub async fn call_llm_with_options(
     if !role.is_empty() && role != "paid_model" {
         // FIX #6: Collect order AND (name, tokens) in a single lock scope per
         // pass, rather than re-acquiring the lock for each model individually.
-        let ordered_models: Vec<(usize, String, u32)> = {
+        let ordered_models: Vec<(String, u32)> = {
             let g = router.lock().await;
             let pool = g.pool_indices(role);
             let order = build_priority_order(&g.models, &pool, start_index);
             order
                 .into_iter()
-                // Skip models already tried in the preferred/sticky passes — no
-                // point re-hitting a just-failed endpoint within the same call.
-                .filter(|mi| !attempted_indices.contains(mi))
                 .map(|mi| {
                     let m = &g.models[mi];
-                    (mi, m.name.clone(), max_tokens.unwrap_or(m.max_tokens))
+                    (m.name.clone(), max_tokens.unwrap_or(m.max_tokens))
                 })
+                // Skip models already tried in the preferred/sticky passes — no
+                // point re-hitting a just-failed endpoint within the same call.
+                .filter(|(name, _)| !attempted.contains(name))
                 .collect()
         };
 
-        for (mi, name, tokens) in ordered_models {
-            attempted_indices.insert(mi);
+        for (name, tokens) in ordered_models {
+            attempted.insert(name.clone());
             match try_call(
-                mi,
+                &name,
                 messages,
                 system,
                 tools,
@@ -505,26 +535,26 @@ pub async fn call_llm_with_options(
     }
 
     // Pass 1: general pool
-    let ordered_models: Vec<(usize, String, u32)> = {
+    let ordered_models: Vec<(String, u32)> = {
         let g = router.lock().await;
         let pool = g.general_pool();
         let order = build_priority_order(&g.models, &pool, start_index);
         order
             .into_iter()
-            // Skip models already attempted in earlier passes (preferred,
-            // sticky, role) so each model is tried at most once per call.
-            .filter(|mi| !attempted_indices.contains(mi))
             .map(|mi| {
                 let m = &g.models[mi];
-                (mi, m.name.clone(), max_tokens.unwrap_or(m.max_tokens))
+                (m.name.clone(), max_tokens.unwrap_or(m.max_tokens))
             })
+            // Skip models already attempted in earlier passes (preferred,
+            // sticky, role) so each model is tried at most once per call.
+            .filter(|(name, _)| !attempted.contains(name))
             .collect()
     };
 
-    for (mi, name, tokens) in ordered_models {
-        attempted_indices.insert(mi);
+    for (name, tokens) in ordered_models {
+        attempted.insert(name.clone());
         match try_call(
-            mi,
+            &name,
             messages,
             system,
             tools,
@@ -546,26 +576,26 @@ pub async fn call_llm_with_options(
     // Pass 1.5: sweep over ALL enabled, non-paid models regardless of role.
     // This catches cases where the user has assigned roles to every model (so
     // the general pool with role="" is empty) but the role-specific pool was
-    // exhausted. We use `attempted_indices` — the set of every model index
-    // actually called in prior passes — for precise dedup.
+    // exhausted. We use `attempted` — the set of every model name actually
+    // called in prior passes — for precise dedup.
     {
-        let sweep_models: Vec<(usize, String, u32)> = {
+        let sweep_models: Vec<(String, u32)> = {
             let g = router.lock().await;
             g.models
                 .iter()
-                .enumerate()
-                .filter(|(i, m)| {
+                .filter(|m| {
                     m.enabled
                         && m.is_available()
                         && m.role != "paid_model"
-                        && !attempted_indices.contains(i)
+                        && !attempted.contains(&m.name)
                 })
-                .map(|(i, m)| (i, m.name.clone(), max_tokens.unwrap_or(m.max_tokens)))
+                .map(|m| (m.name.clone(), max_tokens.unwrap_or(m.max_tokens)))
                 .collect()
         };
-        for (mi, name, tokens) in sweep_models {
+        for (name, tokens) in sweep_models {
+            attempted.insert(name.clone());
             match try_call(
-                mi,
+                &name,
                 messages,
                 system,
                 tools,
@@ -587,7 +617,7 @@ pub async fn call_llm_with_options(
             }
         }
     }
-    let ordered_models: Vec<(usize, String, u32)> = {
+    let ordered_models: Vec<(String, u32)> = {
         let g = router.lock().await;
         let pool = g.pool_indices("paid_model");
         let order = build_priority_order(&g.models, &pool, start_index);
@@ -595,14 +625,14 @@ pub async fn call_llm_with_options(
             .into_iter()
             .map(|mi| {
                 let m = &g.models[mi];
-                (mi, m.name.clone(), max_tokens.unwrap_or(m.max_tokens))
+                (m.name.clone(), max_tokens.unwrap_or(m.max_tokens))
             })
             .collect()
     };
 
-    for (mi, name, tokens) in ordered_models {
+    for (name, tokens) in ordered_models {
         match try_call(
-            mi,
+            &name,
             messages,
             system,
             tools,
@@ -618,7 +648,7 @@ pub async fn call_llm_with_options(
             Ok(r) => {
                 let model_id = {
                     let g = router.lock().await;
-                    g.models[mi].model_id.clone()
+                    g.find(&name).map(|m| m.model_id.clone()).unwrap_or_default()
                 };
                 router
                     .lock()
@@ -641,7 +671,7 @@ pub async fn call_llm_with_options(
 }
 
 async fn try_call(
-    idx: usize,
+    model_name: &str,
     messages: &[Message],
     system: &str,
     tools: &[ToolDefinition],
@@ -658,7 +688,13 @@ async fn try_call(
     // and avoids silent default-value bugs if it reads any other field.
     let (base_record, model_ids_str, api_key, timeout_secs) = {
         let g = router.lock().await;
-        let m = &g.models[idx];
+        // Looked up by name, not by the index the caller selected under an
+        // earlier lock: the model set can be replaced between the two (see
+        // `RouterState::find`). A model that vanished is just another candidate
+        // to fail over from.
+        let Some(m) = g.find(model_name) else {
+            anyhow::bail!("model '{model_name}' is no longer configured");
+        };
         if !m.is_available() {
             anyhow::bail!("not available");
         }
@@ -774,8 +810,10 @@ async fn try_call(
         match call_result {
             Ok(Ok(resp)) => {
                 let mut g = router.lock().await;
-                g.models[idx].mark_success(resp.usage.input_tokens, resp.usage.output_tokens);
-                g.models[idx].rl_snapshot = tmp.rl_snapshot;
+                if let Some(m) = g.find_mut(model_name) {
+                    m.mark_success(resp.usage.input_tokens, resp.usage.output_tokens);
+                    m.rl_snapshot = tmp.rl_snapshot;
+                }
                 // Fix 3a: remove any ModelIdFailed alerts accumulated during earlier
                 // model_ids in this same record — they were transient and the record
                 // ultimately succeeded, so they must not reach watchers.
@@ -877,15 +915,21 @@ async fn try_call(
 
     // All model_ids in this slot failed — update router state and log alert.
     if let Some((e, is_rl, is_timeout, failed_model_id)) = last_error {
-        let (consecutive, model_name) = {
+        let consecutive = {
             let mut g = router.lock().await;
-            if is_rl {
-                let hint = parse_rate_limit_hint(&e.to_string());
-                g.models[idx].mark_rate_limited(&hint);
-            } else {
-                g.models[idx].mark_error(threshold);
+            match g.find_mut(model_name) {
+                Some(m) => {
+                    if is_rl {
+                        let hint = parse_rate_limit_hint(&e.to_string());
+                        m.mark_rate_limited(&hint);
+                    } else {
+                        m.mark_error(threshold);
+                    }
+                    m.consecutive_errors
+                }
+                // Deleted mid-call: nothing left to book the failure against.
+                None => 0,
             }
-            (g.models[idx].consecutive_errors, g.models[idx].name.clone())
         };
 
         // Fix 4b: use the explicitly-tracked is_timeout flag rather than
@@ -897,7 +941,7 @@ async fn try_call(
             .lock()
             .await
             .push(RouterAlert::ModelFailed {
-                model_name: model_name.clone(),
+                model_name: model_name.to_string(),
                 model_id: failed_model_id.clone(),
                 error: e.to_string(),
                 is_rate_limit: is_rl,
@@ -929,13 +973,10 @@ pub async fn generate_image_with_model(
     input_image: Option<&ContentBlock>,
 ) -> anyhow::Result<GeneratedImage> {
     let threshold = settings.error_threshold();
-    let (idx, base_record, api_key, timeout_secs) = {
+    let (base_record, api_key, timeout_secs) = {
         let g = router.lock().await;
-        let (idx, m) = g
-            .models
-            .iter()
-            .enumerate()
-            .find(|(_, m)| m.name == model_name)
+        let m = g
+            .find(model_name)
             .ok_or_else(|| anyhow::anyhow!("model '{}' was not found", model_name))?;
         if !m.is_available() {
             anyhow::bail!(
@@ -945,12 +986,7 @@ pub async fn generate_image_with_model(
             );
         }
         let resolved_key = settings.resolve(&m.api_key);
-        (
-            idx,
-            m.clone(),
-            resolved_key,
-            m.timeout_secs.unwrap_or(0).max(120),
-        )
+        (m.clone(), resolved_key, m.timeout_secs.unwrap_or(0).max(120))
     };
 
     if api_key.trim().is_empty() {
@@ -995,8 +1031,10 @@ pub async fn generate_image_with_model(
         match call_result {
             Ok(Ok(img)) => {
                 let mut g = router.lock().await;
-                g.models[idx].mark_success(img.usage.input_tokens, img.usage.output_tokens);
-                g.models[idx].rl_snapshot = tmp.rl_snapshot;
+                if let Some(m) = g.find_mut(model_name) {
+                    m.mark_success(img.usage.input_tokens, img.usage.output_tokens);
+                    m.rl_snapshot = tmp.rl_snapshot;
+                }
                 tracing::info!(
                     "✓ {} generated {} bytes ({})",
                     current_model_id,
@@ -1023,11 +1061,13 @@ pub async fn generate_image_with_model(
     let (e, is_rl) = last_error.expect("model_ids is non-empty, so at least one attempt ran");
     {
         let mut g = router.lock().await;
-        if is_rl {
-            let hint = parse_rate_limit_hint(&e.to_string());
-            g.models[idx].mark_rate_limited(&hint);
-        } else {
-            g.models[idx].mark_error(threshold);
+        if let Some(m) = g.find_mut(model_name) {
+            if is_rl {
+                let hint = parse_rate_limit_hint(&e.to_string());
+                m.mark_rate_limited(&hint);
+            } else {
+                m.mark_error(threshold);
+            }
         }
     }
     Err(e)
@@ -1367,9 +1407,48 @@ pub async fn reset_model(router: &SharedRouter, name: &str) -> bool {
     false
 }
 
+/// Does this reload change how the model is actually reached? A key/endpoint
+/// edit is the operator deliberately fixing a broken model, so its health state
+/// should start clean rather than keep a cooldown earned by the old settings.
+/// Everything else (priority, role, max_tokens, …) leaves the connection intact.
+fn same_endpoint(a: &ModelRecord, b: &ModelRecord) -> bool {
+    a.provider == b.provider
+        && a.model_id == b.model_id
+        && a.base_url == b.base_url
+        && a.api_key == b.api_key
+}
+
 pub async fn update_models(router: &SharedRouter, mut new_models: Vec<ModelRecord>) {
     new_models.sort_by_key(|m| m.priority);
     let mut g = router.lock().await;
+
+    // Records are rebuilt from the DB, which stores *configuration* only — every
+    // runtime field comes back zeroed (see `config::load_models_from_db`). The
+    // dashboard calls this on every add/update/delete/bulk toggle, so adopting
+    // the new vector wholesale would, on each such edit, forget every model's
+    // 429 quarantine (the router then immediately re-hammers providers that are
+    // still rate-limited), zero the lifetime usage counters shown on the Models
+    // page, and clear the `no_reasoning` flag so a param already rejected with a
+    // 400 gets sent again. Carry that state across by name.
+    for m in new_models.iter_mut() {
+        let Some(prev) = g.find(&m.name) else {
+            continue;
+        };
+        // Lifetime totals are cumulative telemetry: never a reason to reset.
+        m.total_calls = prev.total_calls;
+        m.total_input_tokens = prev.total_input_tokens;
+        m.total_output_tokens = prev.total_output_tokens;
+
+        if same_endpoint(prev, m) {
+            m.status = prev.status.clone();
+            m.rate_limit_reset_at = prev.rate_limit_reset_at.clone();
+            m.consecutive_errors = prev.consecutive_errors;
+            m.consecutive_rate_limits = prev.consecutive_rate_limits;
+            m.rl_snapshot = prev.rl_snapshot.clone();
+            m.no_reasoning = prev.no_reasoning;
+        }
+    }
+
     g.models = new_models;
     // FIX #3: Do NOT reset global_index to 0 on config reload.
     // Resetting it caused a burst of requests to the first model after
@@ -1535,5 +1614,255 @@ mod tests {
                 "category {cat:?} for {err:?} is not in FAILURE_CATEGORIES"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod reload_tests {
+    use super::*;
+    use crate::providers::types::{ModelRecord, RateLimitHint, RateLimitWindow};
+
+    fn model(name: &str) -> ModelRecord {
+        ModelRecord {
+            name: name.to_string(),
+            provider: "openai".into(),
+            model_id: "gpt-x".into(),
+            api_key: "sk-test".into(),
+            base_url: None,
+            timeout_secs: None,
+            priority: 1,
+            max_tokens: 1024,
+            enabled: true,
+            disabled_reason: None,
+            role: String::new(),
+            thinking_mode: None,
+            no_reasoning: false,
+            status: "available".into(),
+            rate_limit_reset_at: None,
+            consecutive_errors: 0,
+            consecutive_rate_limits: 0,
+            total_calls: 0,
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+            rl_snapshot: Default::default(),
+        }
+    }
+
+    fn router_with(models: Vec<ModelRecord>) -> SharedRouter {
+        Arc::new(Mutex::new(RouterState::new(models)))
+    }
+
+    /// A dashboard edit rebuilds every record from the DB, which stores no
+    /// runtime state. Without carry-over this reload forgets the 429 cooldown
+    /// and the router immediately re-hits a provider that is still limited.
+    #[tokio::test]
+    async fn reload_preserves_rate_limit_quarantine() {
+        let router = router_with(vec![model("a"), model("b")]);
+        {
+            let mut g = router.lock().await;
+            g.find_mut("a").unwrap().mark_rate_limited(&RateLimitHint {
+                window: RateLimitWindow::Hourly,
+                explicit_secs: Some(3600),
+            });
+            assert!(!g.find("a").unwrap().is_available());
+        }
+
+        // Unrelated edit: "b" gets a new priority, "a" is untouched.
+        let mut reloaded = vec![model("a"), model("b")];
+        reloaded[1].priority = 5;
+        update_models(&router, reloaded).await;
+
+        let g = router.lock().await;
+        let a = g.find("a").unwrap();
+        assert_eq!(a.status, "rate_limited", "cooldown survives the reload");
+        assert!(a.rate_limit_reset_at.is_some());
+        assert!(!a.is_available(), "still quarantined, so routing skips it");
+    }
+
+    /// Lifetime counters back the Models page usage display; a config edit is
+    /// not a reason to zero them.
+    #[tokio::test]
+    async fn reload_preserves_usage_totals() {
+        let router = router_with(vec![model("a")]);
+        {
+            let mut g = router.lock().await;
+            g.find_mut("a").unwrap().mark_success(100, 20);
+            g.find_mut("a").unwrap().mark_success(50, 10);
+        }
+
+        update_models(&router, vec![model("a")]).await;
+
+        let g = router.lock().await;
+        let a = g.find("a").unwrap();
+        assert_eq!(a.total_calls, 2);
+        assert_eq!(a.total_input_tokens, 150);
+        assert_eq!(a.total_output_tokens, 30);
+    }
+
+    /// Re-keying or re-pointing a model is the operator fixing it, so its
+    /// health state starts clean — but the lifetime totals still carry.
+    #[tokio::test]
+    async fn endpoint_change_clears_health_but_keeps_totals() {
+        let router = router_with(vec![model("a")]);
+        {
+            let mut g = router.lock().await;
+            let a = g.find_mut("a").unwrap();
+            a.mark_success(10, 5);
+            a.mark_error(3);
+            a.mark_error(3);
+        }
+
+        let mut fixed = model("a");
+        fixed.api_key = "sk-a-fresh-key".into();
+        update_models(&router, vec![fixed]).await;
+
+        let g = router.lock().await;
+        let a = g.find("a").unwrap();
+        assert_eq!(a.consecutive_errors, 0, "clean slate after the fix");
+        assert_eq!(a.status, "available");
+        assert_eq!(a.total_calls, 1, "telemetry is still cumulative");
+    }
+
+    /// Deleting a model must leave the survivors' state attached to the right
+    /// records — the reload re-sorts and re-indexes the vector.
+    #[tokio::test]
+    async fn state_follows_the_model_not_its_position() {
+        let router = router_with(vec![model("a"), model("b"), model("c")]);
+        {
+            let mut g = router.lock().await;
+            g.find_mut("c").unwrap().mark_success(7, 3);
+        }
+
+        // "a" is deleted; "c" moves from index 2 to index 1.
+        update_models(&router, vec![model("b"), model("c")]).await;
+
+        let g = router.lock().await;
+        assert!(g.find("a").is_none());
+        assert_eq!(g.find("b").unwrap().total_calls, 0);
+        assert_eq!(g.find("c").unwrap().total_input_tokens, 7);
+    }
+}
+
+#[cfg(test)]
+mod routing_order_tests {
+    use super::*;
+    use crate::providers::types::ModelRecord;
+
+    fn m(name: &str, provider: &str, priority: i32) -> ModelRecord {
+        ModelRecord {
+            name: name.into(),
+            provider: provider.into(),
+            model_id: format!("{provider}-id"),
+            api_key: "k".into(),
+            base_url: None,
+            timeout_secs: None,
+            priority,
+            max_tokens: 100,
+            enabled: true,
+            disabled_reason: None,
+            role: String::new(),
+            thinking_mode: None,
+            no_reasoning: false,
+            status: "available".into(),
+            rate_limit_reset_at: None,
+            consecutive_errors: 0,
+            consecutive_rate_limits: 0,
+            total_calls: 0,
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+            rl_snapshot: Default::default(),
+        }
+    }
+
+    /// The seed is a full-width hash, so values near `usize::MAX` are ordinary
+    /// inputs, not edge cases. A plain `start + offset` panics on them under the
+    /// overflow checks dev and test profiles turn on; a `wrapping_add` survives
+    /// but silently stops being a permutation, trying one model twice and
+    /// another not at all.
+    #[test]
+    fn every_seed_yields_a_permutation() {
+        // Distinct providers => one bucket each, which is where the modular
+        // arithmetic across buckets has to hold.
+        for n in 1..=5usize {
+            let models: Vec<ModelRecord> = (0..n)
+                .map(|i| m(&format!("m{i}"), &format!("p{i}"), 1))
+                .collect();
+            let pool: Vec<usize> = (0..n).collect();
+
+            let seeds = (0..n + 2)
+                .flat_map(|k| [k, usize::MAX - k])
+                .chain([usize::MAX / 2, usize::MAX / 2 + 1]);
+
+            for start in seeds {
+                let order = build_priority_order(&models, &pool, start);
+                assert_eq!(order.len(), n, "n={n} seed={start} lost candidates");
+                let unique: std::collections::HashSet<_> = order.iter().collect();
+                assert_eq!(
+                    unique.len(),
+                    n,
+                    "n={n} seed={start} is not a permutation: {order:?}"
+                );
+            }
+        }
+    }
+
+    /// Same check for rotation *within* one bucket (several API keys sharing a
+    /// provider + model_id), which uses the other modular index.
+    #[test]
+    fn every_seed_permutes_within_a_bucket() {
+        for n in 1..=5usize {
+            // Same provider for all => a single bucket with n entries.
+            let models: Vec<ModelRecord> =
+                (0..n).map(|i| m(&format!("key{i}"), "shared", 1)).collect();
+            let pool: Vec<usize> = (0..n).collect();
+
+            for start in (0..n + 2).flat_map(|k| [k, usize::MAX - k]) {
+                let order = build_priority_order(&models, &pool, start);
+                let unique: std::collections::HashSet<_> = order.iter().collect();
+                assert_eq!(
+                    unique.len(),
+                    n,
+                    "n={n} seed={start} reused a key: {order:?}"
+                );
+            }
+        }
+    }
+
+    /// Every available model must appear exactly once, tier by tier.
+    #[test]
+    fn order_is_a_permutation_respecting_priority() {
+        let models = vec![
+            m("hi-1", "p1", 1),
+            m("hi-2", "p2", 1),
+            m("lo-1", "p3", 5),
+            m("lo-2", "p4", 5),
+        ];
+        let pool: Vec<usize> = (0..models.len()).collect();
+
+        for start in 0..8 {
+            let order = build_priority_order(&models, &pool, start);
+            assert_eq!(order.len(), 4);
+            let names: Vec<&str> = order.iter().map(|&i| models[i].name.as_str()).collect();
+            assert!(
+                names[..2].iter().all(|n| n.starts_with("hi-")),
+                "priority 1 must come first, got {names:?}"
+            );
+        }
+    }
+
+    /// Multiple API keys for one provider+model share a bucket; the seed has to
+    /// rotate within it, or key #0 gets hammered until it 429s.
+    #[test]
+    fn same_endpoint_keys_rotate_across_seeds() {
+        // Same provider and model_id => one bucket, two entries.
+        let models = vec![m("key-a", "p1", 1), m("key-b", "p1", 1)];
+        let pool: Vec<usize> = (0..models.len()).collect();
+
+        let first_of = |start: usize| build_priority_order(&models, &pool, start)[0];
+        assert_ne!(
+            first_of(0),
+            first_of(1),
+            "consecutive seeds must start on different keys"
+        );
     }
 }
