@@ -277,8 +277,9 @@ fn internal_tools() -> Vec<ToolDefinition> {
             "shell_tool",
             "Execute native bash commands directly on the LOCAL server hosting the agent. \
             Use this ONLY for checking your own underlying system (e.g. your local RAM, disk, processes). DO NOT use this for external servers. \
-            CRITICAL RESTRICTION: You MUST NOT execute destructive commands that alter server permissions, lock out users, or damage the system (e.g., rm -rf /, chmod, chown, iptables, ufw, passwd, mkfs). \
-            These commands are strictly blocked and will fail. \
+            CRITICAL RESTRICTION: commands that would destroy the host or lock its users out are refused and will fail — recursive deletes of the filesystem root or home directory (`rm -rf /`, `rm -rf ~`), filesystem formatting (`mkfs`), raw device imaging (`dd if=`), RECURSIVE permission changes (`chmod -R`, `chown -R`), and account or firewall changes (`passwd`, `userdel`, `groupdel`, `iptables`, `ufw`). \
+            Scoped operations are expected and work normally: `rm -rf ./build`, `chmod 644 file.txt`, and `chown me:me file` are all fine — only the recursive/system-wide forms above are refused. \
+            Output is capped at 1 MiB per stream, and the timeout kills the command's whole process group, so a backgrounded job cannot outlive the call. \
             Use this for read-only local system checks, standard file operations, or running scripts locally.",
             serde_json::json!({
                 "command": {"type": "string", "description": "The bash command to execute."},

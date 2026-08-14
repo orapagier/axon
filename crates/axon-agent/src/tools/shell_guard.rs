@@ -173,15 +173,16 @@ fn is_catastrophic_target(op: &str) -> bool {
 fn refuse(c: &Cmd) -> Option<Refusal> {
     let recursive = c.has_flag('r', "recursive") || c.has_flag('R', "recursive");
 
-    // Recursive force-delete aimed at root or $HOME.
-    if c.program == "rm"
-        && recursive
-        && c.has_flag('f', "force")
-        && c.operands.iter().any(|op| is_catastrophic_target(op))
-    {
+    // Recursive delete aimed at root or $HOME.
+    //
+    // `-f` is deliberately NOT required. It only suppresses prompts, and the
+    // agent's shell has no tty to prompt on — so `rm -r /` destroys just as
+    // much as `rm -rf /`. Nothing legitimate ever recursively deletes the
+    // filesystem root, so there is no false positive to trade away here.
+    if c.program == "rm" && recursive && c.operands.iter().any(|op| is_catastrophic_target(op)) {
         return Some(Refusal {
             rule: "rm-root",
-            detail: "recursive force-delete of the filesystem root or home directory".into(),
+            detail: "recursive delete of the filesystem root or home directory".into(),
         });
     }
 
@@ -259,6 +260,10 @@ mod tests {
             "rm -rf $HOME",
             "echo hi; rm -fr /",
             "true && rm -fr /*",
+            // No `-f`: with no tty there is nothing to prompt on, so this is
+            // just as destructive.
+            "rm -r /",
+            "rm --recursive /",
         ] {
             assert!(blocked(cmd), "should have been refused: {cmd}");
         }

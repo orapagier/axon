@@ -49,7 +49,7 @@ This document is the complete guide: architecture, prerequisites, installing or 
 - **Real tools.** Shell, SSH, HTTP, web search, image generation/processing, parallel workers, cron jobs, watchers, and workflows.
 - **Self-correcting.** A validation pipeline (claim guard, refusal nudge, blank/raw-syntax guards, and an optional secondary-LLM quality check) catches hallucinations and tool misuse before anything is sent publicly.
 - **Live dashboard.** Mobile-friendly Vue 3 UI for chat, models, tools, services, memory, files, tasks, watchers, and the visual workflow canvas — all changeable live without a restart. Installable as a phone app (PWA).
-- **Secure by design.** Bearer master-key auth, fail-closed AES-256-GCM encryption of all secrets at rest, shell blocklist, path-traversal protection, and HMAC-verified webhooks.
+- **Secure by design.** Bearer master-key auth with brute-force throttling, fail-closed AES-256-GCM encryption of all secrets at rest, path-traversal protection, and HMAC-verified webhooks. The shell tool deliberately runs as the Axon process user — **run Axon unprivileged**; see [Security](#-security).
 
 ---
 
@@ -291,6 +291,7 @@ What happens on each request:
   - *daily* quota exhausted → until the window resets (provider reset if given, else next UTC midnight).
 
   A non-rate-limit error parks the model until midnight after `router.error_threshold` consecutive failures. A successful call reinstates the model immediately; cooldowns otherwise auto-expire.
+- **Editing models keeps live state:** adding, editing, or deleting a model on the Models page reloads the router from the database. Active 429 cooldowns and the lifetime call/token counters **survive** that reload, so a routine config tweak no longer un-parks every rate-limited provider or zeroes the usage figures. Changing a model's provider, model ID, base URL, or API key is treated as *fixing* it and does clear its health state — the lifetime counters still carry over. To clear a cooldown deliberately, use the per-model reset on the Models page.
 - **Flat per-attempt timeout:** each call gets `router.model_call_timeout_secs` (default 30 s, overridable per model), bounded only by the overall run deadline — no adaptive/fair-share math.
 - **Alerts:** rate-limit, timeout, and "paid fallback used" events are collected per run and surfaced to the operator (dashboard + messaging notifications).
 
@@ -314,7 +315,7 @@ Memories are always presented to the model as **hints to verify with tools**, ne
 
 | Tool | What it does |
 |------|-------------|
-| `shell_tool` | Runs `bash -c <cmd>` with a per-call timeout and streamed output. A blocklist rejects catastrophic commands (see [Security](#-security) for the exact list). |
+| `shell_tool` | Runs `bash -c <cmd>`. The per-call timeout kills the whole process group (so backgrounded jobs can't outlive it) and output is capped at 1 MiB per stream. A guard refuses commands that are catastrophic *by accident* — an agent safeguard, **not** a sandbox (see [Security](#-security)). |
 | `ssh_tool` | Run commands / transfer files on remote servers configured on the SSH page; credentials encrypted at rest. |
 | `http_request` | Arbitrary HTTP requests plus a library of saved HTTP requests. |
 | `web_search` | Web search with quota-rotating accounts. |
@@ -413,7 +414,14 @@ Examples:
 - **Credential test:** the Services page has a **Test** button per stored credential (`POST /api/credentials/:id/test`) that makes a cheap, service-specific call and reports validity without ever returning the secret. Services without a known probe report "present but not testable".
 - **File downloads** are restricted to the staging directory (`data/files`) via canonical-path validation, preventing path traversal.
 - **Webhook authenticity:** Facebook events are verified with HMAC-SHA256 against the app secret; the verify token gates subscription.
-- **Shell blocklist scope (be aware):** the shell guardrail blocks the most catastrophic patterns (`rm -rf /`, `rm -rf /*`, `mkfs`, `dd if=`, `chmod -R`, `chown -R`, `iptables`, `ufw`, `passwd`, `userdel`, `groupdel`, …) but, by design, still permits *scoped* destructive commands (e.g. `rm -rf ./build`). Treat the agent's shell access as you would a trusted operator account; do not expose the dashboard publicly without a master key, and run it as a least-privilege user.
+- **Brute-force throttling:** failed dashboard auth is penalised per source — 10 free attempts, then an escalating block (30s, doubling, capped at 15 min). Because that per-source key comes from a proxy header a client can forge, a **global backstop** also delays *every* failed attempt once failures exceed 50/minute, ramping to 2s. Correct keys are never delayed, so an attacker cannot use the backstop to lock the operator out. Put the app behind the reverse proxy in `deploy/Caddyfile.example` so the forwarded-IP headers can be trusted.
+- **⚠️ The shell tool is guarded, not sandboxed.** `shell_tool` runs arbitrary commands **as the Axon process user, by design** — that is the feature, and no string-level check can contain it.
+
+  The guard catches commands that are catastrophic *by accident*: recursive deletes of `/` or `$HOME`, `mkfs`, `dd if=`, recursive `chmod`/`chown`, and account/firewall changes (`passwd`, `userdel`, `groupdel`, `iptables`, `ufw`). It matches the parsed program name and its flags, so re-spelled variants are caught too (`rm -fr /`, `rm  -rf /`, `rm -r /`, `/bin/rm -rf /`, `sudo rm -rf /`), while commands that merely *mention* one of those words in an argument are not (`cat /etc/passwd`, `grep iptables /var/log/syslog`). *Scoped* destructive commands stay allowed on purpose — `rm -rf ./build` is the tool doing its job.
+
+  **It cannot stop a determined caller, and is not meant to.** `X=rm; $X -rf /`, a base64-piped script, or a one-line Python program all reach the same syscalls without ever spelling a refused command. Anyone able to invoke the tool already holds the master key.
+
+  **Treat the process user's privileges as the actual boundary:** run Axon as a least-privilege user, ideally in a container, and never as root. Don't expose the dashboard publicly without a strong master key.
 
 ---
 
