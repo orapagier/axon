@@ -118,6 +118,11 @@ const activePage = ref('chat')
 // Chat stays mounted once visited so navigating away doesn't wipe the
 // conversation. Other pages unmount so their polling timers stop.
 const KEEP_MOUNTED = new Set(['chat'])
+// Full-bleed pages: they own their own gutters and must reach the sidebar
+// hairline, so they skip .page's padding and 1440px centring. Chat needs it so
+// its conversation rail sits flush against the shell nav instead of floating in
+// the middle of a wide screen; Workflows needs the whole canvas.
+const FLUSH_PAGES = new Set(['chat', 'workflows'])
 const visitedPages = ref(new Set(['chat']))
 const sidebarOpen = ref(false)
 // Chat is the default landing page and, like Workflows, wants the full canvas —
@@ -467,7 +472,7 @@ async function logout() {
           :id="`page-${item.id}`"
           :key="item.id"
           class="page"
-          :class="{ active: activePage === item.id, 'page-flush': item.id === 'workflows' }"
+          :class="{ active: activePage === item.id, 'page-flush': FLUSH_PAGES.has(item.id) }"
           :style="{ display: activePage === item.id ? 'flex' : 'none' }"
         >
           <component
