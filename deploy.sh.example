@@ -439,7 +439,27 @@ echo "🌐 [6/7] Uploading to server..."
 
 ssh $SSH_OPTS "$TARGET_SERVER" "sudo rm -f $REMOTE_DIR/$DEPLOY_FILE"
 scp $SSH_OPTS "$ROOT_DIR/$DEPLOY_FILE" "${TARGET_SERVER}:${REMOTE_DIR}/"
-echo "  ✅ Uploaded"
+
+# ── Verify the upload ── scp has been observed exiting 0 after a truncated
+# transfer. A short tarball only fails at extraction, which happens *after*
+# step 7 has already wiped the old deployment — so check the digest here, while
+# the server is still untouched.
+LOCAL_SHA=""
+if command -v sha256sum >/dev/null 2>&1; then
+    LOCAL_SHA=$(sha256sum "$ROOT_DIR/$DEPLOY_FILE" | grep -oE '^[0-9a-f]{64}' || true)
+else
+    LOCAL_SHA=$(shasum -a 256 "$ROOT_DIR/$DEPLOY_FILE" | grep -oE '^[0-9a-f]{64}' || true)
+fi
+REMOTE_SHA=$(ssh $SSH_OPTS "$TARGET_SERVER" "sha256sum $REMOTE_DIR/$DEPLOY_FILE" 2>/dev/null \
+    | tr -d '\r' | grep -oE '^[0-9a-f]{64}' | tail -1 || true)
+if [ -z "$LOCAL_SHA" ] || [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+    echo "  ❌ Upload verification failed — the server's copy does not match."
+    echo "     local:  ${LOCAL_SHA:-<unavailable>}"
+    echo "     remote: ${REMOTE_SHA:-<missing>}"
+    echo "     The server has NOT been modified. Re-run to retry the upload."
+    exit 1
+fi
+echo "  ✅ Uploaded and verified (sha256 ${LOCAL_SHA:0:12}…)"
 echo ""
 
 echo "🔄 [7/7] Deploying to server..."
@@ -483,7 +503,23 @@ ssh $SSH_OPTS "$TARGET_SERVER" "bash -s" <<REMOTE
 
     # ── Set aside the server's data/ (Files area) before the wipe ──
     # The bundle no longer ships data/ — the server's copy is the only one.
-    sudo rm -rf "$REMOTE_DIR/.axon_data_keep"
+    #
+    # A leftover .axon_data_keep means an earlier deploy died between this
+    # set-aside and the restore further down, so it currently holds the ONLY
+    # copy of the Files area. Deleting it here (as this used to) destroys it
+    # for good — that is exactly how a re-run after a failed deploy wipes
+    # user data. Bail out instead, before anything is touched.
+    if [ -d "$REMOTE_DIR/.axon_data_keep" ]; then
+        echo "  ❌ $REMOTE_DIR/.axon_data_keep already exists."
+        echo "     A previous deploy failed after setting data/ aside, so this"
+        echo "     directory holds the only copy of the Files area."
+        echo ""
+        echo "     Put it back, then re-run this deploy:"
+        echo "       mv $REMOTE_DIR/.axon_data_keep $REMOTE_DIR/axon/core/data"
+        echo ""
+        echo "     Nothing has been wiped."
+        exit 1
+    fi
     if [ -d "$REMOTE_DIR/axon/core/data" ]; then
         sudo mv "$REMOTE_DIR/axon/core/data" "$REMOTE_DIR/.axon_data_keep"
         echo "    ✅ data/ set aside for restore"
