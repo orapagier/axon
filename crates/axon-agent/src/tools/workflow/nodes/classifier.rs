@@ -9,6 +9,7 @@
 //! options (coerced/clamped here), so a Switch can rely on it.
 
 use crate::state::AppState;
+use crate::text::truncate_chars;
 use serde_json::{json, Value};
 
 const DEFAULT_CATEGORIES: &str = "support, sales, billing, spam, personal, other";
@@ -51,7 +52,7 @@ pub(crate) fn execute<'a>(
         let system = build_system_prompt(&categories, &priorities, &intents, extra);
         let stimulus = format!(
             "Classify the following text. Respond with ONLY the JSON object — no markdown, no prose.\n\n---\n{}\n---",
-            truncate(&input, MAX_INPUT_CHARS)
+            truncate_chars(&input, MAX_INPUT_CHARS)
         );
 
         let selected_model = config
@@ -115,7 +116,13 @@ pub(crate) fn execute<'a>(
                 let category = coerce_enum_from_text(&text_lc, &categories);
                 let priority = coerce_enum_from_text(&text_lc, &priorities);
                 let intent = coerce_enum_from_text(&text_lc, &intents);
-                (category, priority, intent, None, truncate(raw.trim(), 500))
+                (
+                    category,
+                    priority,
+                    intent,
+                    None,
+                    truncate_chars(raw.trim(), 500),
+                )
             }
         };
 
@@ -177,16 +184,6 @@ fn build_system_prompt(
          Example: {\"category\":\"support\",\"priority\":\"normal\",\"intent\":\"question\",\"confidence\":0.82,\"reasoning\":\"asks how to reset password\"}",
     );
     p
-}
-
-/// Truncate by characters (not bytes) so multibyte input never panics.
-fn truncate(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        let t: String = s.chars().take(max).collect();
-        format!("{}…[truncated]", t)
-    }
 }
 
 /// Pull a JSON object out of a model response, tolerating markdown fences or
@@ -352,7 +349,7 @@ mod tests {
     #[test]
     fn truncate_is_char_safe() {
         let s = "áéíóú";
-        assert_eq!(truncate(s, 10), s);
-        assert!(truncate(s, 2).starts_with("áé"));
+        assert_eq!(truncate_chars(s, 10), s);
+        assert!(truncate_chars(s, 2).starts_with("áé"));
     }
 }

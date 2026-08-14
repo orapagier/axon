@@ -41,9 +41,22 @@ struct Record {
     last_seen: Instant,
 }
 
+/// Window over which the global failure backstop counts.
+const GLOBAL_WINDOW: Duration = Duration::from_secs(60);
+/// Failures per `GLOBAL_WINDOW`, across *all* sources, before every further
+/// failure is delayed. Set well above what a few misconfigured clients produce.
+const GLOBAL_FREE_FAILURES: u32 = 50;
+/// Ceiling on that delay. Small on purpose — it only ever slows down requests
+/// that already presented a wrong key, and it must not become a way to pin
+/// unbounded numbers of sleeping tasks.
+const MAX_GLOBAL_DELAY: Duration = Duration::from_secs(2);
+
 #[derive(Default)]
 struct Throttle {
     clients: HashMap<String, Record>,
+    /// Failures in the current global window, and when that window opened.
+    global_failures: u32,
+    global_window_start: Option<Instant>,
 }
 
 impl Throttle {
@@ -51,6 +64,60 @@ impl Throttle {
     fn penalty_remaining(&self, client: &str, now: Instant) -> Option<Duration> {
         let until = self.clients.get(client)?.blocked_until?;
         (until > now).then(|| until - now)
+    }
+
+    /// Free one slot when the table is full, so a new source is still tracked.
+    ///
+    /// Evicts the least-recently-seen record that is **not** currently serving a
+    /// penalty. Dropping a blocked record would hand that source a free reset,
+    /// which is exactly what an attacker filling the table wants; dropping an
+    /// idle, unpenalised one costs nothing. `false` when every slot is blocked
+    /// and nothing could be freed without releasing a live penalty.
+    fn evict_one(&mut self, now: Instant) -> bool {
+        let victim = self
+            .clients
+            .iter()
+            .filter(|(_, r)| !r.blocked_until.is_some_and(|until| until > now))
+            .min_by_key(|(_, r)| r.last_seen)
+            .map(|(k, _)| k.clone());
+        match victim {
+            Some(k) => {
+                self.clients.remove(&k);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Count a failure against the global window and return how long this
+    /// attempt should be delayed before it is answered.
+    ///
+    /// This is the backstop for the per-source table, whose key comes from a
+    /// client-controlled header: an attacker who can spoof `X-Forwarded-For`
+    /// presents a fresh key every request and never accumulates a per-source
+    /// penalty, no matter how the table is managed. A global counter is immune
+    /// to that because it does not depend on the key at all. It delays rather
+    /// than rejects, and only on the failure path, so the operator presenting
+    /// the correct key is never affected — an attacker cannot use this to lock
+    /// them out.
+    fn record_global_failure(&mut self, now: Instant) -> Duration {
+        let expired = self
+            .global_window_start
+            .is_none_or(|start| now.duration_since(start) >= GLOBAL_WINDOW);
+        if expired {
+            self.global_window_start = Some(now);
+            self.global_failures = 0;
+        }
+        self.global_failures = self.global_failures.saturating_add(1);
+
+        let over = self.global_failures.saturating_sub(GLOBAL_FREE_FAILURES);
+        if over == 0 {
+            return Duration::ZERO;
+        }
+        // Ramp linearly to the ceiling over the next `GLOBAL_FREE_FAILURES`
+        // failures, rather than jumping straight to the maximum.
+        let ramp = u32::min(over, GLOBAL_FREE_FAILURES);
+        (MAX_GLOBAL_DELAY * ramp) / GLOBAL_FREE_FAILURES
     }
 
     fn record_failure(&mut self, client: &str, now: Instant) {
@@ -63,12 +130,18 @@ impl Throttle {
             // penalty, which is only possible when the app port is reachable
             // without going through the reverse proxy.
             tracing::error!(
-                "Auth throttle table saturated at {} sources — a new failing source is not \
-                 being tracked. This strongly suggests X-Forwarded-For spoofing; verify the \
-                 app port is reachable ONLY via the reverse proxy (see deploy/Caddyfile.example).",
+                "Auth throttle table saturated at {} sources. This strongly suggests \
+                 X-Forwarded-For spoofing; verify the app port is reachable ONLY via the \
+                 reverse proxy (see deploy/Caddyfile.example).",
                 MAX_TRACKED
             );
-            return;
+            // Previously this returned, leaving the new source untracked — so
+            // once the table filled, every *other* attacker (including one at a
+            // fixed IP that the per-source penalty would have stopped cold) got
+            // unlimited free attempts. Fail closed instead: make room.
+            if !self.evict_one(now) {
+                return;
+            }
         }
 
         let rec = self.clients.entry(client.to_string()).or_insert(Record {
@@ -219,11 +292,21 @@ pub async fn require_auth(req: Request, next: Next) -> Response {
         throttle().record_success(&client, now);
         next.run(req).await
     } else {
-        throttle().record_failure(&client, now);
+        let delay = {
+            let mut t = throttle();
+            t.record_failure(&client, now);
+            t.record_global_failure(now)
+        };
         tracing::warn!(
             "Unauthorized access attempt to dashboard from {} (invalid master key)",
             client
         );
+        // Held outside the lock. Only wrong-key requests ever wait here, so a
+        // correct key is answered at full speed no matter how much noise an
+        // attacker is generating.
+        if !delay.is_zero() {
+            tokio::time::sleep(delay).await;
+        }
         StatusCode::UNAUTHORIZED.into_response()
     }
 }
@@ -328,5 +411,107 @@ mod tests {
             th.record_failure(&format!("10.0.{}.{}", i / 256, i % 256), now);
         }
         assert!(th.clients.len() <= MAX_TRACKED);
+    }
+
+    // Once the table filled, the old code stopped tracking new sources entirely
+    // — so an attacker at a *fixed* IP, exactly the case the per-source penalty
+    // handles best, got unlimited free attempts.
+    #[test]
+    fn saturation_still_penalises_a_new_source() {
+        let mut th = t();
+        let now = Instant::now();
+        for i in 0..MAX_TRACKED {
+            th.record_failure(&format!("10.0.{}.{}", i / 256, i % 256), now);
+        }
+        assert_eq!(th.clients.len(), MAX_TRACKED, "table is full");
+
+        for _ in 0..=FREE_ATTEMPTS {
+            th.record_failure("9.9.9.9", now);
+        }
+        assert!(
+            th.penalty_remaining("9.9.9.9", now).is_some(),
+            "a new source must still earn a penalty once the table is saturated"
+        );
+        assert!(th.clients.len() <= MAX_TRACKED, "and stay bounded");
+    }
+
+    // Eviction must never release a live penalty — that would let an attacker
+    // clear their own block by filling the table.
+    #[test]
+    fn eviction_prefers_idle_records_over_blocked_ones() {
+        let mut th = t();
+        let now = Instant::now();
+
+        for _ in 0..=FREE_ATTEMPTS {
+            th.record_failure("blocked-one", now);
+        }
+        assert!(th.penalty_remaining("blocked-one", now).is_some());
+        th.record_failure("idle-one", now);
+
+        assert!(th.evict_one(now));
+        assert!(
+            th.penalty_remaining("blocked-one", now).is_some(),
+            "the penalised record must survive"
+        );
+        assert!(!th.clients.contains_key("idle-one"), "the idle one goes");
+    }
+
+    #[test]
+    fn eviction_refuses_when_every_slot_is_blocked() {
+        let mut th = t();
+        let now = Instant::now();
+        for i in 0..3 {
+            for _ in 0..=FREE_ATTEMPTS {
+                th.record_failure(&format!("src{i}"), now);
+            }
+        }
+        assert!(
+            !th.evict_one(now),
+            "nothing evictable without freeing a block"
+        );
+        assert_eq!(th.clients.len(), 3);
+    }
+
+    // The per-source table is keyed on a spoofable header, so the global
+    // backstop is what actually bounds an attacker who sends a fresh
+    // X-Forwarded-For every request and never accumulates a per-source penalty.
+    #[test]
+    fn global_backstop_delays_spoofed_sources() {
+        let mut th = t();
+        let now = Instant::now();
+
+        for i in 0..GLOBAL_FREE_FAILURES {
+            let d = th.record_global_failure(now);
+            assert!(d.is_zero(), "failure {i} is still within the free budget");
+        }
+        let first = th.record_global_failure(now);
+        assert!(
+            first > Duration::ZERO,
+            "past the budget, failures are delayed"
+        );
+
+        let mut last = first;
+        for _ in 0..GLOBAL_FREE_FAILURES {
+            let d = th.record_global_failure(now);
+            assert!(d >= last, "delay must not decrease");
+            last = d;
+        }
+        assert!(last <= MAX_GLOBAL_DELAY, "and stays capped");
+    }
+
+    #[test]
+    fn global_window_resets_after_it_elapses() {
+        let mut th = t();
+        let now = Instant::now();
+        for _ in 0..GLOBAL_FREE_FAILURES * 2 {
+            th.record_global_failure(now);
+        }
+        assert!(th.record_global_failure(now) > Duration::ZERO);
+
+        let later = now + GLOBAL_WINDOW + Duration::from_secs(1);
+        assert!(
+            th.record_global_failure(later).is_zero(),
+            "a quiet minute clears the backstop"
+        );
     }
 }

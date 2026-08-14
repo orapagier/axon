@@ -8,6 +8,7 @@ pub mod registry;
 pub mod runner;
 pub mod schema;
 pub mod shell;
+pub mod shell_guard;
 pub mod ssh;
 pub mod telegram;
 pub mod web_search;

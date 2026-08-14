@@ -20,6 +20,7 @@ pub mod router;
 pub mod scheduler;
 pub mod state;
 pub mod stt;
+pub mod text;
 pub mod tools;
 pub mod tts;
 pub mod watcher;

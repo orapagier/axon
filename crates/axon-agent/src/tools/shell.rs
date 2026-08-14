@@ -13,6 +13,35 @@ const MAX_STREAM_BYTES: usize = 1024 * 1024;
 /// option.
 const DRAIN_GRACE: Duration = Duration::from_millis(200);
 
+/// Kill the command's entire process group.
+///
+/// `child.kill()` signals only `bash` itself. Anything it backgrounded (`sleep
+/// 300 &`) or left in a pipeline keeps running, keeps holding the stdout pipe it
+/// inherited, and outlives the timeout that was supposed to stop it. The child
+/// is spawned as its own group leader (see `run_command`) so the whole tree can
+/// be signalled in one call here.
+#[cfg(unix)]
+async fn kill_process_group(child: &mut tokio::process::Child) {
+    if let Some(pid) = child.id() {
+        // SAFETY: `killpg` is a plain syscall with no memory effects. The group
+        // id is the child's own pid — `process_group(0)` made it the leader — so
+        // this can only ever reach processes this call spawned.
+        unsafe {
+            libc::killpg(pid as libc::pid_t, libc::SIGKILL);
+        }
+    }
+    // Still reap the direct child so it does not linger as a zombie.
+    let _ = child.kill().await;
+}
+
+#[cfg(not(unix))]
+async fn kill_process_group(child: &mut tokio::process::Child) {
+    // No portable process-group equivalent on Windows (it needs a Job Object),
+    // so this kills `bash` only; a backgrounded grandchild can still survive.
+    // The read loop's own deadline is what bounds the call either way.
+    let _ = child.kill().await;
+}
+
 /// Append up to the per-stream cap. Returns `true` if anything was dropped.
 fn append_capped(buf: &mut Vec<u8>, data: &[u8]) -> bool {
     let room = MAX_STREAM_BYTES.saturating_sub(buf.len());
@@ -28,36 +57,31 @@ pub struct ShellTool;
 
 impl ShellTool {
     pub async fn run_command(cmd: &str, timeout_seconds: u64) -> anyhow::Result<serde_json::Value> {
-        // Prevent obvious destructive commands
-        let blocked_patterns = [
-            "rm -rf /",
-            "rm -rf /*",
-            "mkfs",
-            "dd if=",
-            "chmod -R",
-            "chown -R",
-            "iptables",
-            "ufw",
-            "passwd",
-            "userdel",
-            "groupdel",
-        ];
-
-        for pattern in blocked_patterns.iter() {
-            if cmd.contains(pattern) {
-                return Ok(json!({
-                    "error": format!("Command execution blocked: '{}' matches restricted pattern '{}'. Destructive or permission-altering commands are prohibited.", cmd, pattern)
-                }));
-            }
+        // Refuse commands that are catastrophic by accident. This is a guard
+        // against agent mistakes, not a containment boundary — see
+        // `shell_guard`'s module docs for exactly what it does and does not do.
+        if let Some(refusal) = crate::tools::shell_guard::check(cmd) {
+            return Ok(json!({
+                "error": format!(
+                    "Command execution blocked [{}]: {}. Refusing to run: {}",
+                    refusal.rule, refusal.detail, cmd
+                )
+            }));
         }
 
-        let mut child = match tokio::process::Command::new("bash")
+        let mut command = tokio::process::Command::new("bash");
+        command
             .arg("-c")
             .arg(cmd)
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-        {
+            .stderr(std::process::Stdio::piped());
+
+        // Make the child its own process-group leader so a timeout can signal
+        // the whole tree it spawns, not just `bash` — see `kill_process_group`.
+        #[cfg(unix)]
+        command.process_group(0);
+
+        let mut child = match command.spawn() {
             Ok(c) => c,
             Err(e) => return Ok(json!({"error": format!("Failed to spawn process: {}", e)})),
         };
@@ -118,7 +142,7 @@ impl ShellTool {
                 // Both readers reached EOF: the command finished on its own.
                 Ok(None) => break,
                 Err(_) if drain_until.is_none() => {
-                    let _ = child.kill().await;
+                    kill_process_group(&mut child).await;
                     drain_until = Some(tokio::time::Instant::now() + DRAIN_GRACE);
                 }
                 // Grace window is over; stop regardless of what is still open.
@@ -139,7 +163,7 @@ impl ShellTool {
                 Ok(Ok(status)) => status.code().unwrap_or(-1),
                 Ok(Err(_)) => -1,
                 Err(_) => {
-                    let _ = child.kill().await;
+                    kill_process_group(&mut child).await;
                     timed_out = true;
                     -1
                 }
@@ -191,7 +215,9 @@ mod tests {
     #[tokio::test]
     async fn timeout_is_honored_when_a_grandchild_holds_the_pipe() {
         let started = Instant::now();
-        let out = ShellTool::run_command("sleep 5 & echo hi", 1).await.unwrap();
+        let out = ShellTool::run_command("sleep 5 & echo hi", 1)
+            .await
+            .unwrap();
         let elapsed = started.elapsed();
 
         assert_eq!(out.get("timeout").and_then(|v| v.as_bool()), Some(true));
@@ -229,6 +255,45 @@ mod tests {
             captured.len() < MAX_STREAM_BYTES * 3,
             "captured {} bytes; the per-stream cap is {MAX_STREAM_BYTES}",
             captured.len()
+        );
+    }
+
+    /// The timeout must take down the whole tree, not just `bash`. Without a
+    /// process-group kill the backgrounded `sleep` outlives the command that
+    /// spawned it and keeps running unattended on the host.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn timeout_kills_backgrounded_grandchildren() {
+        let marker = format!(
+            "axon-orphan-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        // `sleep` is renamed via a symlink so the marker shows up in the
+        // process table and can be matched without matching our own pgrep.
+        let script = format!(
+            "d=$(mktemp -d); ln -s $(command -v sleep) $d/{marker}; $d/{marker} 30 & echo up"
+        );
+
+        let out = ShellTool::run_command(&script, 1).await.unwrap();
+        assert_eq!(out.get("timeout").and_then(|v| v.as_bool()), Some(true));
+
+        // Give the signal a moment to be delivered and the process reaped.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let survivors = std::process::Command::new("pgrep")
+            .arg("-f")
+            .arg(&marker)
+            .output()
+            .expect("pgrep");
+        let found = String::from_utf8_lossy(&survivors.stdout);
+        assert!(
+            found.trim().is_empty(),
+            "backgrounded grandchild survived the timeout (pids: {})",
+            found.trim()
         );
     }
 

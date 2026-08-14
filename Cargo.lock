@@ -376,6 +376,7 @@ dependencies = [
  "image_processor",
  "jmespath",
  "jsonwebtoken",
+ "libc",
  "metrics",
  "metrics-exporter-prometheus",
  "mime_guess",

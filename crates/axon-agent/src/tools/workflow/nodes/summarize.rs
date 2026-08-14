@@ -5,6 +5,7 @@
 //! stays at its default (false) — there is no raw-JSON guard to defeat here.
 
 use crate::state::AppState;
+use crate::text::truncate_chars;
 use serde_json::{json, Value};
 
 /// Max characters of input text handed to the model — same budget as Classifier.
@@ -47,7 +48,7 @@ pub(crate) fn execute<'a>(
         let system = build_system_prompt(length, style, focus);
         let stimulus = format!(
             "Summarize the following text.\n\n---\n{}\n---",
-            truncate(&input, MAX_INPUT_CHARS)
+            truncate_chars(&input, MAX_INPUT_CHARS)
         );
 
         let selected_model = config
@@ -107,16 +108,6 @@ fn build_system_prompt(length: &str, style: &str, focus: &str) -> String {
     p
 }
 
-/// Truncate by characters (not bytes) so multibyte input never panics.
-fn truncate(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        let t: String = s.chars().take(max).collect();
-        format!("{}…[truncated]", t)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -146,12 +137,12 @@ mod tests {
     #[test]
     fn truncate_is_char_safe() {
         let s = "áéíóú";
-        assert_eq!(truncate(s, 10), s);
-        assert!(truncate(s, 2).starts_with("áé"));
+        assert_eq!(truncate_chars(s, 10), s);
+        assert!(truncate_chars(s, 2).starts_with("áé"));
     }
 
     #[test]
     fn truncate_noop_under_limit() {
-        assert_eq!(truncate("short", 100), "short");
+        assert_eq!(truncate_chars("short", 100), "short");
     }
 }

@@ -648,7 +648,9 @@ pub async fn call_llm_with_options(
             Ok(r) => {
                 let model_id = {
                     let g = router.lock().await;
-                    g.find(&name).map(|m| m.model_id.clone()).unwrap_or_default()
+                    g.find(&name)
+                        .map(|m| m.model_id.clone())
+                        .unwrap_or_default()
                 };
                 router
                     .lock()
@@ -986,7 +988,11 @@ pub async fn generate_image_with_model(
             );
         }
         let resolved_key = settings.resolve(&m.api_key);
-        (m.clone(), resolved_key, m.timeout_secs.unwrap_or(0).max(120))
+        (
+            m.clone(),
+            resolved_key,
+            m.timeout_secs.unwrap_or(0).max(120),
+        )
     };
 
     if api_key.trim().is_empty() {

@@ -140,3 +140,11 @@ axon-instagram = { path = "../axon-instagram" }
 axon-business  = { path = "../axon-business" }
 axon-crm       = { path = "../axon-crm" }
 
+
+# Shell tool timeout kills the command's whole process group, not just `bash`
+# (see tools/shell.rs): a backgrounded job or pipeline member otherwise survives
+# the kill, keeps the inherited stdout pipe open, and outlives its timeout.
+# `killpg` has no std equivalent. Already resolved transitively (tokio, rusqlite),
+# so naming it directly adds no compile weight — same policy as `zip`/`flate2`.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

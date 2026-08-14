@@ -9,6 +9,7 @@
 //! rewrite-in-prose correction (see classifier.rs for the same pattern).
 
 use crate::state::AppState;
+use crate::text::truncate_chars;
 use serde_json::{Map, Value};
 
 /// Max characters of input text handed to the model — same budget as Classifier.
@@ -56,7 +57,7 @@ pub(crate) fn execute<'a>(
         let system = build_system_prompt(&attrs, extra);
         let stimulus = format!(
             "Extract fields from the following text. Respond with ONLY the JSON object — no markdown, no prose.\n\n---\n{}\n---",
-            truncate(&input, MAX_INPUT_CHARS)
+            truncate_chars(&input, MAX_INPUT_CHARS)
         );
 
         let selected_model = config
@@ -205,16 +206,6 @@ fn coerce_type(value: Value, attr_type: &str) -> Value {
             other => Value::String(serde_json::to_string(other).unwrap_or_default()),
         },
         _ => value,
-    }
-}
-
-/// Truncate by characters (not bytes) so multibyte input never panics.
-fn truncate(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        let t: String = s.chars().take(max).collect();
-        format!("{}…[truncated]", t)
     }
 }
 
@@ -375,7 +366,7 @@ mod tests {
     #[test]
     fn truncate_is_char_safe() {
         let s = "áéíóú";
-        assert_eq!(truncate(s, 10), s);
-        assert!(truncate(s, 2).starts_with("áé"));
+        assert_eq!(truncate_chars(s, 10), s);
+        assert!(truncate_chars(s, 2).starts_with("áé"));
     }
 }
