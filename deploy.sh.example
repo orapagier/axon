@@ -232,7 +232,9 @@ if ! $SKIP_BUILD; then
     # ── Axon Agent assets ──
     cp -r crates/axon-agent/static "$DIST_DIR/core/"
     cp -r crates/axon-agent/config "$DIST_DIR/core/"
-    cp -r crates/axon-agent/tools "$DIST_DIR/core/"
+    # tools/ holds user-added tool definitions; the agent creates it on start,
+    # so it may not exist locally.
+    [ -d crates/axon-agent/tools ] && cp -r crates/axon-agent/tools "$DIST_DIR/core/" || true
     # data/ is runtime state (uploads, generated files, axon-backup-*.db) and is
     # NOT shipped: the server keeps its own data/ across deploys (set aside and
     # restored in the remote step) and the app recreates data/files on demand.
