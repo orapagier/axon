@@ -1,0 +1,13 @@
+# Pins the toolchain for everyone building this workspace — local and CI alike.
+#
+# Without this, "stable" silently means whatever each machine last ran
+# `rustup update` on, so a clippy lint or a new rustc warning can appear for one
+# developer and not another. rustup reads this file automatically and installs
+# the listed components on first use.
+#
+# The components mirror what .github/workflows/ci.yml enforces (cargo fmt
+# --check, cargo clippy), so a fresh clone can run both CI gates without any
+# extra `rustup component add` step.
+[toolchain]
+channel    = "stable"
+components = ["rustfmt", "clippy"]

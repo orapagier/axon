@@ -40,6 +40,9 @@ tokens.json
 dist/
 dist-cham/
 dist-gcp/
+# Output of scripts/package-release.sh. Was tracked by accident, which put a
+# ~59 MB prebuilt binary in every clone; regenerate it instead of committing it.
+dist-release/
 
 # ── graphify output / caches ──
 graphify-out/

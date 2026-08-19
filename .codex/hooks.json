@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash 'C:\\Users\\Admin\\OneDrive - samuzziel\\Documents\\Dev\\Axon Copy\\.codex\\hooks\\auto-backup.sh'",
+            "command": "bash .codex/hooks/auto-backup.sh",
             "statusMessage": "Generating commit message, committing and pushing"
           }
         ]
