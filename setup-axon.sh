@@ -126,6 +126,21 @@ set_env_var() {
   rm -f "$tmp"
 }
 
+# Piped execution (`curl … | bash`) has NO source file, so BASH_SOURCE is unset
+# and `set -u` would abort here before a single flag is parsed. Everything that
+# wants the script's own path has to tolerate that.
+# Defined up here, ahead of the sudo guard below: that guard prints $SELF_NAME,
+# so under `set -u` a later definition would abort with "unbound variable"
+# instead of printing the instruction the user actually needs.
+SELF_SRC="${BASH_SOURCE[0]:-}"
+SELF_NAME="setup-axon.sh"
+SELF_URL="https://raw.githubusercontent.com/orapagier/axon/main/setup-axon.sh"
+if [ -n "$SELF_SRC" ]; then
+  ROOT="$(cd "$(dirname "$SELF_SRC")" && pwd)"
+else
+  ROOT="$PWD"   # piped: no script dir, so judge the repo from the working dir
+fi
+
 # Privilege: a fresh Debian install is often root-only (sudo is not installed by
 # default there, and the first user may not be in the sudo group). Running as
 # root is legitimate for a provisioning script, so adapt instead of demanding
@@ -178,17 +193,6 @@ else
   INTERACTIVE=0
 fi
 
-# Piped execution (`curl … | bash`) has NO source file, so BASH_SOURCE is unset
-# and `set -u` would abort here before a single flag is parsed. Everything that
-# wants the script's own path has to tolerate that.
-SELF_SRC="${BASH_SOURCE[0]:-}"
-SELF_NAME="setup-axon.sh"
-SELF_URL="https://raw.githubusercontent.com/orapagier/axon/main/setup-axon.sh"
-if [ -n "$SELF_SRC" ]; then
-  ROOT="$(cd "$(dirname "$SELF_SRC")" && pwd)"
-else
-  ROOT="$PWD"   # piped: no script dir, so judge the repo from the working dir
-fi
 AGENT_DIR="$ROOT/crates/axon-agent"
 UI_DIR="$ROOT/axon-ui"
 
@@ -271,11 +275,13 @@ fi
 # apt is noisy (dpkg triggers, "Selecting previously unselected package", ...).
 # Everything goes to a log; it is only surfaced if a step actually fails.
 APT_LOG="$(mktemp)"
+# </dev/null on both, for the same reason ssh gets -n below: under `curl … | bash`
+# stdin is this script's own source, and any child that reads it eats the rest.
 apt_install() {
-  $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$@" >>"$APT_LOG" 2>&1 \
+  $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$@" >>"$APT_LOG" 2>&1 </dev/null \
     || { warn "apt-get install failed for: $*"; tail -20 "$APT_LOG" >&2; return 1; }
 }
-apt_update() { $SUDO apt-get update -qq >>"$APT_LOG" 2>&1 || warn "apt-get update reported an error"; }
+apt_update() { $SUDO apt-get update -qq >>"$APT_LOG" 2>&1 </dev/null || warn "apt-get update reported an error"; }
 
 step "Base packages"
 apt_update
@@ -425,14 +431,14 @@ esac
 
 # .cargo/config.toml pins jobs= and is hand-tuned for a specific host; flag a
 # mismatch rather than editing a committed file.
-CFG_JOBS="$(sed -nE 's/^[[:space:]]*jobs[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' "$ROOT/.cargo/config.toml" 2>/dev/null | head -1)"
+CFG_JOBS="$(sed -nE 's/^[[:space:]]*jobs[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' "$ROOT/.cargo/config.toml" 2>/dev/null | head -1 || true)"
 if [ -n "$CFG_JOBS" ]; then
   log ".cargo/config.toml pins jobs=$CFG_JOBS (committed + hand-tuned; left untouched)"
   [ "$CFG_JOBS" -gt "$CORES" ] && warn "jobs=$CFG_JOBS exceeds this host's $CORES cores — expect oversubscription."
 fi
 
 # Disk: a debug + release target/ for this workspace runs to several GiB.
-AVAIL_GB="$(df -BG --output=avail "$ROOT" | tail -1 | tr -dc '0-9')"
+AVAIL_GB="$(df -BG --output=avail "$ROOT" | tail -1 | tr -dc '0-9' || true)"
 [ "${AVAIL_GB:-99}" -lt 15 ] && warn "only ${AVAIL_GB}G free — target/ can exceed 10G." || log "disk: ${AVAIL_GB}G free"
 
 # The canonical copy of this script lives in the repo; a copy in ~/ is what you
@@ -450,7 +456,13 @@ fi
 # ── Git identity + credentials (load-bearing for the auto-backup Stop hook) ──
 if [ "$DO_GIT" = 1 ]; then
   step "Git identity & credentials"
-  GIT_NAME="${GIT_NAME:-$(git config --get remote.origin.url 2>/dev/null | sed -nE 's#.*github\.com[:/]([^/]+)/.*#\1#p')}"
+  # `git -C "$ROOT"`, not a bare `git`: this script is designed to be run from
+  # ANY directory (`curl … | bash` from wherever), so the CWD is usually not a
+  # repo at all — a bare `git config` there fails, and under `set -o pipefail`
+  # that non-zero propagates out of the command substitution and makes the
+  # ASSIGNMENT itself fail, which `set -e` turns into a silent exit right here.
+  # The trailing `|| true` covers the other case: a checkout with no origin.
+  GIT_NAME="${GIT_NAME:-$(git -C "$ROOT" config --get remote.origin.url 2>/dev/null | sed -nE 's#.*github\.com[:/]([^/]+)/.*#\1#p' || true)}"
   GIT_EMAIL="${GIT_EMAIL:-}"
 
   if git config --get user.name >/dev/null 2>&1; then
@@ -557,7 +569,11 @@ if [ "$DO_GIT" = 1 ]; then
   # `ssh -T` to GitHub always exits 1 (no shell access), so this must NOT be a
   # pipeline: under `set -o pipefail` that exit code would override grep's match
   # and report a working key as broken. Capture, then test the string.
-  GH_SSH_OUT="$(ssh -o StrictHostKeyChecking=yes -o BatchMode=yes -T git@github.com 2>&1 || true)"
+  # -n is load-bearing under `curl … | bash`: there, the script's own source text
+  # IS stdin, and ssh drains stdin to forward it to the remote. Without -n it
+  # swallows the whole rest of this file, bash then reads EOF and exits 0 —
+  # silently skipping Rust, Node, fonts, .env and the summary, with no error.
+  GH_SSH_OUT="$(ssh -n -o StrictHostKeyChecking=yes -o BatchMode=yes -T git@github.com 2>&1 || true)"
   if [ "${GH_SSH_OUT#*successfully authenticated}" != "$GH_SSH_OUT" ]; then
     log "SSH key is registered on GitHub — pushes will work"
   else
@@ -568,7 +584,7 @@ if [ "$DO_GIT" = 1 ]; then
         && log "key uploaded to your GitHub account" \
         || warn "upload failed — paste it manually (below)"
     fi
-    GH_SSH_OUT2="$(ssh -o BatchMode=yes -T git@github.com 2>&1 || true)"
+    GH_SSH_OUT2="$(ssh -n -o BatchMode=yes -T git@github.com 2>&1 || true)"
     if [ "${GH_SSH_OUT2#*successfully authenticated}" = "$GH_SSH_OUT2" ]; then
       echo ""
       echo -e "${B}ACTION REQUIRED — add this public key to GitHub${N}"
@@ -661,7 +677,7 @@ if [ "$DO_NODE" = 1 ]; then
   step "Node.js 22 LTS"
   NEED_NODE=1
   if command -v node >/dev/null 2>&1; then
-    NODE_MAJOR="$(node -v | sed -E 's/^v([0-9]+).*/\1/')"
+    NODE_MAJOR="$(node -v | sed -E 's/^v([0-9]+).*/\1/' || true)"
     if [ "$NODE_MAJOR" -ge 20 ]; then log "node $(node -v) satisfies Vite 5 (^18 || >=20)"; NEED_NODE=0
     else warn "node $(node -v) is too old for Vite 5 — upgrading"; fi
   fi
@@ -693,7 +709,12 @@ if [ "$DO_NODE" = 1 ]; then
     # never shipped to a browser) and scroll the real output away; run
     # `npm audit` in axon-ui/ deliberately when you want to review them.
     info "npm ci in axon-ui/ (lockfile-exact, matches CI)"
-    ( cd "$UI_DIR" && NPM_CONFIG_UPDATE_NOTIFIER=false npm ci --no-fund --no-audit --loglevel=error )
+    # Not fatal: npm ci is the one step that depends on a slow public registry,
+    # and under `set -e` an unguarded failure would abort the run before the
+    # fonts, .env and summary steps — leaving a half-configured checkout and no
+    # report. The summary re-checks node_modules and prints the retry command.
+    ( cd "$UI_DIR" && NPM_CONFIG_UPDATE_NOTIFIER=false npm ci --no-fund --no-audit --loglevel=error ) \
+      || warn "npm ci failed (see above) — continuing; retry with: cd $UI_DIR && npm ci"
   fi
 fi
 
@@ -745,7 +766,7 @@ if [ "$W_QDRANT" = 1 ]; then
     log "qdrant already installed"
   else
     # Version matched to the pin in qdrant/install.sh so dev mirrors production.
-    QV="$(sed -nE 's/^QDRANT_VERSION="?(v[0-9.]+)"?.*/\1/p' "$ROOT/qdrant/install.sh" 2>/dev/null | head -1)"
+    QV="$(sed -nE 's/^QDRANT_VERSION="?(v[0-9.]+)"?.*/\1/p' "$ROOT/qdrant/install.sh" 2>/dev/null | head -1 || true)"
     QV="${QV:-v1.9.2}"
     if [ -z "$RUST_ARCH" ]; then
       warn "no qdrant release for $(uname -m) — skipping (the agent runs fine without it)"
@@ -906,7 +927,7 @@ if [ -n "$GN" ] && [ -n "$GE" ]; then ok "git identity" "$GN <$GE>"
 else miss "git identity" "incomplete"; TODO+=("Set your git identity: git config --global user.email 'you@example.com'"); fi
 
 if [ "$DO_GIT" = 1 ]; then
-  SSH_PROBE="$(ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -T git@github.com 2>&1 || true)"
+  SSH_PROBE="$(ssh -n -o BatchMode=yes -o StrictHostKeyChecking=yes -T git@github.com 2>&1 || true)"
   if [ "${SSH_PROBE#*successfully authenticated}" != "$SSH_PROBE" ]; then
     ok "github ssh" "key accepted — push works"
   else
@@ -921,7 +942,7 @@ if command -v gh >/dev/null 2>&1; then
     || { miss "gh auth" "not authenticated"; TODO+=("Run 'gh auth login' when you want to cut releases"); }
 fi
 if command -v gcloud >/dev/null 2>&1; then
-  GACC="$(gcloud auth list --filter=status:ACTIVE --format='value(account)' 2>/dev/null | head -1)"
+  GACC="$(gcloud auth list --filter=status:ACTIVE --format='value(account)' 2>/dev/null | head -1 || true)"
   if [ -n "$GACC" ]; then
     GPROJ="$(gcloud config get-value project 2>/dev/null | grep -v '^$' | grep -v unset || true)"
     if [ -n "$GPROJ" ]; then ok "gcloud" "$GACC ($GPROJ)"
