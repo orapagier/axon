@@ -135,7 +135,7 @@ set_env_var() {
 # could then neither push nor build. Escalation is per-command via $SUDO instead.
 if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
   echo "Do not run this with sudo. Run it as $SUDO_USER:" >&2
-  echo "    bash ${BASH_SOURCE[0]##*/}" >&2
+  echo "    bash $SELF_NAME" >&2
   echo "It escalates only the commands that need root, so your SSH key, Rust" >&2
   echo "toolchain and the checkout stay owned by you." >&2
   exit 1
@@ -178,9 +178,31 @@ else
   INTERACTIVE=0
 fi
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Piped execution (`curl … | bash`) has NO source file, so BASH_SOURCE is unset
+# and `set -u` would abort here before a single flag is parsed. Everything that
+# wants the script's own path has to tolerate that.
+SELF_SRC="${BASH_SOURCE[0]:-}"
+SELF_NAME="setup-axon.sh"
+SELF_URL="https://raw.githubusercontent.com/orapagier/axon/main/setup-axon.sh"
+if [ -n "$SELF_SRC" ]; then
+  ROOT="$(cd "$(dirname "$SELF_SRC")" && pwd)"
+else
+  ROOT="$PWD"   # piped: no script dir, so judge the repo from the working dir
+fi
 AGENT_DIR="$ROOT/crates/axon-agent"
 UI_DIR="$ROOT/axon-ui"
+
+show_help() {
+  # Under a pipe there is no local file to read the header out of, so pull the
+  # canonical copy rather than printing nothing useful.
+  if [ -n "$SELF_SRC" ] && [ -r "$SELF_SRC" ]; then
+    sed -n '2,/^# =\{20,\}$/p' "$SELF_SRC" | sed 's/^# \{0,1\}//'
+  elif command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$SELF_URL" | sed -n '2,/^# =\{20,\}$/p' | sed 's/^# \{0,1\}//'
+  else
+    echo "Full options: $SELF_URL"
+  fi
+}
 
 DO_RUST=1; DO_NODE=1; DO_GH=1; DO_GCLOUD=1; DO_DENY=1; DO_ENV=1; DO_GIT=1
 W_MUSL=0; W_LLD=0; W_QDRANT=0; W_GRAPHIFY=0; VERIFY=0
@@ -208,7 +230,7 @@ while [ $# -gt 0 ]; do
     --all)           W_MUSL=1; W_LLD=1; W_QDRANT=1; W_GRAPHIFY=1; VERIFY=1 ;;
     # Pattern-bounded rather than a hardcoded line range, so editing the header
     # above can never silently truncate --help.
-    --help|-h)       sed -n '2,/^# =\{20,\}$/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --help|-h)       show_help; exit 0 ;;
     *)               err "unknown flag: $1 (try --help)" ;;
   esac
   shift
@@ -416,9 +438,9 @@ AVAIL_GB="$(df -BG --output=avail "$ROOT" | tail -1 | tr -dc '0-9')"
 # The canonical copy of this script lives in the repo; a copy in ~/ is what you
 # run to bootstrap a machine that has no checkout yet. Two copies drift, so say
 # so instead of letting the ~/ one silently rot.
-SELF_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+SELF_PATH="${SELF_SRC:+$(cd "$(dirname "$SELF_SRC")" && pwd)/$(basename "$SELF_SRC")}"
 REPO_COPY="$ROOT/setup-axon.sh"
-if [ "$SELF_PATH" != "$REPO_COPY" ] && [ -f "$REPO_COPY" ] && ! cmp -s "$SELF_PATH" "$REPO_COPY"; then
+if [ -n "$SELF_PATH" ] && [ "$SELF_PATH" != "$REPO_COPY" ] && [ -f "$REPO_COPY" ] && ! cmp -s "$SELF_PATH" "$REPO_COPY"; then
   warn "the repo's setup-axon.sh differs from the copy you ran"
   warn "  running: $SELF_PATH"
   warn "  repo:    $REPO_COPY"
