@@ -102,7 +102,12 @@ pub fn sanitize_filename(name: &str) -> String {
         })
         .collect();
 
-    if sanitized.is_empty() {
+    // `.` and `..` survive the character filter above (they contain no illegal
+    // character) but are directory references, not names: `dir.join("..")`
+    // escapes the staging directory. `fs::write` happens to fail on them today,
+    // which is luck, not a guarantee — every caller that joins this onto a path
+    // deserves a name that can only ever be a leaf.
+    if sanitized.is_empty() || sanitized.chars().all(|c| c == '.') {
         sanitized = "file".to_string();
     }
 
@@ -134,6 +139,15 @@ mod tests {
         assert_eq!(sanitize_filename(" song.mp3\\r\\n"), "song.mp3");
         assert_eq!(sanitize_filename("line\r\nbreak.txt"), "line__break.txt");
         assert_eq!(sanitize_filename(" \n\t "), "file");
+    }
+
+    // Neither may resolve to a directory reference once joined onto staging_dir.
+    #[test]
+    fn dot_names_never_escape_the_staging_dir() {
+        for name in ["..", ".", "...", " .. "] {
+            let staged = staging_dir().join(sanitize_filename(name));
+            assert_eq!(staged.parent(), Some(staging_dir().as_path()), "{name}");
+        }
     }
 
     #[test]

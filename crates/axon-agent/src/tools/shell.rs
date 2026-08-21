@@ -272,11 +272,15 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         );
-        // `sleep` is renamed via a symlink so the marker shows up in the
-        // process table and can be matched without matching our own pgrep.
-        let script = format!(
-            "d=$(mktemp -d); ln -s $(command -v sleep) $d/{marker}; $d/{marker} 30 & echo up"
-        );
+        // The marker rides in the grandchild's own command line, so `pgrep -f`
+        // can find it. (An earlier version symlinked `sleep` under the marker
+        // name instead — that silently stopped working on distros shipping the
+        // coreutils multi-call binary, where `sleep` dispatches on argv[0] and a
+        // renamed copy exits with "unknown program". The grandchild never
+        // started, so the test passed vacuously on some hosts and failed on
+        // ours.) `sh` is a real grandchild in the child's process group, so it
+        // survives a kill aimed at `bash` alone and dies with a group kill.
+        let script = format!("sh -c 'sleep 30 #{marker}' & echo up");
 
         let out = ShellTool::run_command(&script, 1).await.unwrap();
         assert_eq!(out.get("timeout").and_then(|v| v.as_bool()), Some(true));

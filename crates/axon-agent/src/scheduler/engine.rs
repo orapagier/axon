@@ -495,9 +495,33 @@ fn should_stop(store: &JobStore, id: &str, cond: &Option<StopCondition>, result:
             .flatten()
             .and_then(|j| c.value.parse::<i64>().ok().map(|max| j.run_count >= max))
             .unwrap_or(false),
-        "date_after" => chrono::Utc::now().to_rfc3339() > c.value,
+        "date_after" => date_has_passed(&c.value, chrono::Utc::now()),
         _ => false,
     }
+}
+
+/// Has `value` (an RFC3339 timestamp, or a bare `YYYY-MM-DD` date) already passed?
+///
+/// Compares *instants*, not strings. A lexicographic compare of two RFC3339
+/// strings agrees with the timeline only when both carry the same offset:
+/// `2026-08-21T20:00:00+08:00` sorts after `2026-08-21T12:00:00+00:00` even
+/// though they are the same moment, so a stop condition written in any
+/// non-UTC zone fired early. Unparseable values never stop the job — a typo
+/// should not silently retire a schedule.
+fn date_has_passed(value: &str, now: chrono::DateTime<chrono::Utc>) -> bool {
+    let v = value.trim();
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(v) {
+        return now > dt.with_timezone(&chrono::Utc);
+    }
+    // Bare date: treat as end-of-day UTC so "stop after 2026-01-01" includes
+    // all of Jan 1 rather than expiring at midnight.
+    if let Ok(d) = chrono::NaiveDate::parse_from_str(v, "%Y-%m-%d") {
+        if let Some(end) = d.and_hms_opt(23, 59, 59) {
+            return now > end.and_utc();
+        }
+    }
+    tracing::warn!("Scheduler: unparseable date_after stop condition {:?}", value);
+    false
 }
 
 async fn execute_job_task(
@@ -654,5 +678,47 @@ fn fire_slot_key_for_cron(cron_expr: &str, now: chrono::DateTime<chrono::Utc>) -
         now.format("%Y-%m-%dT%H:%M").to_string()
     } else {
         now.format("%Y-%m-%dT%H:%M:%S").to_string()
+    }
+}
+
+#[cfg(test)]
+mod stop_condition_tests {
+    use super::date_has_passed;
+    use chrono::{DateTime, Utc};
+
+    fn at(s: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
+    }
+
+    #[test]
+    fn compares_instants_not_strings() {
+        // 20:00+08:00 IS 12:00Z. The old lexicographic compare saw "20" > "12"
+        // and retired the job an instant early; both must read as "not yet".
+        let now = at("2026-08-21T12:00:00Z");
+        assert!(!date_has_passed("2026-08-21T20:00:00+08:00", now));
+        assert!(date_has_passed(
+            "2026-08-21T19:59:59+08:00",
+            at("2026-08-21T12:00:00Z")
+        ));
+    }
+
+    #[test]
+    fn plain_utc_still_works_both_ways() {
+        let now = at("2026-08-21T12:00:00Z");
+        assert!(date_has_passed("2026-08-20T23:00:00Z", now));
+        assert!(!date_has_passed("2026-08-22T01:00:00Z", now));
+    }
+
+    #[test]
+    fn bare_date_covers_the_whole_day() {
+        assert!(!date_has_passed("2026-08-21", at("2026-08-21T12:00:00Z")));
+        assert!(date_has_passed("2026-08-21", at("2026-08-22T00:00:01Z")));
+    }
+
+    // A typo must not silently retire a schedule.
+    #[test]
+    fn garbage_never_stops_the_job() {
+        assert!(!date_has_passed("next tuesday", Utc::now()));
+        assert!(!date_has_passed("", Utc::now()));
     }
 }

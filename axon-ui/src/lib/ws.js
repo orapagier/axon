@@ -1,11 +1,18 @@
 import { ref } from 'vue'
 import { get } from './api.js'
 
+const RETRY_MIN = 1000
+const RETRY_MAX = 30000
+
 export const wsStatus = ref('connecting') // 'connected' | 'disconnected' | 'connecting'
 
 let ws = null
 let reconnectTimer = null
 let keepaliveTimer = null
+// Reconnect backoff. A flat 3s retry means every open tab hammers a server
+// that is down (restarting, redeploying) forever, and N tabs multiply it.
+// Back off to 30s, then reset the moment a socket actually opens.
+let retryDelay = RETRY_MIN
 // Multiple independent consumers share the one socket: ChatPage drives the run
 // stream, while the bell listens for server-wide notifications from any page.
 const handlers = new Set()
@@ -22,6 +29,7 @@ function openSocket() {
   socket.onopen = () => {
     if (ws !== socket) return
     opened = true
+    retryDelay = RETRY_MIN
     wsStatus.value = 'connected'
   }
   socket.onclose = () => {
@@ -32,11 +40,14 @@ function openSocket() {
     // opening. The browser can't read the 401 off a failed WS upgrade, so
     // confirm with a REST auth probe: get() clears the stale key and bounces
     // to login on 401, while a transient outage throws and falls through to a
-    // normal reconnect. Without this, a wrong key reconnects every 3s forever.
+    // normal reconnect. Without this, a wrong key reconnects forever.
     if (!opened) {
       get('/settings').catch(() => {})
     }
-    reconnectTimer = setTimeout(openSocket, 3000)
+    // Jitter so tabs that dropped together don't reconnect in lockstep.
+    const wait = retryDelay * (0.7 + Math.random() * 0.6)
+    retryDelay = Math.min(retryDelay * 2, RETRY_MAX)
+    reconnectTimer = setTimeout(openSocket, wait)
   }
   socket.onerror = () => socket.close()
   socket.onmessage = (e) => {
@@ -73,6 +84,8 @@ export function connectWs() {
   }
 
   clearTimeout(reconnectTimer)
+  // An explicit call (page mount, user action) is a fresh intent, not a retry.
+  retryDelay = RETRY_MIN
   openSocket()
 
   if (!keepaliveTimer) {

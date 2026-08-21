@@ -507,7 +507,19 @@ pub(crate) fn evaluate_js_expression(
     results: &std::collections::HashMap<String, NodeResult>,
     run_id: &str,
 ) -> Option<Value> {
+    if expression.len() > JS_SCRIPT_MAX_BYTES {
+        return None;
+    }
     let mut context = boa_engine::Context::default();
+    // Same hard interpreter limits the JS *node* sets (see `execute_js_node`).
+    // This path is worse off without them: it runs synchronously on the async
+    // executor thread rather than in `spawn_blocking`, so `{{ while(true){} }}`
+    // in any field would wedge a tokio worker permanently, and an unbounded
+    // recursion would blow the Rust stack and abort the whole process.
+    context
+        .runtime_limits_mut()
+        .set_loop_iteration_limit(5_000_000);
+    context.runtime_limits_mut().set_recursion_limit(512);
     register_expression_natives(&mut context);
 
     // Per-item fan-out context — bound as $item/$index below, hidden from $node.
@@ -1539,5 +1551,47 @@ mod resolve_tests {
         m.insert(n.node_id.clone(), n);
         let out = resolve_value("{{ $jmespath($node[\"API\"].data, \"users[*].id\") }}", &m);
         assert_eq!(out, json!([7, 9]));
+    }
+}
+
+#[cfg(test)]
+mod expression_limit_tests {
+    use super::evaluate_js_expression;
+    use std::collections::HashMap;
+
+    /// The whole point of the runtime limits: this evaluator runs synchronously
+    /// on the async executor, so an inline `{{ }}` that never terminates used to
+    /// wedge a tokio worker for the life of the process. Bounded now, it just
+    /// errors out and the field resolves to nothing.
+    #[test]
+    fn runaway_loop_terminates_instead_of_hanging() {
+        let started = std::time::Instant::now();
+        let out = evaluate_js_expression("(function(){ while(true){} })()", &HashMap::new(), "t");
+        assert!(out.is_none(), "a non-terminating expression yields no value");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(60),
+            "loop limit did not fire"
+        );
+    }
+
+    /// Unbounded recursion in boa consumes the *Rust* stack; without a limit
+    /// this aborted the whole agent rather than failing one field.
+    #[test]
+    fn runaway_recursion_is_caught_not_fatal() {
+        let out = evaluate_js_expression("(function f(){ return f(); })()", &HashMap::new(), "t");
+        assert!(out.is_none());
+    }
+
+    #[test]
+    fn oversized_expressions_are_refused() {
+        let big = format!("\"{}\"", "x".repeat(super::JS_SCRIPT_MAX_BYTES + 1));
+        assert!(evaluate_js_expression(&big, &HashMap::new(), "t").is_none());
+    }
+
+    // The limits must not disturb ordinary expressions.
+    #[test]
+    fn normal_expressions_still_evaluate() {
+        let out = evaluate_js_expression("1 + 2", &HashMap::new(), "t");
+        assert_eq!(out, Some(serde_json::json!(3)));
     }
 }

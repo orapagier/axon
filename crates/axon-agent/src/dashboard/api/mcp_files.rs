@@ -215,45 +215,89 @@ pub async fn download_file(
     }
 
     let path = PathBuf::from(&path_str);
-    if let Ok(bytes) = std::fs::read(&path) {
-        let filename = path.file_name().unwrap_or_default().to_string_lossy();
-        let mime = mime_guess::from_path(&path)
-            .first_or_octet_stream()
-            .to_string();
+    // Streamed, not `std::fs::read`: staged files include tool-generated video
+    // and archives with no size ceiling, and buffering one whole file per
+    // concurrent download is how this endpoint OOMs the agent. `ReaderStream`
+    // also keeps the blocking read off the async worker.
+    let file = match tokio::fs::File::open(&path).await {
+        Ok(f) => f,
+        Err(_) => {
+            return (
+                axum::http::StatusCode::NOT_FOUND,
+                "File not found or unreadable".to_string(),
+            )
+                .into_response()
+        }
+    };
+    let len = file.metadata().await.ok().map(|m| m.len());
 
-        // Images are served inline so the chat renderer can display them in the
-        // bubble; `attachment` would make the browser download the file even
-        // when it is the src of an <img>. Everything else keeps `attachment`,
-        // which also stops HTML or SVG from rendering as a same-origin document.
-        let inline_ok = matches!(
-            mime.as_str(),
-            "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "image/bmp"
-        );
-        let disposition = if inline_ok {
-            format!("inline; filename=\"{}\"", filename)
-        } else {
-            format!("attachment; filename=\"{}\"", filename)
-        };
+    let filename = path.file_name().unwrap_or_default().to_string_lossy();
+    let mime = mime_guess::from_path(&path)
+        .first_or_octet_stream()
+        .to_string();
 
-        (
-            [
-                (header::CONTENT_TYPE, mime),
-                (header::CONTENT_DISPOSITION, disposition),
-                // Defence in depth: these bytes come from tool output, so make
-                // sure a mislabelled file is never sniffed into something
-                // executable in the dashboard's origin.
-                (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_string()),
-            ],
-            bytes,
-        )
-            .into_response()
-    } else {
-        (
-            axum::http::StatusCode::NOT_FOUND,
-            "File not found or unreadable".to_string(),
-        )
-            .into_response()
+    // Images are served inline so the chat renderer can display them in the
+    // bubble; `attachment` would make the browser download the file even
+    // when it is the src of an <img>. Everything else keeps `attachment`,
+    // which also stops HTML or SVG from rendering as a same-origin document.
+    let inline_ok = matches!(
+        mime.as_str(),
+        "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "image/bmp"
+    );
+    let kind = if inline_ok { "inline" } else { "attachment" };
+    let disposition = format!("{kind}; {}", content_disposition_filename(&filename));
+
+    let mut headers = axum::http::HeaderMap::new();
+    // Defence in depth on nosniff: these bytes come from tool output, so a
+    // mislabelled file must never be sniffed into something executable in the
+    // dashboard's origin. Content-Length keeps the body from being chunked,
+    // which is what gives the client a download progress bar.
+    let fields = [
+        (header::CONTENT_TYPE, mime),
+        (header::CONTENT_DISPOSITION, disposition),
+        (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_string()),
+    ]
+    .into_iter()
+    .chain(len.map(|n| (header::CONTENT_LENGTH, n.to_string())));
+    for (name, value) in fields {
+        if let Ok(v) = axum::http::HeaderValue::from_str(&value) {
+            headers.insert(name, v);
+        }
     }
+
+    let body = axum::body::Body::from_stream(tokio_util::io::ReaderStream::new(file));
+    (headers, body).into_response()
+}
+
+/// Render the `filename` part of a `Content-Disposition` header for `name`.
+///
+/// Two things the old `format!("filename=\"{name}\"")` got wrong: a `"` or
+/// newline in the name broke out of the quoted string (staged names are
+/// sanitized, but files also arrive here written directly by tools, which never
+/// pass through `sanitize_filename`), and any non-ASCII name — an emoji, an
+/// accent — is simply not representable in that form. Emit a scrubbed ASCII
+/// fallback plus the RFC 5987 `filename*` form that modern browsers prefer.
+fn content_disposition_filename(name: &str) -> String {
+    let ascii: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | ' ') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let ascii = if ascii.trim().is_empty() {
+        "download".to_string()
+    } else {
+        ascii
+    };
+    format!(
+        "filename=\"{}\"; filename*=UTF-8''{}",
+        ascii,
+        urlencoding::encode(name)
+    )
 }
 
 pub async fn upload_file(
@@ -296,4 +340,39 @@ pub async fn upload_file(
         }
     }
     Json(json!({ "ok": true, "files": saved_files }))
+}
+
+#[cfg(test)]
+mod content_disposition_tests {
+    use super::content_disposition_filename;
+
+    // A quote in the name used to terminate the quoted-string early, letting
+    // the rest of the filename be read as header parameters.
+    #[test]
+    fn quotes_and_newlines_cannot_escape_the_header() {
+        let h = content_disposition_filename("evil\".txt");
+        let ascii = h.split("; filename*").next().unwrap();
+        assert_eq!(ascii, "filename=\"evil_.txt\"");
+        assert!(!content_disposition_filename("a\r\nX-Evil: 1").contains('\n'));
+    }
+
+    #[test]
+    fn non_ascii_survives_in_the_rfc5987_form() {
+        let h = content_disposition_filename("résumé.pdf");
+        assert!(h.starts_with("filename=\"r_sum_.pdf\""), "{h}");
+        assert!(h.ends_with("filename*=UTF-8''r%C3%A9sum%C3%A9.pdf"), "{h}");
+    }
+
+    #[test]
+    fn ordinary_names_are_left_alone() {
+        assert!(content_disposition_filename("chart 1.png")
+            .starts_with("filename=\"chart 1.png\""));
+    }
+
+    // An all-non-ascii name must not produce an empty quoted string.
+    #[test]
+    fn always_yields_an_ascii_fallback() {
+        assert!(content_disposition_filename("日本語")
+            .starts_with("filename=\"___\""));
+    }
 }

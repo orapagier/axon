@@ -93,6 +93,13 @@
     --accent: #4dabf7;
     --accentDim: rgba(77, 171, 247, 0.16);
     --accent-glow: #22d3ee;
+    /* Keyboard focus. One definition, consumed by the global :focus-visible
+       rule and by every component that paints its own ring, so the halo can
+       never drift between them. Cyan rather than the blue accent: the ring has
+       to stay legible on top of accent-tinted surfaces (.nav-item.active,
+       .btn-primary) where a blue ring would sink into the background. */
+    --focus-ring: var(--accent-glow);
+    --focus-halo: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
     --green: #4cc98a;
     --greenDim: #17352a;
     --red: #e8808f;
@@ -232,6 +239,26 @@ a {
 
 ::selection {
     background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+/* ── Keyboard focus floor ─────────────────────────────────────────────────
+   Every focusable thing gets a visible ring, not just the handful of
+   components that happened to paint their own: the sidebar nav, list rows,
+   tabs, chat starters, close buttons and links were all invisible to a
+   keyboard before this. `outline` rather than the box-shadow halo the
+   components use, because an outline is never clipped by an `overflow:
+   hidden` ancestor — and several of these live inside scroll containers.
+   Specificity is deliberately minimal (one pseudo-class), so any component
+   that wants the softer halo instead simply keeps overriding it. */
+:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+}
+
+/* Focus is a keyboard affordance; a mouse press should not paint a ring.
+   Chromium still draws one on some elements after :focus-visible is styled. */
+:focus:not(:focus-visible) {
+    outline: none;
 }
 
 button,
@@ -905,7 +932,7 @@ textarea {
 
 .switch:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
+    box-shadow: var(--focus-halo);
 }
 
 /* ── Empty state ──────────────────────────────────────────────────────────── */
@@ -1435,7 +1462,7 @@ label {
 
 .btn:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
+    box-shadow: var(--focus-halo);
 }
 
 /* ── Sizing variants ──────────────────────────────────────────────────────── */
@@ -2598,17 +2625,21 @@ textarea {
 /* ════════════════════════════════════════════════════════════════════════════
    MOTION DISCIPLINE
    ════════════════════════════════════════════════════════════════════════════ */
+/* Universal rather than a list of selectors: the old version named five
+   components, so every component added after it silently opted back in to
+   animating. `!important` because component rules that set their own
+   transition would otherwise win on specificity. Motion is not removed
+   outright — 1ms still fires transitionend/animationend, so JS that waits on
+   those keeps working instead of hanging. */
 @media (prefers-reduced-motion: reduce) {
-    .page.active {
-        animation: none;
-    }
 
-    .btn,
-    .switch,
-    .switch::after,
-    .list-row,
-    .nav-item {
-        transition: none;
+    *,
+    *::before,
+    *::after {
+        animation-duration: 1ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 1ms !important;
+        scroll-behavior: auto !important;
     }
 }
 

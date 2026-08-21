@@ -11,6 +11,9 @@ path = "src/main.rs"
 
 [dependencies]
 tokio               = { version = "1",    features = ["full"] }
+# `io` only, for ReaderStream — lets /api/download stream a file instead of
+# reading the whole thing into memory. Already in the tree via reqwest/sqlx.
+tokio-util          = { version = "0.7",  default-features = false, features = ["io"] }
 tokio-stream        = "0.1"
 futures             = "0.3"
 # default-features off drops native-tls (OpenSSL) so the whole workspace

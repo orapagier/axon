@@ -123,7 +123,10 @@ async fn fetch_oauth2_token(config: &Value) -> Result<String, String> {
         }
     }
 
-    let client = reqwest::Client::new();
+    // Shared pool: a fresh Client here meant a new TLS context and connection
+    // pool per token fetch (see http.rs). 30s cap — a token endpoint that
+    // stalls must not wedge the request that is waiting on it.
+    let client = crate::http::shared_30s();
     let (access_token, expires_at) = match grant {
         "refreshToken" => {
             let refresh = config
@@ -189,6 +192,9 @@ async fn fetch_oauth2_token(config: &Value) -> Result<String, String> {
     };
 
     if let Ok(mut cache) = OAUTH2_TOKEN_CACHE.lock() {
+        // Drop entries that can never be served again, so rotating credentials
+        // (each a distinct cache key) don't grow this map for the process's life.
+        cache.retain(|_, (_, exp)| *exp > now);
         cache.insert(cache_key, (access_token.clone(), expires_at));
     }
     Ok(access_token)

@@ -676,7 +676,7 @@ async fn main() -> anyhow::Result<()> {
                 let prompt = format!(
                     "Instructions: {}\n\nData to process: {}",
                     msg.description,
-                    msg.output.to_string()
+                    msg.output
                 );
 
                 let ctx = axon::agent::RunContext::new(

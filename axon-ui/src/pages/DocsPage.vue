@@ -803,7 +803,10 @@ function jumpToSection(sectionId) {
   const el = document.getElementById(`docs-${sectionId}`)
   if (!el) return
   activeSectionId.value = sectionId
-  el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  // CSS `scroll-behavior` can't reach a scrollIntoView call, so the
+  // reduced-motion preference has to be honored here by hand.
+  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+  el.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' })
 }
 
 function destroyObserver() {

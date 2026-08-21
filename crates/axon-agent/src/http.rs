@@ -8,7 +8,21 @@
 use once_cell::sync::Lazy;
 use std::time::Duration;
 
-static DEFAULT: Lazy<reqwest::Client> = Lazy::new(reqwest::Client::new);
+static DEFAULT: Lazy<reqwest::Client> = Lazy::new(|| {
+    reqwest::Client::builder()
+        // No *overall* timeout: this client carries Telegram's 30s getUpdates
+        // long poll and arbitrarily large file downloads, both of which a
+        // wall-clock cap would cut off mid-flight. But it previously had no
+        // bound at all, so a peer that completes the TCP handshake and then
+        // goes silent hung the caller forever — a Telegram/Slack/Discord send
+        // or a workflow node would simply never return, and on the messaging
+        // side that stalls the whole poll loop. connect + per-read timeouts
+        // bound the stall without capping a healthy long transfer.
+        .connect_timeout(Duration::from_secs(15))
+        .read_timeout(Duration::from_secs(120))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+});
 
 static TIMEOUT_30S: Lazy<reqwest::Client> = Lazy::new(|| {
     reqwest::Client::builder()
@@ -24,7 +38,8 @@ static TIMEOUT_60S: Lazy<reqwest::Client> = Lazy::new(|| {
         .expect("build shared 60s HTTP client")
 });
 
-/// Default client — no overall request timeout, same as `Client::new()`.
+/// Default client — no overall request timeout (streams may run long), but
+/// connect and per-read stalls are bounded.
 pub fn shared() -> reqwest::Client {
     DEFAULT.clone()
 }
