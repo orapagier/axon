@@ -204,7 +204,7 @@ function onTidyUp() {
   border: none;
   color: var(--text, #e5e7eb);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all 0.15s var(--ease-out);
 }
 
 @media (min-width: 768px) {

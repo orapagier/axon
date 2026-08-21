@@ -1062,7 +1062,7 @@ onBeforeUnmount(() => {
   font-size: 0.78rem;
   text-align: left;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background 0.15s var(--ease-out), color 0.15s var(--ease-out);
 }
 
 .docs-rail-btn:hover {
@@ -1097,7 +1097,7 @@ onBeforeUnmount(() => {
 }
 
 .docs-section-card {
-  animation: docs-slide-in 0.28s ease both;
+  animation: docs-slide-in 0.28s var(--ease-out) both;
   animation-delay: var(--stagger-delay, 0s);
   scroll-margin-top: 10px;
 }

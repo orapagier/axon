@@ -104,7 +104,7 @@ function onOpenContextMenu(event) {
   padding-bottom: 8px;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.15s ease;
+  transition: opacity 0.15s var(--ease-out);
 }
 
 :global(.canvas-node:hover) .canvas-node-toolbar,
@@ -134,7 +134,7 @@ function onOpenContextMenu(event) {
   border-radius: 6px;
   color: var(--color-foreground, #6b7280);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all 0.15s var(--ease-out);
 }
 
 .toolbar-btn:hover {

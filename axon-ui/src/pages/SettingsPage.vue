@@ -638,7 +638,7 @@ onMounted(load)
   font-size: 0.8rem;
   text-align: left;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background 0.15s var(--ease-out), color 0.15s var(--ease-out);
 }
 
 .set-rail-btn:hover {

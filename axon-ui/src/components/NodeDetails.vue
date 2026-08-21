@@ -4488,7 +4488,7 @@ small.form-desc {
   color: #a5b4fc;
   padding: 6px 0;
   font-size: 11.5px; font-weight: 600; letter-spacing: 0.2px;
-  cursor: pointer; transition: color 0.18s ease;
+  cursor: pointer; transition: color 0.18s var(--ease-out);
 }
 .btn-curl-import:hover { color: #c7d2fe; }
 .btn-curl-import:active { transform: translateY(1px); }
@@ -4828,7 +4828,7 @@ small.form-desc {
   width: 36px; height: 20px;
   background: rgba(255, 255, 255, 0.1);
   border-radius: 10px;
-  transition: all 0.3s ease;
+  transition: all 0.3s var(--ease-out);
   position: relative;
 }
 .toggle-switch input:checked + .toggle-track, .toggle input:checked + .toggle-track {
@@ -4840,7 +4840,7 @@ small.form-desc {
   width: 16px; height: 16px;
   background: #fff;
   border-radius: 50%;
-  transition: all 0.3s ease;
+  transition: all 0.3s var(--ease-out);
 }
 .toggle-switch input:checked + .toggle-track .toggle-thumb, .toggle input:checked + .toggle-track .toggle-thumb {
   transform: translateX(16px);

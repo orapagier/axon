@@ -904,7 +904,7 @@ defineExpose({
 /* Minimap transition */
 .minimap-enter-active,
 .minimap-leave-active {
-  transition: opacity 0.3s ease;
+  transition: opacity 0.3s var(--ease-out);
 }
 
 .minimap-enter-from,
@@ -931,7 +931,7 @@ defineExpose({
 
 :deep(.vue-flow__handle) {
   opacity: 0;
-  transition: opacity 0.15s ease;
+  transition: opacity 0.15s var(--ease-out);
 }
 
 :deep(.vue-flow__node:hover .vue-flow__handle),

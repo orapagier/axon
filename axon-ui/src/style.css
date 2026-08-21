@@ -1,16 +1,26 @@
 /* ════════════════════════════════════════════════════════════════════════════
-   AXON · design system v6 — "Midnight Glass" — the single source of truth
+   AXON · design system v7 — "Liquid Glass" — the single source of truth
    ----------------------------------------------------------------------------
-   A deep cool workspace: near-black graphite planes that catch a faint ambient
-   glow, frosted-glass chrome bars and panels, one electric-blue accent with a
-   cyan focus halo, IBM Plex Mono for every data readout. Token-driven
-   throughout — every color/radius/shadow/glass value reads from :root, so the
-   palette changes in exactly one place.
+   A deep cool workspace lit by one slow-drifting aurora, with frosted chrome
+   floating on top of it. One electric-blue accent, a cyan focus halo, IBM Plex
+   Mono for every data readout. Token-driven throughout — every
+   color/radius/shadow/glass/easing value reads from :root, so the palette
+   changes in exactly one place.
 
-   Glass is scoped to chrome (.shell-topbar, .sidebar, .mobile-tabbar) plus
-   .panel and .modal — inputs, buttons, .card and chat bubbles stay solid so
-   text stays crisp. Honors prefers-reduced-transparency at the bottom of the
-   file. This is the only global stylesheet.
+   What makes the glass read as glass rather than fog, in order of importance:
+     1. saturate() in the backdrop filter (--glass-filter), so what is behind a
+        surface blooms through in colour instead of going grey;
+     2. something moving behind it to refract — the .layout::before aurora is
+        the only ambient light in the app, and it drifts on a 48s cycle;
+     3. a specular edge — bright inset hairline on top, dark one underneath
+        (--glass-highlight) — so the surface has a lit rim and a grounded one.
+
+   Blur is scoped to chrome (.shell-topbar, .sidebar, .mobile-tabbar) plus
+   .panel and .modal. Inputs, buttons, .card and chat bubbles stay opaque so
+   text stays crisp; they join the same material family through --edge-sheen
+   (raised) or --well-shade (recessed) rather than through transparency.
+   Honors prefers-reduced-transparency and prefers-reduced-motion at the bottom
+   of the file. This is the only global stylesheet.
    ════════════════════════════════════════════════════════════════════════════ */
 
 /* ── Reset ────────────────────────────────────────────────────────────────── */
@@ -81,11 +91,11 @@
     color-scheme: dark;
 
     /* Core surfaces & text — deep cool graphite */
-    --bg: #0d1017;
-    --bg-card: #161b26;
-    --surface: #11151e;
+    --bg: #090c14;
+    --bg-card: #151a26;
+    --surface: #10141d;
     --surface2: #1e2433;
-    --border: rgba(120, 150, 200, 0.12);
+    --border: rgba(140, 175, 235, 0.14);
     --text: #e6ebf5;
     --muted: #7e8aa0;
 
@@ -115,24 +125,33 @@
     --font-body: 'Instrument Sans', -apple-system, 'Segoe UI', sans-serif;
     --font-mono: 'IBM Plex Mono', Consolas, 'SFMono-Regular', monospace;
 
-    /* Radius scale — crisp, barely-rounded corners; never pill */
-    --r-sm: 6px;
-    --r-md: 8px;
-    --r-lg: 10px;
+    /* Radius scale — soft enough to read as poured glass, tight enough that
+       dense data rows never look like toys. Deliberately not pill. */
+    --r-sm: 7px;
+    --r-md: 11px;
+    --r-lg: 16px;
+
+    /* Easing — one pair, used everywhere. --ease-out decelerates hard at the
+       end (the "settles into place" feel); --ease-fluid overshoots nothing but
+       starts faster, for travel over distance (drawers, page transitions). */
+    --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+    --ease-fluid: cubic-bezier(0.32, 0.72, 0, 1);
 
     /* Button sizing — single source of truth. Every button derives from these.
        HEIGHT IS UNIFORM across base / -sm / -xs by design. */
     --btn-h: 27px;
     --btn-px: 12px;
-    --btn-radius: 8px;
+    --btn-radius: 9px;
     --btn-fs: 0.72rem;
     --btn-gap: 6px;
     --btn-sm-h: var(--btn-h);
     --btn-sm-px: 10px;
     --btn-sm-fs: 0.71rem;
+    --btn-sm-radius: var(--btn-radius);
     --btn-xs-h: var(--btn-h);
     --btn-xs-px: 9px;
     --btn-xs-fs: 0.7rem;
+    --btn-xs-radius: var(--btn-radius);
 
     /* Search field sizing */
     --search-h: 32px;
@@ -141,17 +160,30 @@
 
     /* Layout, shadows */
     --sidebar-w: 252px;
-    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
-    --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.5);
+    /* Two-part shadows: a tight contact shadow that anchors the surface to
+       what is under it, plus a wide ambient one that gives it height. A single
+       shadow can do one or the other, never both. */
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35), 0 8px 24px -10px rgba(0, 0, 0, 0.55);
+    --shadow-lg: 0 2px 6px rgba(0, 0, 0, 0.4), 0 32px 70px -20px rgba(0, 0, 0, 0.62);
 
     /* ── Glass system · one source of truth for frosted surfaces ─────────
        Consumed by .shell-topbar, .sidebar, .mobile-tabbar, .panel, .modal.
        The body's ambient glow (see body {}) gives these surfaces something
        to refract; inputs/buttons/.card stay solid for text crispness. */
-    --glass-bg: color-mix(in srgb, var(--bg-card) 72%, transparent);
-    --glass-border: rgba(170, 200, 255, 0.10);
-    --glass-blur: 12px;
-    --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    --glass-bg: color-mix(in srgb, var(--bg-card) 62%, transparent);
+    --glass-border: rgba(178, 206, 255, 0.15);
+    --glass-blur: 22px;
+    /* saturate() is the whole trick: without it a blurred backdrop desaturates
+       into grey fog. brightness() lifts it back off the near-black ground. */
+    --glass-filter: blur(var(--glass-blur)) saturate(165%) brightness(1.04);
+    --glass-highlight:
+        inset 0 1px 0 rgba(255, 255, 255, 0.08),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.28);
+
+    /* Opaque members of the same material family. Raised things (buttons,
+       cards) catch a lit top edge; recessed things (inputs) sink instead. */
+    --edge-sheen: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    --well-shade: inset 0 1px 2px rgba(0, 0, 0, 0.28);
 
     /* ── Canvas / workflow-editor node system ────────────────────────────
        Self-contained palette used only by the workflow canvas components
@@ -196,12 +228,7 @@ html {
 
 body {
     font-family: var(--font-body);
-    background:
-        radial-gradient(ellipse 60% 50% at 15% -5%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 70%),
-        radial-gradient(ellipse 50% 45% at 85% 0%, color-mix(in srgb, var(--accent-glow) 9%, transparent), transparent 70%),
-        radial-gradient(ellipse 70% 50% at 50% 110%, color-mix(in srgb, var(--blue) 7%, transparent), transparent 70%),
-        var(--bg);
-    background-attachment: fixed;
+    background: var(--bg);
     color: var(--text);
     font-size: 14px;
     line-height: 1.5;
@@ -276,6 +303,42 @@ textarea {
     height: 100vh;
 }
 
+/* ── Ambient aurora · the light every glass surface refracts ──────────────
+   Three soft light pools on a 48s drift, sitting behind the whole shell. This
+   is the only ambient light in the app: without something moving back here the
+   backdrop-filters above have nothing to do and the chrome reads as flat
+   translucent plastic. Transform-only and gradient-only — no filter, so it
+   composites on the GPU and never repaints. Oversized by 25% on every side so
+   the drift never walks an edge into view. Pinned to its end state by the
+   global prefers-reduced-motion rule.
+
+   z-index 0 rather than -1, and .main deliberately gets NO z-index: both are
+   positioned with z-index 0/auto, so they paint in tree order and .main lands
+   on top for free. Giving .main a z-index would make it a stacking context and
+   trap the page-level overlays that are tuned against the shell's own layers
+   (ChatPage's 960 sits above the mobile tab bar at 890 — inside a new context
+   it would sink below it). */
+.layout::before,
+.login-page::before {
+    content: "";
+    position: fixed;
+    inset: -25%;
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0.55;
+    background:
+        radial-gradient(38% 42% at 22% 26%, color-mix(in srgb, var(--accent) 32%, transparent), transparent 68%),
+        radial-gradient(34% 38% at 78% 16%, color-mix(in srgb, var(--accent-glow) 24%, transparent), transparent 66%),
+        radial-gradient(46% 42% at 52% 90%, color-mix(in srgb, var(--purple) 22%, transparent), transparent 70%);
+    animation: aurora-drift 48s cubic-bezier(0.4, 0, 0.6, 1) infinite alternate;
+    will-change: transform;
+}
+
+@keyframes aurora-drift {
+    from { transform: translate3d(-3%, -2%, 0) scale(1); }
+    to { transform: translate3d(3%, 2.5%, 0) scale(1.08); }
+}
+
 .app-shell {
     position: relative;
     min-width: 0;
@@ -323,8 +386,8 @@ textarea {
 .sidebar {
     width: var(--sidebar-w);
     background: var(--glass-bg);
-    backdrop-filter: blur(var(--glass-blur));
-    -webkit-backdrop-filter: blur(var(--glass-blur));
+    backdrop-filter: var(--glass-filter);
+    -webkit-backdrop-filter: var(--glass-filter);
     border-right: 1px solid var(--border);
     display: flex;
     flex-direction: column;
@@ -334,7 +397,7 @@ textarea {
     top: 0;
     bottom: 0;
     z-index: 1000;
-    transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: left 0.42s var(--ease-fluid);
 }
 
 .sidebar.open {
@@ -376,7 +439,7 @@ textarea {
     color: var(--text);
     text-align: left;
     cursor: pointer;
-    transition: background 0.2s ease;
+    transition: background 0.2s var(--ease-out);
 }
 
 .brand-lockup:hover {
@@ -428,7 +491,8 @@ textarea {
     background: var(--bg-card);
     color: var(--text);
     cursor: pointer;
-    transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+    box-shadow: var(--edge-sheen);
+    transition: background 0.2s var(--ease-out), border-color 0.2s var(--ease-out), transform 0.2s var(--ease-out), box-shadow 0.2s var(--ease-out);
 }
 
 .shell-icon-btn:hover {
@@ -467,17 +531,23 @@ textarea {
     font-weight: 600;
     text-align: left;
     cursor: pointer;
-    transition: background 0.15s ease, color 0.15s ease;
+    transition: background 0.15s var(--ease-out), color 0.15s var(--ease-out);
 }
 
 .nav-item:hover {
-    background: var(--surface2);
+    background: color-mix(in srgb, var(--text) 6%, transparent);
     color: var(--text);
 }
 
 .nav-item.active {
-    background: color-mix(in srgb, var(--nav-tint) 9%, transparent);
+    background: linear-gradient(90deg,
+        color-mix(in srgb, var(--nav-tint) 22%, transparent),
+        color-mix(in srgb, var(--nav-tint) 6%, transparent) 58%,
+        transparent);
     color: var(--text);
+    box-shadow:
+        inset 0 0 0 1px color-mix(in srgb, var(--nav-tint) 20%, transparent),
+        var(--edge-sheen);
 }
 
 .nav-item.active::after {
@@ -578,8 +648,8 @@ textarea {
     gap: 12px;
     padding: 12px 22px;
     background: var(--glass-bg);
-    backdrop-filter: blur(var(--glass-blur));
-    -webkit-backdrop-filter: blur(var(--glass-blur));
+    backdrop-filter: var(--glass-filter);
+    -webkit-backdrop-filter: var(--glass-filter);
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
     position: relative;
@@ -612,7 +682,7 @@ textarea {
     height: 8px;
     border-radius: 2px;
     background: var(--page-tint, var(--accent));
-    transition: background 0.25s ease;
+    transition: background 0.25s var(--ease-out);
 }
 
 .shell-page-heading {
@@ -706,12 +776,12 @@ textarea {
     display: flex;
     flex-direction: column;
     flex: 1 1 auto;
-    animation: page-enter 0.35s ease both;
+    animation: page-enter 0.5s var(--ease-fluid) both;
 }
 
 @keyframes page-enter {
-    from { opacity: 0; transform: translateY(8px); }
-    to { opacity: 1; transform: translateY(0); }
+    from { opacity: 0; transform: translateY(12px) scale(0.994); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 .page-flush {
@@ -793,8 +863,8 @@ textarea {
    ════════════════════════════════════════════════════════════════════════════ */
 .panel {
     background: var(--glass-bg);
-    backdrop-filter: blur(var(--glass-blur));
-    -webkit-backdrop-filter: blur(var(--glass-blur));
+    backdrop-filter: var(--glass-filter);
+    -webkit-backdrop-filter: var(--glass-filter);
     border: 1px solid var(--glass-border);
     border-radius: var(--r-lg);
     box-shadow: var(--glass-highlight), var(--shadow-sm);
@@ -808,7 +878,12 @@ textarea {
     gap: 12px;
     padding: 10px 16px;
     border-bottom: 1px solid var(--border);
-    background: var(--surface);
+    /* Not a flat fill: a short top-down wash reads as the light falling on the
+       lip of the panel, and keeps the head distinct from the body without a
+       second border. */
+    background: linear-gradient(180deg,
+        color-mix(in srgb, var(--text) 5%, transparent),
+        transparent);
 }
 
 .panel-title {
@@ -840,7 +915,7 @@ textarea {
 .list-row {
     padding: 11px 16px 12px;
     border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
-    transition: background 0.15s ease;
+    transition: background 0.15s var(--ease-out);
 }
 
 .list-row:first-child {
@@ -848,7 +923,10 @@ textarea {
 }
 
 .list-row:hover {
-    background: color-mix(in srgb, var(--text) 2.5%, transparent);
+    background: linear-gradient(90deg,
+        color-mix(in srgb, var(--accent) 7%, transparent),
+        color-mix(in srgb, var(--text) 3%, transparent) 40%,
+        transparent);
 }
 
 .row-line {
@@ -902,7 +980,7 @@ textarea {
     border: 1px solid color-mix(in srgb, var(--text) 22%, transparent);
     background: var(--surface2);
     cursor: pointer;
-    transition: background 0.2s ease, border-color 0.2s ease;
+    transition: background 0.2s var(--ease-out), border-color 0.2s var(--ease-out);
 }
 
 .switch::after {
@@ -916,7 +994,7 @@ textarea {
     background: var(--bg-card);
     border: 1px solid color-mix(in srgb, var(--text) 25%, transparent);
     box-sizing: border-box;
-    transition: transform 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+    transition: transform 0.2s var(--ease-out), background 0.2s var(--ease-out), border-color 0.2s var(--ease-out);
 }
 
 .switch[aria-checked="true"] {
@@ -942,9 +1020,10 @@ textarea {
     align-items: center;
     gap: 6px;
     padding: 44px 20px;
-    border: 1px dashed color-mix(in srgb, var(--text) 25%, transparent);
+    border: 1px solid var(--border);
     border-radius: var(--r-lg);
-    background: none;
+    background: color-mix(in srgb, var(--text) 2.5%, transparent);
+    box-shadow: var(--well-shade);
     text-align: center;
 }
 
@@ -977,7 +1056,7 @@ textarea {
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: var(--r-lg);
-    box-shadow: var(--shadow-sm);
+    box-shadow: var(--edge-sheen), var(--shadow-sm);
     padding: 20px;
     margin-bottom: 16px;
     overflow: hidden;
@@ -1265,7 +1344,8 @@ select,
     font-size: 13.5px;
     margin-bottom: 10px;
     font-family: inherit;
-    transition: border-color 0.25s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.25s ease;
+    box-shadow: var(--well-shade);
+    transition: border-color 0.25s var(--ease-out), box-shadow 0.25s var(--ease-out), background 0.25s var(--ease-out);
 }
 
 input[type=text]:hover,
@@ -1283,8 +1363,9 @@ textarea:focus,
 select:focus {
     outline: none;
     border-color: color-mix(in srgb, var(--accent) 60%, transparent);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent),
-                0 0 14px color-mix(in srgb, var(--accent-glow) 22%, transparent);
+    box-shadow: var(--well-shade),
+                0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent),
+                0 0 18px color-mix(in srgb, var(--accent-glow) 22%, transparent);
 }
 
 input::placeholder,
@@ -1351,9 +1432,9 @@ label {
     display: none;
     position: fixed;
     inset: 0;
-    background: rgba(8, 8, 12, 0.66);
-    backdrop-filter: blur(var(--glass-blur));
-    -webkit-backdrop-filter: blur(var(--glass-blur));
+    background: rgba(6, 8, 14, 0.58);
+    backdrop-filter: var(--glass-filter);
+    -webkit-backdrop-filter: var(--glass-filter);
     z-index: 2000;
     align-items: center;
     justify-content: center;
@@ -1365,9 +1446,11 @@ label {
 
 .modal {
     background: var(--glass-bg);
+    backdrop-filter: var(--glass-filter);
+    -webkit-backdrop-filter: var(--glass-filter);
     border: 1px solid var(--glass-border);
     border-radius: var(--r-lg);
-    box-shadow: var(--glass-highlight);
+    box-shadow: var(--glass-highlight), var(--shadow-lg);
     padding: 28px;
     max-width: 720px;
     width: min(100%, 720px);
@@ -1431,19 +1514,19 @@ label {
     cursor: pointer;
     white-space: nowrap;
     text-decoration: none;
-    box-shadow: 0 1px 2px color-mix(in srgb, var(--text) 8%, transparent);
-    transition: transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1),
-        background 0.18s ease, border-color 0.18s ease,
-        box-shadow 0.25s ease, color 0.18s ease, filter 0.18s ease;
+    box-shadow: var(--edge-sheen), 0 1px 2px rgba(0, 0, 0, 0.3);
+    transition: transform 0.18s var(--ease-out),
+        background 0.18s var(--ease-out), border-color 0.18s var(--ease-out),
+        box-shadow 0.25s var(--ease-out), color 0.18s var(--ease-out), filter 0.18s var(--ease-out);
 }
 
 .btn:hover,
 .btn-icon:hover,
 .btn-styled:hover {
     transform: translateY(-1px);
-    background: color-mix(in srgb, var(--text) 6%, var(--bg-card));
+    background: color-mix(in srgb, var(--text) 7%, var(--bg-card));
     border-color: color-mix(in srgb, var(--text) 32%, transparent);
-    box-shadow: 0 3px 10px color-mix(in srgb, var(--text) 12%, transparent);
+    box-shadow: var(--edge-sheen), 0 4px 14px -4px rgba(0, 0, 0, 0.5);
 }
 
 .btn:active {
@@ -1610,7 +1693,7 @@ label {
     color: var(--bg-card);
     cursor: pointer;
     align-self: flex-end;
-    transition: transform 0.2s ease, filter 0.18s ease;
+    transition: transform 0.2s var(--ease-out), filter 0.18s var(--ease-out);
 }
 
 .btn-chat-send svg {
@@ -1856,13 +1939,14 @@ label {
     line-height: 1.4;
     text-align: left;
     cursor: pointer;
-    transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+    transition: transform 0.18s var(--ease-out), border-color 0.18s var(--ease-out), background 0.18s var(--ease-out);
 }
 
 .chat-starter-btn:hover {
     transform: translateY(-2px);
     border-color: color-mix(in srgb, var(--accent) 45%, transparent);
     background: var(--surface2);
+    box-shadow: var(--edge-sheen), 0 10px 26px -12px rgba(0, 0, 0, 0.6);
 }
 
 /* ── Chat bubbles ─────────────────────────────────────────────────────────── */
@@ -1899,15 +1983,19 @@ label {
 }
 
 .chat-msg.user .chat-bubble {
-    background: color-mix(in srgb, var(--accent) 16%, var(--bg-card));
+    background: linear-gradient(160deg,
+        color-mix(in srgb, var(--accent) 24%, var(--bg-card)),
+        color-mix(in srgb, var(--accent) 12%, var(--bg-card)));
+    border-color: color-mix(in srgb, var(--accent) 26%, transparent);
+    box-shadow: var(--edge-sheen);
     color: var(--text);
-    border-bottom-right-radius: 4px;
+    border-bottom-right-radius: 6px;
 }
 
 .chat-msg.agent .chat-bubble {
-    background: color-mix(in srgb, var(--text) 4%, transparent);
+    background: color-mix(in srgb, var(--text) 5%, transparent);
     color: var(--text);
-    border-bottom-left-radius: 4px;
+    border-bottom-left-radius: 6px;
 }
 
 .chat-meta {
@@ -2102,7 +2190,7 @@ label {
     padding: 12px 18px;
     font-size: 13px;
     z-index: 300;
-    animation: slideIn 0.2s ease;
+    animation: slideIn 0.2s var(--ease-out);
     max-width: 300px;
 }
 
@@ -2123,27 +2211,28 @@ label {
    LOGIN PAGE
    ════════════════════════════════════════════════════════════════════════════ */
 .login-page {
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
-    height: 100vh;
+    height: 100dvh;
     width: 100vw;
     padding: 24px;
-    background:
-        radial-gradient(circle at 20% 16%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 20%),
-        radial-gradient(circle at 80% 10%, color-mix(in srgb, var(--accent-glow) 9%, transparent), transparent 18%),
-        radial-gradient(circle at 50% 100%, color-mix(in srgb, var(--blue) 7%, transparent), transparent 22%),
-        linear-gradient(180deg, #07090d 0%, #0d1017 100%);
+    background: linear-gradient(180deg, #06080e 0%, var(--bg) 100%);
 }
 
 .login-card {
+    position: relative;
+    z-index: 1;
     width: 100%;
     max-width: 420px;
-    padding: 28px;
+    padding: 32px 28px;
     border-radius: var(--r-lg);
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    box-shadow: var(--shadow-lg);
+    background: var(--glass-bg);
+    backdrop-filter: var(--glass-filter);
+    -webkit-backdrop-filter: var(--glass-filter);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-highlight), var(--shadow-lg);
     text-align: center;
 }
 
@@ -2202,12 +2291,19 @@ label {
 }
 
 ::-webkit-scrollbar-thumb {
-    background: color-mix(in srgb, var(--text) 18%, transparent);
-    border-radius: 3px;
+    background: color-mix(in srgb, var(--text) 16%, transparent);
+    border-radius: 999px;
+    transition: background 0.2s var(--ease-out);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: color-mix(in srgb, var(--text) 30%, transparent);
+    background: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+/* Firefox has no ::-webkit pseudo-elements; this is the whole API there. */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--text) 16%, transparent) transparent;
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -2449,6 +2545,15 @@ textarea {
         --tabbar-h: 56px;
     }
 
+    /* ponytail: aurora holds still on phones — every animated frame makes all
+       five backdrop-filtered surfaces re-blur their backdrop, and phone GPUs
+       are where that bill lands. Re-enable if mobile perf stops mattering. */
+    .layout::before,
+    .login-page::before {
+        animation: none;
+        transform: translate3d(0, 0, 0) scale(1.04);
+    }
+
     .shell-topbar .shell-nav-toggle.mobile-only {
         display: none;
     }
@@ -2464,8 +2569,8 @@ textarea {
         min-height: var(--tabbar-h);
         padding: 4px max(6px, env(safe-area-inset-right)) max(4px, env(safe-area-inset-bottom)) max(6px, env(safe-area-inset-left));
         background: var(--glass-bg);
-        backdrop-filter: blur(var(--glass-blur));
-        -webkit-backdrop-filter: blur(var(--glass-blur));
+        backdrop-filter: var(--glass-filter);
+        -webkit-backdrop-filter: var(--glass-filter);
         border-top: 1px solid var(--glass-border);
         user-select: none;
         -webkit-user-select: none;
@@ -2483,7 +2588,7 @@ textarea {
         background: none;
         color: var(--muted);
         cursor: pointer;
-        transition: color 0.15s ease, transform 0.1s ease;
+        transition: color 0.15s var(--ease-out), transform 0.1s var(--ease-out);
     }
 
     .tabbar-icon {
@@ -2649,6 +2754,32 @@ textarea {
     .mobile-tabbar,
     .panel,
     .modal {
+        background: var(--bg-card);
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+    }
+
+    /* The two dimming scrims blur as well, and were missed before. Opaque-up
+       so the layer underneath is hidden rather than smeared. */
+    .modal-overlay {
+        background: rgba(6, 8, 14, 0.9);
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+    }
+
+    .sidebar-overlay {
+        background: rgba(6, 8, 14, 0.8);
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+    }
+
+    /* Ambient light is the point of the glass; with glass off it is noise. */
+    .layout::before,
+    .login-page::before {
+        display: none;
+    }
+
+    .login-card {
         background: var(--bg-card);
         backdrop-filter: none;
         -webkit-backdrop-filter: none;

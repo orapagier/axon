@@ -405,7 +405,7 @@ onMounted(() => {
   flex-shrink: 0;
   color: var(--muted);
   opacity: 0.6;
-  transition: transform 0.15s ease;
+  transition: transform 0.15s var(--ease-out);
 }
 
 .collapse-icon.rotated {
@@ -541,7 +541,7 @@ onMounted(() => {
 
 .row-action {
   opacity: 0.25;
-  transition: opacity 0.15s ease;
+  transition: opacity 0.15s var(--ease-out);
 }
 
 .memory-row:hover .row-action,

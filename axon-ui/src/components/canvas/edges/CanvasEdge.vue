@@ -63,7 +63,7 @@ const edgeStyles = computed(() => ({
       ? 'var(--canvas-edge-color-hover, rgba(220, 220, 220, 0.7))'
       : 'var(--canvas-edge-color, rgba(180, 180, 180, 0.5))',
   strokeWidth: props.selected ? 3 : 2,
-  transition: 'stroke 0.15s ease, stroke-width 0.15s ease',
+  transition: 'stroke 0.15s var(--ease-out), stroke-width 0.15s var(--ease-out)',
 }))
 
 // Z-index based on hover state
@@ -212,7 +212,7 @@ function onMouseLeave() {
   border-radius: 50%;
   opacity: 0.35;
   box-shadow: 0 0 6px rgba(99, 102, 241, 0.4);
-  transition: all 0.18s ease;
+  transition: all 0.18s var(--ease-out);
   position: absolute;
 }
 
@@ -256,7 +256,7 @@ function onMouseLeave() {
   border: none;
   border-radius: 6px;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease, transform 0.1s ease;
+  transition: background 0.15s var(--ease-out), color 0.15s var(--ease-out), transform 0.1s var(--ease-out);
   color: rgba(255, 255, 255, 0.85);
 }
 

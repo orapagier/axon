@@ -1142,7 +1142,7 @@ onUnmounted(() => {
   font-size: 0.64rem;
   color: var(--muted);
   cursor: pointer;
-  transition: color 0.15s ease;
+  transition: color 0.15s var(--ease-out);
 }
 
 .svc-group-action:hover {
@@ -1165,7 +1165,7 @@ onUnmounted(() => {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
-  transition: border-color 0.15s ease;
+  transition: border-color 0.15s var(--ease-out);
 }
 
 .svc-tile:hover {
@@ -1284,7 +1284,7 @@ onUnmounted(() => {
   font: inherit;
   font-size: 0.76rem;
   cursor: pointer;
-  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+  transition: border-color 0.15s var(--ease-out), color 0.15s var(--ease-out), background 0.15s var(--ease-out);
 }
 
 .svc-add-tile:hover {

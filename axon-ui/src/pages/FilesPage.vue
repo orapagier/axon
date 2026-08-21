@@ -368,7 +368,7 @@ onMounted(load)
 
 .row-action {
   opacity: 0.25;
-  transition: opacity 0.15s ease;
+  transition: opacity 0.15s var(--ease-out);
 }
 
 .file-row:hover .row-action,

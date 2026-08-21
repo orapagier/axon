@@ -118,7 +118,7 @@ function onActivate(event) {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition: border-color 0.2s var(--ease-out), box-shadow 0.2s var(--ease-out);
 }
 
 /* Trigger node: rounded left side */

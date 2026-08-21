@@ -466,7 +466,7 @@ function cancelRename() {
   border: 3px solid rgba(255, 255, 255, 0.3);
   border-radius: 50%;
   opacity: 0;
-  transition: opacity 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
+  transition: opacity 0.2s var(--ease-out), transform 0.2s var(--ease-out), border-color 0.2s var(--ease-out);
   z-index: 5;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
   cursor: pointer;
@@ -679,7 +679,7 @@ function cancelRename() {
   pointer-events: none;
   white-space: nowrap;
   opacity: 0;
-  transition: opacity 0.2s ease;
+  transition: opacity 0.2s var(--ease-out);
   /* Neutral default so dynamic Switch labels (case N / custom / default) are
      legible; true/false override below. */
   color: #c7d2fe;

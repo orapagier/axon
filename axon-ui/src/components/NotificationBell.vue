@@ -250,10 +250,12 @@ function fullTime(ts) {
   right: 0;
   width: 340px;
   max-width: calc(100vw - 32px);
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: var(--shadow-lg);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-filter);
+  -webkit-backdrop-filter: var(--glass-filter);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--glass-highlight), var(--shadow-lg);
   z-index: 1000;
   display: flex;
   flex-direction: column;
@@ -322,7 +324,7 @@ function fullTime(ts) {
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: background 0.15s var(--ease-out);
 }
 
 .notif-row:last-child {
@@ -390,7 +392,7 @@ function fullTime(ts) {
   color: var(--muted);
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+  transition: opacity 0.15s var(--ease-out), background 0.15s var(--ease-out), color 0.15s var(--ease-out);
 }
 
 .notif-row:hover .notif-row-delete {
@@ -428,7 +430,7 @@ function fullTime(ts) {
 
 .notif-pop-enter-active,
 .notif-pop-leave-active {
-  transition: opacity 0.15s ease, transform 0.15s ease;
+  transition: opacity 0.15s var(--ease-out), transform 0.15s var(--ease-out);
 }
 
 .notif-pop-enter-from,

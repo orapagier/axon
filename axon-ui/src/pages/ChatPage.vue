@@ -2642,7 +2642,7 @@ watch(disabled, (newVal) => {
 
 .trace-chevron {
   display: inline-block;
-  transition: transform 0.15s ease;
+  transition: transform 0.15s var(--ease-out);
 }
 
 .trace-chevron.open {
@@ -2690,7 +2690,7 @@ watch(disabled, (newVal) => {
   font-size: 0.9rem;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition: background 0.15s var(--ease-out), border-color 0.15s var(--ease-out);
 }
 
 .conv-new:hover {
@@ -2724,7 +2724,7 @@ watch(disabled, (newVal) => {
   padding: 9px 10px;
   border-radius: 9px;
   cursor: pointer;
-  transition: background 0.12s ease;
+  transition: background 0.12s var(--ease-out);
 }
 
 .conv-item:hover {
@@ -2791,7 +2791,7 @@ watch(disabled, (newVal) => {
   opacity: 0;
   border-radius: 6px;
   cursor: pointer;
-  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+  transition: opacity 0.12s var(--ease-out), background 0.12s var(--ease-out), color 0.12s var(--ease-out);
 }
 
 .conv-item:hover .conv-del,
@@ -2866,7 +2866,7 @@ watch(disabled, (newVal) => {
   font-size: 0.76rem;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.12s ease;
+  transition: background 0.12s var(--ease-out);
 }
 
 .voice-cancel:hover {
@@ -2888,7 +2888,7 @@ watch(disabled, (newVal) => {
   background: transparent;
   color: inherit;
   cursor: pointer;
-  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+  transition: color 0.15s var(--ease-out), border-color 0.15s var(--ease-out), background 0.15s var(--ease-out);
 }
 
 .btn-mic:not(:disabled):hover {
@@ -2994,7 +2994,7 @@ watch(disabled, (newVal) => {
   background: transparent;
   color: var(--text);
   cursor: pointer;
-  transition: color 0.15s ease, border-color 0.15s ease;
+  transition: color 0.15s var(--ease-out), border-color 0.15s var(--ease-out);
 }
 
 .handsfree-close:hover {
@@ -3028,7 +3028,7 @@ watch(disabled, (newVal) => {
   opacity: 0;
   cursor: pointer;
   vertical-align: middle;
-  transition: opacity 0.12s ease, color 0.12s ease;
+  transition: opacity 0.12s var(--ease-out), color 0.12s var(--ease-out);
 }
 
 .chat-msg.agent:hover .msg-speak,

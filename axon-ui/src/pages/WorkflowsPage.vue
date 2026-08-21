@@ -3687,7 +3687,7 @@ onUnmounted(() => {
 /* Transitions */
 .slide-rtl-enter-active,
 .slide-rtl-leave-active {
-  transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.4s ease;
+  transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.4s var(--ease-out);
 }
 .slide-rtl-enter-from,
 .slide-rtl-leave-to {
@@ -3697,7 +3697,7 @@ onUnmounted(() => {
 
 .fade-enter-active,
 .fade-leave-active {
-  transition: opacity 0.3s ease;
+  transition: opacity 0.3s var(--ease-out);
 }
 .fade-enter-from,
 .fade-leave-to {
@@ -3847,7 +3847,7 @@ onUnmounted(() => {
   border-right: 1px solid rgba(255, 255, 255, 0.06);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  transition: width 0.28s ease, transform 0.28s ease, opacity 0.28s ease;
+  transition: width 0.28s var(--ease-out), transform 0.28s var(--ease-out), opacity 0.28s var(--ease-out);
 }
 
 .workflow-explorer.sidebar-collapsed:not(.compact-layout) .workflow-sidebar {
@@ -3913,7 +3913,7 @@ onUnmounted(() => {
     rgba(255, 255, 255, 0.02);
   color: rgba(255, 255, 255, 0.86);
   cursor: pointer;
-  transition: transform 0.18s ease, background 0.18s ease, border-color 0.18s ease;
+  transition: transform 0.18s var(--ease-out), background 0.18s var(--ease-out), border-color 0.18s var(--ease-out);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.05),
     0 10px 20px rgba(0, 0, 0, 0.16);

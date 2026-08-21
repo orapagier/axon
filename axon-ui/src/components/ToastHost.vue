@@ -45,19 +45,21 @@ import { toasts, dismissToast } from '../lib/toast.js'
   align-items: flex-start;
   gap: 9px;
   max-width: 380px;
-  padding: 10px 14px;
-  border-radius: 10px;
-  border: 1px solid rgba(86, 230, 200, 0.32);
-  background: var(--bg-card);
+  padding: 11px 15px;
+  border-radius: var(--r-lg);
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--glass-border));
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-filter);
+  -webkit-backdrop-filter: var(--glass-filter);
   color: var(--text);
   font-size: 0.78rem;
   line-height: 1.45;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--glass-highlight), var(--shadow-lg);
   cursor: pointer;
 }
 
 .toast-card.error {
-  border-color: rgba(244, 118, 118, 0.42);
+  border-color: color-mix(in srgb, var(--red) 45%, transparent);
 }
 
 .toast-dot {
@@ -84,16 +86,16 @@ import { toasts, dismissToast } from '../lib/toast.js'
 
 .toast-slide-enter-active,
 .toast-slide-leave-active {
-  transition: opacity 0.18s ease, transform 0.18s ease;
+  transition: opacity 0.28s var(--ease-out), transform 0.28s var(--ease-fluid);
 }
 
 .toast-slide-enter-from,
 .toast-slide-leave-to {
   opacity: 0;
-  transform: translateY(8px);
+  transform: translateX(16px) scale(0.96);
 }
 
 .toast-slide-move {
-  transition: transform 0.18s ease;
+  transition: transform 0.18s var(--ease-out);
 }
 </style>

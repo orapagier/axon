@@ -628,7 +628,7 @@ onMounted(load)
 
 .row-action {
   opacity: 0.25;
-  transition: opacity 0.15s ease;
+  transition: opacity 0.15s var(--ease-out);
 }
 
 .model-row:hover .row-action,
@@ -688,7 +688,7 @@ onMounted(load)
   height: 100%;
   border-radius: 999px;
   background: var(--accent);
-  transition: width 0.4s ease;
+  transition: width 0.4s var(--ease-out);
 }
 
 .rate-pct {

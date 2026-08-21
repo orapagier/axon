@@ -1475,7 +1475,7 @@ onMounted(loadDashboard)
   font-size: 0.8rem;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background 0.15s var(--ease-out), color 0.15s var(--ease-out);
 }
 
 .crm-tab:hover {
@@ -1591,7 +1591,7 @@ onMounted(loadDashboard)
   font: inherit;
   text-align: left;
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: background 0.15s var(--ease-out);
 }
 
 .mini-row:hover {
@@ -1697,7 +1697,7 @@ onMounted(loadDashboard)
 /* Row actions stay quiet until the row is engaged. */
 .crm-table .row-actions .btn {
   opacity: 0.25;
-  transition: opacity 0.15s ease;
+  transition: opacity 0.15s var(--ease-out);
 }
 
 .crm-table tr:hover .row-actions .btn,
@@ -1771,7 +1771,7 @@ onMounted(loadDashboard)
   border-radius: var(--r-md);
   padding: 10px;
   cursor: pointer;
-  transition: border-color 0.15s ease;
+  transition: border-color 0.15s var(--ease-out);
 }
 
 .kanban-card:hover {
@@ -1830,7 +1830,7 @@ onMounted(loadDashboard)
 
 .drawer-fade-enter-active,
 .drawer-fade-leave-active {
-  transition: opacity 0.2s ease;
+  transition: opacity 0.2s var(--ease-out);
 }
 
 .drawer-fade-enter-from,
