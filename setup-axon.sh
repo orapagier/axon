@@ -114,6 +114,33 @@
 #    --verify         after install, run `cargo check -p axon-core` to prove the
 #                     toolchain genuinely compiles this workspace.
 #
+#  NOTHING HERE PROMPTS  (a re-run finishes on its own)
+#    The auto-backup Stop hook commits with no TTY, and a fresh container or a
+#    cron run has nobody to type at, so every answerable question now has a
+#    default instead of a prompt:
+#      git identity   what git already has > GIT_NAME= / GIT_EMAIL= > your
+#                     public GitHub email > DEFAULT_GIT_NAME / DEFAULT_GIT_EMAIL,
+#                     set near the top of this file. Never the users.noreply
+#                     alias: valid for attribution, but not the address you
+#                     want on your own commits.
+#      GCP project    set to DEFAULT_GCP_PROJECT when none is selected
+#                     (AXON_GCP_PROJECT= overrides). Choosing a project is
+#                     configuration, not a login — no browser is involved. An
+#                     existing selection is never overwritten.
+#      deploy config  deployaxongcp.sh and .deploy.env are copied from their
+#                     committed .example files when absent. Both are gitignored,
+#                     so this cannot reach a build or be pushed by the hook.
+#                     Putting your real hosts in .deploy.env is still yours.
+#      npm ci         retried once against the warmed cache before giving up.
+#
+#    THREE things still need a human, and none of them can be scripted:
+#      * `gh auth login`     — interactive OAuth in a browser
+#      * `gcloud auth login` — interactive OAuth in a browser
+#      * AXON_MASTER_KEY, and ONLY when an existing .env has an empty one.
+#        Generating a fresh key there would silently make an already-encrypted
+#        database unreadable, so it asks instead. A brand-new .env just gets a
+#        generated key with no question asked.
+#
 #  SKIP FLAGS
 #    --no-rust  --no-node  --no-gh  --no-gcloud  --no-deny  --no-env  --no-git
 #
@@ -303,6 +330,18 @@ W_MUSL=0; W_LLD=0; W_QDRANT=0; W_GRAPHIFY=0; VERIFY=0
 # bootstrap path is not hardcoded to one person's directory layout.
 REPO_URL="${AXON_REPO_URL:-https://github.com/orapagier/axon}"
 CLONE_DIR="${AXON_DIR:-$HOME/dev/axon}"
+
+# Fallbacks, used only when nothing better is available. They exist so that an
+# unattended re-run never stops to ask a question: the auto-backup Stop hook
+# commits with no TTY, and `curl … | bash` in a fresh container has nobody to
+# type at. Anything git already has configured wins over these, and GIT_NAME= /
+# GIT_EMAIL= override them for a single run. Change these two lines if someone
+# else works on this checkout.
+DEFAULT_GIT_NAME="${DEFAULT_GIT_NAME:-orapagier}"
+DEFAULT_GIT_EMAIL="${DEFAULT_GIT_EMAIL:-orapajelmar@gmail.com}"
+# Selecting a GCP project is configuration, not a login — no browser is
+# involved — so it is done rather than left on the TODO list.
+DEFAULT_GCP_PROJECT="${AXON_GCP_PROJECT:-axon-490415}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -602,57 +641,40 @@ if [ "$DO_GIT" = 1 ]; then
   # ASSIGNMENT itself fail, which `set -e` turns into a silent exit right here.
   # The trailing `|| true` covers the other case: a checkout with no origin.
   GIT_NAME="${GIT_NAME:-$(git -C "$ROOT" config --get remote.origin.url 2>/dev/null | sed -nE 's#.*github\.com[:/]([^/]+)/.*#\1#p' || true)}"
+  GIT_NAME="${GIT_NAME:-$DEFAULT_GIT_NAME}"
   GIT_EMAIL="${GIT_EMAIL:-}"
 
   if git config --get user.name >/dev/null 2>&1; then
     log "user.name  already set: $(git config --get user.name)"
-  elif [ -n "$GIT_NAME" ]; then
-    git config --global user.name "$GIT_NAME"
-    log "user.name  set to '$GIT_NAME' (from the origin remote; override with GIT_NAME=)"
   else
-    warn "user.name unset and not inferable — run: git config --global user.name 'Your Name'"
+    git config --global user.name "$GIT_NAME"
+    log "user.name  set to '$GIT_NAME' (override with GIT_NAME=)"
   fi
 
-  # Derive the email rather than just warning about it: an unset user.email
-  # makes every `git commit` fail, and the Stop hook swallows that error, so
-  # the failure is invisible until you notice nothing has been pushed.
+  # Derive the email rather than asking for it. An unset user.email makes every
+  # `git commit` fail, and the auto-backup Stop hook swallows that error, so the
+  # failure stays invisible until you notice nothing has been pushed. There is
+  # deliberately no prompt left here: that hook runs with no TTY, an unattended
+  # re-run must not stall on a question, and a wrong-but-editable default beats
+  # a blocked commit. Precedence: what git already has > GIT_EMAIL= > your
+  # public GitHub email > DEFAULT_GIT_EMAIL.
   EMAIL_SRC=""
   if [ -z "$GIT_EMAIL" ] && command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
     GIT_EMAIL="$(gh api user --jq '.email // empty' 2>/dev/null || true)"
     [ -n "$GIT_EMAIL" ] && EMAIL_SRC=" (your public GitHub email)"
-    # With "Keep my email private" on, the API returns null. Do NOT silently
-    # substitute the ID+login@users.noreply address: it is valid for
-    # attribution, but it is very likely not the address you actually want on
-    # your commits. Ask, and offer noreply only as the default.
-    if [ -z "$GIT_EMAIL" ] && [ "$INTERACTIVE" = 1 ]; then
-      _uid="$(gh api user --jq '.id // empty' 2>/dev/null || true)"
-      _ulogin="$(gh api user --jq '.login // empty' 2>/dev/null || true)"
-      _noreply=""
-      [ -n "$_uid" ] && [ -n "$_ulogin" ] && _noreply="${_uid}+${_ulogin}@users.noreply.github.com"
-      echo ""
-      echo "  Your GitHub email is private, so it can't be read from the API."
-      [ -n "$_noreply" ] && echo "  Press Enter to use GitHub's private-email alias: $_noreply"
-      read -r -p "  Git commit email: " _typed < /dev/tty
-      GIT_EMAIL="${_typed:-$_noreply}"
-      [ -n "$_typed" ] && EMAIL_SRC="" || EMAIL_SRC=" (GitHub private-email alias)"
-    fi
+  fi
+  if [ -z "$GIT_EMAIL" ]; then
+    # Deliberately NOT the users.noreply alias: it is valid for attribution but
+    # almost certainly not the address you want on your own commits.
+    GIT_EMAIL="$DEFAULT_GIT_EMAIL"
+    EMAIL_SRC=" (built-in default — change DEFAULT_GIT_EMAIL, or pass GIT_EMAIL=)"
   fi
 
   if git config --get user.email >/dev/null 2>&1; then
     log "user.email already set: $(git config --get user.email)"
-  elif [ -n "$GIT_EMAIL" ]; then
-    git config --global user.email "$GIT_EMAIL"
-    log "user.email set to '$GIT_EMAIL'${EMAIL_SRC} — override anytime with GIT_EMAIL="
-  elif [ "$INTERACTIVE" = 1 ]; then
-    read -r -p "  Git commit email: " _e < /dev/tty
-    if [ -n "$_e" ]; then
-      git config --global user.email "$_e"; log "user.email set to '$_e'"
-    else
-      warn "left unset — 'git commit' will fail until you set it"
-    fi
   else
-    warn "user.email is UNSET — 'git commit' will fail and the Stop hook hides the error"
-    warn "     git config --global user.email 'you@example.com'"
+    git config --global user.email "$GIT_EMAIL"
+    log "user.email set to '$GIT_EMAIL'${EMAIL_SRC}"
   fi
 
   # Sensible defaults for a repo whose .gitattributes forces LF everywhere.
@@ -861,8 +883,20 @@ if [ "$DO_NODE" = 1 ]; then
     # and under `set -e` an unguarded failure would abort the run before the
     # fonts, .env and summary steps — leaving a half-configured checkout and no
     # report. The summary re-checks node_modules and prints the retry command.
-    ( cd "$UI_DIR" && NPM_CONFIG_UPDATE_NOTIFIER=false npm ci --no-fund --no-audit --loglevel=error ) \
-      || warn "npm ci failed (see above) — continuing; retry with: cd $UI_DIR && npm ci"
+    # One automatic retry. The failure seen in practice is a read ETIMEDOUT
+    # partway through unpacking, from a registry that had already spent 60-90s
+    # on single tarballs — not a bad lockfile, so the same command is worth
+    # running again. The second attempt resumes against a now-warm ~/.npm cache
+    # and normally finishes in seconds. --fetch-timeout raises npm's 5-minute
+    # default for the individual reads that stall; npm's built-in retries only
+    # cover whole requests, which is why the first attempt died outright.
+    _npm_ci() { ( cd "$1" && NPM_CONFIG_UPDATE_NOTIFIER=false \
+      npm ci --no-fund --no-audit --loglevel=error --fetch-timeout=600000 ); }
+    if ! _npm_ci "$UI_DIR"; then
+      warn "npm ci failed — retrying once against the warmed cache"
+      _npm_ci "$UI_DIR" \
+        || warn "npm ci failed twice (see above) — continuing; retry with: cd $UI_DIR && npm ci"
+    fi
   fi
 fi
 
@@ -883,6 +917,18 @@ if [ "$DO_GCLOUD" = 1 ]; then
   fi
   if gcloud auth list --filter=status:ACTIVE --format="value(account)" 2>/dev/null | grep -q .; then
     log "gcloud authenticated as $(gcloud auth list --filter=status:ACTIVE --format='value(account)' 2>/dev/null | head -1)"
+    # An existing selection is a deliberate choice — never overwrite it. Only
+    # fill one in when no project is set at all.
+    _gp="$(gcloud config get-value project 2>/dev/null | grep -v '^$' | grep -v unset || true)"
+    if [ -n "$_gp" ]; then
+      log "gcloud project already selected: $_gp"
+    elif gcloud projects describe "$DEFAULT_GCP_PROJECT" >/dev/null 2>&1; then
+      gcloud config set project "$DEFAULT_GCP_PROJECT" >/dev/null 2>&1 \
+        && log "gcloud project set to $DEFAULT_GCP_PROJECT (override with AXON_GCP_PROJECT=)" \
+        || warn "could not set gcloud project to $DEFAULT_GCP_PROJECT"
+    else
+      warn "gcloud project '$DEFAULT_GCP_PROJECT' is not visible to this account — set one with: gcloud config set project <ID>"
+    fi
   else
     warn "gcloud is not authenticated."
     # --no-launch-browser is the right flow under WSL: there is no browser on
@@ -954,6 +1000,34 @@ fi
 # i.e. data/files/fonts, relative to the agent's cwd or exe. That path is
 # gitignored (.gitignore: **/data/files/) and is never shipped by the deploy
 # script, so it has to be provisioned from the tracked copy in assets/fonts.
+step "Deploy config"
+# deploy*.sh and .deploy.env are gitignored, so they never arrive with a clone
+# and every fresh checkout starts without them. Both have committed .example
+# files, so copying them is purely mechanical — do it instead of printing an
+# instruction to do it. Neither file is read until you actually deploy, and both
+# are gitignored, so a copy here cannot affect a build or be pushed by the hook.
+if ls "$ROOT"/deploy*.sh >/dev/null 2>&1; then
+  log "deploy script present — left alone"
+elif [ -f "$ROOT/deploy.sh.example" ]; then
+  cp "$ROOT/deploy.sh.example" "$ROOT/deployaxongcp.sh"
+  chmod +x "$ROOT/deployaxongcp.sh"
+  log "created deployaxongcp.sh from deploy.sh.example"
+else
+  warn "no deploy.sh.example in this checkout — nothing to copy"
+fi
+if [ -f "$ROOT/.deploy.env" ]; then
+  log ".deploy.env present — left untouched"
+elif [ -f "$ROOT/.deploy.env.example" ]; then
+  cp "$ROOT/.deploy.env.example" "$ROOT/.deploy.env"
+  log "created .deploy.env from .deploy.env.example"
+  # The example ships RFC 5737 documentation addresses (203.0.113.x) as
+  # placeholders. Getting the file into place is automatable; knowing your real
+  # hosts is not, so say so plainly rather than implying this step is finished.
+  warn ".deploy.env holds the example's placeholder hosts — edit it before deploying"
+else
+  warn "no .deploy.env.example in this checkout — nothing to copy"
+fi
+
 step "Fonts (image tool)"
 FONT_SRC="$AGENT_DIR/assets/fonts"
 FONT_DST="$AGENT_DIR/data/files/fonts"
@@ -1126,8 +1200,12 @@ fi
 # Deploy prerequisites: only mention them if something is actually absent.
 ls "$ROOT"/deploy*.sh >/dev/null 2>&1 \
   || TODO+=("No deploy*.sh (gitignored, so it never came with the clone): cp deploy.sh.example deployaxongcp.sh")
-[ -f "$ROOT/.deploy.env" ] \
-  || TODO+=("No .deploy.env — deployaxongcp.sh aborts without it: cp .deploy.env.example .deploy.env")
+if [ ! -f "$ROOT/.deploy.env" ]; then
+  TODO+=("No .deploy.env — deployaxongcp.sh aborts without it: cp .deploy.env.example .deploy.env")
+elif grep -q '203\.0\.113\.' "$ROOT/.deploy.env" 2>/dev/null; then
+  # Copied but never edited: a deploy would target the documentation range.
+  TODO+=("Edit .deploy.env — it still holds the example's placeholder hosts (203.0.113.x)")
+fi
 
 # ── Verdict ──
 echo ""
