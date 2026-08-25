@@ -195,7 +195,24 @@ log "Log rotation configured"
 # ── Phase 8: Start Qdrant ─────────────────────────────────────────────────────
 step "Phase 8: Starting Qdrant"
 
-sudo systemctl start qdrant
+# `systemctl start` is a no-op on an already-running unit, so a Qdrant left over
+# from an install by a *different* user would keep running as that user — while
+# Phase 3 above has just chowned /var/lib/qdrant to this one. The service then
+# serves reads happily (0755) and fails every write with "Permission denied",
+# which surfaces later as a collection that exists but cannot be indexed.
+# Restart when the live process is not the user this install just made owner.
+RUNNING_PID=$(systemctl show -p MainPID --value qdrant 2>/dev/null || echo 0)
+RUNNING_USER=""
+if [ "${RUNNING_PID:-0}" != "0" ]; then
+  RUNNING_USER=$(stat -c %U "/proc/${RUNNING_PID}" 2>/dev/null || echo "")
+fi
+
+if [ -n "$RUNNING_USER" ] && [ "$RUNNING_USER" != "$QDRANT_USER" ]; then
+  warn "Qdrant is running as '$RUNNING_USER' but its data now belongs to '$QDRANT_USER' — restarting"
+  sudo systemctl restart qdrant
+else
+  sudo systemctl start qdrant
+fi
 sleep 3
 
 if sudo systemctl is-active --quiet qdrant; then
@@ -213,6 +230,15 @@ for i in 1 2 3 4 5; do
   sleep 2
   [ $i -eq 5 ] && err "Qdrant not responding on :6333 after 10s"
 done
+
+# Healthy only means it answers reads. Prove it can write before Phase 9 starts
+# creating things, so a permissions problem is named here rather than as an
+# unexplained failure eight index calls later.
+LIVE_USER=$(stat -c %U "/proc/$(systemctl show -p MainPID --value qdrant)" 2>/dev/null || echo "")
+if [ -n "$LIVE_USER" ] && ! sudo -u "$LIVE_USER" test -w "$QDRANT_DATA/storage"; then
+  err "Qdrant runs as '$LIVE_USER' but cannot write $QDRANT_DATA/storage (owned by $(stat -c %U "$QDRANT_DATA/storage")).
+     Fix with: sudo chown -R $LIVE_USER:$LIVE_USER $QDRANT_DATA && sudo systemctl restart qdrant"
+fi
 
 # ── Phase 9: Create collections ───────────────────────────────────────────────
 step "Phase 9: Creating optimised collections"
