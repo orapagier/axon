@@ -159,20 +159,23 @@ async fn main() -> anyhow::Result<()> {
         .map(|v| v.eq_ignore_ascii_case("json"))
         .unwrap_or(false);
 
-    if let Ok(otlp_endpoint) = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT") {
+    // Held for the whole process so buffered spans can be flushed on shutdown;
+    // `None` when OTLP export isn't configured.
+    let tracer_provider = if let Ok(otlp_endpoint) = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT") {
+        use opentelemetry::trace::TracerProvider as _;
         use opentelemetry_otlp::WithExportConfig;
         opentelemetry::global::set_text_map_propagator(
             opentelemetry_sdk::propagation::TraceContextPropagator::new(),
         );
-        let tracer = opentelemetry_otlp::new_pipeline()
-            .tracing()
-            .with_exporter(
-                opentelemetry_otlp::new_exporter()
-                    .tonic()
-                    .with_endpoint(otlp_endpoint),
-            )
-            .install_batch(opentelemetry_sdk::runtime::Tokio)
-            .expect("Failed to initialize OTLP tracer");
+        let exporter = opentelemetry_otlp::SpanExporter::builder()
+            .with_tonic()
+            .with_endpoint(otlp_endpoint)
+            .build()
+            .expect("Failed to build the OTLP span exporter");
+        let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+            .with_batch_exporter(exporter)
+            .build();
+        let tracer = provider.tracer("axon");
 
         use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
         let env_filter = tracing_subscriber::EnvFilter::from_default_env()
@@ -196,6 +199,7 @@ async fn main() -> anyhow::Result<()> {
                 .with(tracing_opentelemetry::layer().with_tracer(tracer))
                 .init();
         }
+        Some(provider)
     } else if json_logs {
         tracing_subscriber::fmt()
             .json()
@@ -205,6 +209,7 @@ async fn main() -> anyhow::Result<()> {
                     .add_directive("tower_http=info".parse()?),
             )
             .init();
+        None
     } else {
         tracing_subscriber::fmt()
             .with_env_filter(
@@ -213,7 +218,8 @@ async fn main() -> anyhow::Result<()> {
                     .add_directive("tower_http=info".parse()?),
             )
             .init();
-    }
+        None
+    };
 
     tracing::info!("AXON v{} starting...", env!("CARGO_PKG_VERSION"));
 
@@ -675,8 +681,7 @@ async fn main() -> anyhow::Result<()> {
                 );
                 let prompt = format!(
                     "Instructions: {}\n\nData to process: {}",
-                    msg.description,
-                    msg.output
+                    msg.description, msg.output
                 );
 
                 let ctx = axon::agent::RunContext::new(
@@ -803,6 +808,10 @@ async fn main() -> anyhow::Result<()> {
     .await
     .context("serve")?;
 
-    opentelemetry::global::shutdown_tracer_provider();
+    if let Some(provider) = tracer_provider {
+        if let Err(e) = provider.shutdown() {
+            tracing::warn!("OTLP tracer shutdown failed: {e}");
+        }
+    }
     Ok(())
 }

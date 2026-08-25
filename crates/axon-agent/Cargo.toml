@@ -76,10 +76,10 @@ aes-gcm = "0.10.3"
 subtle = "2"
 rand = "0.8.5"
 qdrant-client = "1.8.0"
-opentelemetry = "0.21.0"
-opentelemetry_sdk = { version = "0.21.2", features = ["rt-tokio"] }
-opentelemetry-otlp = { version = "0.14.0", features = ["grpc-tonic"] }
-tracing-opentelemetry = "0.22.0"
+opentelemetry = "0.32.0"
+opentelemetry_sdk = { version = "0.32.0", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.32.0", features = ["grpc-tonic"] }
+tracing-opentelemetry = "0.33.0"
 chrono-tz = "0.10.4"
 dirs = "5.0"
 # C3 observability: Prometheus /metrics. default-features off so we don't pull the
