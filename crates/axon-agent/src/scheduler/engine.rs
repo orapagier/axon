@@ -520,7 +520,10 @@ fn date_has_passed(value: &str, now: chrono::DateTime<chrono::Utc>) -> bool {
             return now > end.and_utc();
         }
     }
-    tracing::warn!("Scheduler: unparseable date_after stop condition {:?}", value);
+    tracing::warn!(
+        "Scheduler: unparseable date_after stop condition {:?}",
+        value
+    );
     false
 }
 

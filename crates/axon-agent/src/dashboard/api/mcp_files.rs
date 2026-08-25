@@ -365,14 +365,12 @@ mod content_disposition_tests {
 
     #[test]
     fn ordinary_names_are_left_alone() {
-        assert!(content_disposition_filename("chart 1.png")
-            .starts_with("filename=\"chart 1.png\""));
+        assert!(content_disposition_filename("chart 1.png").starts_with("filename=\"chart 1.png\""));
     }
 
     // An all-non-ascii name must not produce an empty quoted string.
     #[test]
     fn always_yields_an_ascii_fallback() {
-        assert!(content_disposition_filename("日本語")
-            .starts_with("filename=\"___\""));
+        assert!(content_disposition_filename("日本語").starts_with("filename=\"___\""));
     }
 }

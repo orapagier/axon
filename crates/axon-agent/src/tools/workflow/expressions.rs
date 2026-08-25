@@ -1567,7 +1567,10 @@ mod expression_limit_tests {
     fn runaway_loop_terminates_instead_of_hanging() {
         let started = std::time::Instant::now();
         let out = evaluate_js_expression("(function(){ while(true){} })()", &HashMap::new(), "t");
-        assert!(out.is_none(), "a non-terminating expression yields no value");
+        assert!(
+            out.is_none(),
+            "a non-terminating expression yields no value"
+        );
         assert!(
             started.elapsed() < std::time::Duration::from_secs(60),
             "loop limit did not fire"
