@@ -56,7 +56,10 @@ const MAX_LIST_PAGES: usize = 20;
 /// spreadsheet picker showing a single sheet.
 ///
 /// Shared drives are included, so a file the user works in daily from a team
-/// drive is listed the way drive.google.com lists it.
+/// drive is listed the way drive.google.com lists it. That breadth is what
+/// makes the second walk below necessary: Drive answers an `allDrives` query
+/// out of several corpora at once and abandons the ones it cannot reach,
+/// saying so with `incompleteSearch` rather than an error.
 pub(crate) async fn paged_list(
     state: &AppState,
     q: &str,
@@ -68,9 +71,82 @@ pub(crate) async fn paged_list(
     let wanted = wanted.clamp(1, 1000) as usize;
 
     let mut files: Vec<Value> = Vec::new();
+    // One file can surface twice across corpora (owned *and* reachable through
+    // a shared drive), and again when the fallback walk re-lists the user's own
+    // corpus, so dedupe spans every walk.
     let mut seen: HashSet<String> = HashSet::new();
+
+    let all = walk_corpus(
+        state,
+        &tok,
+        q,
+        fields,
+        wanted,
+        "allDrives",
+        &mut files,
+        &mut seen,
+    )
+    .await?;
+
+    // `incompleteSearch` means Drive returned what it could and dropped the
+    // rest — for a picker that is indistinguishable from "you own three
+    // spreadsheets". The user's own corpus is always searchable in full, so ask
+    // for it directly; anything already collected is deduped away.
+    let mut more_available = all.more_available;
+    if all.incomplete && files.len() < wanted {
+        let own = walk_corpus(
+            state, &tok, q, fields, wanted, "user", &mut files, &mut seen,
+        )
+        .await?;
+        more_available = more_available || own.more_available;
+        // Each walk is sorted on its own, so the concatenation is not. Restore
+        // the "most recently edited first" order the pickers promise.
+        files.sort_by(|a, b| modified_time(b).cmp(modified_time(a)));
+    }
+
+    Ok(json!({
+        "files": files,
+        "count": files.len(),
+        "truncated": more_available,
+    }))
+}
+
+/// RFC 3339 timestamps sort correctly as plain strings; a file listed without
+/// one (the caller did not ask for the field) sorts last rather than first.
+fn modified_time(file: &Value) -> &str {
+    file.get("modifiedTime")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+}
+
+/// What one [`walk_corpus`] pass learned beyond the files it appended.
+struct WalkOutcome {
+    /// Drive still had matches when `wanted` was reached.
+    more_available: bool,
+    /// Drive flagged the results as partial (`incompleteSearch`).
+    incomplete: bool,
+}
+
+/// Walk every page of `q` over a single Drive corpus, appending new files.
+///
+/// `files` and `seen` are shared across walks so a second corpus can top up the
+/// first without repeating anything.
+#[allow(clippy::too_many_arguments)]
+async fn walk_corpus(
+    state: &AppState,
+    tok: &str,
+    q: &str,
+    fields: &str,
+    wanted: usize,
+    corpora: &str,
+    files: &mut Vec<Value>,
+    seen: &mut HashSet<String>,
+) -> Result<WalkOutcome> {
     let mut page_token: Option<String> = None;
-    let mut more_available = false;
+    let mut outcome = WalkOutcome {
+        more_available: false,
+        incomplete: false,
+    };
 
     for _ in 0..MAX_LIST_PAGES {
         let mut params: Vec<(&str, String)> = vec![
@@ -79,9 +155,13 @@ pub(crate) async fn paged_list(
             ("pageSize", "200".to_string()),
             ("q", q.to_string()),
             ("orderBy", "modifiedTime desc".to_string()),
-            ("fields", format!("nextPageToken,{fields}")),
-            ("corpora", "allDrives".to_string()),
-            ("includeItemsFromAllDrives", "true".to_string()),
+            ("fields", format!("nextPageToken,incompleteSearch,{fields}")),
+            ("corpora", corpora.to_string()),
+            // Only meaningful alongside a shared-drive corpus; the "user" walk
+            // is deliberately narrowed to what that corpus can answer in full.
+            ("includeItemsFromAllDrives", (corpora != "user").to_string()),
+            // Kept on regardless: without it Drive rejects a response that
+            // happens to contain a shared-drive file.
             ("supportsAllDrives", "true".to_string()),
         ];
         if let Some(t) = &page_token {
@@ -91,7 +171,7 @@ pub(crate) async fn paged_list(
         let resp: Value = state
             .client
             .get(format!("{BASE}/files"))
-            .bearer_auth(&tok)
+            .bearer_auth(tok)
             .query(&params)
             .send()
             .await?
@@ -100,20 +180,22 @@ pub(crate) async fn paged_list(
             .json()
             .await?;
 
+        if resp.get("incompleteSearch").and_then(|v| v.as_bool()) == Some(true) {
+            outcome.incomplete = true;
+        }
+
         let page: &[Value] = resp
             .get("files")
             .and_then(|v| v.as_array())
             .map(Vec::as_slice)
             .unwrap_or_default();
         for f in page {
-            // One file can surface twice across corpora (owned *and* reachable
-            // through a shared drive).
             let id = f.get("id").and_then(|v| v.as_str()).unwrap_or_default();
             if id.is_empty() || !seen.insert(id.to_string()) {
                 continue;
             }
             if files.len() >= wanted {
-                more_available = true;
+                outcome.more_available = true;
                 break;
             }
             files.push(f.clone());
@@ -128,16 +210,12 @@ pub(crate) async fn paged_list(
             break;
         }
         if files.len() >= wanted {
-            more_available = true;
+            outcome.more_available = true;
             break;
         }
     }
 
-    Ok(json!({
-        "files": files,
-        "count": files.len(),
-        "truncated": more_available,
-    }))
+    Ok(outcome)
 }
 
 pub async fn list(
