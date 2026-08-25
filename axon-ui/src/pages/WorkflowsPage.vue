@@ -143,7 +143,15 @@ const { nodes: mappedNodes, edges: mappedEdges } = useCanvasMapping({
   workflowObject: computed(() => selectedWorkflow.value),
 })
 
-const spreadsheetOptions = ref([])
+// Spreadsheets are cached per Google account, like calendars below: a node
+// acting as a second account must be offered that account's files, not the
+// globally signed-in one's. Keyed by credential_id, with '' meaning "the
+// account on the Credentials page".
+const spreadsheetsByAccount = ref({})
+const spreadsheetLoadState = ref({})
+const spreadsheetLoadedAt = ref({})
+/** How long a fetched spreadsheet list is treated as current, in ms. */
+const SPREADSHEET_LIST_TTL_MS = 60_000
 const spreadsheetTabsById = ref({})
 const spreadsheetTabIdMapsById = ref({})
 const loadingSpreadsheetTabsById = ref({})
@@ -153,14 +161,82 @@ const loadingSpreadsheetTabsById = ref({})
 const calendarsByAccount = ref({})
 const calendarLoadState = ref({})
 
-async function loadSpreadsheets() {
+/**
+ * Fetch the spreadsheets visible to one Google account.
+ *
+ * The failure path records the message rather than leaving an empty list
+ * behind: "no spreadsheets" and "the token expired" look identical in a
+ * dropdown, and only one of them is something the user can fix.
+ */
+async function loadSpreadsheets(credentialId = '', force = false) {
+  const key = credentialId || ''
+  const state = spreadsheetLoadState.value[key]
+  if (state === 'loading') return
+  if (!force && state === 'ok') return
+  // `force` means "this list may be stale", not "fetch again unconditionally":
+  // clicking through a row of Sheets nodes would otherwise fire one multi-page
+  // Drive walk per node.
+  if (force && Date.now() - (spreadsheetLoadedAt.value[key] || 0) < SPREADSHEET_LIST_TTL_MS) {
+    return
+  }
+
+  spreadsheetLoadState.value = { ...spreadsheetLoadState.value, [key]: 'loading' }
   try {
-    const d = await get('/google/sheets')
-    const files = d.files || []
-    spreadsheetOptions.value = files.map(f => ({ name: f.name, value: f.id }))
+    const qs = key ? `?credential_id=${encodeURIComponent(key)}` : ''
+    const d = await get(`/google/sheets${qs}`)
+    if (d.error) throw new Error(d.error)
+    const files = Array.isArray(d.files) ? d.files : []
+    spreadsheetsByAccount.value = {
+      ...spreadsheetsByAccount.value,
+      [key]: files.map(f => ({
+        name: f.name || f.id,
+        value: f.id,
+        description: f.modifiedTime ? `Edited ${formatSheetDate(f.modifiedTime)}` : '',
+      })),
+    }
+    spreadsheetLoadState.value = { ...spreadsheetLoadState.value, [key]: 'ok' }
+    spreadsheetLoadedAt.value = { ...spreadsheetLoadedAt.value, [key]: Date.now() }
   } catch (e) {
     console.error('Failed to load Google Sheets', e)
+    spreadsheetLoadState.value = {
+      ...spreadsheetLoadState.value,
+      [key]: String(e?.message || e),
+    }
   }
+}
+
+/** Short local date for a spreadsheet's modifiedTime, or '' if unparseable. */
+function formatSheetDate(iso) {
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString()
+}
+
+/** Hint text under a spreadsheet field: how many were found, or why none were. */
+function spreadsheetPickerHint(credentialId = '') {
+  const key = credentialId || ''
+  const state = spreadsheetLoadState.value[key]
+  if (state === 'loading') return 'Loading your spreadsheets…'
+  const count = (spreadsheetsByAccount.value[key] || []).length
+  if (state && state !== 'ok') {
+    const stale = count > 0 ? ` Showing the ${count} loaded earlier.` : ''
+    return `Could not load your spreadsheets: ${state}. Check the Google connection on the Credentials page, then reopen this node.${stale}`
+  }
+  if (count === 0) {
+    return 'No spreadsheets found for this account. You can still paste a spreadsheet ID or URL.'
+  }
+  return `${count} spreadsheet${count === 1 ? '' : 's'} found, most recently edited first. You can also paste a spreadsheet ID or URL.`
+}
+
+/**
+ * The id inside a pasted Google Sheets URL, or the input unchanged.
+ *
+ * Pasting the address bar is the obvious thing to do, and every Sheets API call
+ * rejects a full URL — so unwrap it here instead of failing at run time.
+ */
+function normalizeSpreadsheetId(raw) {
+  const value = String(raw || '').trim()
+  const match = value.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/)
+  return match ? match[1] : value
 }
 
 /**
@@ -230,8 +306,14 @@ function calendarPickerHint(credentialId = '') {
   return `${count} calendar${count === 1 ? '' : 's'} found, including any under "Other calendars". You can also type a calendar ID or an email address.`
 }
 
+/**
+ * The spreadsheet whose tabs a `sheet_id` field should offer.
+ *
+ * `spreadsheet_id` first, then the source of a copy/move pair — a `sheet_id`
+ * always names a tab in the sheet being read from, never the destination.
+ */
 function getSpreadsheetIdFromConfig(nodeConfig = {}) {
-  return (
+  return normalizeSpreadsheetId(
     nodeConfig?.spreadsheet_id ||
     nodeConfig?.source_spreadsheet_id ||
     nodeConfig?.destination_spreadsheet_id ||
@@ -239,34 +321,55 @@ function getSpreadsheetIdFromConfig(nodeConfig = {}) {
   )
 }
 
-async function loadSpreadsheetTabs(spreadsheetId) {
-  if (!spreadsheetId) return
-  if (spreadsheetTabsById.value[spreadsheetId]) return
-  if (loadingSpreadsheetTabsById.value[spreadsheetId]) return
+/**
+ * Cache key for one spreadsheet's tabs.
+ *
+ * Account-qualified because two connected Google accounts can each hold a file
+ * with the same id only by coincidence — but a node switched from one account
+ * to the other must re-fetch rather than reuse tabs it can no longer read.
+ */
+function tabsCacheKey(spreadsheetId, credentialId = '') {
+  return `${credentialId || ''}::${spreadsheetId}`
+}
+
+async function loadSpreadsheetTabs(spreadsheetId, credentialId = '') {
+  const id = normalizeSpreadsheetId(spreadsheetId)
+  if (!id) return
+  const key = tabsCacheKey(id, credentialId)
+  if (spreadsheetTabsById.value[key]) return
+  if (loadingSpreadsheetTabsById.value[key]) return
 
   loadingSpreadsheetTabsById.value = {
     ...loadingSpreadsheetTabsById.value,
-    [spreadsheetId]: true,
+    [key]: true,
   }
 
   try {
-    const encodedId = encodeURIComponent(spreadsheetId)
-    const d = await get(`/google/sheets/${encodedId}/tabs`)
+    const encodedId = encodeURIComponent(id)
+    const qs = credentialId ? `?credential_id=${encodeURIComponent(credentialId)}` : ''
+    const d = await get(`/google/sheets/${encodedId}/tabs${qs}`)
     const tabs = Array.isArray(d.tabs) ? d.tabs : []
     spreadsheetTabsById.value = {
       ...spreadsheetTabsById.value,
-      [spreadsheetId]: tabs,
+      [key]: tabs,
     }
     spreadsheetTabIdMapsById.value = {
       ...spreadsheetTabIdMapsById.value,
-      [spreadsheetId]: d.sheet_id_map || {},
+      [key]: d.sheet_id_map || {},
     }
   } catch (e) {
     console.error('Failed to load Google Sheet tabs', e)
+    // Cache the failure as an empty list. Without it the property builder,
+    // which requests tabs during render, would re-fire the same failing call on
+    // every keystroke in the panel.
+    spreadsheetTabsById.value = {
+      ...spreadsheetTabsById.value,
+      [key]: [],
+    }
   } finally {
     loadingSpreadsheetTabsById.value = {
       ...loadingSpreadsheetTabsById.value,
-      [spreadsheetId]: false,
+      [key]: false,
     }
   }
 }
@@ -342,17 +445,21 @@ function schemaToProperties(tool, nodeConfig = {}) {
   const required = tool.required || []
   const spreadsheetIdKeys = new Set(['spreadsheet_id', 'source_spreadsheet_id', 'destination_spreadsheet_id'])
   const selectedSpreadsheetId = getSpreadsheetIdFromConfig(nodeConfig)
-  const selectedSheetTabs = selectedSpreadsheetId ? (spreadsheetTabsById.value[selectedSpreadsheetId] || []) : []
-
-  if (selectedSpreadsheetId && !spreadsheetTabsById.value[selectedSpreadsheetId]) {
-    loadSpreadsheetTabs(selectedSpreadsheetId)
-  }
 
   // ── Google Calendar specific ─────────────────────────────────────────────
   // Any field naming a single calendar becomes a picker over the calendars of
   // the account this node acts as.
   const calendarIdKeys = new Set(['calendar_id', 'source_calendar_id', 'destination_calendar_id'])
   const googleAccountId = nodeConfig?.credential_id || ''
+
+  const selectedTabsKey = tabsCacheKey(selectedSpreadsheetId, googleAccountId)
+  const selectedSheetTabs = selectedSpreadsheetId
+    ? (spreadsheetTabsById.value[selectedTabsKey] || [])
+    : []
+
+  if (selectedSpreadsheetId && !spreadsheetTabsById.value[selectedTabsKey]) {
+    loadSpreadsheetTabs(selectedSpreadsheetId, googleAccountId)
+  }
 
   // The backend serializes schema keys alphabetically, which inverts natural
   // pairs (time_max before time_min, end before start). Pin them back.
@@ -389,12 +496,20 @@ function schemaToProperties(tool, nodeConfig = {}) {
         value: tab.sheet_id,
         description: `Sheet ID: ${tab.sheet_id}`,
       }))
-      const selectedMap = spreadsheetTabIdMapsById.value[selectedSpreadsheetId] || {}
+      const selectedMap = spreadsheetTabIdMapsById.value[selectedTabsKey] || {}
       prop.hint = `Pick a sheet tab from the selected spreadsheet (${Object.keys(selectedMap).length} tabs loaded).`
-    } else if (isSpreadsheetIdKey && spreadsheetOptions.value.length > 0) {
+    } else if (isSpreadsheetIdKey) {
+      // Spreadsheet picker. `allowCustomValue` keeps the field usable when the
+      // list is empty or failed to load — the picker used to fall back to a
+      // bare text box in that case, with nothing on screen to say why, so an
+      // expired token was indistinguishable from an empty Drive.
+      loadSpreadsheets(googleAccountId)
       prop.type = 'options'
       prop.searchable = true
-      prop.options = spreadsheetOptions.value
+      prop.allowCustomValue = true
+      prop.options = spreadsheetsByAccount.value[googleAccountId] || []
+      prop.hint = spreadsheetPickerHint(googleAccountId)
+      prop.placeholder = 'Pick a spreadsheet, or paste an ID or URL…'
     } else if (calendarIdKeys.has(key)) {
       // Calendar picker. Custom values stay allowed so a calendar shared after
       // the list was cached — or one belonging to someone else entirely — can
@@ -685,21 +800,67 @@ watch(
     selectedNode.value?.data?.config?.spreadsheet_id,
     selectedNode.value?.data?.config?.source_spreadsheet_id,
     selectedNode.value?.data?.config?.destination_spreadsheet_id,
+    selectedNode.value?.data?.config?.credential_id,
   ],
-  ([spreadsheetId, sourceSpreadsheetId, destinationSpreadsheetId]) => {
-    if (spreadsheetId) loadSpreadsheetTabs(spreadsheetId)
-    if (sourceSpreadsheetId && sourceSpreadsheetId !== spreadsheetId) {
-      loadSpreadsheetTabs(sourceSpreadsheetId)
-    }
-    if (
-      destinationSpreadsheetId &&
-      destinationSpreadsheetId !== spreadsheetId &&
-      destinationSpreadsheetId !== sourceSpreadsheetId
-    ) {
-      loadSpreadsheetTabs(destinationSpreadsheetId)
-    }
+  ([spreadsheetId, sourceSpreadsheetId, destinationSpreadsheetId, credentialId]) => {
+    const account = credentialId || ''
+    // Deduped: the three fields often hold the same id, and each distinct one
+    // costs a request.
+    const ids = new Set(
+      [spreadsheetId, sourceSpreadsheetId, destinationSpreadsheetId]
+        .map(normalizeSpreadsheetId)
+        .filter(Boolean)
+    )
+    for (const id of ids) loadSpreadsheetTabs(id, account)
   },
   { immediate: true }
+)
+
+/**
+ * Drop a `sheet_id` that belongs to a spreadsheet the node no longer points at.
+ *
+ * Sheet ids are small integers scoped to one file, so the id of a tab in the
+ * previous spreadsheet is very likely a *valid* — and completely unrelated —
+ * tab in the new one. Left in place it silently sends the write to the wrong
+ * tab. Only runs once the new file's tabs have loaded, so a value is never
+ * cleared mid-fetch.
+ */
+watch(
+  () => {
+    const config = selectedNode.value?.data?.config
+    if (!config) return null
+    const id = getSpreadsheetIdFromConfig(config)
+    if (!id) return null
+    return spreadsheetTabsById.value[tabsCacheKey(id, config.credential_id || '')] || null
+  },
+  (tabs) => {
+    if (!tabs || tabs.length === 0) return
+    const config = selectedNode.value?.data?.config
+    const current = config?.sheet_id
+    if (current === undefined || current === '') return
+    // Expressions resolve at run time; there is nothing to validate here.
+    if (typeof current === 'string' && current.includes('{{')) return
+    if (!tabs.some(tab => String(tab.sheet_id) === String(current))) {
+      config.sheet_id = ''
+    }
+  }
+)
+
+/**
+ * Refresh the spreadsheet list whenever a Sheets node is opened.
+ *
+ * A sheet created in the browser after this page loaded would otherwise never
+ * appear: the list was fetched once at startup and cached for the session, so
+ * the only cure was a full reload.
+ */
+watch(
+  () => [selectedNode.value?.id, selectedNode.value?.data?.config?.credential_id],
+  ([nodeId]) => {
+    if (!nodeId) return
+    const toolName = selectedNode.value?.data?.config?.tool_name || ''
+    if (!toolName.startsWith('gsheets_')) return
+    loadSpreadsheets(selectedNode.value?.data?.config?.credential_id || '', true)
+  }
 )
 
 async function load() {
@@ -2540,7 +2701,8 @@ onMounted(() => {
   load()
   loadMcpTools()
   loadFonts()
-  loadSpreadsheets()
+  // Spreadsheets and calendars load when a node that needs them is opened —
+  // both are per-account and the list has to be fresh at that moment anyway.
   loadCalendars()
   window.addEventListener('mousedown', handleClickOutside)
   window.addEventListener('keydown', handleKeydown)

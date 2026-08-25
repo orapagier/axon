@@ -4,35 +4,47 @@ use axon_core::{AppState, EnsureOk};
 use serde_json::{json, Value};
 
 const BASE: &str = "https://sheets.googleapis.com/v4/spreadsheets";
-const DRIVE_BASE: &str = "https://www.googleapis.com/drive/v3";
+
+/// The id inside a pasted Google Sheets URL, or the input unchanged.
+///
+/// Copying the address bar is the obvious way to name a spreadsheet, and every
+/// Sheets endpoint rejects a full URL with a 404 that says nothing about why.
+/// Unwrap it here, once, so the picker, the agent and hand-typed workflow
+/// fields all behave the same.
+pub fn normalize_id(raw: &str) -> String {
+    let raw = raw.trim();
+    // .../spreadsheets/d/<ID>/edit#gid=0 — the id is the segment after "/d/".
+    if let Some(rest) = raw.split("/spreadsheets/d/").nth(1) {
+        let id = rest
+            .split(['/', '?', '#'])
+            .next()
+            .unwrap_or_default()
+            .trim();
+        if !id.is_empty() {
+            return id.to_string();
+        }
+    }
+    raw.to_string()
+}
 
 // ── Spreadsheet Listing (via Drive API) ───────────────────────────────────────
 
 /// List spreadsheets in the user's Google Drive account.
-/// Uses Drive files.list API filtered to Google Sheets mime type.
+///
+/// Delegates to [`crate::drive::paged_list`], which follows `nextPageToken`.
+/// That is not an optimisation: Drive applies `q` after it has taken a page off
+/// the corpus, so a mime-filtered page routinely comes back holding a single
+/// match — sometimes none — alongside a token pointing at the rest. Reading
+/// only the first page is why the spreadsheet picker used to offer one file to
+/// accounts holding dozens.
 pub async fn list_spreadsheets(state: &AppState, max_results: u32) -> Result<Value> {
-    let tok = access_token(state).await?;
-    let q = "mimeType='application/vnd.google-apps.spreadsheet' and trashed=false";
-    let resp: Value = state
-        .client
-        .get(format!("{DRIVE_BASE}/files"))
-        .bearer_auth(&tok)
-        .query(&[
-            ("pageSize", max_results.to_string()),
-            ("q", q.into()),
-            ("orderBy", "modifiedTime desc".into()),
-            (
-                "fields",
-                "files(id,name,modifiedTime,webViewLink,shared)".into(),
-            ),
-        ])
-        .send()
-        .await?
-        .ensure_ok()
-        .await?
-        .json()
-        .await?;
-    Ok(resp)
+    crate::drive::paged_list(
+        state,
+        "mimeType='application/vnd.google-apps.spreadsheet' and trashed=false",
+        "files(id,name,modifiedTime,webViewLink,shared)",
+        max_results,
+    )
+    .await
 }
 
 // ── Spreadsheet Management ────────────────────────────────────────────────────
@@ -981,4 +993,48 @@ fn col_index_to_letter(mut idx: usize) -> String {
         idx = idx / 26 - 1;
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_pasted_sheets_url_yields_its_id() {
+        assert_eq!(
+            normalize_id("https://docs.google.com/spreadsheets/d/1AbC-dEf_23/edit#gid=0"),
+            "1AbC-dEf_23"
+        );
+        // The `/edit` suffix is optional, and so is the fragment.
+        assert_eq!(
+            normalize_id("https://docs.google.com/spreadsheets/d/1AbC-dEf_23"),
+            "1AbC-dEf_23"
+        );
+        // A share link carries its parameters in a query string instead.
+        assert_eq!(
+            normalize_id("https://docs.google.com/spreadsheets/d/1AbC-dEf_23/edit?usp=sharing"),
+            "1AbC-dEf_23"
+        );
+    }
+
+    #[test]
+    fn a_bare_id_is_returned_untouched_apart_from_whitespace() {
+        assert_eq!(normalize_id("  1AbC-dEf_23  "), "1AbC-dEf_23");
+    }
+
+    #[test]
+    fn anything_that_is_not_a_sheets_url_passes_through() {
+        // Better to let Google reject an unrecognised value in its own words
+        // than to guess at an id and act on the wrong file.
+        assert_eq!(
+            normalize_id("https://example.com/nope"),
+            "https://example.com/nope"
+        );
+        assert_eq!(normalize_id(""), "");
+        // A truncated URL has no id to take; don't invent one.
+        assert_eq!(
+            normalize_id("https://docs.google.com/spreadsheets/d/"),
+            "https://docs.google.com/spreadsheets/d/"
+        );
+    }
 }

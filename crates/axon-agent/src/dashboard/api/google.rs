@@ -1,33 +1,72 @@
 use super::*;
 
-pub async fn get_google_sheets(State(state): State<AppState>) -> Json<Value> {
-    if let Ok(res) = state
-        .tools
-        .run("gsheets_list", json!({"max_results": 100}))
-        .await
-    {
-        Json(res)
-    } else {
-        Json(json!({"files": []}))
+/// Spreadsheets for the node's spreadsheet picker.
+///
+/// `?credential_id=` runs the lookup as the Google account that node is
+/// configured to act as, exactly as the calendar picker does. Without it a node
+/// pointed at a second account would be offered the globally signed-in
+/// account's spreadsheets — files it cannot even open.
+pub async fn get_google_sheets(
+    State(state): State<AppState>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Json<Value> {
+    let credential_id = params
+        .get("credential_id")
+        .map(String::as_str)
+        .unwrap_or_default();
+
+    let listed = crate::google_accounts::scoped(&state, credential_id, async {
+        state
+            .tools
+            .run("gsheets_list", json!({"max_results": 500}))
+            .await
+            .map_err(|e| e.to_string())
+    })
+    .await;
+
+    // An expired token used to collapse into an empty list, which the picker
+    // rendered as "you have no spreadsheets" — indistinguishable from an empty
+    // Drive, and impossible for the user to act on. Report it instead.
+    match listed {
+        Ok(res) => Json(res),
+        Err(e) => {
+            tracing::warn!("Spreadsheet list failed: {e}");
+            Json(json!({ "files": [], "error": e }))
+        }
     }
 }
 
 pub async fn get_google_sheet_tabs(
     State(state): State<AppState>,
     Path(spreadsheet_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> Json<Value> {
-    let res = match state
-        .tools
-        .run("gsheets_get", json!({"spreadsheet_id": spreadsheet_id}))
-        .await
-    {
+    let credential_id = params
+        .get("credential_id")
+        .map(String::as_str)
+        .unwrap_or_default();
+
+    // Same account as the picker that chose the spreadsheet: a sheet belonging
+    // to a second Google account is unreadable by the globally signed-in one,
+    // so a tab list fetched without the scope would come back empty.
+    let listed = crate::google_accounts::scoped(&state, credential_id, async {
+        state
+            .tools
+            .run("gsheets_get", json!({"spreadsheet_id": spreadsheet_id}))
+            .await
+            .map_err(|e| e.to_string())
+    })
+    .await;
+
+    let res = match listed {
         Ok(value) => value,
         Err(e) => {
+            tracing::warn!("Sheet tab list failed: {e}");
             return Json(json!({
                 "tabs": [],
                 "sheet_id_map": {},
-                "error": e.to_string(),
-            }))
+                "error": e,
+            }));
         }
     };
 

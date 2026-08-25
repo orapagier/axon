@@ -30,6 +30,38 @@ macro_rules! str {
     };
 }
 
+/// A *required* numeric argument, as a `u64`.
+///
+/// `num!` substitutes a default when the value is missing, blank or
+/// unparseable. For an identifier that is wrong twice over: sheet 0 is the real
+/// id of a spreadsheet's first tab, so a field left empty would quietly retarget
+/// `gsheets_delete_sheet` (or rename, or clear-filter) at whatever tab happens
+/// to sit at the front. Refuse the call instead of acting on the wrong tab.
+macro_rules! req_u64 {
+    ($args:expr) => {
+        |key: &str| -> Result<u64> {
+            let raw = $args
+                .get(key)
+                .ok_or_else(|| anyhow::anyhow!("missing required param '{key}'"))?;
+            // Same string tolerance as `num!`: workflow fields and expressions
+            // routinely deliver "0" rather than 0.
+            let n = raw
+                .as_f64()
+                .or_else(|| raw.as_str().and_then(|s| s.trim().parse::<f64>().ok()))
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "param '{key}' must be a number, got {raw}. For a sheet tab, pick one \
+                         from the dropdown or use gsheets_get to find its numeric sheetId."
+                    )
+                })?;
+            if !n.is_finite() || n < 0.0 {
+                anyhow::bail!("param '{key}' must be a non-negative number, got {n}");
+            }
+            Ok(n as u64)
+        }
+    };
+}
+
 macro_rules! num {
     ($args:expr) => {
         |key: &str, default: f64| -> f64 {
@@ -347,6 +379,10 @@ impl GoogleService {
         let a = &args;
         let s = str!(a);
         let n = num!(a);
+        let req_u64 = req_u64!(a);
+        // Spreadsheet ids arrive as often from a pasted browser URL as from the
+        // picker. `sheet_ref` unwraps the former; see `sheets::normalize_id`.
+        let sheet_ref = |key: &str| -> Result<String> { Ok(sheets::normalize_id(s(key)?)) };
 
         if let Some(v) = youtube::try_call(&self.0, name, a).await? {
             return Ok(ok_json(v));
@@ -909,9 +945,9 @@ impl GoogleService {
                 sheets::create_spreadsheet(&self.0, s("title")?, json_arr_opt(a, "sheet_names"))
                     .await
             }
-            "gsheets_get" => sheets::get_spreadsheet(&self.0, s("spreadsheet_id")?).await,
+            "gsheets_get" => sheets::get_spreadsheet(&self.0, &sheet_ref("spreadsheet_id")?).await,
             "gsheets_read_range" => {
-                sheets::read_range(&self.0, s("spreadsheet_id")?, s("range")?).await
+                sheets::read_range(&self.0, &sheet_ref("spreadsheet_id")?, s("range")?).await
             }
             "gsheets_batch_read" => {
                 let ranges = parse_batch_read_ranges(a.get("ranges"));
@@ -921,37 +957,46 @@ impl GoogleService {
                          like 'Sheet1!A1:C10' (a range that resolves to null/blank is skipped)."
                     );
                 }
-                sheets::batch_read(&self.0, s("spreadsheet_id")?, ranges).await
+                sheets::batch_read(&self.0, &sheet_ref("spreadsheet_id")?, ranges).await
             }
             "gsheets_write_range" => {
                 let values = parse_2d_values(a);
-                sheets::write_range(&self.0, s("spreadsheet_id")?, s("range")?, values).await
+                sheets::write_range(&self.0, &sheet_ref("spreadsheet_id")?, s("range")?, values)
+                    .await
             }
             "gsheets_batch_write" => {
                 let data = parse_batch_write_data(a.get("data"));
-                sheets::batch_write(&self.0, s("spreadsheet_id")?, data).await
+                sheets::batch_write(&self.0, &sheet_ref("spreadsheet_id")?, data).await
             }
             "gsheets_append_rows" => {
                 let values = parse_2d_values(a);
-                sheets::append_rows(&self.0, s("spreadsheet_id")?, s("range")?, values).await
+                sheets::append_rows(&self.0, &sheet_ref("spreadsheet_id")?, s("range")?, values)
+                    .await
             }
             "gsheets_clear_range" => {
-                sheets::clear_range(&self.0, s("spreadsheet_id")?, s("range")?).await
+                sheets::clear_range(&self.0, &sheet_ref("spreadsheet_id")?, s("range")?).await
             }
             "gsheets_find" => {
-                sheets::find_in_sheet(&self.0, s("spreadsheet_id")?, s("range")?, s("query")?).await
+                sheets::find_in_sheet(
+                    &self.0,
+                    &sheet_ref("spreadsheet_id")?,
+                    s("range")?,
+                    s("query")?,
+                )
+                .await
             }
             "gsheets_add_sheet" => {
-                sheets::add_sheet(&self.0, s("spreadsheet_id")?, s("title")?).await
+                sheets::add_sheet(&self.0, &sheet_ref("spreadsheet_id")?, s("title")?).await
             }
             "gsheets_delete_sheet" => {
-                sheets::delete_sheet(&self.0, s("spreadsheet_id")?, n("sheet_id", 0.0) as u64).await
+                sheets::delete_sheet(&self.0, &sheet_ref("spreadsheet_id")?, req_u64("sheet_id")?)
+                    .await
             }
             "gsheets_rename_sheet" => {
                 sheets::rename_sheet(
                     &self.0,
-                    s("spreadsheet_id")?,
-                    n("sheet_id", 0.0) as u64,
+                    &sheet_ref("spreadsheet_id")?,
+                    req_u64("sheet_id")?,
                     s("new_title")?,
                 )
                 .await
@@ -959,8 +1004,8 @@ impl GoogleService {
             "gsheets_duplicate_sheet" => {
                 sheets::duplicate_sheet(
                     &self.0,
-                    s("spreadsheet_id")?,
-                    n("sheet_id", 0.0) as u64,
+                    &sheet_ref("spreadsheet_id")?,
+                    req_u64("sheet_id")?,
                     a.get("new_title").and_then(|v| v.as_str()),
                 )
                 .await
@@ -968,17 +1013,17 @@ impl GoogleService {
             "gsheets_copy_sheet_to" => {
                 sheets::copy_sheet_to(
                     &self.0,
-                    s("source_spreadsheet_id")?,
-                    n("sheet_id", 0.0) as u64,
-                    s("destination_spreadsheet_id")?,
+                    &sheet_ref("source_spreadsheet_id")?,
+                    req_u64("sheet_id")?,
+                    &sheet_ref("destination_spreadsheet_id")?,
                 )
                 .await
             }
             "gsheets_export_sheet" => {
                 sheets::export_sheet(
                     &self.0,
-                    s("spreadsheet_id")?,
-                    n("sheet_id", 0.0) as u64,
+                    &sheet_ref("spreadsheet_id")?,
+                    req_u64("sheet_id")?,
                     a.get("format").and_then(|v| v.as_str()).unwrap_or("pdf"),
                     a.get("range").and_then(|v| v.as_str()),
                     a.get("portrait").and_then(|v| v.as_bool()),
@@ -990,8 +1035,8 @@ impl GoogleService {
             "gsheets_insert_dimension" => {
                 sheets::insert_dimension(
                     &self.0,
-                    s("spreadsheet_id")?,
-                    n("sheet_id", 0.0) as u64,
+                    &sheet_ref("spreadsheet_id")?,
+                    req_u64("sheet_id")?,
                     s("dimension")?,
                     n("start_index", 0.0) as u32,
                     n("count", 1.0) as u32,
@@ -1001,8 +1046,8 @@ impl GoogleService {
             "gsheets_delete_dimension" => {
                 sheets::delete_dimension(
                     &self.0,
-                    s("spreadsheet_id")?,
-                    n("sheet_id", 0.0) as u64,
+                    &sheet_ref("spreadsheet_id")?,
+                    req_u64("sheet_id")?,
                     s("dimension")?,
                     n("start_index", 0.0) as u32,
                     n("end_index", 1.0) as u32,
@@ -1012,8 +1057,8 @@ impl GoogleService {
             "gsheets_sort_range" => {
                 sheets::sort_range(
                     &self.0,
-                    s("spreadsheet_id")?,
-                    n("sheet_id", 0.0) as u64,
+                    &sheet_ref("spreadsheet_id")?,
+                    req_u64("sheet_id")?,
                     n("start_row", 0.0) as u32,
                     n("end_row", 0.0) as u32,
                     n("start_col", 0.0) as u32,
@@ -1026,8 +1071,8 @@ impl GoogleService {
             "gsheets_create_filter" => {
                 sheets::create_filter(
                     &self.0,
-                    s("spreadsheet_id")?,
-                    n("sheet_id", 0.0) as u64,
+                    &sheet_ref("spreadsheet_id")?,
+                    req_u64("sheet_id")?,
                     n("start_row", 0.0) as u32,
                     n("end_row", 0.0) as u32,
                     n("start_col", 0.0) as u32,
@@ -1036,13 +1081,14 @@ impl GoogleService {
                 .await
             }
             "gsheets_clear_filter" => {
-                sheets::clear_filter(&self.0, s("spreadsheet_id")?, n("sheet_id", 0.0) as u64).await
+                sheets::clear_filter(&self.0, &sheet_ref("spreadsheet_id")?, req_u64("sheet_id")?)
+                    .await
             }
             "gsheets_merge_cells" => {
                 sheets::merge_cells(
                     &self.0,
-                    s("spreadsheet_id")?,
-                    n("sheet_id", 0.0) as u64,
+                    &sheet_ref("spreadsheet_id")?,
+                    req_u64("sheet_id")?,
                     n("start_row", 0.0) as u32,
                     n("end_row", 0.0) as u32,
                     n("start_col", 0.0) as u32,
@@ -1056,8 +1102,8 @@ impl GoogleService {
             "gsheets_unmerge_cells" => {
                 sheets::unmerge_cells(
                     &self.0,
-                    s("spreadsheet_id")?,
-                    n("sheet_id", 0.0) as u64,
+                    &sheet_ref("spreadsheet_id")?,
+                    req_u64("sheet_id")?,
                     n("start_row", 0.0) as u32,
                     n("end_row", 0.0) as u32,
                     n("start_col", 0.0) as u32,
@@ -1068,8 +1114,8 @@ impl GoogleService {
             "gsheets_bold_row" => {
                 sheets::bold_row(
                     &self.0,
-                    s("spreadsheet_id")?,
-                    n("sheet_id", 0.0) as u64,
+                    &sheet_ref("spreadsheet_id")?,
+                    req_u64("sheet_id")?,
                     n("row_index", 0.0) as u32,
                 )
                 .await
@@ -1077,8 +1123,8 @@ impl GoogleService {
             "gsheets_freeze_rows" => {
                 sheets::freeze_rows(
                     &self.0,
-                    s("spreadsheet_id")?,
-                    n("sheet_id", 0.0) as u64,
+                    &sheet_ref("spreadsheet_id")?,
+                    req_u64("sheet_id")?,
                     n("row_count", 1.0) as u32,
                 )
                 .await
@@ -1086,16 +1132,16 @@ impl GoogleService {
             "gsheets_auto_resize" => {
                 sheets::auto_resize_columns(
                     &self.0,
-                    s("spreadsheet_id")?,
-                    n("sheet_id", 0.0) as u64,
+                    &sheet_ref("spreadsheet_id")?,
+                    req_u64("sheet_id")?,
                 )
                 .await
             }
             "gsheets_format_cells" => {
                 sheets::format_cells(
                     &self.0,
-                    s("spreadsheet_id")?,
-                    n("sheet_id", 0.0) as u64,
+                    &sheet_ref("spreadsheet_id")?,
+                    req_u64("sheet_id")?,
                     n("start_row", 0.0) as u32,
                     n("end_row", 0.0) as u32,
                     n("start_col", 0.0) as u32,
@@ -1123,8 +1169,8 @@ impl GoogleService {
                     .unwrap_or((1.0, 0.0, 0.0));
                 sheets::add_conditional_format(
                     &self.0,
-                    s("spreadsheet_id")?,
-                    n("sheet_id", 0.0) as u64,
+                    &sheet_ref("spreadsheet_id")?,
+                    req_u64("sheet_id")?,
                     n("start_row", 0.0) as u32,
                     n("end_row", 0.0) as u32,
                     n("start_col", 0.0) as u32,
@@ -1137,8 +1183,8 @@ impl GoogleService {
             "gsheets_clear_conditional_formats" => {
                 sheets::clear_conditional_formats(
                     &self.0,
-                    s("spreadsheet_id")?,
-                    n("sheet_id", 0.0) as u64,
+                    &sheet_ref("spreadsheet_id")?,
+                    req_u64("sheet_id")?,
                 )
                 .await
             }
@@ -1148,7 +1194,7 @@ impl GoogleService {
                     .and_then(|v| v.as_array())
                     .cloned()
                     .unwrap_or_default();
-                sheets::batch_update(&self.0, s("spreadsheet_id")?, requests).await
+                sheets::batch_update(&self.0, &sheet_ref("spreadsheet_id")?, requests).await
             }
 
             // Slides
@@ -1558,6 +1604,45 @@ mod tests {
         assert!(parse_batch_read_ranges(None).is_empty());
         assert!(parse_batch_read_ranges(Some(&json!(""))).is_empty());
         assert!(parse_batch_read_ranges(Some(&json!({"parameters": [{"range": ""}]}))).is_empty());
+    }
+
+    #[test]
+    fn a_required_sheet_id_is_never_defaulted_to_the_first_tab() {
+        // Sheet 0 is a real tab, so `num!`'s "fall back to the default" shape
+        // would have turned an unfilled field into a delete of whichever tab
+        // sits at the front of the spreadsheet.
+        let args = json!({}).as_object().unwrap().clone();
+        let req = req_u64!(&args);
+        assert!(req("sheet_id").is_err());
+
+        let args = json!({"sheet_id": ""}).as_object().unwrap().clone();
+        let req = req_u64!(&args);
+        assert!(req("sheet_id").is_err());
+
+        let args = json!({"sheet_id": "not a number"})
+            .as_object()
+            .unwrap()
+            .clone();
+        let req = req_u64!(&args);
+        assert!(req("sheet_id").is_err());
+
+        let args = json!({"sheet_id": -3}).as_object().unwrap().clone();
+        let req = req_u64!(&args);
+        assert!(req("sheet_id").is_err());
+    }
+
+    #[test]
+    fn a_supplied_sheet_id_survives_both_json_shapes() {
+        // The tab dropdown emits a number; a typed field or an expression
+        // emits the same id as a string.
+        let args = json!({"sheet_id": 0}).as_object().unwrap().clone();
+        assert_eq!(req_u64!(&args)("sheet_id").unwrap(), 0);
+
+        let args = json!({"sheet_id": " 1234567 "})
+            .as_object()
+            .unwrap()
+            .clone();
+        assert_eq!(req_u64!(&args)("sheet_id").unwrap(), 1234567);
     }
 }
 

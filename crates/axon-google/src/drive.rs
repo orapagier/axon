@@ -2,6 +2,7 @@ use crate::auth::access_token;
 use anyhow::Result;
 use axon_core::{AppState, EnsureOk};
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::path::Path;
 
 const BASE: &str = "https://www.googleapis.com/drive/v3";
@@ -41,60 +42,148 @@ fn guess_mime_type(path: &Path) -> &'static str {
     }
 }
 
+/// How many Drive pages a filtered listing will walk before giving up.
+const MAX_LIST_PAGES: usize = 20;
+
+/// Run a Drive `files.list` query, following `nextPageToken` until `wanted`
+/// files are collected or Drive runs out.
+///
+/// Paging is not optional here. Drive applies `q` *after* it has taken a page
+/// off the corpus, so a filtered query routinely returns a page holding one
+/// match — or none — together with a `nextPageToken` pointing at the rest.
+/// A caller that reads only the first page silently under-reports: asking for
+/// ten Drive files and being handed one is the same defect that left the
+/// spreadsheet picker showing a single sheet.
+///
+/// Shared drives are included, so a file the user works in daily from a team
+/// drive is listed the way drive.google.com lists it.
+pub(crate) async fn paged_list(
+    state: &AppState,
+    q: &str,
+    fields: &str,
+    wanted: u32,
+) -> Result<Value> {
+    let tok = access_token(state).await?;
+    // 0 would ask Drive for empty pages forever; the API itself caps at 1000.
+    let wanted = wanted.clamp(1, 1000) as usize;
+
+    let mut files: Vec<Value> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut page_token: Option<String> = None;
+    let mut more_available = false;
+
+    for _ in 0..MAX_LIST_PAGES {
+        let mut params: Vec<(&str, String)> = vec![
+            // A full page regardless of `wanted`: against a filtered query a
+            // small pageSize mostly buys extra round trips.
+            ("pageSize", "200".to_string()),
+            ("q", q.to_string()),
+            ("orderBy", "modifiedTime desc".to_string()),
+            ("fields", format!("nextPageToken,{fields}")),
+            ("corpora", "allDrives".to_string()),
+            ("includeItemsFromAllDrives", "true".to_string()),
+            ("supportsAllDrives", "true".to_string()),
+        ];
+        if let Some(t) = &page_token {
+            params.push(("pageToken", t.clone()));
+        }
+
+        let resp: Value = state
+            .client
+            .get(format!("{BASE}/files"))
+            .bearer_auth(&tok)
+            .query(&params)
+            .send()
+            .await?
+            .ensure_ok()
+            .await?
+            .json()
+            .await?;
+
+        let page: &[Value] = resp
+            .get("files")
+            .and_then(|v| v.as_array())
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        for f in page {
+            // One file can surface twice across corpora (owned *and* reachable
+            // through a shared drive).
+            let id = f.get("id").and_then(|v| v.as_str()).unwrap_or_default();
+            if id.is_empty() || !seen.insert(id.to_string()) {
+                continue;
+            }
+            if files.len() >= wanted {
+                more_available = true;
+                break;
+            }
+            files.push(f.clone());
+        }
+
+        page_token = resp
+            .get("nextPageToken")
+            .and_then(|v| v.as_str())
+            .filter(|t| !t.is_empty())
+            .map(str::to_string);
+        if page_token.is_none() {
+            break;
+        }
+        if files.len() >= wanted {
+            more_available = true;
+            break;
+        }
+    }
+
+    Ok(json!({
+        "files": files,
+        "count": files.len(),
+        "truncated": more_available,
+    }))
+}
+
 pub async fn list(
     state: &AppState,
     max_results: u32,
     folder_id: Option<&str>,
     mime_type: Option<&str>,
 ) -> Result<Value> {
-    let tok = access_token(state).await?;
     let mut q_parts = vec!["trashed=false".to_owned()];
     if let Some(f) = folder_id {
-        q_parts.push(format!("'{}' in parents", f));
+        q_parts.push(format!("'{}' in parents", escape_drive_literal(f)));
     }
     if let Some(m) = mime_type {
-        q_parts.push(format!("mimeType='{}'", m));
+        q_parts.push(format!("mimeType='{}'", escape_drive_literal(m)));
     }
 
-    let resp: Value = state.client
-        .get(format!("{BASE}/files"))
-        .bearer_auth(&tok)
-        .query(&[
-            ("pageSize", max_results.to_string()),
-            ("q",        q_parts.join(" and ")),
-            ("orderBy",  "modifiedTime desc".into()),
-            ("fields",   "files(id,name,mimeType,size,modifiedTime,parents,webViewLink,shared),nextPageToken".into()),
-        ])
-        .send().await?.ensure_ok().await?.json().await?;
-    Ok(resp)
+    paged_list(
+        state,
+        &q_parts.join(" and "),
+        "files(id,name,mimeType,size,modifiedTime,parents,webViewLink,shared)",
+        max_results,
+    )
+    .await
 }
 
 pub async fn search(state: &AppState, query: &str, max_results: u32) -> Result<Value> {
-    let tok = access_token(state).await?;
     // Drive query syntax uses single-quoted string literals. A raw single quote in the
     // search term breaks the syntax (e.g. "it's" → name contains 'it's'). Escape them.
-    let escaped = query.replace('\'', "\\'");
+    let escaped = escape_drive_literal(query);
     let q =
         format!("(name contains '{escaped}' or fullText contains '{escaped}') and trashed=false");
-    let resp: Value = state
-        .client
-        .get(format!("{BASE}/files"))
-        .bearer_auth(&tok)
-        .query(&[
-            ("pageSize", max_results.to_string()),
-            ("q", q),
-            (
-                "fields",
-                "files(id,name,mimeType,size,modifiedTime,webViewLink)".into(),
-            ),
-        ])
-        .send()
-        .await?
-        .ensure_ok()
-        .await?
-        .json()
-        .await?;
-    Ok(resp)
+    paged_list(
+        state,
+        &q,
+        "files(id,name,mimeType,size,modifiedTime,webViewLink)",
+        max_results,
+    )
+    .await
+}
+
+/// Escape a value being interpolated into a Drive `q` single-quoted literal.
+///
+/// Backslash first, then the quote — reversing the order would re-escape the
+/// backslashes this function just introduced.
+fn escape_drive_literal(raw: &str) -> String {
+    raw.replace('\\', "\\\\").replace('\'', "\\'")
 }
 
 pub async fn upload_binary(
@@ -709,4 +798,31 @@ pub async fn remove_permission(
         .ensure_ok()
         .await?;
     Ok(json!({ "success": true, "removedPermissionId": permission_id }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_quote_in_a_search_term_cannot_break_out_of_the_literal() {
+        // Drive `q` literals are single-quoted; an unescaped apostrophe in
+        // "Q1 'draft' numbers" ends the literal early and the whole query
+        // 400s.
+        assert_eq!(escape_drive_literal("it's"), r"it\'s");
+    }
+
+    #[test]
+    fn backslashes_are_escaped_before_quotes_not_after() {
+        // Escaping the quote first would leave the backslash this function
+        // introduced to be doubled by the second pass, producing `a\\'b`
+        // — a literal backslash followed by an unescaped, query-breaking quote.
+        assert_eq!(escape_drive_literal(r"a\'b"), r"a\\\'b");
+    }
+
+    #[test]
+    fn an_ordinary_folder_id_is_left_alone() {
+        let id = "1AbC-dEf_23";
+        assert_eq!(escape_drive_literal(id), id);
+    }
 }
