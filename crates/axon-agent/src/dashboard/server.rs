@@ -107,6 +107,13 @@ pub fn build_router(state: AppState) -> Router {
             "/api/models/available",
             axum::routing::post(api::get_available_models),
         )
+        // Voices are a separate axis from models for speech providers — see
+        // `get_provider_voices`. Registered before the `:name` wildcard so
+        // "voices" is not swallowed as a model name.
+        .route(
+            "/api/models/voices",
+            axum::routing::post(api::get_provider_voices),
+        )
         .route(
             "/api/models/:name",
             axum::routing::put(api::update_model).delete(api::delete_model),

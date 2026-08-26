@@ -893,6 +893,7 @@ mod tests {
             enabled: true,
             disabled_reason: None,
             role: "".into(),
+            voice: None,
             thinking_mode: thinking_mode.map(|s| s.to_string()),
             no_reasoning: false,
             status: "available".into(),

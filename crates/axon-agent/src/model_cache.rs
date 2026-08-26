@@ -107,6 +107,12 @@ pub fn store(
     Ok(())
 }
 
+/// Cache key under which *voice* catalogues live in `provider_model_cache`.
+/// Synthetic, like `tts::TTS_CACHE_PROVIDER`: a speech provider keeps voices on
+/// a separate axis from engines, and the two lists must not collide under one
+/// provider key.
+pub const VOICE_CACHE_PROVIDER: &str = "voices";
+
 /// One background sweep: for every distinct `(provider, base_url)` among the
 /// enabled models, resolve a usable API key and fetch + store that provider's
 /// catalogue. Per-provider failures are logged and skipped — one dead key never
@@ -202,6 +208,27 @@ pub async fn refresh_all(db: Db, settings: Arc<RuntimeSettings>) -> String {
             // No resolvable key for this provider — leave any prior cache in
             // place and move on silently (avoids log spam for unconfigured keys).
             continue;
+        }
+        // A speech provider has a second catalogue — the voices, which the
+        // ModelsPage Voice dropdown reads. Prefetched alongside the engines so
+        // opening the modal is instant rather than a live round-trip.
+        if crate::providers::is_speech_provider(&provider) {
+            let base = base_url
+                .clone()
+                .or_else(|| crate::providers::provider_base_url(&provider).map(str::to_string))
+                .unwrap_or_default();
+            match crate::providers::list_elevenlabs_voices(&base, &api_key).await {
+                Ok(voices) if !voices.is_empty() => {
+                    cached += voices.len();
+                    if let Ok(conn) = db.get() {
+                        if let Err(e) = store(&conn, VOICE_CACHE_PROVIDER, Some(&base), &voices) {
+                            tracing::warn!("model_cache: voice store failed: {}", e);
+                        }
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => tracing::warn!("model_cache: voice refresh failed: {:#}", e),
+            }
         }
         match list_available_models(&provider, base_url.as_deref(), &api_key).await {
             Ok(choices) => {

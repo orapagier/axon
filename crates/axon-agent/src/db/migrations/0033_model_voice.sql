@@ -1,0 +1,14 @@
+-- Which voice a speech model speaks with. Only meaningful for role='tts' rows;
+-- NULL/blank on every other model and on TTS rows that want the global default.
+--
+-- Speech providers separate the *engine* from the *speaker*: on ElevenLabs
+-- `model_id` picks the engine (eleven_multilingual_v2, eleven_flash_v2_5) while
+-- the voice is an opaque id in the request path
+-- (POST /v1/text-to-speech/{voice_id}), so the two cannot share one column.
+-- OpenAI-compatible hosts take it as a `voice` body field instead, and Piper
+-- has no separate voice at all (the model *is* the voice).
+--
+-- Blank falls back to the `tts.voice` setting, which is what a pre-router TTS
+-- install already has configured — so adding a pool of keys with no voice set
+-- keeps speaking in exactly the voice it spoke in before.
+ALTER TABLE models ADD COLUMN voice TEXT;

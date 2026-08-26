@@ -262,6 +262,14 @@ pub struct ModelRecord {
     #[serde(default)]
     pub disabled_reason: Option<String>,
     pub role: String,
+    /// Which voice a `role = "tts"` model speaks with; ignored by every other
+    /// role. Speech providers keep the engine and the speaker in separate
+    /// fields — on ElevenLabs `model_id` is the engine and this is the opaque
+    /// voice id that goes in the request path, on OpenAI-compatible hosts it is
+    /// the `voice` body field — so it cannot ride along in `model_id`.
+    /// `None`/blank falls back to the `tts.voice` setting.
+    #[serde(default)]
+    pub voice: Option<String>,
     /// Thinking mode (models.toml, optional), provider-specific values:
     /// Anthropic — "adaptive" (Claude 4.6+), "budget" (older Claude models
     /// that take a thinking token budget). Google — "level" (Gemini 3.x
@@ -556,6 +564,9 @@ pub fn normalize_provider_name(provider: &str) -> String {
     let normalized = provider.trim().to_ascii_lowercase();
     match normalized.as_str() {
         "gemini" => "google".to_string(),
+        // The name is written half a dozen ways in the wild (and in the docs);
+        // fold them all so a hand-typed provider still matches the adapter.
+        "eleven_labs" | "eleven-labs" | "eleven labs" | "11labs" | "xi" => "elevenlabs".to_string(),
         _ => normalized,
     }
 }
@@ -604,8 +615,19 @@ pub fn provider_base_url(p: &str) -> Option<&'static str> {
         "nvidia" => Some("https://integrate.api.nvidia.com/v1"),
         "openrouter" => Some("https://openrouter.ai/api/v1"),
         "ollama" => Some("http://localhost:11434/v1"),
+        // Speech-only, and not OpenAI-shaped: it authenticates with `xi-api-key`
+        // and puts the voice in the request path. Only ever reached by
+        // `role = "tts"` models — `providers::call` has no adapter for it.
+        "elevenlabs" => Some("https://api.elevenlabs.io/v1"),
         _ => None,
     }
+}
+
+/// True for providers that synthesize speech rather than answer chat
+/// completions. Used to keep them out of the chat router's fallback sweeps and
+/// out of the chat-shaped health probe.
+pub fn is_speech_provider(provider: &str) -> bool {
+    matches!(normalize_provider_name(provider).as_str(), "elevenlabs")
 }
 
 #[cfg(test)]

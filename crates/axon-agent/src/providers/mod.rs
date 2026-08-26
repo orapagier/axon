@@ -5,7 +5,7 @@ pub mod ollama;
 pub mod openai_compat;
 pub mod types;
 use crate::tools::schema::ToolDefinition;
-pub use list::{list_available_models, ModelChoice};
+pub use list::{list_available_models, list_elevenlabs_voices, ModelChoice};
 pub use types::*;
 
 #[derive(Clone, Default)]

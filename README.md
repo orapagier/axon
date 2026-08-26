@@ -241,9 +241,37 @@ enabled     = true                    # optional (defaults to true)
 | `quality_checker` | Secondary model that audits the main agent's output. |
 | `axon_node` | Model used by the "Axon" node inside Workflows. |
 | `image_model` | Vision-capable model for the Cortex node's Image mode. **Strict** — never falls back to general/paid_model. |
+| `tts` | Speech synthesis for spoken replies. **Strict** — kept out of every chat pool (a speech host has no `/chat/completions` route). See below. |
 | `paid_model` | **Last-resort** fallback, only tried after every free option is exhausted. |
 
 **`model_id` fallback chains:** a comma-separated `model_id` (e.g. `"gpt-oss-120b,gpt-oss-20b"`) lets one entry try several upstream model IDs in order before the record is considered failed.
+
+#### Spoken replies (`role = "tts"`)
+
+Tag a model `tts` and it joins a speech pool that rotates the same way the chat
+pools do — when one key is rate-limited or out of quota, the next takes over
+instead of the reply dropping to the browser's built-in voice. Add one row per
+API key; several keys for the same engine are spread across calls rather than
+hammering the first one.
+
+Provider **`elevenlabs`** is speech-only and needs a **Voice** as well as a
+model: on ElevenLabs `model_id` picks the engine (`eleven_multilingual_v2`,
+`eleven_flash_v2_5`) while the voice is an opaque id that goes in the request
+path, so both are separate fields on the Models page, each with its own
+dropdown. A blank Voice falls back to the `tts.voice` setting. Any
+OpenAI-compatible speech host (Groq, OpenAI) works in the pool too.
+
+Three behaviors are specific to speech and worth knowing:
+
+- **The pool is sticky, not round-robin.** A reply is synthesized one sentence
+  per request, so rotating every request would change the speaker mid-answer.
+  It stays on one model until that model fails.
+- **Retries are capped at 3.** Synthesis is billed per character of input and a
+  failover re-sends the whole sentence.
+- **The `tts.*` settings become the fallback**, used when no `tts`-role model
+  exists and when the pool is exhausted. Piper stays there permanently (a local
+  binary has no API key), which makes it a free offline last resort behind a
+  paid pool.
 
 ### Runtime settings (dashboard / DB)
 

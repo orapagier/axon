@@ -343,7 +343,7 @@ fn build_model_payload(config: &Value) -> Value {
     let mut p = serde_json::Map::new();
 
     for key in [
-        "name", "provider", "model_id", "api_key", "base_url", "role",
+        "name", "provider", "model_id", "api_key", "base_url", "role", "voice",
     ] {
         if let Some(s) = config.get(key).and_then(|v| v.as_str()) {
             if !s.trim().is_empty() {

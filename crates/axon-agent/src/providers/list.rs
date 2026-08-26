@@ -61,12 +61,141 @@ pub async fn list_available_models(
         "google" => list_google(base.as_deref(), api_key).await?,
         "ollama" => list_ollama(base.as_deref(), api_key).await?,
         "cloudflare" => list_cloudflare(base.as_deref(), api_key).await?,
+        // Bare JSON array with its own capability flag — nothing OpenAI-shaped
+        // to parse, and the daily cache sweep reaches speech models through
+        // here just like any other provider.
+        "elevenlabs" => {
+            let base = base
+                .as_deref()
+                .or_else(|| provider_base_url(&provider))
+                .unwrap_or_default();
+            list_elevenlabs_models(base, api_key).await?
+        }
         _ => list_openai_compat(&provider, base.as_deref(), api_key).await?,
     };
     // Stable, de-duplicated ordering so the dropdown is predictable run to run.
     out.sort_by(|a, b| a.id.cmp(&b.id));
     out.dedup_by(|a, b| a.id == b.id);
     Ok(out)
+}
+
+// ── ElevenLabs ──────────────────────────────────────────────────────────────
+// Speech-only, and the odd one out twice over: it authenticates with
+// `xi-api-key` rather than a bearer token, and it keeps *two* catalogues — the
+// synthesis engines (`/v1/models`) and the voices that speak them
+// (`/v2/voices`). Both are listed here so every provider catalogue lives in one
+// module; `crate::tts` calls them.
+
+/// Normalize whatever ElevenLabs URL was configured down to the `/v1` root the
+/// endpoints hang off. Accepts the bare domain, either versioned root, or a
+/// full endpoint path.
+pub(crate) fn elevenlabs_root(base_url: &str) -> String {
+    let root = base_url.trim().trim_end_matches('/');
+    let root = root
+        .trim_end_matches("/v1")
+        .trim_end_matches("/v2")
+        .trim_end_matches('/');
+    format!("{}/v1", root)
+}
+
+/// Speech engines ElevenLabs exposes: `GET /v1/models` filtered to the ones
+/// that can actually synthesize. Their catalogue is a *bare JSON array* of
+/// `{model_id, name, can_do_text_to_speech}` — not the OpenAI `{data:[{id}]}`
+/// envelope — so it needs its own parse.
+pub async fn list_elevenlabs_models(
+    base_url: &str,
+    api_key: &str,
+) -> anyhow::Result<Vec<ModelChoice>> {
+    #[derive(serde::Deserialize)]
+    struct Item {
+        model_id: String,
+        name: Option<String>,
+        #[serde(default)]
+        can_do_text_to_speech: bool,
+    }
+    let url = format!("{}/models", elevenlabs_root(base_url));
+    let resp = HTTP_CLIENT
+        .get(&url)
+        .header("xi-api-key", api_key.to_string())
+        .send()
+        .await
+        .with_context(|| format!("list ElevenLabs models at {}", url))?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        let snippet: String = text.chars().take(300).collect();
+        anyhow::bail!("ElevenLabs model list failed ({}): {}", status, snippet);
+    }
+    let items: Vec<Item> = serde_json::from_str(&text).context("parse ElevenLabs model list")?;
+    Ok(items
+        .into_iter()
+        .filter(|i| i.can_do_text_to_speech)
+        .map(|i| ModelChoice {
+            id: i.model_id,
+            label: i.name,
+        })
+        .collect())
+}
+
+/// Voices available to an ElevenLabs key: `GET /v2/voices`, one page (their
+/// default of 30 covers the premade library plus a personal cloned set; the
+/// field stays free-text for anything past that).
+///
+/// Returned as `ModelChoice` so it can ride the same `provider_model_cache`
+/// plumbing and the same dropdown component as model ids — `id` is the opaque
+/// `voice_id` that goes in the request path, `label` the human name the user
+/// actually recognizes ("Rachel", "Adam").
+pub async fn list_elevenlabs_voices(
+    base_url: &str,
+    api_key: &str,
+) -> anyhow::Result<Vec<ModelChoice>> {
+    #[derive(serde::Deserialize)]
+    struct Voice {
+        voice_id: String,
+        name: Option<String>,
+        category: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Page {
+        voices: Vec<Voice>,
+    }
+    // Synthesis is /v1, the voice catalogue is /v2 — swap the version off the
+    // root the rest of the module normalizes to.
+    let root = elevenlabs_root(base_url);
+    let url = format!(
+        "{}/voices",
+        root.trim_end_matches("/v1").to_string() + "/v2"
+    );
+    let resp = HTTP_CLIENT
+        .get(&url)
+        .header("xi-api-key", api_key.to_string())
+        .send()
+        .await
+        .with_context(|| format!("list ElevenLabs voices at {}", url))?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        let snippet: String = text.chars().take(300).collect();
+        anyhow::bail!("ElevenLabs voice list failed ({}): {}", status, snippet);
+    }
+    let page: Page = serde_json::from_str(&text).context("parse ElevenLabs voice list")?;
+    Ok(page
+        .voices
+        .into_iter()
+        .map(|v| {
+            // "Rachel (premade)" reads better in a dropdown than a bare name
+            // when a cloned voice shares the name of a premade one.
+            let label = match (v.name, v.category) {
+                (Some(n), Some(c)) if !c.trim().is_empty() => Some(format!("{} ({})", n, c)),
+                (Some(n), _) => Some(n),
+                (None, _) => None,
+            };
+            ModelChoice {
+                id: v.voice_id,
+                label,
+            }
+        })
+        .collect())
 }
 
 // ── Anthropic: GET /v1/models (x-api-key + anthropic-version) ────────────────

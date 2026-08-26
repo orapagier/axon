@@ -1,6 +1,7 @@
 use crate::config::RuntimeSettings;
 use crate::providers::{call_provider_with_options, types::*, ProviderCallOptions};
 use crate::tools::schema::ToolDefinition;
+use once_cell::sync::Lazy;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -198,11 +199,19 @@ impl RouterState {
             .map(|(i, _)| i)
             .collect()
     }
+    /// The untagged pool every chat call falls back to.
+    ///
+    /// A speech model is excluded even when its role is blank. The Models page
+    /// tags `role = "tts"` for you when you pick a speech provider, but
+    /// `models.toml` and the Homeostasis Upsert node can both write a row
+    /// without one — and such a row would otherwise sit in the *general* chat
+    /// pool, get POSTed a `/chat/completions` body its host has no route for,
+    /// and bank a cooldown that takes a healthy speech key out of the TTS pool.
     fn general_pool(&self) -> Vec<usize> {
         self.models
             .iter()
             .enumerate()
-            .filter(|(_, m)| m.role.is_empty() && m.enabled)
+            .filter(|(_, m)| m.role.is_empty() && m.enabled && !is_speech_model(m))
             .map(|(i, _)| i)
             .collect()
     }
@@ -578,6 +587,12 @@ pub async fn call_llm_with_options(
     // the general pool with role="" is empty) but the role-specific pool was
     // exhausted. We use `attempted` — the set of every model name actually
     // called in prior passes — for precise dedup.
+    //
+    // "Regardless of role" stops at models that cannot answer a chat completion
+    // at all. A `role = "tts"` entry (or an ElevenLabs-provider one) would be
+    // POSTed a `/chat/completions` body it has no route for, fail, and bank a
+    // cooldown on a model that was perfectly healthy for the job it *is* for —
+    // taking a speech key out of the pool because a chat request went looking.
     {
         let sweep_models: Vec<(String, u32)> = {
             let g = router.lock().await;
@@ -587,6 +602,7 @@ pub async fn call_llm_with_options(
                     m.enabled
                         && m.is_available()
                         && m.role != "paid_model"
+                        && !is_speech_model(m)
                         && !attempted.contains(&m.name)
                 })
                 .map(|m| (m.name.clone(), max_tokens.unwrap_or(m.max_tokens)))
@@ -1079,6 +1095,327 @@ pub async fn generate_image_with_model(
     Err(e)
 }
 
+/// Router role that marks a model as a speech synthesizer rather than a chat
+/// model. Kept out of every chat pool and out of the chat-shaped health probe.
+pub const TTS_ROLE: &str = "tts";
+
+/// True for a model that synthesizes speech and therefore cannot serve a chat
+/// completion. Matched on the role *or* the provider so a row that was tagged
+/// one way but not the other is still kept out of the chat paths.
+pub fn is_speech_model(m: &ModelRecord) -> bool {
+    m.role == TTS_ROLE || is_speech_provider(&m.provider)
+}
+
+/// How many models one utterance may burn before giving up. Speech providers
+/// bill per *character of input*, and a failover re-sends the whole sentence —
+/// so sweeping a ten-key pool on a sentence that fails for a non-key reason
+/// (bad voice id, malformed text) bills that sentence ten times. Three attempts
+/// is enough to ride out a rate-limited key without turning one bad request
+/// into a ten-fold charge.
+const TTS_MAX_ATTEMPTS: usize = 3;
+
+/// How long the pool stays pinned to the model that last spoke.
+///
+/// Both clients synthesize a reply *sentence by sentence* (ChatPage's
+/// `StreamingSpeech`, the Android `StreamingTts`) — each sentence is a separate
+/// request. Rotating per request would therefore change the speaker partway
+/// through a single answer: sentence one in Rachel, sentence two in Adam. So
+/// the pool is sticky by default and only rotates when a model actually fails,
+/// which is also exactly the behavior asked for ("rotate through them when one
+/// hits a rate limit"). The window is generous enough to span the gap between
+/// consecutive sentences of one reply and short enough that a later, unrelated
+/// reply starts fresh.
+const TTS_STICKY_SECS: u64 = 90;
+
+/// The model that last synthesized successfully, and when. See
+/// [`TTS_STICKY_SECS`] — this is what keeps one spoken reply in one voice.
+/// Process-global on purpose: when the dashboard and the phone are both
+/// listening, they should hear the same voice, not two.
+static TTS_STICKY: Lazy<Mutex<Option<(String, Instant)>>> = Lazy::new(|| Mutex::new(None));
+
+/// Speech synthesized through the pool, plus which model produced it.
+pub struct TtsRoute {
+    pub audio: crate::tts::SpeechAudio,
+    pub model_name: String,
+}
+
+/// Build the `tts::TtsConfig` a single router model describes. `voice` falls
+/// back to the global `tts.voice` when the row leaves it blank, so a pool added
+/// on top of an existing TTS install keeps the voice it already spoke in.
+fn tts_config_for(
+    model: &ModelRecord,
+    model_id: &str,
+    api_key: &str,
+    settings: &RuntimeSettings,
+) -> crate::tts::TtsConfig {
+    let base_url = model
+        .base_url
+        .clone()
+        .filter(|b| !b.trim().is_empty())
+        .or_else(|| provider_base_url(&model.provider).map(str::to_string))
+        .unwrap_or_default();
+    let voice = model
+        .voice
+        .clone()
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| settings.resolve(&settings.get_str("tts.voice", "")));
+    crate::tts::TtsConfig {
+        base_url: base_url.trim().trim_end_matches('/').to_string(),
+        model: model_id.to_string(),
+        voice: voice.trim().to_string(),
+        api_key: api_key.to_string(),
+        // Piper is a local binary with no key and no provider — it is
+        // configured through `tts.*` only and never appears as a router model.
+        piper: crate::tts::PiperOptions::default(),
+    }
+}
+
+/// Translate a synthesis failure into the router's health bookkeeping.
+///
+/// Speech providers do not use HTTP status codes the way the chat classifier
+/// assumes, and ElevenLabs is the sharp edge: an exhausted *character quota*
+/// comes back as `401`, which the generic path reads as "bad credentials".
+/// Mishandled, a key that would recover at the next billing reset gets retired
+/// permanently by Homeostasis auto-disable instead. See
+/// [`crate::tts::elevenlabs_failure_kind`].
+fn record_tts_failure(model: &mut ModelRecord, err: &anyhow::Error, threshold: u32) {
+    use crate::tts::ElevenLabsFailure;
+    let text = err.to_string();
+    match crate::tts::elevenlabs_failure_kind(&text) {
+        // Characters spent. Park it for the day rather than burning the key on
+        // a retry every few seconds; a monthly quota is not coming back sooner.
+        ElevenLabsFailure::QuotaExceeded => {
+            model.mark_rate_limited(&RateLimitHint {
+                window: RateLimitWindow::Daily,
+                explicit_secs: None,
+            });
+        }
+        // Concurrency cap (2 on free, 5 on Creator, …) or upstream congestion.
+        // Clears in seconds, so a full-minute bench would be self-inflicted.
+        ElevenLabsFailure::Transient => {
+            model.mark_rate_limited(&RateLimitHint {
+                window: RateLimitWindow::PerMinute,
+                explicit_secs: Some(2),
+            });
+        }
+        ElevenLabsFailure::Other => {
+            let lower = text.to_ascii_lowercase();
+            if lower.contains("rate limit")
+                || lower.contains("429")
+                || lower.contains("too many requests")
+                || lower.contains("quota")
+            {
+                model.mark_rate_limited(&parse_rate_limit_hint(&text));
+            } else {
+                model.mark_error(threshold);
+            }
+        }
+    }
+}
+
+/// Synthesize speech through the `role = "tts"` model pool, rotating to the
+/// next model when one is rate-limited, out of quota, or erroring.
+///
+/// Shares the chat router's machinery rather than reimplementing it: the same
+/// `build_priority_order` (which round-robins across priority tiers *and*
+/// within a `(provider, base_url, model_id)` bucket, so N keys for one model
+/// get spread instead of key #0 being hammered), the same `${VAR}` key
+/// resolution, the same comma-separated `model_id` failover, and the same
+/// `mark_success` / `mark_rate_limited` / `mark_error` health bookkeeping that
+/// the Models page and Homeostasis already read.
+///
+/// It differs from the chat path in three ways, each for a reason particular to
+/// speech:
+///   * **Sticky by default** ([`TTS_STICKY_SECS`]) — a reply is synthesized one
+///     sentence per request, so per-request rotation would change the speaker
+///     mid-answer.
+///   * **Capped attempts** ([`TTS_MAX_ATTEMPTS`]) — retries re-bill the whole
+///     sentence.
+///   * **A 120s timeout floor** — chat-tuned `timeout_secs` (15–45s) are too
+///     short for synthesis, the same adjustment `generate_image_with_model`
+///     makes for images.
+///
+/// `Ok(None)` means the pool is empty — no `role = "tts"` model is configured
+/// at all — which is the caller's cue to fall back to the `tts.*` settings.
+/// `Err` means the pool exists but every candidate failed.
+pub async fn speak_with_router(
+    router: &SharedRouter,
+    settings: &RuntimeSettings,
+    text: &str,
+) -> anyhow::Result<Option<TtsRoute>> {
+    let threshold = settings.error_threshold();
+
+    // Nothing speakable in this payload (an all-emoji reply, a bare code
+    // fence). `tts::speak` would reject it, and routing that rejection through
+    // the failure bookkeeping below would charge a model for the caller's text
+    // — a few such replies in a row would trip the consecutive-error threshold
+    // and park a healthy key until midnight. Fail without touching the pool.
+    if !crate::tts::has_speakable_text(text) {
+        anyhow::bail!("no speakable text in this reply");
+    }
+
+    let sticky = {
+        let g = TTS_STICKY.lock().await;
+        g.as_ref()
+            .filter(|(_, at)| at.elapsed().as_secs() < TTS_STICKY_SECS)
+            .map(|(name, _)| name.clone())
+    };
+
+    // Candidate order, resolved under one lock and released before any I/O.
+    let candidates: Vec<(ModelRecord, String, u64)> = {
+        let mut g = router.lock().await;
+        let start = g.global_index;
+        g.global_index = g.global_index.wrapping_add(1);
+        let pool = g.pool_indices(TTS_ROLE);
+        if pool.is_empty() {
+            return Ok(None);
+        }
+        let mut order = build_priority_order(&g.models, &pool, start);
+        // Pin the last speaker to the front when it is still healthy, so one
+        // reply keeps one voice. A failure below drops it and the rotation
+        // proceeds from wherever `build_priority_order` put the rest.
+        if let Some(name) = &sticky {
+            if let Some(pos) = order.iter().position(|&mi| &g.models[mi].name == name) {
+                let mi = order.remove(pos);
+                order.insert(0, mi);
+            }
+        }
+        order
+            .into_iter()
+            .take(TTS_MAX_ATTEMPTS)
+            .map(|mi| {
+                let m = &g.models[mi];
+                let key = settings.resolve(&m.api_key);
+                // Synthesis latency scales with text length; a chat-tuned
+                // timeout would abort a perfectly healthy long sentence.
+                let timeout = m.timeout_secs.unwrap_or(0).max(120);
+                (m.clone(), key, timeout)
+            })
+            .collect()
+    };
+
+    if candidates.is_empty() {
+        anyhow::bail!(
+            "Every model tagged role=\"tts\" is currently unavailable (disabled, out of quota, \
+             rate-limited, or erroring) — check the Models page"
+        );
+    }
+
+    let mut last_error: Option<anyhow::Error> = None;
+    for (model, api_key, timeout_secs) in candidates {
+        if api_key.trim().is_empty() {
+            last_error = Some(anyhow::anyhow!(
+                "TTS model '{}' has no API key after resolution; check AXON_MASTER_KEY and \
+                 provider environment variables on the server",
+                model.name
+            ));
+            continue;
+        }
+        if api_key.starts_with("${") && api_key.ends_with('}') {
+            last_error = Some(anyhow::anyhow!(
+                "TTS model '{}' has unresolved API key placeholder {}; check .env loading or \
+                 server environment configuration",
+                model.name,
+                api_key
+            ));
+            continue;
+        }
+
+        // Same comma-separated failover convention as the chat path: one row can
+        // list several engines and fall through them before the pool rotates.
+        let model_ids: Vec<String> = model
+            .model_id
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let model_ids = if model_ids.is_empty() {
+            vec![String::new()]
+        } else {
+            model_ids
+        };
+
+        let mut failed: Option<anyhow::Error> = None;
+        for model_id in &model_ids {
+            let cfg = tts_config_for(&model, model_id, &api_key, settings);
+            tracing::info!("→ {} / {} (speech)", model.name, cfg.model);
+            let attempt = tokio::time::timeout(
+                Duration::from_secs(timeout_secs),
+                crate::tts::speak(&cfg, text),
+            )
+            .await;
+            match attempt {
+                Ok(Ok(audio)) => {
+                    {
+                        let mut g = router.lock().await;
+                        if let Some(m) = g.find_mut(&model.name) {
+                            // Speech is billed per character of input, so a
+                            // character count — not a token count — is the
+                            // figure worth surfacing on the Models page. Booked
+                            // as input usage. Counts the payload rather than the
+                            // post-markdown-strip text `speak` actually sends,
+                            // so it reads slightly high; it is a usage gauge,
+                            // not an invoice.
+                            m.mark_success(text.chars().count() as u32, 0);
+                        }
+                    }
+                    *TTS_STICKY.lock().await = Some((model.name.clone(), Instant::now()));
+                    return Ok(Some(TtsRoute {
+                        audio,
+                        model_name: model.name.clone(),
+                    }));
+                }
+                Ok(Err(e)) => {
+                    tracing::warn!("✗ {} / {} speech failed: {}", model.name, model_id, e);
+                    failed = Some(e);
+                }
+                Err(_elapsed) => {
+                    failed = Some(anyhow::anyhow!(
+                        "speech synthesis timed out after {}s",
+                        timeout_secs
+                    ));
+                }
+            }
+        }
+
+        if let Some(e) = failed {
+            let mut g = router.lock().await;
+            if let Some(m) = g.find_mut(&model.name) {
+                record_tts_failure(m, &e, threshold);
+            }
+            drop(g);
+            // The pinned model just failed; let the next request rotate freely
+            // rather than pinning to something that is now on cooldown.
+            let mut pin = TTS_STICKY.lock().await;
+            if pin.as_ref().is_some_and(|(n, _)| n == &model.name) {
+                *pin = None;
+            }
+            last_error = Some(e);
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("no TTS model could serve this request")))
+}
+
+/// Health probe for a speech model: list what the key can reach, rather than
+/// synthesize with it. Costs no characters, and still surfaces the failures a
+/// health check is for — a bad key, a wrong base URL, an unreachable host.
+async fn probe_speech_model(m: &ModelRecord) -> Result<(), String> {
+    let base_url = m
+        .base_url
+        .clone()
+        .filter(|b| !b.trim().is_empty())
+        .or_else(|| provider_base_url(&m.provider).map(str::to_string))
+        .unwrap_or_default();
+    if base_url.is_empty() {
+        return Err("speech model has no base_url and its provider has no default".to_string());
+    }
+    crate::tts::list_tts_models(&base_url, &m.api_key)
+        .await
+        .map(|_| ())
+        .map_err(|e| format!("{:#}", e))
+}
+
 pub async fn get_status(router: &SharedRouter) -> Vec<serde_json::Value> {
     let mut g = router.lock().await;
 
@@ -1104,7 +1441,8 @@ pub async fn get_status(router: &SharedRouter) -> Vec<serde_json::Value> {
             serde_json::json!({
                 "name": m.name, "provider": m.provider, "model_id": m.model_id,
                 "base_url": m.base_url, "timeout_secs": m.timeout_secs,
-                "priority": m.priority, "role": m.role, "status": m.status,
+                "priority": m.priority, "role": m.role, "voice": m.voice,
+                "status": m.status,
                 "max_tokens": m.max_tokens,
                 "enabled": m.enabled,
                 "disabled_reason": m.disabled_reason,
@@ -1188,6 +1526,13 @@ pub async fn health_check(router: &SharedRouter, settings: &RuntimeSettings) -> 
         let started = Instant::now();
         let result = match precheck {
             Err(e) => Err(e),
+            // A speech model has no `/chat/completions` route, so the chat ping
+            // below would report every healthy TTS key as unhealthy — and
+            // Homeostasis auto-disable would then park them. Probe the identity
+            // endpoint instead: it proves the credentials without synthesizing
+            // anything, which matters because synthesis is billed per character
+            // and a health sweep runs on a schedule.
+            Ok(()) if is_speech_model(&m) => probe_speech_model(&m).await,
             Ok(()) => call_provider_with_options(
                 &mut m,
                 &[Message::user("ping")],
@@ -1197,6 +1542,9 @@ pub async fn health_check(router: &SharedRouter, settings: &RuntimeSettings) -> 
                 ProviderCallOptions::default(),
             )
             .await
+            // Only success/failure matters here; discarding the body keeps this
+            // arm the same `Result<(), String>` as the speech probe above.
+            .map(|_| ())
             .map_err(|e| e.to_string()),
         };
         let latency_ms = started.elapsed().as_millis() as u64;
@@ -1327,9 +1675,18 @@ fn classify_health_error(err: &str) -> &'static str {
     // 429 / throttling. Both providers frame these as "rate limit: …"; Gemini
     // surfaces the same as a RESOURCE_EXHAUSTED quota. Checked before the billing
     // buckets because free-tier 429s often also nag about adding credits.
+    //
+    // ElevenLabs' three shapes are folded in here for a specific reason: it
+    // reports a spent character quota as a **401**, and its concurrency cap as a
+    // 429 with no "rate limit" wording. Left to the buckets below, the first
+    // would land in `invalid_key` — and a Homeostasis auto-disable would then
+    // permanently retire a key that recovers at the next billing reset.
     if e.contains("rate limit")
         || e.contains("too many requests")
         || e.contains("resource_exhausted")
+        || e.contains("quota_exceeded")
+        || e.contains("too_many_concurrent_requests")
+        || e.contains("system_busy")
     {
         return "rate_limited";
     }
@@ -1641,6 +1998,7 @@ mod reload_tests {
             enabled: true,
             disabled_reason: None,
             role: String::new(),
+            voice: None,
             thinking_mode: None,
             no_reasoning: false,
             status: "available".into(),
@@ -1767,6 +2125,7 @@ mod routing_order_tests {
             enabled: true,
             disabled_reason: None,
             role: String::new(),
+            voice: None,
             thinking_mode: None,
             no_reasoning: false,
             status: "available".into(),
@@ -1870,5 +2229,162 @@ mod routing_order_tests {
             first_of(1),
             "consecutive seeds must start on different keys"
         );
+    }
+}
+
+#[cfg(test)]
+mod tts_pool_tests {
+    use super::*;
+    use crate::providers::types::ModelRecord;
+
+    fn speech_model(name: &str, provider: &str, role: &str) -> ModelRecord {
+        ModelRecord {
+            name: name.to_string(),
+            provider: provider.into(),
+            model_id: "eleven_multilingual_v2".into(),
+            api_key: "sk-test".into(),
+            base_url: None,
+            timeout_secs: None,
+            priority: 1,
+            max_tokens: 1024,
+            enabled: true,
+            disabled_reason: None,
+            role: role.to_string(),
+            voice: None,
+            thinking_mode: None,
+            no_reasoning: false,
+            status: "available".into(),
+            rate_limit_reset_at: None,
+            consecutive_errors: 0,
+            consecutive_rate_limits: 0,
+            total_calls: 0,
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+            rl_snapshot: Default::default(),
+        }
+    }
+
+    // A speech model must never be reachable from a chat pool. It has no
+    // `/chat/completions` route, so a chat call routed to it fails and banks a
+    // cooldown — quietly removing a healthy key from the TTS pool because an
+    // unrelated chat request went looking for a fallback.
+    #[test]
+    fn speech_models_are_kept_out_of_the_general_chat_pool() {
+        // The blank role is the case that matters: the Models page tags
+        // role="tts" for you, but models.toml and the Homeostasis Upsert node
+        // can both write a row without one.
+        let state = RouterState::new(vec![
+            speech_model("eleven-untagged", "elevenlabs", ""),
+            speech_model("eleven-tagged", "elevenlabs", TTS_ROLE),
+            speech_model("chat", "openai", ""),
+        ]);
+        let general: Vec<&str> = state
+            .general_pool()
+            .into_iter()
+            .map(|i| state.models[i].name.as_str())
+            .collect();
+        assert_eq!(general, vec!["chat"]);
+    }
+
+    #[test]
+    fn tagged_speech_models_form_the_tts_pool() {
+        let state = RouterState::new(vec![
+            speech_model("eleven-a", "elevenlabs", TTS_ROLE),
+            speech_model("eleven-b", "elevenlabs", TTS_ROLE),
+            speech_model("chat", "openai", ""),
+        ]);
+        let pool: Vec<&str> = state
+            .pool_indices(TTS_ROLE)
+            .into_iter()
+            .map(|i| state.models[i].name.as_str())
+            .collect();
+        assert_eq!(pool, vec!["eleven-a", "eleven-b"]);
+    }
+
+    // The whole point of the pool: several keys for one engine must be spread,
+    // not all routed to key #0 until it 429s. `build_priority_order` rotates
+    // within a (provider, base_url, model_id) bucket keyed on `start`.
+    #[test]
+    fn many_keys_for_one_engine_rotate_across_calls() {
+        let models = vec![
+            speech_model("key-1", "elevenlabs", TTS_ROLE),
+            speech_model("key-2", "elevenlabs", TTS_ROLE),
+            speech_model("key-3", "elevenlabs", TTS_ROLE),
+        ];
+        let state = RouterState::new(models);
+        let pool = state.pool_indices(TTS_ROLE);
+
+        let first_pick = |start: usize| -> &str {
+            let order = build_priority_order(&state.models, &pool, start);
+            state.models[order[0]].name.as_str()
+        };
+        // Three consecutive calls must open on three different keys.
+        let picks: Vec<&str> = (0..3).map(first_pick).collect();
+        let mut sorted = picks.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), 3, "expected a rotation, got {picks:?}");
+    }
+
+    // An out-of-quota key must come back eventually, but not on the next
+    // sentence; a concurrency collision must come back almost immediately.
+    // Getting these two backwards is the difference between a stuttering pool
+    // and a pool that benches good keys for a full minute at a time.
+    #[test]
+    fn quota_and_concurrency_get_very_different_cooldowns() {
+        let threshold = 3;
+
+        let mut spent = speech_model("spent", "elevenlabs", TTS_ROLE);
+        record_tts_failure(
+            &mut spent,
+            &anyhow::anyhow!(
+                "speech synthesis failed (401 Unauthorized): {{\"detail\":{{\"status\":\"quota_exceeded\"}}}}"
+            ),
+            threshold,
+        );
+        assert_eq!(spent.status, "rate_limited");
+        assert!(!spent.is_available(), "a spent key must be benched");
+
+        let mut busy = speech_model("busy", "elevenlabs", TTS_ROLE);
+        record_tts_failure(
+            &mut busy,
+            &anyhow::anyhow!(
+                "speech synthesis failed (429 Too Many Requests): {{\"detail\":{{\"status\":\"too_many_concurrent_requests\"}}}}"
+            ),
+            threshold,
+        );
+        assert_eq!(busy.status, "rate_limited");
+
+        // Both are benched, but the concurrency one for far less time.
+        let secs = |m: &ModelRecord| -> i64 {
+            let reset = chrono::DateTime::parse_from_rfc3339(
+                m.rate_limit_reset_at.as_deref().expect("reset time set"),
+            )
+            .expect("valid rfc3339");
+            (reset.with_timezone(&chrono::Utc) - chrono::Utc::now()).num_seconds()
+        };
+        assert!(secs(&busy) <= 10, "concurrency bench was {}s", secs(&busy));
+        assert!(
+            secs(&spent) >= 3600,
+            "quota bench was only {}s",
+            secs(&spent)
+        );
+    }
+
+    // A genuinely bad credential must NOT be treated as a spent quota, or a
+    // typo'd key would be retried once a day forever instead of surfacing as an
+    // error the operator can see and fix.
+    #[test]
+    fn a_bad_key_still_counts_as_an_error() {
+        let mut m = speech_model("typo", "elevenlabs", TTS_ROLE);
+        record_tts_failure(
+            &mut m,
+            &anyhow::anyhow!(
+                "speech synthesis failed (401 Unauthorized): {{\"detail\":{{\"status\":\"invalid_api_key\"}}}}"
+            ),
+            3,
+        );
+        assert_eq!(m.consecutive_errors, 1);
+        assert_ne!(m.status, "rate_limited");
     }
 }

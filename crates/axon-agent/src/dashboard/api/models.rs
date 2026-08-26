@@ -70,6 +70,88 @@ pub async fn get_available_models(
     }
 }
 
+/// Voices a speech provider offers, for the ModelsPage "Voice" dropdown.
+/// Body: `{provider, base_url?, api_key?}`.
+///
+/// This exists because a speech provider separates the *engine* from the
+/// *speaker*: on ElevenLabs `model_id` picks the engine and the voice is an
+/// opaque id in the request path (`21m00Tcm4TlvDq8ikWAM`), so without a
+/// dropdown every model you add means pasting a UUID out of their dashboard.
+/// `label` carries the human name the list is actually navigable by.
+///
+/// `api_key` comes from the still-unsaved add-model form when present — the
+/// dropdown has to work *before* the row exists — and otherwise falls back to a
+/// key already configured for that provider. An empty list means "nothing
+/// listable"; the UI degrades to free text.
+pub async fn get_provider_voices(
+    State(state): State<AppState>,
+    Json(payload): Json<Value>,
+) -> Json<Value> {
+    let provider = crate::providers::normalize_provider_name(
+        payload
+            .get("provider")
+            .and_then(|v| v.as_str())
+            .unwrap_or(""),
+    );
+    if !crate::providers::is_speech_provider(&provider) {
+        // Not an error: the page asks for every provider and simply shows no
+        // dropdown when the answer is empty.
+        return Json(json!({"ok": true, "voices": []}));
+    }
+
+    let base_url = payload
+        .get("base_url")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .or_else(|| crate::providers::provider_base_url(&provider).map(str::to_string))
+        .unwrap_or_default();
+    if base_url.is_empty() {
+        return Json(json!({"ok": true, "voices": []}));
+    }
+
+    // Fast path: the daily-swept cache, keyed by base URL like every other
+    // catalogue.
+    if let Ok(conn) = state.db.get() {
+        let cached = crate::model_cache::read_cached(
+            &conn,
+            crate::model_cache::VOICE_CACHE_PROVIDER,
+            Some(&base_url),
+        );
+        if !cached.is_empty() {
+            return Json(json!({"ok": true, "voices": cached}));
+        }
+    }
+
+    let api_key = payload
+        .get("api_key")
+        .and_then(|v| v.as_str())
+        .map(|k| state.settings.resolve(k))
+        .map(|k| k.trim().to_string())
+        .filter(|k| !k.is_empty() && !(k.starts_with("${") && k.ends_with('}')))
+        .unwrap_or_else(|| resolve_provider_key(&state, &provider));
+
+    match crate::providers::list_elevenlabs_voices(&base_url, &api_key).await {
+        Ok(voices) if !voices.is_empty() => {
+            if let Ok(conn) = state.db.get() {
+                let _ = crate::model_cache::store(
+                    &conn,
+                    crate::model_cache::VOICE_CACHE_PROVIDER,
+                    Some(&base_url),
+                    &voices,
+                );
+            }
+            Json(json!({"ok": true, "voices": voices}))
+        }
+        Ok(_) => Json(json!({"ok": true, "voices": []})),
+        Err(e) => {
+            tracing::warn!("voice list for '{}' failed: {:#}", provider, e);
+            Json(json!({"ok": true, "voices": []}))
+        }
+    }
+}
+
 /// Resolve a usable API key for a provider from the first configured model that
 /// has one, applying `${VAR}` resolution. Returns `""` when none is configured —
 /// which is fine for providers whose model list is a public endpoint.
@@ -137,6 +219,13 @@ pub(crate) fn apply_add_model(conn: &rusqlite::Connection, m: &Value) -> Result<
     let priority = m.get("priority").and_then(|v| v.as_i64()).unwrap_or(99);
     let max_tokens = m.get("max_tokens").and_then(|v| v.as_i64()).unwrap_or(4096);
     let role = m.get("role").and_then(|v| v.as_str()).unwrap_or("");
+    // Only meaningful for role="tts"; stored as NULL when blank so the model
+    // falls back to the global `tts.voice`.
+    let voice = m
+        .get("voice")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty());
 
     if name.is_empty() || provider.is_empty() {
         return Err("Name and provider are required".into());
@@ -146,8 +235,8 @@ pub(crate) fn apply_add_model(conn: &rusqlite::Connection, m: &Value) -> Result<
     // The boot-time models.toml sync is insert-only and never overwrites an
     // existing row, so either way this survives redeploys.
     conn.execute(
-        "INSERT INTO models (name, provider, model_id, api_key, base_url, timeout_secs, priority, max_tokens, role, enabled, origin) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, 'runtime')",
-        rusqlite::params![name, provider, model_id, crate::crypto::encrypt_key(raw_api_key), base_url, timeout_secs, priority, max_tokens, role],
+        "INSERT INTO models (name, provider, model_id, api_key, base_url, timeout_secs, priority, max_tokens, role, voice, enabled, origin) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1, 'runtime')",
+        rusqlite::params![name, provider, model_id, crate::crypto::encrypt_key(raw_api_key), base_url, timeout_secs, priority, max_tokens, role, voice],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
@@ -185,6 +274,16 @@ pub(crate) fn apply_update_model(
         conn.execute(
             "UPDATE models SET role=?1 WHERE name=?2",
             rusqlite::params![role, name],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    // Unlike api_key, an explicitly blank voice IS written (as NULL): clearing
+    // the box is how you hand a TTS model back to the global `tts.voice`.
+    if let Some(voice) = m.get("voice").and_then(|v| v.as_str()) {
+        let voice = voice.trim();
+        conn.execute(
+            "UPDATE models SET voice=?1 WHERE name=?2",
+            rusqlite::params![if voice.is_empty() { None } else { Some(voice) }, name],
         )
         .map_err(|e| e.to_string())?;
     }

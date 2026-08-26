@@ -33,6 +33,7 @@ const form = ref({
   base_url: '',
   priority: 1,
   role: '',
+  voice: '',
   max_tokens: 4096,
 })
 
@@ -46,6 +47,7 @@ const PROVIDERS = [
   { value: 'openrouter', label: 'OpenRouter' },
   { value: 'cloudflare', label: 'Cloudflare Workers AI' },
   { value: 'ollama', label: 'Ollama' },
+  { value: 'elevenlabs', label: 'ElevenLabs (speech)' },
 ]
 
 // Live Model-ID dropdown: options are the provider's models, prefetched daily
@@ -63,8 +65,59 @@ const modelIdOptions = computed(() =>
     description: o.label && o.label !== o.id ? o.label : '',
   }))
 )
+// Live Voice dropdown, same shape as the Model-ID one above. Separate because a
+// speech provider splits the *engine* (model_id) from the *speaker* (voice):
+// on ElevenLabs the voice is an opaque id in the request path
+// ("21m00Tcm4TlvDq8ikWAM"), so without this the field means copying UUIDs out
+// of their dashboard. `label` carries the name a human can actually pick by.
+const availableVoices = ref([])
+const voicesLoading = ref(false)
+
+// Voices only exist for speech providers; every other provider hides the field.
+const isSpeechProvider = computed(() => form.value.provider === 'elevenlabs')
+
+const voiceOptions = computed(() =>
+  availableVoices.value.map((o) => ({
+    value: o.id,
+    name: o.label || o.id,
+    description: o.label && o.label !== o.id ? o.id : '',
+  }))
+)
+
 let modelsFetchSeq = 0
 let modelsFetchTimer = null
+let voicesFetchSeq = 0
+let voicesFetchTimer = null
+
+async function fetchAvailableVoices() {
+  if (!isSpeechProvider.value) {
+    availableVoices.value = []
+    return
+  }
+  const seq = ++voicesFetchSeq
+  voicesLoading.value = true
+  try {
+    const r = await post('/models/voices', {
+      provider: form.value.provider,
+      base_url: form.value.base_url || '',
+      // The key typed into the still-unsaved form: the dropdown has to work
+      // before the model row exists. Blank falls back server-side to a key
+      // already configured for this provider.
+      api_key: form.value.api_key || '',
+    })
+    if (seq !== voicesFetchSeq) return
+    availableVoices.value = r && r.ok && Array.isArray(r.voices) ? r.voices : []
+  } catch {
+    if (seq === voicesFetchSeq) availableVoices.value = []
+  } finally {
+    if (seq === voicesFetchSeq) voicesLoading.value = false
+  }
+}
+
+function scheduleFetchVoices() {
+  clearTimeout(voicesFetchTimer)
+  voicesFetchTimer = setTimeout(fetchAvailableVoices, 400)
+}
 
 async function fetchAvailableModels() {
   const provider = form.value.provider
@@ -103,9 +156,35 @@ watch(
   }
 )
 
+// The voice list additionally depends on the key typed into the form, since a
+// fresh ElevenLabs account has its own cloned voices.
+watch(
+  () => [form.value.provider, form.value.base_url, form.value.api_key],
+  () => {
+    if (modalOpen.value) scheduleFetchVoices()
+  }
+)
+
+// Picking the speech provider is a strong signal about the role; pre-select it
+// so the model actually lands in the TTS pool instead of the chat one.
+watch(
+  () => form.value.provider,
+  (p) => {
+    if (p === 'elevenlabs' && !form.value.role) form.value.role = 'tts'
+  }
+)
+
 async function load() {
   const d = await get('/models')
   models.value = d.models || []
+}
+
+// A stored voice is an opaque id ("21m00Tcm4TlvDq8ikWAM"), which tells a reader
+// nothing on the row. Swap in the human name when the cached voice list has
+// been loaded for this session; fall back to the id otherwise.
+function voiceLabel(id) {
+  const hit = availableVoices.value.find((v) => v.id === id)
+  return hit && hit.label ? hit.label : id
 }
 
 function showAdd() {
@@ -118,11 +197,14 @@ function showAdd() {
     base_url: '',
     priority: 1,
     role: '',
+    voice: '',
     max_tokens: 4096,
   }
   availableModels.value = []
+  availableVoices.value = []
   modalOpen.value = true
   fetchAvailableModels()
+  fetchAvailableVoices()
 }
 
 function showEdit(m) {
@@ -135,11 +217,14 @@ function showEdit(m) {
     base_url: m.base_url || '',
     priority: m.priority,
     role: m.role || '',
+    voice: m.voice || '',
     max_tokens: m.max_tokens || 4096,
   }
   availableModels.value = []
+  availableVoices.value = []
   modalOpen.value = true
   fetchAvailableModels()
+  fetchAvailableVoices()
 }
 
 async function save() {
@@ -352,6 +437,11 @@ onMounted(load)
                 class="mono-chip"
               >{{ m.role }}</span>
               <span
+                v-if="m.voice"
+                class="mono-chip"
+                title="Voice this speech model speaks with"
+              >🔊 {{ voiceLabel(m.voice) }}</span>
+              <span
                 class="model-state-label"
                 :class="stateKey(m)"
               >{{ STATE_LABEL[stateKey(m)] }}</span>
@@ -496,6 +586,34 @@ onMounted(load)
         >
       </div>
 
+      <div
+        v-if="isSpeechProvider"
+        class="form-field"
+      >
+        <label>
+          Voice
+          <span
+            v-if="voicesLoading"
+            class="field-note"
+          >loading…</span>
+          <span
+            v-else-if="availableVoices.length"
+            class="field-note"
+          >{{ availableVoices.length }} available</span>
+        </label>
+        <SearchableSelect
+          v-model="form.voice"
+          :options="voiceOptions"
+          :allow-custom-value="true"
+          placeholder="e.g. Rachel"
+        />
+        <p class="field-hint">
+          Who speaks. Required by ElevenLabs — the voice is part of the request
+          URL, so there is no provider default. Leave blank to use the global
+          <code>tts.voice</code> from Settings → Voice Replies.
+        </p>
+      </div>
+
       <div class="form-grid">
         <div class="form-field">
           <label>Priority</label>
@@ -528,6 +646,9 @@ onMounted(load)
               </option>
               <option value="image_model">
                 Image Model (vision / generation)
+              </option>
+              <option value="tts">
+                TTS (spoken replies)
               </option>
             </optgroup>
             <option value="paid_model">

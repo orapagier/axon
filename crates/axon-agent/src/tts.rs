@@ -1,6 +1,23 @@
 //! Shared text-to-speech powering spoken agent replies on the dashboard Chat
-//! page. Configured via the `tts.*` settings (mirroring the `stt.*`
-//! voice-input group):
+//! page.
+//!
+//! There are two ways in, tried in that order by `dashboard::api::audio`:
+//!
+//!   1. **The router pool** — any model tagged `role = "tts"` on the Models
+//!      page. `router::speak_with_router` rotates through them the way the chat
+//!      pools rotate, so a rate-limited or out-of-quota key fails over to the
+//!      next instead of dropping the reply to the browser voice. This is where
+//!      a bank of ElevenLabs keys lives. The engine itself is still synthesized
+//!      by [`speak`] below — the pool only decides *which* config to hand it.
+//!   2. **The `tts.*` settings** — the original single-endpoint path, still the
+//!      whole configuration when no `role = "tts"` model exists, and the
+//!      fallback when the pool is exhausted. Piper lives here permanently: it
+//!      is a local binary with no API key, so it has no place in a table of
+//!      keyed models — which makes it a good free last resort behind a paid
+//!      pool.
+//!
+//! Engines, selected from the base URL (mirroring the `stt.*` voice-input
+//! group):
 //!   * Groq   — https://api.groq.com/openai/v1 + playai-tts + voice Fritz-PlayAI
 //!   * OpenAI — https://api.openai.com/v1 + gpt-4o-mini-tts + voice alloy
 //!   * Gemini — https://generativelanguage.googleapis.com/v1beta/openai +
@@ -9,6 +26,13 @@
 //!     base URLs are detected and served through the native
 //!     `models/{model}:generateContent` speech API instead, with the returned
 //!     PCM wrapped in a WAV header for the browser.
+//!   * ElevenLabs — https://api.elevenlabs.io/v1. Not OpenAI-compatible on any
+//!     axis: it authenticates with `xi-api-key` rather than a bearer token, the
+//!     voice is an opaque id in the *request path* (so a voice is mandatory and
+//!     is not a name), and `model_id` names only the engine
+//!     (eleven_multilingual_v2, eleven_flash_v2_5). Served through the
+//!     `/stream` variant. Its failure codes do not mean what they look like —
+//!     see [`elevenlabs_failure_kind`].
 //!   * Piper  — `tts.base_url = "piper"` selects a local, offline engine
 //!     instead of an HTTP host: `tts.model` names a voice (e.g.
 //!     `en_US-lessac-medium`) installed under [`piper_models_dir`], synthesis
@@ -124,6 +148,18 @@ fn parse_piper_f32(raw: &str) -> Option<f32> {
     raw.parse::<f32>()
         .ok()
         .filter(|v| v.is_finite() && *v >= 0.0)
+}
+
+/// Is there anything left to say once markdown, URLs, emoji and the rest are
+/// stripped? A reply that is entirely a code fence, a bare link, or emoji
+/// reduces to "" and [`speak`] rejects it.
+///
+/// Exposed because that rejection is a property of the *text*, not of any
+/// model: the router has to know not to book it as a model failure, or a few
+/// emoji-only replies in a row would trip the consecutive-error threshold and
+/// park a perfectly healthy speech key until midnight.
+pub fn has_speakable_text(text: &str) -> bool {
+    !plain_text_for_speech(text).trim().is_empty()
 }
 
 /// Clamp speech input to [`MAX_TTS_CHARS`] on a char boundary.
@@ -255,6 +291,10 @@ pub async fn speak(cfg: &TtsConfig, text: &str) -> anyhow::Result<SpeechAudio> {
         return speak_gemini(cfg, &root, &input).await;
     }
 
+    if is_elevenlabs(&cfg.base_url) {
+        return speak_elevenlabs(cfg, &input).await;
+    }
+
     let mut body = serde_json::json!({
         "model": cfg.model,
         "input": input,
@@ -336,6 +376,114 @@ async fn speak_gemini(cfg: &TtsConfig, root: &str, input: &str) -> anyhow::Resul
         content_type: "audio/wav",
         bytes: wav_from_pcm16(&pcm, rate, 1),
     })
+}
+
+/// True for an ElevenLabs endpoint. Matched on the host so any of their
+/// regional residency domains (`api.eu.residency.elevenlabs.io`, …) route here
+/// too, not just the default `api.elevenlabs.io`.
+pub fn is_elevenlabs(base_url: &str) -> bool {
+    base_url.to_ascii_lowercase().contains("elevenlabs.io")
+}
+
+/// Default ElevenLabs engine when a model row leaves `model_id` blank — their
+/// own documented default for the convert endpoint.
+const ELEVENLABS_DEFAULT_MODEL: &str = "eleven_multilingual_v2";
+
+/// Synthesize via ElevenLabs. Unlike every other hosted engine here this is not
+/// OpenAI-shaped:
+///   * the voice is a path segment, not a body field — so `cfg.voice` is
+///     *required*, and it is an opaque id (`21m00Tcm4TlvDq8ikWAM`), not a name;
+///   * auth is the `xi-api-key` header, not `Authorization: Bearer`;
+///   * `model_id` names the engine (eleven_multilingual_v2, eleven_flash_v2_5).
+///
+/// Uses the `/stream` variant so audio starts flowing before the whole
+/// utterance is synthesized — both clients (ChatPage's `StreamingSpeech` and
+/// the Android `StreamingTts`) already play sentence-by-sentence, so this is
+/// the difference between a sentence's worth of latency and a syllable's.
+///
+/// Errors are deliberately verbose about *which* failure it was: the router's
+/// pool rotation keys off the text (see `elevenlabs_failure_kind`), and
+/// ElevenLabs reports a spent character quota as a 401 rather than a 429.
+async fn speak_elevenlabs(cfg: &TtsConfig, input: &str) -> anyhow::Result<SpeechAudio> {
+    if cfg.voice.is_empty() {
+        anyhow::bail!(
+            "ElevenLabs needs a voice id — the voice is part of the request path, so there is \
+             no provider default. Set the model's Voice on the Models page (or `tts.voice` for \
+             the settings fallback); pick one from the dropdown or copy its id from \
+             https://elevenlabs.io/app/voice-library"
+        );
+    }
+    let model = if cfg.model.trim().is_empty() {
+        ELEVENLABS_DEFAULT_MODEL
+    } else {
+        cfg.model.trim()
+    };
+
+    let url = format!(
+        "{}/text-to-speech/{}/stream?output_format=mp3_44100_128",
+        crate::providers::list::elevenlabs_root(&cfg.base_url),
+        cfg.voice
+    );
+    let body = serde_json::json!({
+        "text": input,
+        "model_id": model,
+    });
+    let resp = HTTP_CLIENT
+        .post(&url)
+        .header("xi-api-key", cfg.api_key.clone())
+        .json(&body)
+        .send()
+        .await
+        .with_context(|| format!("speech request to {}", url))?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        let snippet: String = body.chars().take(300).collect();
+        anyhow::bail!("speech synthesis failed ({}): {}", status, snippet);
+    }
+    Ok(SpeechAudio::Streamed(resp))
+}
+
+/// How the router should treat an ElevenLabs failure. Their status codes do not
+/// mean what the generic classifier assumes, and getting this wrong is the
+/// difference between "rotate to the next key for 5 seconds" and "disable this
+/// key forever":
+///
+///   * **401 + `quota_exceeded`** is an exhausted *character quota*, not a bad
+///     key. The generic classifier sees "401 Unauthorized" and files it as
+///     `invalid_key`, which Homeostasis auto-disable will happily park
+///     permanently — so a key that would have come back next billing cycle is
+///     retired instead. Treated as a long (daily) cooldown.
+///   * **429 + `too_many_concurrent_requests`** is a burst collision against the
+///     plan's concurrency cap (2 on free, 5 on Creator, …), which clears in
+///     *seconds*. The default per-minute cooldown would bench a perfectly good
+///     key for a full minute over one overlapping sentence.
+///   * **429 + `system_busy`** is ElevenLabs being overloaded — also transient.
+///
+/// Anything else falls through to the generic handling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ElevenLabsFailure {
+    /// Character quota spent; back at the next billing reset.
+    QuotaExceeded,
+    /// Concurrency cap or upstream congestion; back in seconds.
+    Transient,
+    /// Not an ElevenLabs-specific condition.
+    Other,
+}
+
+/// Classify an ElevenLabs error string. Matches on the `detail.status` values
+/// their API returns rather than on the HTTP code alone, precisely because the
+/// code alone is misleading.
+pub fn elevenlabs_failure_kind(err: &str) -> ElevenLabsFailure {
+    let e = err.to_ascii_lowercase();
+    if e.contains("quota_exceeded") || e.contains("insufficient_credits") {
+        return ElevenLabsFailure::QuotaExceeded;
+    }
+    if e.contains("too_many_concurrent_requests") || e.contains("system_busy") {
+        return ElevenLabsFailure::Transient;
+    }
+    ElevenLabsFailure::Other
 }
 
 /// `tts.base_url` value that selects the local Piper engine instead of an
@@ -604,6 +752,11 @@ pub async fn list_tts_models(base_url: &str, api_key: &str) -> anyhow::Result<Ve
     if is_piper(base_url) {
         return Ok(piper_voices_in(&piper_models_dir()));
     }
+    // ElevenLabs answers with a bare array and its own capability flag, so it
+    // never goes through the OpenAI-compat listing or the name heuristic below.
+    if is_elevenlabs(base_url) {
+        return crate::providers::list::list_elevenlabs_models(base_url, api_key).await;
+    }
     // Google's native root serves no OpenAI-shaped catalogue; its compat layer
     // at {root}/openai does, so Gemini listings go through there whichever
     // Google URL the user pasted.
@@ -624,6 +777,79 @@ mod tests {
             id: id.into(),
             label: None,
         }
+    }
+
+    // ElevenLabs' status codes do not mean what a generic classifier assumes,
+    // and the cost of getting it wrong is asymmetric: read a spent character
+    // quota as a bad credential and Homeostasis auto-disable retires a key that
+    // would have recovered at the next billing reset.
+    #[test]
+    fn unspeakable_replies_are_recognized_before_routing() {
+        // Each of these strips to nothing — and must be told apart from a model
+        // failure, or the router parks a healthy key over a bad payload.
+        for empty in [
+            "```rust\nfn main() {}\n```",
+            "https://example.com",
+            "🎉🎉🎉",
+            "**_~_**",
+        ] {
+            assert!(
+                !has_speakable_text(empty),
+                "{empty:?} should be unspeakable"
+            );
+        }
+        assert!(has_speakable_text("Hello **there**."));
+        assert!(has_speakable_text("See https://example.com for the docs"));
+    }
+
+    #[test]
+    fn elevenlabs_quota_exhaustion_is_not_a_bad_key() {
+        // Verbatim shape of their 401 when the character allowance is gone.
+        let err = "speech synthesis failed (401 Unauthorized): {\"detail\":{\"status\":\"quota_exceeded\",\"message\":\"You have 12 characters remaining\"}}";
+        assert_eq!(
+            elevenlabs_failure_kind(err),
+            ElevenLabsFailure::QuotaExceeded
+        );
+    }
+
+    #[test]
+    fn elevenlabs_concurrency_and_congestion_are_transient() {
+        for err in [
+            "speech synthesis failed (429 Too Many Requests): {\"detail\":{\"status\":\"too_many_concurrent_requests\"}}",
+            "speech synthesis failed (429 Too Many Requests): {\"detail\":{\"status\":\"system_busy\"}}",
+        ] {
+            assert_eq!(
+                elevenlabs_failure_kind(err),
+                ElevenLabsFailure::Transient,
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn ordinary_failures_are_left_to_the_generic_path() {
+        // A genuinely invalid key must NOT be mistaken for a spent quota, or a
+        // typo'd credential would be retried once a day forever.
+        assert_eq!(
+            elevenlabs_failure_kind(
+                "speech synthesis failed (401 Unauthorized): {\"detail\":{\"status\":\"invalid_api_key\"}}"
+            ),
+            ElevenLabsFailure::Other
+        );
+        assert_eq!(
+            elevenlabs_failure_kind(
+                "speech synthesis failed (404 Not Found): voice does not exist"
+            ),
+            ElevenLabsFailure::Other
+        );
+    }
+
+    #[test]
+    fn elevenlabs_detected_on_default_and_regional_hosts() {
+        assert!(is_elevenlabs("https://api.elevenlabs.io/v1"));
+        assert!(is_elevenlabs("https://api.eu.residency.elevenlabs.io/v1"));
+        assert!(!is_elevenlabs("https://api.groq.com/openai/v1"));
+        assert!(!is_elevenlabs("piper"));
     }
 
     #[test]

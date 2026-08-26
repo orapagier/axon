@@ -79,18 +79,57 @@ pub async fn speak_text(State(state): State<AppState>, Json(payload): Json<Value
         )
             .into_response();
     }
+    // Pool first: any model tagged role="tts" on the Models page routes through
+    // the router, which rotates to the next key when one is rate-limited or out
+    // of quota. `Ok(None)` means no such model exists at all — the settings
+    // fallback below is then the whole configuration, exactly as before the
+    // pool existed. A pool that exists but is exhausted still falls through to
+    // settings, which is what makes a local Piper install a genuinely useful
+    // last resort: paid voices while credit lasts, offline voice after.
+    match crate::router::speak_with_router(&state.router, &state.settings, &text).await {
+        Ok(Some(route)) => {
+            tracing::debug!("speech served by pool model '{}'", route.model_name);
+            return speech_response(route.audio);
+        }
+        Ok(None) => {}
+        Err(e) => {
+            tracing::warn!(
+                "TTS pool could not serve this reply, trying tts.* settings: {:#}",
+                e
+            );
+        }
+    }
+
     let Some(cfg) = crate::tts::config_from_settings(&state.settings) else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(json!({
-                "error": "Text-to-speech is not configured — set tts.base_url and tts.model under Settings → Voice Replies (e.g. Groq: https://api.groq.com/openai/v1 + playai-tts + voice Fritz-PlayAI)."
+                "error": "Text-to-speech is not configured — add a model with role \"tts\" on the Models page (e.g. provider elevenlabs), or set tts.base_url and tts.model under Settings → Voice Replies (e.g. Groq: https://api.groq.com/openai/v1 + playai-tts + voice Fritz-PlayAI)."
             })),
         )
             .into_response();
     };
 
     match crate::tts::speak(&cfg, &text).await {
-        Ok(crate::tts::SpeechAudio::Streamed(upstream)) => {
+        Ok(audio) => speech_response(audio),
+        Err(e) => {
+            tracing::warn!("TTS synthesis failed ({}): {:#}", cfg.model, e);
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"error": format!("{:#}", e)})),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Wrap synthesized audio in the HTTP response both TTS paths (pool and
+/// settings) return. Streamed upstreams are piped through as they synthesize —
+/// never buffered here — while Gemini's and Piper's already-assembled WAVs ship
+/// as-is.
+fn speech_response(audio: crate::tts::SpeechAudio) -> Response {
+    match audio {
+        crate::tts::SpeechAudio::Streamed(upstream) => {
             let content_type = upstream
                 .headers()
                 .get(reqwest::header::CONTENT_TYPE)
@@ -109,10 +148,10 @@ pub async fn speak_text(State(state): State<AppState>, Json(payload): Json<Value
         }
         // Gemini's native API answers with one buffered WAV instead of a
         // stream; same headers, ready-made body.
-        Ok(crate::tts::SpeechAudio::Buffered {
+        crate::tts::SpeechAudio::Buffered {
             content_type,
             bytes,
-        }) => (
+        } => (
             [
                 (header::CONTENT_TYPE, content_type.to_string()),
                 (header::CACHE_CONTROL, "no-store".to_string()),
@@ -120,14 +159,6 @@ pub async fn speak_text(State(state): State<AppState>, Json(payload): Json<Value
             bytes,
         )
             .into_response(),
-        Err(e) => {
-            tracing::warn!("TTS synthesis failed ({}): {:#}", cfg.model, e);
-            (
-                StatusCode::BAD_GATEWAY,
-                Json(json!({"error": format!("{:#}", e)})),
-            )
-                .into_response()
-        }
     }
 }
 

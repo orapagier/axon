@@ -45,6 +45,10 @@ pub struct RawModel {
     pub enabled: bool,
     #[serde(default)]
     pub role: String,
+    /// Voice id for a `role = "tts"` model; ignored otherwise. Blank falls back
+    /// to the `tts.voice` setting.
+    #[serde(default)]
+    pub voice: Option<String>,
     /// Anthropic-provider thinking mode: "adaptive" | "budget" | unset ("off").
     #[serde(default)]
     pub thinking_mode: Option<String>,
@@ -74,6 +78,10 @@ pub fn load_models(path: &str) -> anyhow::Result<Vec<ModelRecord>> {
             enabled: m.enabled,
             disabled_reason: None,
             role: normalize_role(&m.role),
+            voice: m
+                .voice
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty()),
             thinking_mode: m.thinking_mode,
             no_reasoning: false,
             status: "available".into(),
@@ -109,8 +117,8 @@ pub fn sync_toml_models(conn: &rusqlite::Connection, toml_models: Vec<ModelRecor
         // is no prune: a model dropped from the file is NOT deleted from the DB.
         // Edit or remove a shipped model in the dashboard, never via the TOML.
         let _ = conn.execute(
-            "INSERT OR IGNORE INTO models (name, provider, model_id, api_key, base_url, timeout_secs, priority, max_tokens, enabled, role, thinking_mode, origin)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'toml')",
+            "INSERT OR IGNORE INTO models (name, provider, model_id, api_key, base_url, timeout_secs, priority, max_tokens, enabled, role, thinking_mode, voice, origin)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'toml')",
             rusqlite::params![
                 m.name,
                 m.provider,
@@ -122,14 +130,15 @@ pub fn sync_toml_models(conn: &rusqlite::Connection, toml_models: Vec<ModelRecor
                 m.max_tokens,
                 if m.enabled { 1 } else { 0 },
                 m.role,
-                m.thinking_mode
+                m.thinking_mode,
+                m.voice
             ],
         );
     }
 }
 
 pub fn load_models_from_db(conn: &rusqlite::Connection) -> anyhow::Result<Vec<ModelRecord>> {
-    let mut s = conn.prepare("SELECT name, provider, model_id, api_key, base_url, timeout_secs, priority, max_tokens, enabled, role, thinking_mode, disabled_reason FROM models")?;
+    let mut s = conn.prepare("SELECT name, provider, model_id, api_key, base_url, timeout_secs, priority, max_tokens, enabled, role, thinking_mode, disabled_reason, voice FROM models")?;
     let rows = s.query_map([], |r| {
         let provider: String = r.get(1)?;
         let base_url: Option<String> = r.get(4)?;
@@ -147,6 +156,10 @@ pub fn load_models_from_db(conn: &rusqlite::Connection) -> anyhow::Result<Vec<Mo
             enabled: r.get::<_, i32>(8)? != 0,
             disabled_reason: r.get::<_, Option<String>>(11)?,
             role: normalize_role(&r.get::<_, String>(9)?),
+            voice: r
+                .get::<_, Option<String>>(12)?
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty()),
             thinking_mode: r.get::<_, Option<String>>(10)?,
             no_reasoning: false,
             status: "available".into(),
@@ -312,6 +325,7 @@ mod tests {
             enabled: true,
             disabled_reason: None,
             role: "".into(),
+            voice: None,
             thinking_mode: None,
             no_reasoning: false,
             status: "available".into(),
