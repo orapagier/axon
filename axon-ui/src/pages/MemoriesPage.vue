@@ -319,14 +319,36 @@ onMounted(() => {
 
 <style scoped>
 .memories-page {
-  padding-bottom: 60px;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .memory-grid {
+  flex: 1;
+  min-height: 0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
   gap: 14px;
-  align-items: start;
+}
+
+.memory-grid .panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.memory-grid .panel-head {
+  flex-shrink: 0;
+}
+
+.memory-grid .row-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .head-actions {

@@ -686,7 +686,11 @@ onMounted(load)
 
 <style scoped>
 .models-page {
-  padding-bottom: 60px;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .toolbar-actions {
@@ -694,6 +698,27 @@ onMounted(load)
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+
+.page-toolbar {
+  flex-shrink: 0;
+}
+
+.models-page > .panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+.models-page > .panel .panel-head {
+  flex-shrink: 0;
+}
+
+.models-page > .panel .row-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 /* ── Row identity ─────────────────────────────────────────────────────────── */

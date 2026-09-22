@@ -159,14 +159,40 @@ onMounted(load)
 
 <style scoped>
 .tools-page {
-  padding-bottom: 60px;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.page-toolbar {
+  flex-shrink: 0;
 }
 
 .tools-grid {
+  flex: 1;
+  min-height: 0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
   gap: 14px;
-  align-items: start;
+}
+
+.tools-grid .panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.tools-grid .panel-head {
+  flex-shrink: 0;
+}
+
+.tools-grid .row-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 /* A tool that isn't firing fades back into the membrane. */
