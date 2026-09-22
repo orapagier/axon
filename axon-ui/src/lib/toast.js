@@ -6,9 +6,15 @@ import { addNotification } from './notifications.js'
 // to the notification bell; only `notifyBell` records history there.
 export const toasts = ref([])
 
+// Voice exchanges (TTS/STT mode on the Chat page) suppress toast popups so
+// they don't interrupt a spoken conversation. The notification bell is
+// independent of this flag — `notifyBell` still records there.
+export const toastsSuppressed = ref(false)
+
 let nextId = 0
 
 export function toast(msg, ok = true) {
+  if (toastsSuppressed.value) return
   const id = ++nextId
   toasts.value.push({ id, msg, ok })
   // Errors linger longer so they can actually be read before fading.

@@ -294,6 +294,25 @@ priority   = 5
 timeout_secs = 45
 enabled    = true
 
+# ── OPENCODE BRIDGE (local, zero keys)─────────────────────────────────────
+# Uses the locally-installed opencode CLI's free models via the compiled
+# crates/oc-bridge binary (no node). provider is unknown to Axon, so it routes
+# through openai_compat to the bridge's base_url. The api_key is a decoy the
+# bridge ignores; it must merely resolve.
+# Requires: scripts/dev.sh or scripts/run.sh (they boot the bridge if opencode
+# is installed), or oc-bridge running standalone (bridge :4010, serve :4123).
+
+[[models]]
+name        = "opencode-big-pickle"
+provider    = "opencode"
+model_id    = "big-pickle"
+api_key     = "${AXON_API_KEY}"
+base_url    = "http://127.0.0.1:4010/v1"
+role        = ""
+priority    = 2
+timeout_secs = 240
+enabled     = true
+
 # ── TOOL ROUTER ───────────────
 
 [[models]]

@@ -4,6 +4,7 @@ import { get, post, put } from '../lib/api.js'
 import { toast } from '../lib/toast.js'
 import { useHeaderSearch } from '../lib/headerSearch.js'
 import SearchableSelect from '../components/SearchableSelect.vue'
+import SelfImprovementPanel from '../components/SelfImprovementPanel.vue'
 
 const byCategory = ref({})
 const settingsSearch = ref('')
@@ -61,6 +62,7 @@ const sections = computed(() => [
   })),
   { id: 'router:patterns', title: 'Router Patterns', meta: 'json', divider: true },
   { id: 'router:test', title: 'Router Test', meta: String(routerMatchCount.value) },
+  { id: 'optimizer:panel', title: 'Self-Improvement', meta: 'panel' },
 ])
 
 const activeCategory = computed(() => {
@@ -101,6 +103,7 @@ useHeaderSearch('settings', {
 
 const showingPatterns = computed(() => activeSection.value === 'router:patterns')
 const showingRouterTest = computed(() => activeSection.value === 'router:test')
+const showingOptimizer = computed(() => activeSection.value === 'optimizer:panel')
 
 const routerMatchCount = computed(() => testResult.value?.matched_tools?.length || 0)
 const patternsDirty = computed(() => patternsText.value !== patternsOriginal.value)
@@ -586,6 +589,13 @@ onMounted(load)
               Run a message through the router to inspect its tier and matching tools.
             </p>
           </div>
+        </section>
+
+        <section
+          v-if="!searchActive && showingOptimizer"
+          class="panel set-panel"
+        >
+          <SelfImprovementPanel />
         </section>
       </div>
     </div>

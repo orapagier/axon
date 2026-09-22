@@ -340,6 +340,22 @@ FILE HANDLING:\n\
     sys.push_str(discovery_hint);
     sys.push_str(planning_hint);
 
+    // Few-shot "muscle memory": when stored examples from similar past clean
+    // runs exist, append them so the model mimics proven behavior instead of
+    // guessing. Bounded by agent.few_shot.max_examples × agent.few_shot.max_chars;
+    // skipped for conversational turns, structured/tool-free nodes, and
+    // isolated workflow nodes before any DB read. See `crate::fewshot`.
+    if let Some(block) = crate::fewshot::render_for_task(
+        task,
+        &state.settings,
+        &state.db,
+        is_conversational,
+        tool_free,
+        isolated,
+    ) {
+        sys.push_str(&block);
+    }
+
     // Spoken reply: the request came in by voice and the answer will be read
     // aloud, so a listener can't skim a wall of records. Ask for a short,
     // conversational summary up front rather than a raw enumeration. Applies to

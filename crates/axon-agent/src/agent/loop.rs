@@ -852,6 +852,7 @@ pub(crate) async fn run_inner(
             finalize(
                 state,
                 &run_id,
+                task,
                 "failed",
                 &msg,
                 iters,
@@ -894,6 +895,7 @@ pub(crate) async fn run_inner(
             finalize(
                 state,
                 &run_id,
+                task,
                 "failed",
                 &msg,
                 iters,
@@ -1205,6 +1207,7 @@ pub(crate) async fn run_inner(
                 finalize(
                     state,
                     &run_id,
+                    task,
                     "failed",
                     &msg,
                     iters,
@@ -1353,6 +1356,7 @@ pub(crate) async fn run_inner(
             finalize(
                 state,
                 &run_id,
+                task,
                 "completed",
                 &final_text,
                 iters,
@@ -1468,6 +1472,7 @@ pub(crate) async fn run_inner(
                         finalize(
                             state,
                             &run_id,
+                            task,
                             "completed",
                             &final_text,
                             iters,
@@ -1675,6 +1680,7 @@ pub(crate) async fn run_inner(
                     finalize(
                         state,
                         &run_id,
+                        task,
                         "completed",
                         &final_text,
                         iters,
@@ -1726,6 +1732,7 @@ pub(crate) async fn run_inner(
             finalize(
                 state,
                 &run_id,
+                task,
                 "failed",
                 &msg,
                 iters,
@@ -2189,9 +2196,11 @@ fn spawn_compress(
 
 /// Write the final run record. Guard trigger counts are stored so you can
 /// query how often each guard fires in production without log scraping.
+#[allow(clippy::too_many_arguments)]
 fn finalize(
     state: &AppState,
     id: &str,
+    task: &str,
     status: &str,
     result: &str,
     iters: u32,
@@ -2203,6 +2212,7 @@ fn finalize(
     // Drop run-scoped plan + tool-discovery state on every exit path.
     crate::agent::plan::clear(id);
     crate::agent::tool_discovery::clear(id);
+    let mut wrote = false;
     match state.db.get() {
         Ok(conn) => {
             if let Err(e) = conn.execute(
@@ -2219,9 +2229,27 @@ fn finalize(
                 ]
             ) {
                 tracing::error!("run {id}: failed to finalize run status to '{status}': {e}");
+            } else {
+                wrote = true;
             }
         }
         Err(e) => tracing::error!("run {id}: failed to get DB connection to finalize run status to '{status}': {e}"),
+    }
+    // Learn from the run's best work: a clean completion with real tools and no
+    // guard/QC corrections becomes a few-shot reference example (no-op when the
+    // feature is disabled or the run isn't clean). See `crate::fewshot`.
+    if wrote && status == "completed" {
+        crate::fewshot::capture_good_run(
+            &state.db,
+            &state.settings,
+            id,
+            task,
+            result,
+            tools,
+            guards.nudge_count == 0
+                && guards.claim_guard_count == 0
+                && guards.qc_correction_count == 0,
+        );
     }
 }
 

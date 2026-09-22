@@ -595,6 +595,42 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    // Self-improvement sweep: today's "muscle memory" + prompt optimizer.
+    //   * few-shot re-mining back-fills qualifying completed runs and evicts
+    //     to the cap (blocking SQLite -> spawn_blocking).
+    //   * the prompt optimizer proposes system-prompt revisions against recent
+    //     failures (async LLM work). Both run on the same daily tick; each one
+    //     independently skips itself when disabled or when nothing is due.
+    {
+        let si_db = state.db.clone();
+        let si_settings = state.settings.clone();
+        let si_state = state.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(24 * 3600));
+            loop {
+                interval.tick().await;
+                let db = si_db.clone();
+                let settings = si_settings.clone();
+                match tokio::task::spawn_blocking(move || {
+                    axon::fewshot::sweep(&db, &settings)
+                })
+                .await
+                {
+                    Ok(Ok(n)) => {
+                        if n > 0 {
+                            tracing::info!("few-shot sweep back-filled {n} example(s)");
+                        }
+                    }
+                    Ok(Err(e)) => tracing::warn!("few-shot sweep failed: {e:#}"),
+                    Err(e) => tracing::warn!("few-shot sweep task join error: {e}"),
+                }
+                if let Some(outcome) = axon::optimizer::maybe_run(&si_state).await {
+                    tracing::info!("Prompt optimizer: {outcome}");
+                }
+            }
+        });
+    }
+
     // Scheduled local backups (axon.db + crm.db): local, on-instance snapshots —
     // NOT off-site disaster recovery on their own. Runs immediately on boot,
     // then daily, same interval-tick pattern as the retention sweep above.

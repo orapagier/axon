@@ -199,6 +199,22 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/mcp", get(api::get_mcp).post(api::connect_mcp))
         .route("/api/mcp/:name", axum::routing::delete(api::disconnect_mcp))
         .route("/api/messaging/status", get(api::get_messaging_status))
+        .route("/api/optimizer/status", get(api::optimizer_status))
+        .route("/api/optimizer/run", axum::routing::post(api::run_optimizer))
+        .route(
+            "/api/optimizer/fewshot/sweep",
+            axum::routing::post(api::run_fewshot_sweep),
+        )
+        .route("/api/optimizer/history", get(api::optimizer_history))
+        .route(
+            "/api/optimizer/apply/:id",
+            axum::routing::post(api::optimizer_apply),
+        )
+        .route(
+            "/api/optimizer/reject/:id",
+            axum::routing::post(api::optimizer_reject),
+        )
+        .route("/api/optimizer/examples", get(api::optimizer_examples))
         .route(
             "/api/messaging/reconnect/:platform",
             axum::routing::post(api::reconnect_messaging),

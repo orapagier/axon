@@ -4,6 +4,7 @@ pub mod crypto;
 pub mod dashboard;
 pub mod db;
 pub mod error_reporting;
+pub mod fewshot;
 pub mod files;
 pub mod google_accounts;
 pub mod http;
@@ -15,6 +16,7 @@ pub mod model_cache;
 pub mod notify;
 pub mod observability;
 
+pub mod optimizer;
 pub mod providers;
 pub mod router;
 pub mod scheduler;

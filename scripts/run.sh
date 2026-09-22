@@ -1,20 +1,12 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  Axon — local dev instance (Linux / WSL)
+#  Axon — run server (Linux / WSL)
 # -----------------------------------------------------------------------------
-#  The Linux counterpart of run.bat: build the frontend, sync it into the
-#  agent's static/ dir, then run the backend from crates/axon-agent so it
-#  picks up the .env sitting there.
-#
-#  Modes
-#    (default)   build axon-ui once, serve everything from the agent on :PORT.
-#    --hmr       run vite's dev server alongside the agent instead. Vite
-#                proxies /api and /ws to the agent (see axon-ui/vite.config.js),
-#                so you get hot reload on the UI at :5173 while the agent
-#                keeps serving the API on :PORT. Best for frontend work.
+#  The run.bat counterpart: build the frontend, sync it into the agent's
+#  static/ dir, then run the backend from crates/axon-agent so it picks up
+#  the .env sitting there.
 #
 #  Flags
-#    --hmr             vite dev server + agent, hot reload  (UI on :5173)
 #    --no-ui           skip the frontend entirely, just run the agent
 #    --release         build/run the agent in release mode
 #    --port N          override AXON_PORT for this run
@@ -43,10 +35,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 AGENT_DIR="$ROOT/crates/axon-agent"
 UI_DIR="$ROOT/axon-ui"
 
-HMR=0; SKIP_UI=0; RELEASE=0; PORT_OVERRIDE=""; SKIP_OC=0
+SKIP_UI=0; RELEASE=0; PORT_OVERRIDE=""; SKIP_OC=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --hmr)     HMR=1 ;;
     --no-ui)   SKIP_UI=1 ;;
     --release) RELEASE=1 ;;
     --port)    PORT_OVERRIDE="${2:-}"; shift ;;
@@ -69,17 +60,14 @@ log "repo   $ROOT"
 log "agent  port $PORT"
 
 if pgrep -x axon >/dev/null 2>&1; then
-  warn "an 'axon' process is already running — stopping it so the rebuild isn't blocked"
+  warn "an 'axon' process is already running — stopping it"
   pkill -x axon || true
   sleep 1
 fi
 
-if command -v ss >/dev/null && ss -ltn "sport = :$PORT" 2>/dev/null | grep -q LISTEN; then
-  warn "port $PORT is already listening — the agent will fail to bind"
-fi
-
 # ── opencode bridge (free models; skipped when opencode isn't installed) ─────
 if [ "$SKIP_OC" = 0 ]; then
+  step "opencode bridge"
   source "$ROOT/scripts/lib/oc-bridge.sh"
   oc_ensure_bridge || warn "continuing without the opencode model"
 fi
@@ -92,30 +80,6 @@ if [ "$SKIP_UI" = 0 ]; then
     info "node_modules missing or built for another OS — running npm install"
     npm install
   fi
-fi
-
-# ── HMR mode: agent in the background, vite in the foreground ────────────────
-if [ "$HMR" = 1 ]; then
-  [ "$SKIP_UI" = 1 ] && err "--hmr and --no-ui are contradictory"
-  step "Agent (background)"
-  cd "$AGENT_DIR"
-  CARGO_ARGS=(run); [ "$RELEASE" = 1 ] && CARGO_ARGS+=(--release)
-  AXON_PORT="$PORT" cargo "${CARGO_ARGS[@]}" &
-  AGENT_PID=$!
-  cleanup() { info "stopping agent ($AGENT_PID)"; kill "$AGENT_PID" 2>/dev/null || true; }
-  trap cleanup EXIT INT TERM
-
-  step "Vite dev server"
-  info "UI  http://localhost:5173  (hot reload, proxies /api + /ws to :$PORT)"
-  info "API http://localhost:$PORT"
-  cd "$UI_DIR"
-  npm run dev
-  exit 0
-fi
-
-# ── Served mode: build UI into the agent's static/, then run the agent ───────
-if [ "$SKIP_UI" = 0 ]; then
-  info "building axon-ui"
   npm run build
   step "Sync static"
   mkdir -p "$AGENT_DIR/static"

@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { subscribe, wsSend, wsStatus } from '../lib/ws.js'
 import { get, put, del, postForm, postRaw } from '../lib/api.js'
-import { toast, notifyBell } from '../lib/toast.js'
+import { toast, notifyBell, toastsSuppressed } from '../lib/toast.js'
 import { addNotification } from '../lib/notifications.js'
 import { confirmDialog } from '../lib/confirm.js'
 import { renderMarkdown } from '../lib/markdown.js'
@@ -24,6 +24,15 @@ import EnrollWakeWord from '../components/EnrollWakeWord.vue'
 const messages = ref([])
 const input = ref('')
 const disabled = ref(false)
+// TTS/STT (voice) mode: while a voice exchange is actively running —
+// recording, transcribing, streaming, or reading a reply aloud — voiceModeActive
+// is true. It drives toast suppression (see toastsSuppressed) so popups never
+// interrupt a spoken conversation. voiceConversation stays true once any voice
+// exchange has happened in the current session, keeping the live chat page clean
+// until the user opens the conversation from the sidebar, starts a new chat, or
+// types a text message.
+const voiceModeActive = ref(false)
+const voiceConversation = ref(false)
 const messagesEl = ref(null)
 const inputEl = ref(null)
 const starterPrompts = [
@@ -177,6 +186,7 @@ function abandonRun(bubbleText, metaText) {
   collapseTrace()
   resetRunTrackers()
   disabled.value = false
+  voiceModeActive.value = false
   if (handsFreeActive.value) endHandsFree()
 }
 
@@ -205,12 +215,20 @@ function newChat() {
   stopSpeaking()
   disabled.value = false
   historyOpen.value = false
+  voiceModeActive.value = false
+  voiceConversation.value = false
   nextTick(() => focusComposer())
 }
 
 async function openConversation(id) {
   historyOpen.value = false
-  if (id === currentSessionId.value || disabled.value) return
+  // Opening the current session is normally a no-op (it is already live), but a
+  // TTS/STT conversation is kept off the live page — clicking its sidebar entry
+  // must reload it from the server to reveal the clean transcript.
+  if (id === currentSessionId.value && !voiceConversation.value) return
+  if (disabled.value) return
+  voiceModeActive.value = false
+  voiceConversation.value = false
   currentSessionId.value = id
   resetRunTrackers()
   stopSpeaking()
@@ -442,6 +460,9 @@ function handleWsEvent(ev) {
       collapseTrace()
       resetRunTrackers()
       disabled.value = false
+      // If nothing can be spoken there's no read-aloud to end the exchange;
+      // popups can come back right away.
+      if (!canSpeak) voiceModeActive.value = false
       // Reconcile the sidebar: a brand-new thread now has a backend title, and
       // the active thread bubbles to the top by updated_at.
       loadConversations()
@@ -513,6 +534,17 @@ async function sendMessage(msg, voice) {
   speakReplyOnDone = voice
   if (!currentSessionId.value) newChat()
 
+  // Voice turns (wake word + mic button) run in TTS/STT mode: popups are
+  // suppressed and the live page stays clean while the exchange is active.
+  if (voice) {
+    voiceModeActive.value = true
+    voiceConversation.value = true
+  } else {
+    // A typed message exits TTS/STT mode and reveals the transcript again.
+    voiceConversation.value = false
+    voiceModeActive.value = false
+  }
+
   messages.value.push({ role: 'user', text: msg })
   disabled.value = true
   armRunWatchdog()
@@ -547,6 +579,8 @@ async function sendMessage(msg, voice) {
     agentIdx = -1
     disabled.value = false
     endHandsFree()
+    // The voice turn never made it out, so it isn't a voice conversation.
+    if (voice) voiceConversation.value = false
     if (voice) notifyBell(`Voice message not sent — not connected: "${msg}"`, false)
     else input.value = msg
     toast('Not connected to the agent yet — retry once the status shows Connected.', false)
@@ -844,6 +878,9 @@ function endHandsFree() {
   wake?.stopThinking()
   stopBargeMonitor()
   bargeBusy = false
+  // The exchange is over (natural speech end, dismissal, error, cancel, tab
+  // hidden): popups are no longer suppressed.
+  voiceModeActive.value = false
 }
 
 // ── Orb-core tap: hold / resume the exchange ─────────────────────────────────
@@ -1875,9 +1912,16 @@ onUnmounted(() => {
   wake?.stop()
   clearInterval(recTimer)
   stopSpeaking()
+  toastsSuppressed.value = false
 })
 
 watch(messages, () => scrollBottom(), { deep: true })
+// Voice exchanges suppress toast popups so audio isn't interrupted; the
+// notification bell still records them (notifyBell / pushWsNotification are
+// independent of toastsSuppressed).
+watch(voiceModeActive, (on) => {
+  toastsSuppressed.value = on
+})
 watch(wsStatus, (s) => {
   // If the socket drops mid-run the 'done' event never arrives (the server
   // binds the run to the old socket and won't redeliver on reconnect); unlock
@@ -2171,7 +2215,7 @@ watch(disabled, (newVal) => {
         class="chat-messages"
       >
         <div
-          v-if="messages.length === 0"
+          v-if="voiceConversation || messages.length === 0"
           class="chat-welcome"
         >
           <div class="chat-welcome-mark">
@@ -2197,127 +2241,129 @@ watch(disabled, (newVal) => {
           </div>
         </div>
 
-        <template
-          v-for="(msg, idx) in messages"
-          :key="idx"
-        >
-          <div
-            v-if="msg.role === 'trace'"
-            v-show="msg.trace.length > 0"
-            class="tool-trace"
+        <template v-if="!voiceConversation">
+          <template
+            v-for="(msg, idx) in messages"
+            :key="idx"
           >
-            <button
-              class="trace-toggle"
-              type="button"
-              @click="msg.collapsed = !msg.collapsed"
-            >
-              <span
-                class="trace-chevron"
-                :class="{ open: !msg.collapsed }"
-              >▸</span>
-              Reasoning · {{ msg.trace.length }} step{{ msg.trace.length === 1 ? '' : 's' }}
-            </button>
             <div
-              v-show="!msg.collapsed"
-              class="trace-items"
-            >
-              <div
-                v-for="(item, i) in msg.trace"
-                :key="i"
-                class="tool-trace-item"
-              >
-                <span :style="{ color: item.color }">{{ item.text }}</span>
-              </div>
-            </div>
-          </div>
-
-          <div
-            v-else-if="msg.role === 'user'"
-            class="chat-msg user"
-            :class="{ 'no-anim': msg.noAnim }"
-          >
-            <div class="chat-bubble">
-              {{ msg.text }}
-            </div>
-          </div>
-
-          <div
-            v-else-if="msg.role === 'agent'"
-            class="chat-msg agent"
-            :class="{ 'no-anim': msg.noAnim }"
-          >
-            <div class="chat-bubble">
-              <span
-                v-if="msg.thinking"
-                class="thinking-indicator"
-              >{{ msg.status || 'Thinking...' }}</span>
-              <span
-                class="chat-markdown"
-                v-html="renderMarkdown(msg.text)"
-              />
-            </div>
-            <div
-              v-if="msg.meta || (canSpeak && msg.text && !msg.thinking)"
-              class="chat-meta"
+              v-if="msg.role === 'trace'"
+              v-show="msg.trace.length > 0"
+              class="tool-trace"
             >
               <button
-                v-if="canSpeak && msg.text && !msg.thinking"
-                class="msg-speak"
-                :class="{ speaking: speakingIdx === idx }"
+                class="trace-toggle"
                 type="button"
-                :title="speakingIdx === idx ? 'Stop reading' : 'Read aloud'"
-                @click="toggleSpeak(idx)"
+                @click="msg.collapsed = !msg.collapsed"
               >
-                <svg
-                  v-if="speakingIdx !== idx"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  xmlns="http://www.w3.org/2000/svg"
-                  aria-hidden="true"
-                >
-                  <path
-                    d="M11 5 6 9H3v6h3l5 4V5Z"
-                    stroke="currentColor"
-                    stroke-width="1.8"
-                    stroke-linejoin="round"
-                  />
-                  <path
-                    d="M15.5 8.5a5 5 0 0 1 0 7"
-                    stroke="currentColor"
-                    stroke-width="1.8"
-                    stroke-linecap="round"
-                  />
-                  <path
-                    d="M18.5 6a9 9 0 0 1 0 12"
-                    stroke="currentColor"
-                    stroke-width="1.8"
-                    stroke-linecap="round"
-                  />
-                </svg>
-                <svg
-                  v-else
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  xmlns="http://www.w3.org/2000/svg"
-                  aria-hidden="true"
-                >
-                  <rect
-                    x="6"
-                    y="6"
-                    width="12"
-                    height="12"
-                    rx="2"
-                    fill="currentColor"
-                  />
-                </svg>
+                <span
+                  class="trace-chevron"
+                  :class="{ open: !msg.collapsed }"
+                >▸</span>
+                Reasoning · {{ msg.trace.length }} step{{ msg.trace.length === 1 ? '' : 's' }}
               </button>
-              <span v-if="msg.meta">{{ msg.meta }}</span>
+              <div
+                v-show="!msg.collapsed"
+                class="trace-items"
+              >
+                <div
+                  v-for="(item, i) in msg.trace"
+                  :key="i"
+                  class="tool-trace-item"
+                >
+                  <span :style="{ color: item.color }">{{ item.text }}</span>
+                </div>
+              </div>
             </div>
-          </div>
+
+            <div
+              v-else-if="msg.role === 'user'"
+              class="chat-msg user"
+              :class="{ 'no-anim': msg.noAnim }"
+            >
+              <div class="chat-bubble">
+                {{ msg.text }}
+              </div>
+            </div>
+
+            <div
+              v-else-if="msg.role === 'agent'"
+              class="chat-msg agent"
+              :class="{ 'no-anim': msg.noAnim }"
+            >
+              <div class="chat-bubble">
+                <span
+                  v-if="msg.thinking"
+                  class="thinking-indicator"
+                >{{ msg.status || 'Thinking...' }}</span>
+                <span
+                  class="chat-markdown"
+                  v-html="renderMarkdown(msg.text)"
+                />
+              </div>
+              <div
+                v-if="msg.meta || (canSpeak && msg.text && !msg.thinking)"
+                class="chat-meta"
+              >
+                <button
+                  v-if="canSpeak && msg.text && !msg.thinking"
+                  class="msg-speak"
+                  :class="{ speaking: speakingIdx === idx }"
+                  type="button"
+                  :title="speakingIdx === idx ? 'Stop reading' : 'Read aloud'"
+                  @click="toggleSpeak(idx)"
+                >
+                  <svg
+                    v-if="speakingIdx !== idx"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    xmlns="http://www.w3.org/2000/svg"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M11 5 6 9H3v6h3l5 4V5Z"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linejoin="round"
+                    />
+                    <path
+                      d="M15.5 8.5a5 5 0 0 1 0 7"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                    />
+                    <path
+                      d="M18.5 6a9 9 0 0 1 0 12"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                    />
+                  </svg>
+                  <svg
+                    v-else
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    xmlns="http://www.w3.org/2000/svg"
+                    aria-hidden="true"
+                  >
+                    <rect
+                      x="6"
+                      y="6"
+                      width="12"
+                      height="12"
+                      rx="2"
+                      fill="currentColor"
+                    />
+                  </svg>
+                </button>
+                <span v-if="msg.meta">{{ msg.meta }}</span>
+              </div>
+            </div>
+          </template>
         </template>
       </div>
 

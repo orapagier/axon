@@ -211,7 +211,19 @@ onUnmounted(() => {
   width: 280px;
   height: 280px;
   max-width: 60vw;
-  max-height: 60vw;
+  max-height: 60vh;
+}
+
+/* The orb scales with its viewport on small screens; on desktop it opens up
+   to a larger, more commanding size. Every part of the drawn animation is
+   proportional to min(w, h), so the whole orb scales cleanly. */
+@media (min-width: 768px) {
+  .voice-orb {
+    width: 460px;
+    height: 460px;
+    max-width: min(70vw, 64vh);
+    max-height: min(70vw, 64vh);
+  }
 }
 
 .voice-orb-canvas {

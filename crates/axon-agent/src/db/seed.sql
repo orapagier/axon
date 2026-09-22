@@ -180,6 +180,24 @@ INSERT OR IGNORE INTO settings VALUES
 INSERT OR IGNORE INTO settings VALUES
     ('scheduler.nudge_prompt', 'IT IS NOW THE SCHEDULED TIME FOR: **{job_name}**. Task/Reminder: {task}. Act as a close human friend of {user_name} (who is also a {user_title}). Remind them about this task in a purely natural, warm, and conversational way, as if you''re just casually mentioning it to a friend. Randomly choose a unique greeting (Hi, Hello, Hey, etc.) and use their name or title naturally. Vary your response so it sounds human and not like a bot. IMPORTANT: Output ONLY the actual reminder message as you would say it to a friend. DO NOT include meta-talk like ''Sure, here is your reminder'' or ''Certainly!''. Just start speaking to them immediately with no technical labels or any prefixes.', 'string', 'Scheduler Prompt (placeholders: {job_name}, {task}, {user_name}, {user_title})', 'scheduler', datetime('now'));
 
+-- Self-improvement: few-shot "muscle memory" (learn from your best runs) and
+-- the prompt optimizer (propose/crank system-prompt revisions against recent
+-- failures). Both are opt-out and safe-by-default; see src/fewshot.rs and
+-- src/optimizer.rs.
+INSERT OR IGNORE INTO settings VALUES
+    ('agent.few_shot.enabled',      'true',  'bool',   'Mine high-quality completed runs and inject them as few-shot examples for similar future tasks (adds a small per-request token cost; off disables mining AND injection)', 'agent', datetime('now')),
+    ('agent.few_shot.max_examples', '3',     'int',    'Max few-shot examples injected per request', 'agent', datetime('now')),
+    ('agent.few_shot.max_chars',    '800',   'int',    'Max characters of each example''s answer kept when injected', 'agent', datetime('now')),
+    ('agent.few_shot.max_stored',   '500',   'int',    'Max mined examples retained (oldest evicted first)', 'agent', datetime('now')),
+    ('agent.few_shot.sweep_days',   '7',     'int',    'How many days of completed runs the background re-mining sweep covers', 'agent', datetime('now')),
+    ('optimizer.enabled',           'true',  'bool',   'Daily background prompt-optimizer job: proposes system-prompt revisions that address recent failure modes', 'optimizer', datetime('now')),
+    ('optimizer.interval_hours',    '24',    'int',    'Minimum hours between optimizer runs', 'optimizer', datetime('now')),
+    ('optimizer.lookback_days',     '3',     'int',    'Days of recent agent runs examined for failures worth fixing', 'optimizer', datetime('now')),
+    ('optimizer.candidates',        '3',     'int',    'Prompt-revision candidates generated per run (each is one LLM call)', 'optimizer', datetime('now')),
+    ('optimizer.max_failures',      '6',     'int',    'Max recent failures fed to the optimizer as raw material', 'optimizer', datetime('now')),
+    ('optimizer.auto_apply',        'false', 'bool',   'Automatically deploy the best-scoring candidate (dry-run default: candidates are scored and proposed for manual review instead)', 'optimizer', datetime('now')),
+    ('optimizer.min_score',         '7',     'int',    'Minimum 0-10 quality-checker score for auto_apply to accept a candidate', 'optimizer', datetime('now'));
+
 -- ── Built-in tool routing patterns ──────────────────────────────────────────
 INSERT OR IGNORE INTO tool_patterns (tool_name, pattern, description) VALUES
     ('web_search_tool', '\blook\s+it\s+up\b',                       'Look it up'),
