@@ -68,6 +68,12 @@ INSERT OR IGNORE INTO settings VALUES
     ('agent.reasoning_effort',      'medium', 'string', 'Reasoning depth on complex/tool-use turns: off, low, medium, high. Providers that reject the field are detected and skipped automatically', 'agent', datetime('now')),
     ('agent.planning',              'true',   'bool',   'On multi-step tasks, instruct the model to lay out a checklist via update_plan first and check steps off as it works', 'agent', datetime('now'));
 
+-- Prompt compression + dedup (applied once per outgoing LLM request).
+INSERT OR IGNORE INTO settings VALUES
+    ('compression.enabled',         'true',   'bool',   'Apply safe prompt compression (blank-line/whitespace normalization) to every outgoing LLM request', 'agent', datetime('now')),
+    ('compression.dedup',           'false',  'bool',   'Replace later byte-identical text blocks with a short marker to save tokens (only blocks >= compression.dedup_min_chars chars; changes what the model literally sees)', 'agent', datetime('now')),
+    ('compression.dedup_min_chars', '400',    'int',    'Minimum block length (chars) before a repeated block is eligible for dedup', 'agent', datetime('now'));
+
 -- Cost redesign: per-run budgets + observation compression (defaults mirror the code).
 INSERT OR IGNORE INTO settings VALUES
     ('agent.temperature',             '0.3',  'float', 'Sampling temperature for agent model calls; low values reduce hallucinated tool syntax and correction oscillation', 'agent', datetime('now')),

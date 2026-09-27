@@ -350,6 +350,35 @@ pub async fn call_llm_with_options(
 ) -> anyhow::Result<(UnifiedResponse, String, String)> {
     let threshold = settings.error_threshold();
     let timeout_secs = settings.model_call_timeout_secs();
+
+    // Compress once per request so every model attempt in the pass sweep shares
+    // the same (smaller) payload. Stage 1 (whitespace normalization) is always
+    // safe; stage 2 (exact-repeat block elision) is opt-in via
+    // `compression.dedup`. Toggling `compression.enabled` off is free — the
+    // borrows below fall back to the caller's slices with no copy.
+    let (owned_system, owned_messages, _compression_stats) =
+        if settings.get_bool("compression.enabled", true) {
+            let (sys, msgs, stats) =
+                crate::prompt_compress::compress_request(system, messages, settings);
+            if stats.saved_chars() > 0 {
+                tracing::debug!(
+                    "prompt compression saved {} chars ({:.1}%), {} block(s) elided",
+                    stats.saved_chars(),
+                    stats.saved_ratio() * 100.0,
+                    stats.deduplicated_segments,
+                );
+            }
+            (Some(sys), Some(msgs), stats)
+        } else {
+            (
+                None,
+                None,
+                crate::prompt_compress::CompressionStats::default(),
+            )
+        };
+    let system: &str = owned_system.as_deref().unwrap_or(system);
+    let messages: &[Message] = owned_messages.as_deref().unwrap_or(messages);
+
     // Tracks every model actually attempted across all passes, by name.
     // Fed to the sweep pass (1.5) for precise dedup. Keyed on the name rather
     // than the position because the model set can be replaced between passes

@@ -15,6 +15,7 @@ pub mod messaging;
 pub mod model_cache;
 pub mod notify;
 pub mod observability;
+pub mod prompt_compress;
 
 pub mod optimizer;
 pub mod providers;
