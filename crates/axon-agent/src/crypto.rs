@@ -5,8 +5,12 @@
 //! `AXON_MASTER_KEY`.
 //!
 //! ## Schemes
-//! * **v2 (current):** key = SHA-256(`AXON_MASTER_KEY`) → always 32 bytes for any
-//!   input length. Ciphertext is stored tagged with a `v2:` prefix.
+//! * **v3 (current):** key = scrypt(`AXON_MASTER_KEY`, salt) under a fresh
+//!   random 16-byte salt **per stored value**, so no two credentials ever share
+//!   a key. Stored as `v3:<salt_b64>:<nonce||ciphertext b64>`.
+//! * **v2:** key = SHA-256(`AXON_MASTER_KEY`) → always 32 bytes for any
+//!   input length. Stored tagged `v2:`. Still *readable*; upgraded to v3 on
+//!   boot ([`reencrypt_v2_secrets`]) and during rotation.
 //! * **v1 (legacy):** key = the master string truncated/zero-padded to 32 bytes.
 //!   Ciphertext is untagged base64. Still *readable* (so upgrades are seamless)
 //!   but never written anymore.
@@ -33,13 +37,29 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use sha2::{Digest, Sha256};
 use std::env;
 
-/// Marks a value encrypted under the current (v2, KDF-derived) scheme. Untagged
+/// Marks a value encrypted under the current (v3, salted scrypt KDF) scheme.
+const V3_PREFIX: &str = "v3:";
+
+/// Salt length in bytes for the v3 per-value KDF.
+const V3_SALT_BYTES: usize = 16;
+
+/// Marks a value encrypted under the v2 (KDF-derived) scheme. Untagged
 /// blobs are treated as legacy v1 ciphertext or genuine plaintext.
 const V2_PREFIX: &str = "v2:";
 
 /// The public development key used when `AXON_MASTER_KEY` is unset. It protects
 /// nothing — boot refuses it outside `AXON_DEV=1`.
 const DEV_DEFAULT_KEY: &str = "00000000000000000000000000000000";
+
+/// Test-only serialization guard for the process-global `AXON_MASTER_KEY`.
+/// Crypto tests run against whatever key the env gives them (usually the dev
+/// default); any test that *changes* that variable must hold this for its
+/// whole run or it silently re-keys another test mid-flight.
+#[cfg(test)]
+pub(crate) fn master_key_guard() -> std::sync::MutexGuard<'static, ()> {
+    static GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    GUARD.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 /// Secret columns re-encrypted from v1 → v2 on boot: `(table, secret_column)`.
 /// Every listed table has an implicit `rowid` (none are `WITHOUT ROWID`).
@@ -176,6 +196,23 @@ fn legacy_key() -> aes_gcm::Key<Aes256Gcm> {
     legacy_key_from(&master_secret())
 }
 
+/// scrypt parameters for v3: log_n=12 → 4 MiB ROMix, ~15 ms per derivation.
+/// Slow enough that guessing the master key offline (the only real attack on
+/// an AES-GCM ciphertext here) costs ~milliseconds per try per salt, yet fast
+/// enough to sit unnoticed in per-request credential reads.
+fn v3_params() -> Option<scrypt::Params> {
+    scrypt::Params::new(12, 8, 1).ok()
+}
+
+/// v3 key: scrypt(master secret, per-value salt) → 32 bytes. `None` only on
+/// implausible param/output errors, which the constants above never trigger.
+fn v3_key_from(secret: &str, salt: &[u8]) -> Option<aes_gcm::Key<Aes256Gcm>> {
+    let params = v3_params()?;
+    let mut key = [0u8; 32];
+    scrypt::scrypt(secret.as_bytes(), salt, &params, &mut key).ok()?;
+    Some(key.into())
+}
+
 /// AES-256-GCM encrypt → base64(`nonce(12) || ciphertext`). `None` only if the
 /// AEAD itself fails (effectively never for reasonable inputs).
 fn aes_encrypt(plain: &str, key: &aes_gcm::Key<Aes256Gcm>) -> Option<String> {
@@ -201,13 +238,32 @@ fn aes_decrypt(blob: &str, key: &aes_gcm::Key<Aes256Gcm>) -> Option<String> {
     String::from_utf8(plaintext).ok()
 }
 
-/// Encrypt a secret for storage. Empty in → empty out. Output is `v2:`-tagged.
+/// Split a v3 body (`salt_b64:blob_b64`) into its salt bytes and ciphertext
+/// blob. `None` on any structural or base64 problem (treated as undecryptable).
+fn split_v3(rest: &str) -> Option<(Vec<u8>, &str)> {
+    let (salt_b64, blob) = rest.split_once(':')?;
+    let salt = STANDARD.decode(salt_b64).ok()?;
+    if salt.is_empty() {
+        return None;
+    }
+    Some((salt, blob))
+}
+
+/// Encrypt a secret for storage. Empty in → empty out. Output is `v3:`-tagged
+/// with a fresh random per-value salt.
 pub fn encrypt_key(plain: &str) -> String {
     if plain.is_empty() {
         return String::new();
     }
-    match aes_encrypt(plain, &derive_key()) {
-        Some(b64) => format!("{V2_PREFIX}{b64}"),
+    let mut salt = [0u8; V3_SALT_BYTES];
+    use aes_gcm::aead::rand_core::RngCore;
+    OsRng.fill_bytes(&mut salt);
+    let Some(key) = v3_key_from(&master_secret(), &salt) else {
+        tracing::error!("Encryption failed (KDF); refusing to store the secret as plaintext");
+        return String::new();
+    };
+    match aes_encrypt(plain, &key) {
+        Some(blob) => format!("{V3_PREFIX}{}:{blob}", STANDARD.encode(salt)),
         None => {
             // Encryption effectively never fails; fail closed (never persist
             // plaintext masquerading as an encrypted value).
@@ -217,13 +273,47 @@ pub fn encrypt_key(plain: &str) -> String {
     }
 }
 
-/// Decrypt a stored secret. Backward compatible across schemes:
-/// * `v2:` tagged → KDF key; on failure returns `""` (fail-closed, "re-enter").
+/// Encrypt `plain` under an explicit master `secret` with the v3 scheme.
+/// Test-only helper: the rotation path needs to fabricate values that only the
+/// *old* key can read.
+#[cfg(test)]
+fn v3_encrypt_under(secret: &str, plain: &str) -> Option<String> {
+    let mut salt = [0u8; V3_SALT_BYTES];
+    use aes_gcm::aead::rand_core::RngCore;
+    OsRng.fill_bytes(&mut salt);
+    let key = v3_key_from(secret, &salt)?;
+    let blob = aes_encrypt(plain, &key)?;
+    Some(format!("{V3_PREFIX}{}:{blob}", STANDARD.encode(salt)))
+}
+
+/// Decrypt a stored secret. Backward compatible across all three schemes:
+/// * `v3:` → per-value salted scrypt key; on failure returns `""` (fail-closed).
+/// * `v2:` → KDF key; on failure returns `""` (fail-closed, "re-enter").
 /// * untagged → try the legacy key, then the KDF key; if neither authenticates,
 ///   the value was never our ciphertext, so it is returned as-is (a genuine
 ///   plaintext key stored before encryption existed).
 pub fn decrypt_key(encoded: &str) -> String {
     if encoded.is_empty() {
+        return String::new();
+    }
+
+    if let Some(rest) = encoded.strip_prefix(V3_PREFIX) {
+        let (salt, blob) = match split_v3(rest) {
+            Some(x) => x,
+            None => {
+                tracing::warn!("Malformed v3 credential (bad salt); needs re-entry.");
+                return String::new();
+            }
+        };
+        if let Some(key) = v3_key_from(&master_secret(), &salt) {
+            if let Some(plain) = aes_decrypt(blob, &key) {
+                return plain;
+            }
+        }
+        tracing::warn!(
+            "Credential decryption failed: AXON_MASTER_KEY differs from the key used to encrypt \
+             this secret. The credential must be re-entered."
+        );
         return String::new();
     }
 
@@ -298,6 +388,9 @@ pub struct RekeyOutcome {
 /// guess fails rather than yielding garbage, and anything unreadable is
 /// reported and left exactly as it was rather than being destroyed.
 pub fn rekey_secrets(conn: &rusqlite::Connection, old_secret: &str) -> RekeyOutcome {
+    let current_secret = master_secret();
+    let current_v3 = |salt: &[u8]| v3_key_from(&current_secret, salt);
+    let old_v3 = |salt: &[u8]| v3_key_from(old_secret, salt);
     let old_v2 = derive_key_from(old_secret);
     let old_v1 = legacy_key_from(old_secret);
     let current = derive_key();
@@ -316,38 +409,63 @@ pub fn rekey_secrets(conn: &rusqlite::Connection, old_secret: &str) -> RekeyOutc
         };
 
         for (rowid, value) in rows {
-            let plain = match value.strip_prefix(V2_PREFIX) {
-                Some(blob) => {
-                    if aes_decrypt(blob, &current).is_some() {
-                        out.already_current += 1;
+            let plain = if let Some(rest) = value.strip_prefix(V3_PREFIX) {
+                // v3: per-value salted scrypt key, current then old.
+                let (salt, blob) = match split_v3(rest) {
+                    Some(x) => x,
+                    None => {
+                        out.undecryptable += 1;
                         continue;
                     }
-                    match aes_decrypt(blob, &old_v2) {
-                        Some(p) => p,
-                        None => {
-                            out.undecryptable += 1;
-                            tracing::warn!(
-                                "Re-key: {table}.{col} rowid {rowid} decrypts under neither the \
-                                 old nor the current AXON_MASTER_KEY — left untouched, it will \
-                                 need to be re-entered."
-                            );
-                            continue;
-                        }
-                    }
+                };
+                if current_v3(&salt)
+                    .and_then(|k| aes_decrypt(blob, &k))
+                    .is_some()
+                {
+                    out.already_current += 1;
+                    continue;
                 }
-                // Untagged. Only meaningful where v1 ciphertext could exist;
-                // anywhere else this is plaintext and must not be touched.
-                None => {
-                    if !had_legacy_scheme(table, col) {
+                match old_v3(&salt).and_then(|k| aes_decrypt(blob, &k)) {
+                    Some(p) => p,
+                    None => {
+                        out.undecryptable += 1;
+                        tracing::warn!(
+                            "Re-key: {table}.{col} rowid {rowid} decrypts under neither the \
+                             old nor the current AXON_MASTER_KEY — left untouched, it will \
+                             need to be re-entered."
+                        );
                         continue;
                     }
-                    match aes_decrypt(&value, &old_v1) {
-                        Some(p) => p,
-                        // Not v1 ciphertext under the old key ⇒ genuine
-                        // plaintext. Leave it for reencrypt_legacy_secrets.
-                        None => continue,
+                }
+            } else if let Some(blob) = value.strip_prefix(V2_PREFIX) {
+                if aes_decrypt(blob, &current).is_some() {
+                    out.already_current += 1;
+                    continue;
+                }
+                match aes_decrypt(blob, &old_v2) {
+                    Some(p) => p,
+                    None => {
+                        out.undecryptable += 1;
+                        tracing::warn!(
+                            "Re-key: {table}.{col} rowid {rowid} decrypts under neither the \
+                             old nor the current AXON_MASTER_KEY — left untouched, it will \
+                             need to be re-entered."
+                        );
+                        continue;
                     }
                 }
+            } else if had_legacy_scheme(table, col) {
+                // Untagged ciphertext, only meaningful where v1 could exist.
+                match aes_decrypt(&value, &old_v1) {
+                    Some(p) => p,
+                    // Not v1 ciphertext under the old key ⇒ genuine plaintext.
+                    // Leave it for reencrypt_legacy_secrets.
+                    None => continue,
+                }
+            } else {
+                // Untagged outside the legacy columns: genuine plaintext (a
+                // numeric setting, say) — must not be touched.
+                continue;
             };
 
             let reencrypted = encrypt_key(&plain);
@@ -409,8 +527,56 @@ pub fn rekey_if_requested(conn: &rusqlite::Connection) {
     );
 }
 
+/// One-shot boot upgrade: rewrite every v2-tagged ciphertext the current key
+/// can still read to the v3 (per-value salt) scheme. Idempotent — rows already
+/// tagged `v3:` are excluded, and values that do not authenticate (rotated or
+/// foreign keys) are left for [`rekey_if_requested`] or manual re-entry.
+/// Covers [`ENCRYPTED_COLUMNS`], not just the legacy ones: v2 wrote everywhere.
+pub fn reencrypt_v2_secrets(conn: &rusqlite::Connection) -> usize {
+    let v2_key = derive_key();
+    let mut upgraded = 0usize;
+
+    for (table, col) in ENCRYPTED_COLUMNS {
+        // Table may not exist on partially-migrated DBs; skip quietly.
+        let rows: Vec<(i64, String)> = match conn.prepare(&format!(
+            "SELECT rowid, {col} FROM {table} WHERE {col} LIKE '{V2_PREFIX}%'"
+        )) {
+            Ok(mut stmt) => stmt
+                .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
+                .and_then(|it| it.collect::<Result<Vec<_>, _>>())
+                .unwrap_or_default(),
+            Err(_) => continue,
+        };
+
+        for (rowid, value) in rows {
+            let Some(blob) = value.strip_prefix(V2_PREFIX) else {
+                continue;
+            };
+            let Some(plain) = aes_decrypt(blob, &v2_key) else {
+                continue;
+            };
+            let reencrypted = encrypt_key(&plain);
+            if reencrypted.is_empty() {
+                continue;
+            }
+            match conn.execute(
+                &format!("UPDATE {table} SET {col} = ?1 WHERE rowid = ?2"),
+                rusqlite::params![reencrypted, rowid],
+            ) {
+                Ok(_) => upgraded += 1,
+                Err(e) => tracing::warn!("v2→v3 upgrade {table}.{col} rowid {rowid} failed: {e}"),
+            }
+        }
+    }
+
+    if upgraded > 0 {
+        tracing::info!("Upgraded {upgraded} stored secret(s) from v2 to the v3 (salted) scheme");
+    }
+    upgraded
+}
+
 /// One-shot boot upgrade: rewrite every legacy (v1, untagged) ciphertext in the
-/// known secret columns to the v2 (KDF) scheme. Idempotent — already-`v2:`
+/// known secret columns to the v3 (salted KDF) scheme. Idempotent — already-tagged
 /// values and genuine plaintext (which does not authenticate under the legacy
 /// key) are left untouched. Best-effort: individual failures are logged, not
 /// fatal. Returns the number of values upgraded.
@@ -422,7 +588,8 @@ pub fn reencrypt_legacy_secrets(conn: &rusqlite::Connection) -> usize {
         // Table may not exist on partially-migrated DBs; skip quietly.
         let rows: Vec<(i64, String)> = match conn.prepare(&format!(
             "SELECT rowid, {col} FROM {table} \
-             WHERE {col} IS NOT NULL AND {col} != '' AND {col} NOT LIKE '{V2_PREFIX}%'"
+             WHERE {col} IS NOT NULL AND {col} != '' \
+               AND {col} NOT LIKE '{V2_PREFIX}%' AND {col} NOT LIKE '{V3_PREFIX}%'"
         )) {
             Ok(mut stmt) => stmt
                 .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
@@ -469,7 +636,8 @@ pub fn reencrypt_legacy_secrets(conn: &rusqlite::Connection) -> usize {
 pub fn encrypt_credentials_at_rest(conn: &rusqlite::Connection) -> usize {
     let rows: Vec<(String, String)> = match conn.prepare(&format!(
         "SELECT id, data FROM credentials \
-         WHERE data IS NOT NULL AND data != '' AND data NOT LIKE '{V2_PREFIX}%'"
+         WHERE data IS NOT NULL AND data != '' \
+           AND data NOT LIKE '{V2_PREFIX}%' AND data NOT LIKE '{V3_PREFIX}%'"
     )) {
         Ok(mut stmt) => stmt
             .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
@@ -541,6 +709,7 @@ mod rekey_tests {
     // rotation. Missing one silently orphans those credentials.
     #[test]
     fn rotates_every_encrypted_column() {
+        let _g = super::master_key_guard();
         let conn = schema();
         conn.execute(
             "INSERT INTO models (name, api_key) VALUES ('m', ?1)",
@@ -602,6 +771,7 @@ mod rekey_tests {
     // Leaving AXON_MASTER_KEY_OLD set for an extra boot must be harmless.
     #[test]
     fn is_idempotent() {
+        let _g = super::master_key_guard();
         let conn = schema();
         conn.execute(
             "INSERT INTO models (name, api_key) VALUES ('m', ?1)",
@@ -623,6 +793,7 @@ mod rekey_tests {
     // never overwritten with an empty or garbage value.
     #[test]
     fn unreadable_values_are_preserved_not_destroyed() {
+        let _g = super::master_key_guard();
         let conn = schema();
         let orphan = v2_under("some-third-unrelated-key", "unrecoverable");
         conn.execute(
@@ -645,6 +816,7 @@ mod rekey_tests {
     // provider keys. Untagged values there must never be touched.
     #[test]
     fn plaintext_settings_are_untouched() {
+        let _g = super::master_key_guard();
         let conn = schema();
         conn.execute(
             "INSERT INTO settings (key, value) VALUES ('router.timeout', '30'), ('a.b', 'true')",
@@ -671,6 +843,7 @@ mod rekey_tests {
     // it is only trial-decrypted in columns that ever used the v1 scheme.
     #[test]
     fn legacy_v1_under_old_key_is_rotated() {
+        let _g = super::master_key_guard();
         let conn = schema();
         let v1 = aes_encrypt("old-legacy-value", &legacy_key_from(OLD)).unwrap();
         assert!(!v1.starts_with(V2_PREFIX));
@@ -679,7 +852,7 @@ mod rekey_tests {
 
         assert_eq!(rekey_secrets(&conn, OLD).rekeyed, 1);
         let stored = get(&conn, "SELECT api_key FROM models");
-        assert!(stored.starts_with(V2_PREFIX), "upgraded to v2 as well");
+        assert!(stored.starts_with(V3_PREFIX), "upgraded to v3 as well");
         assert_eq!(decrypt_key(&stored), "old-legacy-value");
     }
 
@@ -687,6 +860,7 @@ mod rekey_tests {
     // an untagged blob there must be left for encrypt_credentials_at_rest.
     #[test]
     fn untagged_outside_legacy_columns_is_skipped() {
+        let _g = super::master_key_guard();
         let conn = schema();
         conn.execute(
             "INSERT INTO credentials (id, data) VALUES ('c', ?1)",
@@ -704,6 +878,7 @@ mod rekey_tests {
     // A missing table (partially-migrated DB) must not abort the pass.
     #[test]
     fn missing_tables_are_skipped() {
+        let _g = super::master_key_guard();
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch("CREATE TABLE models (name TEXT PRIMARY KEY, api_key TEXT NOT NULL);")
             .unwrap();
@@ -715,10 +890,31 @@ mod rekey_tests {
         assert_eq!(rekey_secrets(&conn, OLD).rekeyed, 1);
     }
 
+    // A v3 value written under the OLD key (per-value salt rides in the blob)
+    // must rotate onto the current key like any other scheme.
+    #[test]
+    fn v3_under_old_key_is_rotated() {
+        let _g = super::master_key_guard();
+        let conn = schema();
+        let v3_old = v3_encrypt_under(OLD, "salted-value").unwrap();
+        conn.execute(
+            "INSERT INTO models (name, api_key) VALUES ('m', ?1)",
+            [v3_old],
+        )
+        .unwrap();
+
+        let out = rekey_secrets(&conn, OLD);
+        assert_eq!(out.rekeyed, 1);
+        let stored = get(&conn, "SELECT api_key FROM models");
+        assert!(stored.starts_with(V3_PREFIX), "stays v3");
+        assert_eq!(decrypt_key(&stored), "salted-value");
+    }
+
     // Guards the superset relationship: every legacy column must also be in the
     // re-key list, or a rotation would skip it.
     #[test]
     fn encrypted_columns_covers_secret_columns() {
+        let _g = super::master_key_guard();
         for pair in SECRET_COLUMNS {
             assert!(
                 ENCRYPTED_COLUMNS.contains(pair),
@@ -734,12 +930,14 @@ mod key_strength_tests {
 
     #[test]
     fn rejects_short_keys() {
+        let _g = super::master_key_guard();
         assert!(weak_key_reason("short").is_some());
         assert!(weak_key_reason("123456789012345").is_some(), "15 chars");
     }
 
     #[test]
     fn rejects_shipped_placeholders() {
+        let _g = super::master_key_guard();
         // The literal value in crates/axon-agent/.env.example before this change.
         assert!(weak_key_reason("changeme-master-key").is_some());
         assert!(weak_key_reason("your-secret-key-here").is_some());
@@ -747,12 +945,14 @@ mod key_strength_tests {
 
     #[test]
     fn rejects_low_entropy_padding() {
+        let _g = super::master_key_guard();
         assert!(weak_key_reason(&"a".repeat(40)).is_some());
         assert!(weak_key_reason(&"abab".repeat(10)).is_some());
     }
 
     #[test]
     fn accepts_a_generated_key() {
+        let _g = super::master_key_guard();
         // Representative `openssl rand -base64 32` output.
         assert_eq!(
             weak_key_reason("Yy1kQ0hLc2VjdXJlUmFuZG9tS2V5MTIzNA=="),
@@ -765,6 +965,7 @@ mod key_strength_tests {
     // wrongly accepted for being byte-long.
     #[test]
     fn counts_characters_not_bytes() {
+        let _g = super::master_key_guard();
         assert!(weak_key_reason("日本語日本語日本語").is_some(), "9 chars");
     }
 }
@@ -774,20 +975,68 @@ mod tests {
     use super::*;
 
     #[test]
-    fn v2_round_trip() {
+    fn v3_round_trip() {
+        let _g = super::master_key_guard();
         let enc = encrypt_key("super-secret-token");
-        assert!(enc.starts_with(V2_PREFIX), "new writes are v2-tagged");
+        assert!(enc.starts_with(V3_PREFIX), "new writes are v3-tagged");
         assert_eq!(decrypt_key(&enc), "super-secret-token");
     }
 
     #[test]
+    fn v3_uses_a_fresh_salt_per_value() {
+        let _g = super::master_key_guard();
+        // Same plaintext twice must not produce the same ciphertext prefix —
+        // the per-value salt is the whole point of v3.
+        let a = encrypt_key("same-value");
+        let b = encrypt_key("same-value");
+        assert_ne!(a, b);
+        let salt_of = |v: &str| {
+            v.strip_prefix(V3_PREFIX)
+                .unwrap()
+                .split(':')
+                .next()
+                .unwrap()
+                .to_string()
+        };
+        assert_ne!(salt_of(&a), salt_of(&b));
+        assert_eq!(decrypt_key(&a), "same-value");
+        assert_eq!(decrypt_key(&b), "same-value");
+    }
+
+    #[test]
+    fn v2_values_still_decrypt() {
+        let _g = super::master_key_guard();
+        let blob = format!(
+            "{V2_PREFIX}{}",
+            aes_encrypt("old-v2-value", &derive_key()).unwrap()
+        );
+        assert_eq!(decrypt_key(&blob), "old-v2-value");
+    }
+
+    #[test]
+    fn v3_wrong_key_fails_closed() {
+        let _g = super::master_key_guard();
+        let blob = v3_encrypt_under("a-totally-different-master", "secret").unwrap();
+        assert_eq!(decrypt_key(&blob), "");
+    }
+
+    #[test]
+    fn v3_malformed_is_rejected_not_garbage() {
+        let _g = super::master_key_guard();
+        assert_eq!(decrypt_key("v3:not-base64!!:also-not"), "");
+        assert_eq!(decrypt_key("v3:single-part-only"), "");
+    }
+
+    #[test]
     fn empty_is_passthrough() {
+        let _g = super::master_key_guard();
         assert_eq!(encrypt_key(""), "");
         assert_eq!(decrypt_key(""), "");
     }
 
     #[test]
     fn plaintext_untagged_value_is_returned_asis() {
+        let _g = super::master_key_guard();
         // A raw key that was stored before encryption existed and is not valid
         // base64 ciphertext must survive verbatim.
         assert_eq!(
@@ -798,6 +1047,7 @@ mod tests {
 
     #[test]
     fn legacy_v1_ciphertext_still_decrypts() {
+        let _g = super::master_key_guard();
         // Simulate a value written by the old truncate/pad scheme (untagged).
         let secret = master_secret();
         let legacy_blob = aes_encrypt("old-value", &legacy_key_from(&secret)).unwrap();
@@ -807,6 +1057,7 @@ mod tests {
 
     #[test]
     fn v2_wrong_key_fails_closed() {
+        let _g = super::master_key_guard();
         // Encrypt under a different master, then try to read under the current
         // one: must return "" (re-enter), never the ciphertext.
         let blob = aes_encrypt("secret", &derive_key_from("a-totally-different-master")).unwrap();
@@ -815,7 +1066,45 @@ mod tests {
     }
 
     #[test]
+    fn reencrypt_v2_upgrades_only_current_key_readable() {
+        let _g = super::master_key_guard();
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE models (name TEXT PRIMARY KEY, api_key TEXT NOT NULL);")
+            .unwrap();
+        let readable = format!("{V2_PREFIX}{}", aes_encrypt("k1", &derive_key()).unwrap());
+        let foreign = format!(
+            "{V2_PREFIX}{}",
+            aes_encrypt("k2", &derive_key_from("other-master")).unwrap()
+        );
+        conn.execute(
+            "INSERT INTO models (name, api_key) VALUES ('a', ?1), ('b', ?2), ('c', 'raw-plaintext')",
+            rusqlite::params![readable, foreign],
+        )
+        .unwrap();
+
+        assert_eq!(reencrypt_v2_secrets(&conn), 1, "only the readable v2 row");
+        let a: String = conn
+            .query_row("SELECT api_key FROM models WHERE name='a'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(a.starts_with(V3_PREFIX));
+        assert_eq!(decrypt_key(&a), "k1");
+
+        let b: String = conn
+            .query_row("SELECT api_key FROM models WHERE name='b'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(b, foreign, "unreadable v2 must survive untouched");
+
+        // Second pass is a no-op (already v3 / excluded).
+        assert_eq!(reencrypt_v2_secrets(&conn), 0);
+    }
+
+    #[test]
     fn reencrypt_upgrades_legacy_only() {
+        let _g = super::master_key_guard();
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch("CREATE TABLE models (name TEXT PRIMARY KEY, api_key TEXT NOT NULL);")
             .unwrap();
@@ -832,13 +1121,13 @@ mod tests {
         let upgraded = reencrypt_legacy_secrets(&conn);
         assert_eq!(upgraded, 1, "only the legacy ciphertext is upgraded");
 
-        // Legacy row is now v2 and still decrypts to the same plaintext.
+        // Legacy row is now v3 and still decrypts to the same plaintext.
         let a: String = conn
             .query_row("SELECT api_key FROM models WHERE name='a'", [], |r| {
                 r.get(0)
             })
             .unwrap();
-        assert!(a.starts_with(V2_PREFIX));
+        assert!(a.starts_with(V3_PREFIX));
         assert_eq!(decrypt_key(&a), "legacy-key");
 
         // Plaintext row is untouched.
@@ -855,6 +1144,7 @@ mod tests {
 
     #[test]
     fn credentials_at_rest_encrypts_plaintext_only() {
+        let _g = super::master_key_guard();
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch("CREATE TABLE credentials (id TEXT PRIMARY KEY, data TEXT NOT NULL);")
             .unwrap();
@@ -870,13 +1160,13 @@ mod tests {
         let n = encrypt_credentials_at_rest(&conn);
         assert_eq!(n, 1, "only the plaintext row is encrypted");
 
-        // Plaintext row is now v2-tagged and round-trips back to the same JSON.
+        // Plaintext row is now v3-tagged and round-trips back to the same JSON.
         let p: String = conn
             .query_row("SELECT data FROM credentials WHERE id='p'", [], |r| {
                 r.get(0)
             })
             .unwrap();
-        assert!(p.starts_with(V2_PREFIX));
+        assert!(p.starts_with(V3_PREFIX));
         assert_eq!(decrypt_key(&p), plaintext_json);
 
         // Already-encrypted row is untouched; empty row is skipped.

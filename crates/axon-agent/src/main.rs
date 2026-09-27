@@ -300,12 +300,14 @@ async fn main() -> anyhow::Result<()> {
         let conn = pool.get().context("get DB connection")?;
         axon::db::init(&conn).context("initialize database")?;
         // Key rotation, if AXON_MASTER_KEY_OLD is set. Must run before anything
-        // reads a credential, and before the v1→v2 upgrade below (that pass
-        // keys off the *current* master key, so it cannot read values still
+        // reads a credential, and before the upgrade passes below (those
+        // key off the *current* master key, so they cannot read values still
         // encrypted under the old one).
         axon::crypto::rekey_if_requested(&conn);
-        // D1: upgrade any pre-KDF (v1) stored secrets to the v2 scheme in place.
+        // D1: upgrade any pre-KDF (v1) stored secrets to the v3 scheme in place.
         axon::crypto::reencrypt_legacy_secrets(&conn);
+        // D2: upgrade v2 (unsalted KDF) values to the v3 per-value salt scheme.
+        axon::crypto::reencrypt_v2_secrets(&conn);
         // D1: encrypt the credentials.data JSON blob at rest (was plaintext).
         axon::crypto::encrypt_credentials_at_rest(&conn);
     }
@@ -611,10 +613,8 @@ async fn main() -> anyhow::Result<()> {
                 interval.tick().await;
                 let db = si_db.clone();
                 let settings = si_settings.clone();
-                match tokio::task::spawn_blocking(move || {
-                    axon::fewshot::sweep(&db, &settings)
-                })
-                .await
+                match tokio::task::spawn_blocking(move || axon::fewshot::sweep(&db, &settings))
+                    .await
                 {
                     Ok(Ok(n)) => {
                         if n > 0 {

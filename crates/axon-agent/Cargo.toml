@@ -142,6 +142,7 @@ axon-facebook  = { path = "../axon-facebook" }
 axon-instagram = { path = "../axon-instagram" }
 axon-business  = { path = "../axon-business" }
 axon-crm       = { path = "../axon-crm" }
+scrypt = "0.12"
 
 
 # Shell tool timeout kills the command's whole process group, not just `bash`
