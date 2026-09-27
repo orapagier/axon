@@ -78,7 +78,10 @@ pub async fn maybe_run(state: &AppState) -> Option<String> {
 pub async fn run_once(state: &AppState) -> anyhow::Result<Option<String>> {
     // Open the audit trail — record_run() below updates this row.
     if let Ok(conn) = state.db.get() {
-        let _ = conn.execute("INSERT INTO optimizer_runs (started_at) VALUES (datetime('now'))", []);
+        let _ = conn.execute(
+            "INSERT INTO optimizer_runs (started_at) VALUES (datetime('now'))",
+            [],
+        );
     }
 
     let settings = &state.settings;
@@ -141,7 +144,11 @@ pub async fn run_once(state: &AppState) -> anyhow::Result<Option<String>> {
     let best_index = scored
         .iter()
         .enumerate()
-        .max_by(|a, b| a.1 .0.partial_cmp(&b.1 .0).unwrap_or(std::cmp::Ordering::Equal))
+        .max_by(|a, b| {
+            a.1 .0
+                .partial_cmp(&b.1 .0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
         .map(|(i, _)| i)
         .filter(|i| scored[*i].0.is_some());
     let winner_id = best_index.map(|i| candidate_ids[i].1);
@@ -170,7 +177,14 @@ pub async fn run_once(state: &AppState) -> anyhow::Result<Option<String>> {
     } else {
         format!("{} candidate(s) proposed for review", scored.len())
     };
-    record_run(state, failures.len(), scored.len(), winner_id, &outcome, None);
+    record_run(
+        state,
+        failures.len(),
+        scored.len(),
+        winner_id,
+        &outcome,
+        None,
+    );
 
     let notify = state.notify.clone();
     notify
@@ -225,7 +239,12 @@ pub fn apply_history(
         rusqlite::params![id],
         |r| r.get(0),
     )?;
-    apply_prompt(db, settings, &prompt, &format!("applied from history #{id}"))?;
+    apply_prompt(
+        db,
+        settings,
+        &prompt,
+        &format!("applied from history #{id}"),
+    )?;
     // Only one prompt is ever "live": demote any other applied rows, then flag
     // this one. Earlier live versions remain restorable via their baseline rows.
     let _ = conn.execute(
@@ -333,8 +352,7 @@ fn recent_failures(
         )?
         .filter_map(|r| r.ok())
         .filter(|(task, result)| {
-            task.trim().len() >= 8
-                && !SENTINELS.iter().any(|sent| result.contains(sent))
+            task.trim().len() >= 8 && !SENTINELS.iter().any(|sent| result.contains(sent))
         })
         .map(|(task, result)| {
             let issue = if result.trim().is_empty() {
@@ -403,7 +421,10 @@ No markdown, no code fence, no commentary outside the JSON array.",
     )
     .await?;
     let text = resp.text_content();
-    tracing::info!("optimizer: candidate generation via {model}: {} chars", text.len());
+    tracing::info!(
+        "optimizer: candidate generation via {model}: {} chars",
+        text.len()
+    );
     Ok(parse_candidates(&text, want))
 }
 
@@ -510,7 +531,13 @@ fn parse_score(text: &str) -> Option<f64> {
     // First number 0..=10 anywhere in the reply (models love narration).
     let cleaned: String = text
         .chars()
-        .map(|c| if c.is_ascii_digit() || c == '.' { c } else { ' ' })
+        .map(|c| {
+            if c.is_ascii_digit() || c == '.' {
+                c
+            } else {
+                ' '
+            }
+        })
         .collect();
     cleaned
         .split_whitespace()
@@ -528,30 +555,25 @@ fn truncate(s: &str, max: usize) -> String {
 
 // ── Status / history (dashboard) ─────────────────────────────────────────────
 
-pub fn status(
-    db: &Pool<SqliteConnectionManager>,
-    settings: &RuntimeSettings,
-) -> Value {
+pub fn status(db: &Pool<SqliteConnectionManager>, settings: &RuntimeSettings) -> Value {
     let mut last: Option<Value> = None;
     if let Ok(conn) = db.get() {
-        if let Ok((id, started, finished, failures, candidates, outcome, error)) = conn
-            .query_row(
-                "SELECT id, started_at, finished_at, failures_count, candidates_count, outcome, error
+        if let Ok((id, started, finished, failures, candidates, outcome, error)) = conn.query_row(
+            "SELECT id, started_at, finished_at, failures_count, candidates_count, outcome, error
                    FROM optimizer_runs ORDER BY id DESC LIMIT 1",
-                [],
-                |r| {
-                    Ok((
-                        r.get::<_, i64>(0)?,
-                        r.get::<_, String>(1)?,
-                        r.get::<_, Option<String>>(2)?,
-                        r.get::<_, i64>(3)?,
-                        r.get::<_, i64>(4)?,
-                        r.get::<_, Option<String>>(5)?,
-                        r.get::<_, Option<String>>(6)?,
-                    ))
-                },
-            )
-        {
+            [],
+            |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                    r.get::<_, i64>(3)?,
+                    r.get::<_, i64>(4)?,
+                    r.get::<_, Option<String>>(5)?,
+                    r.get::<_, Option<String>>(6)?,
+                ))
+            },
+        ) {
             last = Some(json!({
                 "id": id,
                 "started_at": started,

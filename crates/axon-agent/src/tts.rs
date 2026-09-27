@@ -787,17 +787,16 @@ mod tests {
     fn unspeakable_replies_are_recognized_before_routing() {
         // Each of these strips to nothing — and must be told apart from a model
         // failure, or the router parks a healthy key over a bad payload.
-        for empty in [
-            "```rust\nfn main() {}\n```",
-            "https://example.com",
-            "🎉🎉🎉",
-            "**_~_**",
-        ] {
+        for empty in ["https://example.com", "🎉🎉🎉", "**_~_**"] {
             assert!(
                 !has_speakable_text(empty),
                 "{empty:?} should be unspeakable"
             );
         }
+        // A pure code block is not silent: the listener is told "Code block
+        // omitted." instead (mirrored in ChatPage.vue's plainTextForSpeech),
+        // so the reply counts as speakable.
+        assert!(has_speakable_text("```rust\nfn main() {}\n```"));
         assert!(has_speakable_text("Hello **there**."));
         assert!(has_speakable_text("See https://example.com for the docs"));
     }

@@ -47,11 +47,7 @@ pub fn capture_good_run(
     if result.len() < MIN_RESPONSE_CHARS || result.len() > MAX_CAPTURE_CHARS {
         return;
     }
-    let tools: Vec<String> = tools
-        .iter()
-        .filter(|t| !t.is_empty())
-        .cloned()
-        .collect();
+    let tools: Vec<String> = tools.iter().filter(|t| !t.is_empty()).cloned().collect();
     if tools.is_empty() {
         // Tool-backed answers only — the pattern value is in the tool use.
         return;
@@ -79,10 +75,7 @@ pub fn capture_good_run(
 }
 
 /// Prune `few_shot_examples` to the configured cap, oldest first.
-pub fn prune_to_cap(
-    conn: &rusqlite::Connection,
-    settings: &RuntimeSettings,
-) {
+pub fn prune_to_cap(conn: &rusqlite::Connection, settings: &RuntimeSettings) {
     let max_stored = settings.get_int("agent.few_shot.max_stored", 500).max(0);
     if max_stored == 0 {
         let _ = conn.execute("DELETE FROM few_shot_examples", []);
@@ -145,8 +138,7 @@ pub fn sweep(
 
     let mut inserted = 0usize;
     for (run_id, task, result, tools_json) in rows {
-        let tools: Vec<String> =
-            serde_json::from_str(&tools_json).unwrap_or_default();
+        let tools: Vec<String> = serde_json::from_str(&tools_json).unwrap_or_default();
         let category = tools.first().cloned().unwrap_or_default();
         if category.is_empty() {
             continue;
@@ -243,14 +235,13 @@ pub fn list_examples(
 }
 
 const STOPWORDS: &[&str] = &[
-    "about", "after", "again", "ahead", "also", "another", "around", "because",
-    "before", "between", "could", "does", "doing", "email", "even", "every",
-    "from", "have", "here", "just", "like", "make", "more", "most", "much",
-    "need", "next", "only", "over", "please", "really", "right", "should",
-    "some", "such", "than", "that", "their", "there", "these", "they", "this",
-    "those", "through", "time", "want", "were", "what", "when", "where",
-    "which", "while", "will", "with", "would", "your", "yours", "check",
-    "look", "send", "show", "tell", "give", "find", "last", "been", "might",
+    "about", "after", "again", "ahead", "also", "another", "around", "because", "before",
+    "between", "could", "does", "doing", "email", "even", "every", "from", "have", "here", "just",
+    "like", "make", "more", "most", "much", "need", "next", "only", "over", "please", "really",
+    "right", "should", "some", "such", "than", "that", "their", "there", "these", "they", "this",
+    "those", "through", "time", "want", "were", "what", "when", "where", "which", "while", "will",
+    "with", "would", "your", "yours", "check", "look", "send", "show", "tell", "give", "find",
+    "last", "been", "might",
 ];
 
 /// Render a few-shot block for the current task, or `None` when nothing
@@ -337,7 +328,11 @@ pub fn render_for_task(
         if count >= max_examples {
             break;
         }
-        let intro = format!("Example {} — requested: {}", count + 1, trim(&past_task, 200));
+        let intro = format!(
+            "Example {} — requested: {}",
+            count + 1,
+            trim(&past_task, 200)
+        );
         let answer = trim(&resp, max_chars);
         block.push_str(&format!("\n{intro}\nAnswer: {answer}"));
         count += 1;

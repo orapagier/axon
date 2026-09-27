@@ -22,14 +22,13 @@
 //!                            its RAM use near startup baseline (default 3600; 0 disables)
 
 use axum::{
-    Json,
-    Router,
     extract::State,
-    http::{StatusCode, header},
+    http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
+    Json, Router,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::env;
 use std::sync::Arc;
 use std::time::Duration;
@@ -218,7 +217,10 @@ fn messages_to_prompt(messages: &[Value]) -> String {
             "assistant" if m.get("tool_calls").is_some() => {
                 if let Some(calls) = m.get("tool_calls").and_then(Value::as_array) {
                     for tc in calls {
-                        let name = tc.pointer("/function/name").and_then(Value::as_str).unwrap_or("?");
+                        let name = tc
+                            .pointer("/function/name")
+                            .and_then(Value::as_str)
+                            .unwrap_or("?");
                         let args = tc
                             .pointer("/function/arguments")
                             .map(|v| v.to_string())
@@ -257,9 +259,13 @@ async fn post_json(client: &reqwest::Client, url: &str, body: Value) -> Result<V
     let status = resp.status();
     let text = resp.text().await.unwrap_or_default();
     if !status.is_success() {
-        return Err(format!("opencode {status} at {url}: {}", truncate(&text, 500)));
+        return Err(format!(
+            "opencode {status} at {url}: {}",
+            truncate(&text, 500)
+        ));
     }
-    serde_json::from_str(&text).map_err(|e| format!("bad json from {url}: {e}: {}", truncate(&text, 200)))
+    serde_json::from_str(&text)
+        .map_err(|e| format!("bad json from {url}: {e}: {}", truncate(&text, 200)))
 }
 
 fn truncate(s: &str, n: usize) -> String {
@@ -307,8 +313,14 @@ async fn ask_opencode(
     let result = async {
         let j = post_json(&state.client, &message_url, body).await?;
         if let Some(err) = j.get("info").and_then(|i| i.get("error")) {
-            let code = err.get("code").and_then(Value::as_str).unwrap_or("opencode_error");
-            let msg = err.get("message").and_then(Value::as_str).unwrap_or("unknown");
+            let code = err
+                .get("code")
+                .and_then(Value::as_str)
+                .unwrap_or("opencode_error");
+            let msg = err
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
             return Err(format!("{code}: {msg}"));
         }
         let mut text = String::new();
@@ -420,7 +432,8 @@ async fn handler_chat(
     let system = flatten_system(&messages);
     let prompt = messages_to_prompt(&messages);
 
-    let (text, pin, pout) = match ask_opencode(&state, &provider, &model_id, &system, &prompt).await {
+    let (text, pin, pout) = match ask_opencode(&state, &provider, &model_id, &system, &prompt).await
+    {
         Ok(ok) => ok,
         Err(e) => {
             let status = if e.starts_with("429") {
@@ -505,9 +518,9 @@ async fn main() {
             loop {
                 tokio::time::sleep(Duration::from_secs(restart_secs)).await;
                 match restart_serve(&restart_state).await {
-                    Ok(()) => println!(
-                        "oc-bridge: opencode serve restarted (interval {restart_secs}s)"
-                    ),
+                    Ok(()) => {
+                        println!("oc-bridge: opencode serve restarted (interval {restart_secs}s)")
+                    }
                     Err(e) => eprintln!("oc-bridge: serve restart failed: {e}"),
                 }
             }
@@ -528,7 +541,7 @@ async fn main() {
 
 #[cfg(unix)]
 async fn shutdown_signal() {
-    use tokio::signal::unix::{SignalKind, signal};
+    use tokio::signal::unix::{signal, SignalKind};
     if let Ok(mut sig) = signal(SignalKind::terminate()) {
         let _ = sig.recv().await;
     } else {

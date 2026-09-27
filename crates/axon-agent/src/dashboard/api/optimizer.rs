@@ -42,21 +42,16 @@ pub async fn run_fewshot_sweep(State(state): State<AppState>) -> Json<Value> {
 /// Prompt versions + optimizer run history for review.
 pub async fn optimizer_history(State(state): State<AppState>) -> Json<Value> {
     let limit = 100_i64;
-    let history = crate::optimizer::history(&state.db, limit).unwrap_or_else(|e| {
-        json!({ "error": format!("history read failed: {e:#}") })
-    });
-    let runs = crate::optimizer::run_history(&state.db, limit).unwrap_or_else(|e| {
-        json!({ "error": format!("run history read failed: {e:#}") })
-    });
+    let history = crate::optimizer::history(&state.db, limit)
+        .unwrap_or_else(|e| json!({ "error": format!("history read failed: {e:#}") }));
+    let runs = crate::optimizer::run_history(&state.db, limit)
+        .unwrap_or_else(|e| json!({ "error": format!("run history read failed: {e:#}") }));
     Json(json!({ "status": axum_state_status(&state), "history": history, "runs": runs }))
 }
 
 /// Apply a stored prompt (candidate or historical version) as the live system
 /// prompt. The current prompt is snapshotted first, so this is reversible.
-pub async fn optimizer_apply(
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-) -> Json<Value> {
+pub async fn optimizer_apply(State(state): State<AppState>, Path(id): Path<i64>) -> Json<Value> {
     match crate::optimizer::apply_history(&state.db, &state.settings, id) {
         Ok(()) => Json(json!({ "ok": true, "applied_id": id })),
         Err(e) => Json(json!({ "error": format!("apply failed: {e:#}") })),
@@ -64,10 +59,7 @@ pub async fn optimizer_apply(
 }
 
 /// Dismiss a proposed candidate without applying it.
-pub async fn optimizer_reject(
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-) -> Json<Value> {
+pub async fn optimizer_reject(State(state): State<AppState>, Path(id): Path<i64>) -> Json<Value> {
     match crate::optimizer::reject_history(&state.db, id) {
         Ok(()) => Json(json!({ "ok": true, "rejected_id": id })),
         Err(e) => Json(json!({ "error": format!("reject failed: {e:#}") })),
