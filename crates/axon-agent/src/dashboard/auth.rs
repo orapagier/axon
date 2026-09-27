@@ -229,7 +229,20 @@ fn too_many_requests(remaining: Duration) -> Response {
         .into_response()
 }
 
-pub async fn require_auth(req: Request, next: Next) -> Response {
+/// A WebSocket subprotocol (`axon-ws.<key>`) that `require_auth` validated in
+/// constant time. The browser cannot set an Authorization header on a native
+/// WebSocket upgrade, so the master key rides in the
+/// `Sec-WebSocket-Protocol: axon-ws.<key>` subprotocol instead; `require_auth`
+/// extracts it here, constant-time compares it against the master key below
+/// (same compare as the REST bearer token) and, on a match, stores the exact
+/// offered token in request extensions. `ws_handler` (ws.rs) reads it back and
+/// echoes it on the 101 — the browser rejects the upgrade unless the server
+/// echoes one of the offered subprotocols verbatim, so what is stored is the
+/// full `axon-ws.<key>` string, not the stripped key.
+#[derive(Clone, Debug)]
+pub struct ValidatedWsSubproto(pub String);
+
+pub async fn require_auth(mut req: Request, next: Next) -> Response {
     let master_key = env::var("AXON_MASTER_KEY").unwrap_or_default();
 
     // No key configured: local development only. Boot refuses this in
@@ -259,25 +272,22 @@ pub async fn require_auth(req: Request, next: Next) -> Response {
         .get("Authorization")
         .and_then(|h| h.to_str().ok());
 
-    let query_key = req.uri().query().and_then(|q| {
-        q.split('&')
-            .find_map(|p| p.strip_prefix("api_key="))
-            // The browser sends the key via encodeURIComponent (see axon-ui ws.js),
-            // so it must be percent-decoded before comparison. Keys containing
-            // characters such as '+', '/', '=' or spaces — common in base64/random
-            // secrets — would otherwise never match, breaking WebSocket auth even
-            // though REST (which sends the raw key in the Bearer header) still works.
-            .map(|raw| {
-                urlencoding::decode(raw)
-                    .map(|d| d.into_owned())
-                    .unwrap_or_else(|_| raw.to_string())
-            })
-    });
-
-    let provided = if let Some(h) = auth_header {
+    // WebSocket upgrades: the browser cannot set an Authorization header on
+    // an upgrade request, so the master key rides in the
+    // `Sec-WebSocket-Protocol: axon-ws.<key>` subprotocol instead. Extract it
+    // here (constant-time compare against the master key below) and carry the
+    // validated subprotocol to the WS handler via request extensions so it can
+    // echo the exact subprotocol back on the 101 (the browser rejects the
+    // upgrade unless the server echoes one of the offered subprotocols).
+    let ws_subproto_header = req
+        .headers()
+        .get("Sec-WebSocket-Protocol")
+        .and_then(|h| h.to_str().ok());
+    let ws_subproto = ws_subproto_header.and_then(|v| v.strip_prefix("axon-ws."));
+    let provided = if let Some(k) = ws_subproto {
+        k.to_string()
+    } else if let Some(h) = auth_header {
         h.strip_prefix("Bearer ").unwrap_or(h).to_string()
-    } else if let Some(q) = query_key {
-        q
     } else {
         "".to_string()
     };
@@ -288,8 +298,18 @@ pub async fn require_auth(req: Request, next: Next) -> Response {
     use subtle::ConstantTimeEq;
     let valid: bool = provided.as_bytes().ct_eq(master_key.as_bytes()).into();
 
+    // The full offered subprotocol token (`axon-ws.<key>`), NOT the stripped
+    // key: a browser only accepts a 101 whose `Sec-WebSocket-Protocol` echo is
+    // one of the tokens it offered, so ws.rs must echo the exact string.
+    let ws_matched: Option<String> =
+        ws_subproto.map(|_| ws_subproto_header.unwrap_or_default().to_string());
+
     if valid {
         throttle().record_success(&client, now);
+        if let Some(sub) = ws_matched {
+            req.extensions_mut()
+                .insert(crate::dashboard::auth::ValidatedWsSubproto(sub));
+        }
         next.run(req).await
     } else {
         let delay = {
@@ -366,7 +386,7 @@ mod tests {
             th.record_failure("1.2.3.4", now);
         }
         th.record_success("1.2.3.4", now);
-        assert!(th.clients.get("1.2.3.4").is_none());
+        assert!(!th.clients.contains_key("1.2.3.4"));
     }
 
     // An attacker hammering from one source must not lock the operator out.
@@ -513,5 +533,182 @@ mod tests {
             th.record_global_failure(later).is_zero(),
             "a quiet minute clears the backstop"
         );
+    }
+}
+
+#[cfg(test)]
+mod ws_handshake_tests {
+    // Holding the std master-key guard across awaits is deliberate:
+    // #[tokio::test] is single-threaded and the guard must span the whole
+    // env-mutating test.
+    #![allow(clippy::await_holding_lock)]
+
+    use super::*;
+    use axum::extract::State;
+    use axum::{routing::get, Router};
+
+    const TEST_KEY: &str = "ws-handshake-test-key-1234";
+
+    /// RAII: installs a master key for one test and restores (or removes) the
+    /// previous value even on panic — a leaked TEST_KEY would otherwise poison
+    /// every later test that reads `AXON_MASTER_KEY` (e.g. validate_master_key
+    /// expecting the unset/dev-default path). Must be constructed while
+    /// holding `crate::crypto::master_key_guard()`.
+    struct MasterKeyEnv(Option<String>);
+
+    impl MasterKeyEnv {
+        fn install(key: &str) -> Self {
+            let prev = std::env::var("AXON_MASTER_KEY").ok();
+            std::env::set_var("AXON_MASTER_KEY", key);
+            Self(prev)
+        }
+    }
+
+    impl Drop for MasterKeyEnv {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(v) => std::env::set_var("AXON_MASTER_KEY", v),
+                None => std::env::remove_var("AXON_MASTER_KEY"),
+            }
+        }
+    }
+
+    async fn ext_probe(req: Request) -> Response {
+        let value = match req.extensions().get::<ValidatedWsSubproto>() {
+            Some(v) => v.0.clone(),
+            None => "none".to_string(),
+        };
+        ([(header::HeaderName::from_static("x-ext"), value)], "").into_response()
+    }
+
+    async fn handshake(subproto: &str) -> String {
+        let app = Router::new()
+            .route("/probe", get(ext_probe))
+            .layer(axum::middleware::from_fn(require_auth));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let req = format!(
+            "GET /probe HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\
+             Sec-WebSocket-Protocol: {subproto}\r\n\r\n"
+        );
+        stream.write_all(req.as_bytes()).await.unwrap();
+        let mut buf = Vec::new();
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            stream.read_to_end(&mut buf),
+        )
+        .await
+        .expect("server sent no response");
+        server.abort();
+        String::from_utf8_lossy(&buf).to_lowercase()
+    }
+
+    #[tokio::test]
+    async fn validated_subprotocol_extension_reaches_handlers() {
+        // require_auth reads the process-global master key; serialize against
+        // every other test that depends on its value (see crypto::master_key_guard).
+        let _g = crate::crypto::master_key_guard();
+        let _env = MasterKeyEnv::install(TEST_KEY);
+
+        // Wrong key: middleware rejects before the handler.
+        let head = handshake("axon-ws.wrong").await;
+        assert!(head.contains("401"), "expected 401, got: {head}");
+        assert!(!head.contains("x-ext"), "handler ran for wrong key: {head}");
+
+        // Correct key: the validated subprotocol must reach the handler.
+        let head = handshake(&format!("axon-ws.{TEST_KEY}")).await;
+        assert!(head.contains("200"), "expected 200, got: {head}");
+        assert!(
+            head.contains(&format!("x-ext: axon-ws.{TEST_KEY}")),
+            "extension must carry the full offered token (browsers echo-match it): {head}"
+        );
+    }
+
+    // The bug this guards: the middleware once carried the *stripped* key, so
+    // the echoed `Sec-WebSocket-Protocol` matched no offered token and every
+    // browser aborted the 101 — an endless "Reconnecting" loop.
+    async fn ws_probe(ws: axum::extract::WebSocketUpgrade, req: Request) -> Response {
+        ws_probe_inner(ws, req).await
+    }
+
+    // Exact production shape: FromRequestParts extractors (WebSocketUpgrade,
+    // State) followed by the raw Request — the real ws_handler has State in
+    // between, so the probe must reproduce that extractor order.
+    async fn ws_probe_with_state(
+        ws: axum::extract::WebSocketUpgrade,
+        State(_st): State<u8>,
+        req: Request,
+    ) -> Response {
+        ws_probe_inner(ws, req).await
+    }
+
+    async fn ws_probe_inner(ws: axum::extract::WebSocketUpgrade, req: Request) -> Response {
+        let matched = req
+            .extensions()
+            .get::<ValidatedWsSubproto>()
+            .map(|v| v.0.clone());
+        ws.protocols(matched.into_iter().collect::<Vec<String>>())
+            .on_upgrade(|_socket| async {})
+            .into_response()
+    }
+
+    async fn run_ws_echo_case(with_state: bool) -> String {
+        // Both branches stay Router<u8>; ws_probe simply ignores the state, so
+        // the only difference is whether a State extractor sits between
+        // WebSocketUpgrade and the raw Request (the real ws_handler shape).
+        let app = if with_state {
+            Router::<u8>::new()
+                .route("/ws", get(ws_probe_with_state))
+                .layer(axum::middleware::from_fn(require_auth))
+                .with_state(7u8)
+        } else {
+            Router::<u8>::new()
+                .route("/ws", get(ws_probe))
+                .layer(axum::middleware::from_fn(require_auth))
+                .with_state(7u8)
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        stream
+            .write_all(
+                format!(
+                    "GET /ws HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\
+                     Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+                     Sec-WebSocket-Protocol: axon-ws.{TEST_KEY}\r\n\r\n"
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        let mut buf = [0u8; 1024];
+        let n = tokio::time::timeout(std::time::Duration::from_secs(5), stream.read(&mut buf))
+            .await
+            .expect("server sent no response")
+            .unwrap();
+        server.abort();
+        String::from_utf8_lossy(&buf[..n]).to_lowercase()
+    }
+
+    #[tokio::test]
+    async fn ws_upgrade_echoes_the_offered_subprotocol() {
+        let _g = crate::crypto::master_key_guard();
+        let _env = MasterKeyEnv::install(TEST_KEY);
+
+        for with_state in [false, true] {
+            let head = run_ws_echo_case(with_state).await;
+            assert!(head.contains("101"), "expected 101, got: {head}");
+            assert!(
+                head.contains(&format!("sec-websocket-protocol: axon-ws.{TEST_KEY}")),
+                "subprotocol not echoed (with_state={with_state}) — browsers will abort: {head}"
+            );
+        }
     }
 }

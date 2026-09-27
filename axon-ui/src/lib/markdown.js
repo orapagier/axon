@@ -10,22 +10,17 @@ function escapeHtml(s) {
   ))
 }
 
-// Agent-generated download links carry no credentials, but every /api
-// route sits behind require_auth, so a plain <a href> navigation would
-// 401. Append the master key the same way FilesPage does. The href has
-// already been through escapeHtml, so the key is escaped to match.
-//
-// Applies to <img src> too: an image pointing at /api/download needs the key
-// just as much as a link does, or it renders as a broken icon. Absolute
-// http(s) sources — e.g. a companion's own /public URL — pass through
-// untouched and must never receive the master key.
-function withApiKey(href) {
-  if (!href.startsWith('/api/download?')) return href
-  const key = typeof localStorage !== 'undefined'
-    ? localStorage.getItem('AXON_MASTER_KEY')
-    : null
-  if (!key) return href
-  return `${href}&amp;api_key=${escapeHtml(encodeURIComponent(key))}`
+// Auth for /api files travels in the Authorization header, never in the URL —
+// a key in a URL leaks to history, proxy/server logs and Referer. Plain
+// <a href> and <img src> cannot set headers, so ChatPage fetches the bytes
+// with auth and swaps in a blob URL (see lib/secureFile.js): clicks on
+// /api/download links are intercepted, and images below carry data-axon-src
+// for post-render hydration. Absolute http(s) sources — e.g. a companion's
+// own /public URL — pass through untouched and must never receive the key.
+function imageTag(alt, href) {
+  return href.startsWith('/api/')
+    ? `<img class="md-image" data-axon-src="${href}" alt="${alt}" loading="lazy">`
+    : `<img class="md-image" src="${href}" alt="${alt}" loading="lazy">`
 }
 
 function renderInline(text) {
@@ -45,8 +40,7 @@ function renderInline(text) {
   // the picture as a plain link. Same href restrictions as links.
   out = out.replace(
     /!\[([^\]\n]*)\]\((https?:\/\/[^)\s]+|\/(?!\/)[^)\s]*)\)/g,
-    (_m, alt, href) =>
-      `<img class="md-image" src="${withApiKey(href)}" alt="${alt}" loading="lazy">`
+    (_m, alt, href) => imageTag(alt, href)
   )
 
   // [label](https://url) or [label](/relative/path) — a single leading slash
@@ -55,7 +49,7 @@ function renderInline(text) {
   // link jump off-origin.
   out = out.replace(
     /\[([^\]\n]+)\]\((https?:\/\/[^)\s]+|\/(?!\/)[^)\s]*)\)/g,
-    (_m, label, href) => `<a href="${withApiKey(href)}" target="_blank" rel="noopener noreferrer">${label}</a>`
+    (_m, label, href) => `<a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a>`
   )
 
   // # Headings -> bold lines (pre-wrap keeps them on their own line)

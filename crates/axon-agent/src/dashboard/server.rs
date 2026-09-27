@@ -10,20 +10,19 @@ use tower_http::services::{ServeDir, ServeFile};
 /// Per-request span that records query-string *names* but never their values.
 ///
 /// `TraceLayer`'s `DefaultMakeSpan` records the whole URI (`uri = %request.uri()`),
-/// and several callers put secrets in the query string because they cannot set
-/// an `Authorization` header:
-///   * `/ws?api_key=…`            — the dashboard WebSocket (axon-ui `lib/ws.js`)
-///   * `/api/download?…&api_key=` — plain `<a href>` download links (FilesPage)
+/// and some callers still put secrets in the query string because they cannot
+/// set an `Authorization` header:
 ///   * `/auth/:service/callback?code=…` — a live OAuth authorization code
 ///
-/// That wrote the master key — which is also the KDF input for every stored
-/// credential (see `crypto.rs`) — into the logs in plaintext, and
-/// `AXON_LOG_FORMAT=json` ships those lines to an aggregator.
+/// (The dashboard WebSocket and file downloads used to ride in the query
+/// string as `?api_key=` as well; both now authenticate via the
+/// `Authorization` header or the `axon-ws.<key>` WebSocket subprotocol, so no
+/// URL carries the master key — see `auth.rs`.)
 ///
 /// Values are dropped wholesale rather than scrubbed against a denylist of
 /// known-sensitive names, so a query parameter added later cannot silently
 /// reintroduce the leak. The names are kept because they carry the debugging
-/// signal (which callback arrived, whether `api_key` was supplied at all)
+/// signal (which callback arrived, whether a code was supplied at all)
 /// without carrying the secret.
 #[derive(Clone)]
 struct RedactedMakeSpan;
@@ -200,7 +199,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/mcp/:name", axum::routing::delete(api::disconnect_mcp))
         .route("/api/messaging/status", get(api::get_messaging_status))
         .route("/api/optimizer/status", get(api::optimizer_status))
-        .route("/api/optimizer/run", axum::routing::post(api::run_optimizer))
+        .route(
+            "/api/optimizer/run",
+            axum::routing::post(api::run_optimizer),
+        )
         .route(
             "/api/optimizer/fewshot/sweep",
             axum::routing::post(api::run_fewshot_sweep),

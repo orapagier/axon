@@ -8,11 +8,8 @@ import RecurrenceEditor from './RecurrenceEditor.vue'
 import { NODE_TYPES } from '../lib/nodes.js'
 import { renameNodeInExpressions, applyAccessPatterns } from '../lib/expressionUpdates.js'
 import { get, post, del } from '../lib/api.js'
+import { downloadFile } from '../lib/secureFile.js'
 import { toast } from '../lib/toast.js'
-
-// /api/download sits behind require_auth; plain <a href> navigation sends
-// no Authorization header, so the key rides along as a query param.
-const masterKey = localStorage.getItem('AXON_MASTER_KEY') || ''
 
 const props = defineProps({
   node: { type: Object, required: true },
@@ -3793,10 +3790,10 @@ onUnmounted(() => {
                             {{ nodeResult.file.mime_type }} • {{ (nodeResult.file.size / 1024).toFixed(1) }} KB
                           </div>
                         </div>
-                        <a
-                          :href="'/api/download?path=' + encodeURIComponent(nodeResult.file.local_path) + '&api_key=' + encodeURIComponent(masterKey)"
+                        <button
+                          type="button"
                           class="btn-download-action"
-                          download
+                          @click="downloadFile('/api/download?path=' + encodeURIComponent(nodeResult.file.local_path), nodeResult.file.original_name)"
                         >
                           <svg
                             viewBox="0 0 24 24"
@@ -3808,7 +3805,7 @@ onUnmounted(() => {
                             d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"
                           /></svg>
                           Download
-                        </a>
+                        </button>
                       </div>
                     </div>
 
@@ -5241,6 +5238,7 @@ small.form-desc {
   background: rgba(99,102,241,0.1); border: 1px solid rgba(99,102,241,0.3);
   color: #818cf8; padding: 7px 14px; border-radius: 7px;
   font-size: 12px; font-weight: 600; text-decoration: none;
+  font-family: inherit; cursor: pointer;
   transition: all 0.2s; white-space: nowrap; flex-shrink: 0;
 }
 .btn-download-action:hover { background: rgba(99,102,241,0.22); border-color: rgba(99,102,241,0.55); color: #a5b4fc; }

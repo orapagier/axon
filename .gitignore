@@ -49,8 +49,14 @@ graphify-out/
 **/graphify-out/
 .graphify_*.json
 
-# ── Claude Code personal/local settings ──
+# ── Agent tool personal/local settings ──
 .claude/settings.local.json
+.qoder/
+
+# ── security-audit run scratch (local; the fixes it proposed are applied
+#    in-tree — see the security-hardening commits, not these artifacts) ──
+/run-*/
+/coverage-ledger.json
 
 # ── Logs ──
 *.log

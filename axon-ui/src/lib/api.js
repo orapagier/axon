@@ -44,6 +44,23 @@ export const put = (path, body) => api('PUT', path, body)
 // one notification vs. all) read it; the rest call this with the path alone.
 export const del = (path, body) => api('DELETE', path, body)
 
+// Binary GET for <a>/<img> targets that cannot set headers (downloads, chat
+// images). Takes a full same-origin path like '/api/download?path=…' — the
+// master key travels in the Authorization header, never in the URL.
+export async function getBlob(path) {
+  const masterKey = localStorage.getItem('AXON_MASTER_KEY')
+  const headers = {}
+  if (masterKey) headers['Authorization'] = `Bearer ${masterKey}`
+  const r = await fetch(path, { headers })
+  if (r.status === 401) {
+    localStorage.removeItem('AXON_MASTER_KEY')
+    window.location.reload()
+    throw new Error('Unauthorized')
+  }
+  if (!r.ok) throw new Error(`Request failed (${r.status} ${r.statusText})`)
+  return r.blob()
+}
+
 // For endpoints whose success body is not JSON (e.g. /audio/speech streams
 // audio bytes): same auth handling, but the caller gets the raw Response and
 // decides what to do with the body.

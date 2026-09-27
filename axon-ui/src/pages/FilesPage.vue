@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { get, del } from '../lib/api.js'
+import { downloadFile } from '../lib/secureFile.js'
 import { toast } from '../lib/toast.js'
 import { confirmDialog } from '../lib/confirm.js'
 import { timeAgo, fmtBytes } from '../lib/utils.js'
@@ -14,7 +15,6 @@ function getFileExt(name) {
 
 const incoming = ref([])
 const outgoing = ref([])
-const masterKey = localStorage.getItem('AXON_MASTER_KEY') || ''
 const hasFiles = computed(() => incoming.value.length > 0 || outgoing.value.length > 0)
 
 const searchQuery = ref('')
@@ -172,12 +172,12 @@ onMounted(load)
                 <span class="file-name">{{ f.filename }}</span>
               </div>
               <div class="file-actions">
-                <a
+                <button
+                  type="button"
                   class="btn btn-xs btn-ghost btn-icon row-action"
-                  :href="`/api/download?path=${encodeURIComponent(f.path)}&api_key=${encodeURIComponent(masterKey)}`"
-                  :download="f.filename"
                   title="Download file"
                   aria-label="Download file"
+                  @click="downloadFile(`/api/download?path=${encodeURIComponent(f.path)}`, f.filename)"
                 >
                   <svg
                     viewBox="0 0 24 24"
@@ -194,7 +194,7 @@ onMounted(load)
                       stroke-linejoin="round"
                     />
                   </svg>
-                </a>
+                </button>
                 <button
                   class="btn btn-xs btn-ghost btn-icon text-error row-action"
                   title="Delete file"
@@ -255,12 +255,12 @@ onMounted(load)
                 <span class="file-name">{{ f.filename }}</span>
               </div>
               <div class="file-actions">
-                <a
+                <button
+                  type="button"
                   class="btn btn-xs btn-ghost btn-icon row-action"
-                  :href="`/api/download?path=${encodeURIComponent(f.path)}&api_key=${encodeURIComponent(masterKey)}`"
-                  :download="f.filename"
                   title="Download file"
                   aria-label="Download file"
+                  @click="downloadFile(`/api/download?path=${encodeURIComponent(f.path)}`, f.filename)"
                 >
                   <svg
                     viewBox="0 0 24 24"
@@ -277,7 +277,7 @@ onMounted(load)
                       stroke-linejoin="round"
                     />
                   </svg>
-                </a>
+                </button>
                 <button
                   class="btn btn-xs btn-ghost btn-icon text-error row-action"
                   title="Delete file"

@@ -20,8 +20,13 @@ const handlers = new Set()
 function openSocket() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws'
   const masterKey = localStorage.getItem('AXON_MASTER_KEY')
-  const query = masterKey ? `?api_key=${encodeURIComponent(masterKey)}` : ''
-  const socket = new WebSocket(`${proto}://${location.host}/ws${query}`)
+  // Browser WebSockets cannot set an Authorization header, which is why the key
+  // used to ride in the URL. It now travels in the Sec-WebSocket-Protocol
+  // subprotocol instead (see ws.js openSocket) — the server echoes the
+  // `axon-ws.<key>` subprotocol on a 101 so the browser lets the socket open,
+  // and the key never appears in access/proxy logs or browser history.
+  const subproto = masterKey ? `axon-ws.${masterKey}` : 'axon-ws.'
+  const socket = new WebSocket(`${proto}://${location.host}/ws`, [subproto])
   ws = socket
   wsStatus.value = 'connecting'
   let opened = false

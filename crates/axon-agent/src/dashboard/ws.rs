@@ -20,8 +20,24 @@ pub struct WsTask {
     pub voice: bool,
 }
 
-pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, state))
+pub async fn ws_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<AppState>,
+    req: axum::extract::Request,
+) -> impl IntoResponse {
+    // require_auth (auth.rs) validated the `Sec-WebSocket-Protocol:
+    // axon-ws.<key>` subprotocol in constant time and inserted the matched
+    // ValidatedWsSubproto into request extensions. Echo it here on the 101 —
+    // the browser rejects the upgrade unless the server echoes one of the
+    // subprotocols it offered, and this is the one and only way a browser can
+    // prove to the master key on a WS upgrade (it cannot set an Authorization
+    // header on a native WebSocket, and the key must never ride in a URL).
+    let matched = req
+        .extensions()
+        .get::<crate::dashboard::auth::ValidatedWsSubproto>()
+        .map(|v| v.0.clone());
+    let upgrade = ws.protocols(matched.into_iter().collect::<Vec<String>>());
+    upgrade.on_upgrade(move |socket| handle_socket(socket, state))
 }
 
 /// Ensure a `conversations` row exists for this dashboard chat thread and keep
@@ -407,5 +423,73 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 break;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod subproto_tests {
+    use axum::extract::{Request, WebSocketUpgrade};
+    use axum::http::header;
+    use axum::middleware::Next;
+    use axum::response::{IntoResponse, Response};
+    use axum::routing::get;
+    use axum::Router;
+
+    #[derive(Clone)]
+    struct Marker(String);
+
+    // Mirrors the production pipeline: auth middleware validates the
+    // `axon-ws.<key>` subprotocol, stores it in extensions, and the handler
+    // reads it back to echo on the 101. The browser aborts the upgrade
+    // otherwise, so the echo reaching the wire is the assertion.
+    async fn mw(mut req: Request, next: Next) -> Response {
+        let offered = req
+            .headers()
+            .get(header::SEC_WEBSOCKET_PROTOCOL)
+            .and_then(|h| h.to_str().ok())
+            .map(str::to_string);
+        if let Some(v) = offered {
+            req.extensions_mut().insert(Marker(v));
+        }
+        next.run(req).await
+    }
+
+    async fn handler(ws: WebSocketUpgrade, req: Request) -> impl IntoResponse {
+        let matched = req.extensions().get::<Marker>().map(|m| m.0.clone());
+        ws.protocols(matched.into_iter().collect::<Vec<String>>())
+            .on_upgrade(|_socket| async {})
+    }
+
+    #[tokio::test]
+    async fn validated_subprotocol_is_echoed_on_the_101() {
+        let app = Router::new()
+            .route("/ws", get(handler))
+            .layer(axum::middleware::from_fn(mw));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        stream
+            .write_all(
+                b"GET /ws HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\
+                  Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+                  Sec-WebSocket-Protocol: axon-ws.testkey\r\n\r\n",
+            )
+            .await
+            .unwrap();
+        let mut buf = [0u8; 1024];
+        let n = tokio::time::timeout(std::time::Duration::from_secs(5), stream.read(&mut buf))
+            .await
+            .expect("server sent no response")
+            .unwrap();
+        let head = String::from_utf8_lossy(&buf[..n]).to_lowercase();
+        assert!(head.contains("101"), "expected 101, got: {head}");
+        assert!(
+            head.contains("sec-websocket-protocol: axon-ws.testkey"),
+            "subprotocol was not echoed. response head:\n{head}"
+        );
+        server.abort();
     }
 }

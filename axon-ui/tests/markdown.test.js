@@ -1,14 +1,5 @@
 import { describe, it, expect } from 'vitest'
 
-// Vitest runs in a plain node environment; give markdown.js the browser
-// localStorage it reads the master key from.
-const store = new Map()
-globalThis.localStorage = {
-  getItem: (k) => (store.has(k) ? store.get(k) : null),
-  setItem: (k, v) => store.set(k, String(v)),
-  removeItem: (k) => store.delete(k),
-}
-
 const { renderMarkdown } = await import('../src/lib/markdown.js')
 
 // This module's output is bound with v-html in chat bubbles — these tests
@@ -33,29 +24,18 @@ describe('renderMarkdown XSS safety', () => {
 })
 
 describe('renderMarkdown download links', () => {
-  it('appends the master key to /api/download links', () => {
-    localStorage.setItem('AXON_MASTER_KEY', 'k+y=/1')
-    try {
-      const out = renderMarkdown('[Download f.pdf](/api/download?path=data%2Ffiles%2Ff.pdf)')
-      expect(out).toContain('href="/api/download?path=data%2Ffiles%2Ff.pdf&amp;api_key=k%2By%3D%2F1"')
-    } finally {
-      localStorage.removeItem('AXON_MASTER_KEY')
-    }
+  // The master key must never appear in a URL (history/logs/Referer leak).
+  // Authenticated bytes are fetched by lib/secureFile.js instead — markdown
+  // output must stay credential-free.
+  it('renders /api/download links with no credentials', () => {
+    const out = renderMarkdown('[Download f.pdf](/api/download?path=data%2Ffiles%2Ff.pdf)')
+    expect(out).toContain('href="/api/download?path=data%2Ffiles%2Ff.pdf"')
+    expect(out).not.toContain('api_key')
   })
 
-  it('leaves download links untouched when no key is stored', () => {
-    const out = renderMarkdown('[Download f.pdf](/api/download?path=x.pdf)')
-    expect(out).toContain('href="/api/download?path=x.pdf"')
-  })
-
-  it('does not append the key to other links', () => {
-    localStorage.setItem('AXON_MASTER_KEY', 'secret')
-    try {
-      const out = renderMarkdown('[x](https://example.com) [y](/api/files/staging)')
-      expect(out).not.toContain('secret')
-    } finally {
-      localStorage.removeItem('AXON_MASTER_KEY')
-    }
+  it('does not add credentials to other links', () => {
+    const out = renderMarkdown('[x](https://example.com) [y](/api/files/staging)')
+    expect(out).not.toContain('api_key')
   })
 })
 
@@ -88,20 +68,20 @@ describe('renderMarkdown images', () => {
     expect(out).not.toContain('<a href')
   })
 
-  it('appends the master key to /api/download images but not to remote ones', () => {
-    localStorage.setItem('AXON_MASTER_KEY', 'k123')
-    try {
-      const local = renderMarkdown('![a.png](/api/download?path=data%2Ffiles%2Fa.png)')
-      expect(local).toContain('api_key=k123')
+  it('hydrates /api/download images via data-axon-src but not remote ones', () => {
+    // A local /api image cannot send an Authorization header as <img src>, so
+    // it is emitted as data-axon-src for ChatPage to hydrate with a blob URL.
+    const local = renderMarkdown('![a.png](/api/download?path=data%2Ffiles%2Fa.png)')
+    expect(local).toContain('data-axon-src="/api/download?path=data%2Ffiles%2Fa.png"')
+    expect(local).not.toMatch(/\ssrc="/)
+    expect(local).not.toContain('api_key')
 
-      // A companion's own public URL is unauthenticated by design — leaking the
-      // dashboard master key to another host would be a real credential leak.
-      const remote = renderMarkdown('![a.png](https://windows.example.com/public/a.png)')
-      expect(remote).not.toContain('api_key')
-      expect(remote).not.toContain('k123')
-    } finally {
-      localStorage.removeItem('AXON_MASTER_KEY')
-    }
+    // A companion's own public URL is unauthenticated by design and loads
+    // directly — the dashboard master key must never ride to another origin.
+    const remote = renderMarkdown('![a.png](https://windows.example.com/public/a.png)')
+    expect(remote).toContain('src="https://windows.example.com/public/a.png"')
+    expect(remote).not.toContain('data-axon-src')
+    expect(remote).not.toContain('api_key')
   })
 
   it('still renders ordinary links after an image', () => {

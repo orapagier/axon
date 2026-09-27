@@ -6,6 +6,7 @@ import { toast, notifyBell, toastsSuppressed } from '../lib/toast.js'
 import { addNotification } from '../lib/notifications.js'
 import { confirmDialog } from '../lib/confirm.js'
 import { renderMarkdown } from '../lib/markdown.js'
+import { hydrateSecureImages, onSecureLinkClick } from '../lib/secureFile.js'
 import { createWakeWord, wakeWordSupported, FOLLOWUP_CAPTURE } from '../lib/wakeword.js'
 import {
   prefetchPrompts,
@@ -35,6 +36,9 @@ const voiceModeActive = ref(false)
 const voiceConversation = ref(false)
 const messagesEl = ref(null)
 const inputEl = ref(null)
+// <img> tags for /api images render as data-axon-src (see markdown.js);
+// hydrate them with authenticated blob URLs after each DOM update.
+watch(messages, () => hydrateSecureImages(messagesEl.value), { flush: 'post', deep: true })
 const starterPrompts = [
   'Summarize my connected services and tell me what is missing.',
   'Help me design a workflow for inbound lead qualification.',
@@ -2213,6 +2217,7 @@ watch(disabled, (newVal) => {
       <div
         ref="messagesEl"
         class="chat-messages"
+        @click="onSecureLinkClick"
       >
         <div
           v-if="voiceConversation || messages.length === 0"

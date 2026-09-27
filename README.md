@@ -434,10 +434,10 @@ Examples:
 
 - **Dashboard auth:** every `/api/*` route and the `/ws` WebSocket require the master key.
   - REST clients send `Authorization: Bearer <AXON_MASTER_KEY>`.
-  - The browser WebSocket sends it as a (URL-encoded) `?api_key=` query parameter.
+  - The browser WebSocket cannot set headers on an upgrade, so it offers the key as the `Sec-WebSocket-Protocol: axon-ws.<AXON_MASTER_KEY>` subprotocol; the server constant-time-validates it and echoes it back on the 101. Downloads and chat images fetch through `Authorization` as blob URLs — the key never appears in a URL.
   - **If `AXON_MASTER_KEY` is unset, boot refuses to start** rather than protecting secrets with a public development key — set a strong key, or set `AXON_DEV=1` to explicitly opt into the insecure default for local development only.
-- **Secret encryption:** API keys, SSH credentials, and MCP keys are encrypted with **AES-256-GCM** before being written to SQLite. The key is derived from `AXON_MASTER_KEY` with **SHA-256** (any key length is accepted; short/long keys are no longer silently truncated or padded). New ciphertext is tagged with a `v2:` prefix.
-  - **Seamless upgrade:** secrets written under the older truncate/pad scheme are still read correctly and are re-encrypted to the `v2:` scheme in place on the next boot. A `v2:` value that fails to decrypt (wrong/changed master key) resolves to *empty* — the credential must be re-entered — instead of leaking the raw ciphertext.
+- **Secret encryption:** API keys, SSH credentials, and MCP keys are encrypted with **AES-256-GCM** before being written to SQLite. The key is derived from `AXON_MASTER_KEY` with **scrypt** under a fresh random **per-credential salt** (stored in the value as `v3:<salt>:<ciphertext>`), so no two secrets share a key.
+  - **Seamless upgrade:** values written under the older schemes (`v2:` SHA-256 KDF, or the untagged truncate/pad v1) are still read correctly and are re-encrypted to v3 in place on the next boot. A tagged value that fails to decrypt (wrong/changed master key) resolves to *empty* — the credential must be re-entered — instead of leaking the raw ciphertext.
   - **Key rotation:** changing `AXON_MASTER_KEY` normally leaves previously stored secrets unreadable. To rotate deliberately, set `AXON_MASTER_KEY_OLD` to the previous key for **one boot** alongside the new `AXON_MASTER_KEY` — every stored secret is re-encrypted under the new key on that boot — then remove `AXON_MASTER_KEY_OLD`.
 - **Credential test:** the Services page has a **Test** button per stored credential (`POST /api/credentials/:id/test`) that makes a cheap, service-specific call and reports validity without ever returning the secret. Services without a known probe report "present but not testable".
 - **File downloads** are restricted to the staging directory (`data/files`) via canonical-path validation, preventing path traversal.
@@ -675,7 +675,7 @@ gh release create v0.4.0 \
 | Symptom | Likely cause / fix |
 |---------|--------------------|
 | Dashboard loads but every API call 401s | Wrong/missing master key in the browser. Log in again; confirm `AXON_MASTER_KEY` matches. |
-| REST works but the live log/chat stream never connects | WebSocket auth — ensure the `api_key` query param matches and is URL-safe. |
+| REST works but the live log/chat stream never connects | WebSocket auth — the browser must offer the `axon-ws.<master key>` subprotocol; confirm the stored key matches. |
 | "All models exhausted — check API keys or wait for rate limits to reset" | No usable model. Check that provider keys resolve (`${...}` placeholders must exist in env or settings), that models are `enabled`, and whether everything is on rate-limit cooldown. |
 | `Model '…' has unresolved API key placeholder ${X}` | The `${X}` in `models.toml` isn't defined in the environment or the `settings` table. Add it to `.env` or the Settings page. |
 | Integration tools (Gmail/Calendar/etc.) missing | The in-process integrations failed to initialize — usually a missing `credentials.json`. Check the startup log for "In-process MCP init failed". |
