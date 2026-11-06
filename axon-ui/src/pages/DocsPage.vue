@@ -1181,7 +1181,7 @@ watch(filteredSections, (sections) => {
 }
 
 .docs-nav-group {
-  padding: 16px 8px 8px;
+  padding: 0 8px 8px;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--bg-card);
@@ -1193,12 +1193,15 @@ watch(filteredSections, (sections) => {
 }
 
 .docs-nav-group h2 {
-  padding: 0 12px;
-  margin-bottom: 9px;
-  font: 600 10px var(--font-body);
-  letter-spacing: 0.1em;
+  padding: 13px 20px;
+  margin: 0 -8px 8px;
+  border-bottom: 1px solid var(--border);
+  border-radius: 11px 11px 0 0;
+  background: var(--surface2);
+  font: 700 11px/1.4 var(--font-body);
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--text);
 }
 
 .docs-rail-btn {
@@ -1224,8 +1227,9 @@ watch(filteredSections, (sections) => {
 .docs-rail-btn.active {
   color: var(--accent);
   background: var(--accentDim);
-  border-color: color-mix(in srgb, var(--accent) 15%, transparent);
-  font-weight: 500;
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  box-shadow: inset 3px 0 0 var(--accent);
+  font-weight: 600;
 }
 
 .docs-rail-empty {
@@ -1342,8 +1346,10 @@ watch(filteredSections, (sections) => {
 .docs-bullet-block,
 .docs-table-block,
 .docs-code-block {
+  --docs-card-padding-x: 32px;
+  --docs-card-padding-y: 28px;
   min-width: 0;
-  padding: 28px 32px;
+  padding: var(--docs-card-padding-y) var(--docs-card-padding-x);
   border: 1px solid var(--border);
   border-radius: 16px;
   background: var(--bg-card);
@@ -1360,9 +1366,15 @@ watch(filteredSections, (sections) => {
 .docs-bullet-block h3, .docs-table-block h3, .docs-code-block h3 {
   font-family: var(--font-display);
   font-size: 19px;
-  font-weight: 500;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--text);
   letter-spacing: -0.025em;
-  margin-bottom: 18px;
+  margin: calc(-1 * var(--docs-card-padding-y)) calc(-1 * var(--docs-card-padding-x)) 24px;
+  padding: 18px var(--docs-card-padding-x);
+  border-bottom: 1px solid var(--border);
+  border-radius: 15px 15px 0 0;
+  background: var(--surface2);
   scroll-margin-top: 32px;
 }
 
@@ -1617,8 +1629,16 @@ watch(filteredSections, (sections) => {
   .docs-bullet-block,
   .docs-table-block,
   .docs-code-block {
+    --docs-card-padding-x: 18px;
+    --docs-card-padding-y: 22px;
     padding: 22px 18px;
     border-radius: 12px;
+  }
+
+  .docs-bullet-block h3, .docs-table-block h3, .docs-code-block h3 {
+    padding-block: 15px;
+    border-radius: 11px 11px 0 0;
+    font-size: 17px;
   }
 
   .docs-section-body {
