@@ -1273,8 +1273,8 @@ watch(filteredSections, (sections) => {
   display: grid;
   grid-template-columns: minmax(0, 760px);
   justify-content: center;
-  gap: 48px;
-  padding: 36px clamp(28px, 4vw, 72px) 64px;
+  gap: 24px;
+  padding: 28px clamp(28px, 4vw, 72px) 64px;
   margin: 0 auto;
 }
 
@@ -1292,7 +1292,7 @@ watch(filteredSections, (sections) => {
   gap: 12px;
   color: var(--muted);
   font-size: 12px;
-  margin-bottom: 44px;
+  margin-bottom: 28px;
 }
 
 .docs-breadcrumb span:last-child {
@@ -1315,9 +1315,12 @@ watch(filteredSections, (sections) => {
 }
 
 .docs-section-header {
-  padding-bottom: 32px;
-  margin-bottom: 32px;
-  border-bottom: 1px solid var(--border);
+  padding: 32px;
+  margin-bottom: 20px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: linear-gradient(125deg, color-mix(in srgb, var(--accent) 6%, var(--bg-card)), var(--bg-card) 70%);
+  box-shadow: var(--edge-sheen);
 }
 
 .docs-section-header h2 {
@@ -1343,7 +1346,20 @@ watch(filteredSections, (sections) => {
 .docs-section-body {
   display: flex;
   flex-direction: column;
-  gap: 32px;
+  gap: 20px;
+}
+
+/* Each content type occupies a distinct, consistently padded reading card. */
+.docs-section-body > .docs-paragraph,
+.docs-bullet-block,
+.docs-table-block,
+.docs-code-block {
+  min-width: 0;
+  padding: 28px 32px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--bg-card);
+  box-shadow: var(--edge-sheen);
 }
 
 .docs-paragraph, .docs-bullet-block li {
@@ -1385,7 +1401,7 @@ watch(filteredSections, (sections) => {
   overflow-x: auto;
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: var(--bg-card);
+  background: var(--surface);
 }
 
 .docs-table-wrap table {
@@ -1471,9 +1487,7 @@ watch(filteredSections, (sections) => {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 16px;
-  border-top: 1px solid var(--border);
-  padding-top: 28px;
-  margin-top: 40px;
+  margin-top: 20px;
 }
 
 .docs-pagination button {
@@ -1481,7 +1495,7 @@ watch(filteredSections, (sections) => {
   padding: 18px;
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: transparent;
+  background: var(--bg-card);
   text-align: left;
   cursor: pointer;
   transition: background 150ms, border-color 150ms;
@@ -1527,17 +1541,21 @@ watch(filteredSections, (sections) => {
 
 @media (min-width: 1600px) {
   .docs-reading-layout {
-    grid-template-columns: minmax(0, 760px) 160px;
-    max-width: 1120px;
+    grid-template-columns: minmax(0, 800px) 200px;
+    max-width: 1160px;
     padding-inline: 40px;
   }
 
   .docs-outline {
     display: block;
     position: sticky;
-    top: 36px;
+    top: 28px;
     align-self: start;
-    padding-top: 4px;
+    padding: 20px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--bg-card);
+    box-shadow: var(--edge-sheen);
   }
 
   .docs-outline p {
@@ -1621,7 +1639,7 @@ watch(filteredSections, (sections) => {
 
 @media (max-width: 640px) {
   .docs-reading-layout {
-    padding: 24px 20px 40px;
+    padding: 16px 12px 32px;
   }
 
   .docs-mobile-nav {
@@ -1641,9 +1659,21 @@ watch(filteredSections, (sections) => {
     font-size: 15px;
   }
 
+  .docs-section-header,
+  .docs-section-body > .docs-paragraph,
+  .docs-bullet-block,
+  .docs-table-block,
+  .docs-code-block {
+    padding: 22px 18px;
+    border-radius: 12px;
+  }
+
+  .docs-section-body {
+    gap: 14px;
+  }
+
   .docs-section-header {
-    padding-bottom: 24px;
-    margin-bottom: 24px;
+    margin-bottom: 14px;
   }
 
   .docs-paragraph, .docs-bullet-block li {
