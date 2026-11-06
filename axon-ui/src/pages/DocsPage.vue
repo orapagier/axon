@@ -731,6 +731,7 @@ const DOC_SECTIONS = [
 const searchQuery = ref('')
 const activeSectionId = ref(DOC_SECTIONS[0]?.id || '')
 const articleHeading = ref(null)
+const reader = ref(null)
 
 // The docs search lives in the shell topbar, like every other page.
 useHeaderSearch('docs', {
@@ -806,6 +807,25 @@ const sectionGroups = computed(() => {
   return [...groups].map(([category, sections]) => ({ category, sections }))
 })
 
+const articleOutline = computed(() => (activeSection.value?.blocks || [])
+  .map((block, index) => ({ title: block.title, id: `docs-block-${index}` }))
+  .filter((block) => block.title))
+const readingMinutes = computed(() => Math.max(1, Math.ceil(
+  (activeSection.value?.blocks || []).map(blockToText).join(' ').split(/\s+/).length / 200
+)))
+function topicLabel(section) {
+  const labels = {
+    'platform-overview': 'Overview',
+    'access-and-sessions': 'Authentication & sessions',
+    'navigation-shell': 'Navigation & layout',
+    'chat-and-runtime-stream': 'Chat & live events',
+  }
+  return labels[section.id] || section.title.replace(/ Page.*$/, '').replace(/ \(.*\)$/, '')
+}
+function jumpToBlock(id) {
+  document.getElementById(id)?.scrollIntoView({ block: 'start', behavior: 'instant' })
+}
+
 function clearSearch() {
   searchQuery.value = ''
 }
@@ -816,7 +836,7 @@ async function jumpToSection(sectionId) {
   const heading = articleHeading.value
   heading?.focus({ preventScroll: true })
   // Move only the page scroller; keep the shell and navigation in place.
-  const scroller = heading?.closest('.main-scroll')
+  const scroller = reader.value
   if (scroller) scroller.scrollTop = 0
 }
 
@@ -829,22 +849,6 @@ watch(filteredSections, (sections) => {
 
 <template>
   <div class="page-wrap docs-page">
-    <header class="docs-page-header">
-      <div>
-        <p class="docs-eyebrow">
-          AXON / KNOWLEDGE BASE
-        </p>
-        <h1>Documentation</h1>
-        <p>Guides and reference for your Axon workspace.</p>
-      </div>
-      <span
-        class="docs-result-count"
-        role="status"
-      >
-        {{ filteredSections.length }} {{ searchQuery.trim() ? 'matching' : '' }} articles
-      </span>
-    </header>
-
     <div
       v-if="filteredSections.length"
       class="docs-mobile-nav"
@@ -872,194 +876,253 @@ watch(filteredSections, (sections) => {
     </div>
 
     <section class="docs-layout">
-      <nav
-        class="docs-rail"
-        aria-label="Documentation topics"
-      >
-        <div
-          v-for="group in sectionGroups"
-          :key="group.category"
-          class="docs-nav-group"
+      <aside class="docs-sidebar">
+        <header class="docs-library-header">
+          <span
+            class="docs-book-icon"
+            aria-hidden="true"
+          ><svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+          ><path d="M12 5.5C9 3.5 5 3.5 3 4v15c3-.7 6-.3 9 1.5 3-1.8 6-2.2 9-1.5V4c-2-.5-6-.5-9 1.5Zm0 0v15" /></svg></span>
+          <div><h1>Documentation</h1><p>Explore the Axon platform</p></div>
+        </header>
+        <nav
+          class="docs-rail"
+          aria-label="Documentation topics"
         >
-          <h2>{{ group.category }}</h2>
-          <button
-            v-for="section in group.sections"
-            :key="section.id"
-            type="button"
-            class="docs-rail-btn"
-            :class="{ active: section.id === activeSectionId }"
-            :aria-current="section.id === activeSectionId ? 'page' : undefined"
-            @click="jumpToSection(section.id)"
+          <p
+            class="docs-result-count"
+            role="status"
           >
-            {{ section.title }}
-          </button>
+            {{ filteredSections.length }} {{ searchQuery.trim() ? 'matching articles' : 'guides & references' }}
+          </p>
+          <div
+            v-for="group in sectionGroups"
+            :key="group.category"
+            class="docs-nav-group"
+          >
+            <h2>{{ group.category }}</h2>
+            <button
+              v-for="section in group.sections"
+              :key="section.id"
+              type="button"
+              class="docs-rail-btn"
+              :class="{ active: section.id === activeSectionId }"
+              :aria-current="section.id === activeSectionId ? 'page' : undefined"
+              @click="jumpToSection(section.id)"
+            >
+              {{ topicLabel(section) }}
+            </button>
+          </div>
+          <p
+            v-if="!filteredSections.length"
+            class="docs-rail-empty"
+          >
+            No topics found.
+          </p>
+        </nav>
+        <div class="docs-library-footer">
+          <span class="docs-footer-dot" />Axon documentation
         </div>
-        <p
-          v-if="!filteredSections.length"
-          class="docs-rail-empty"
-        >
-          No topics found.
-        </p>
-      </nav>
+      </aside>
 
-      <div class="docs-content-col">
-        <template v-if="activeSection">
-          <article
-            :key="activeSection.id"
-            class="docs-article"
-            aria-labelledby="docs-article-title"
-          >
-            <header class="docs-section-header">
-              <span class="docs-section-kicker">{{ activeSection.category }}</span>
-              <h2
-                id="docs-article-title"
-                ref="articleHeading"
-                tabindex="-1"
+      <div
+        ref="reader"
+        class="docs-reader"
+      >
+        <div class="docs-reading-layout">
+          <div class="docs-content-col">
+            <template v-if="activeSection">
+              <article
+                :key="activeSection.id"
+                class="docs-article"
+                aria-labelledby="docs-article-title"
               >
-                {{ activeSection.title }}
-              </h2>
-              <p>{{ activeSection.summary }}</p>
-            </header>
-
-            <div class="docs-section-body">
-              <template
-                v-for="(block, blockIndex) in activeSection.blocks"
-                :key="`${activeSection.id}-${blockIndex}`"
-              >
-                <p
-                  v-if="block.type === 'paragraph'"
-                  class="docs-paragraph"
-                >
-                  {{ block.text }}
-                </p>
-
-                <div
-                  v-else-if="block.type === 'bullet'"
-                  class="docs-bullet-block"
-                >
-                  <h3 v-if="block.title">
-                    {{ block.title }}
-                  </h3>
-                  <ul>
-                    <li
-                      v-for="(item, itemIndex) in block.items"
-                      :key="`${activeSection.id}-${blockIndex}-${itemIndex}`"
-                    >
-                      {{ item }}
-                    </li>
-                  </ul>
-                </div>
-
-                <div
-                  v-else-if="block.type === 'table'"
-                  class="docs-table-block"
-                >
-                  <h3 v-if="block.title">
-                    {{ block.title }}
-                  </h3>
-                  <div
-                    class="docs-table-wrap"
-                    tabindex="0"
-                    role="region"
-                    :aria-label="block.title || 'Reference table'"
-                  >
-                    <table>
-                      <thead>
-                        <tr>
-                          <th
-                            v-for="(column, columnIndex) in block.columns"
-                            :key="`${activeSection.id}-${blockIndex}-head-${columnIndex}`"
-                            scope="col"
-                          >
-                            {{ column }}
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr
-                          v-for="(row, rowIndex) in block.rows"
-                          :key="`${activeSection.id}-${blockIndex}-row-${rowIndex}`"
-                        >
-                          <td
-                            v-for="(cell, cellIndex) in row"
-                            :key="`${activeSection.id}-${blockIndex}-row-${rowIndex}-cell-${cellIndex}`"
-                          >
-                            {{ cell }}
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
+                <header class="docs-section-header">
+                  <div class="docs-breadcrumb">
+                    <span>Documentation</span><span aria-hidden="true">/</span><span>{{ activeSection.category }}</span>
                   </div>
-                </div>
+                  <div class="docs-article-meta">
+                    <span class="docs-section-kicker">{{ activeSection.category }}</span><span>{{ readingMinutes }} min read</span>
+                  </div>
+                  <h2
+                    id="docs-article-title"
+                    ref="articleHeading"
+                    tabindex="-1"
+                  >
+                    {{ activeSection.title }}
+                  </h2>
+                  <p>{{ activeSection.summary }}</p>
+                </header>
 
-                <div
-                  v-else-if="block.type === 'code'"
-                  class="docs-code-block"
+                <div class="docs-section-body">
+                  <template
+                    v-for="(block, blockIndex) in activeSection.blocks"
+                    :key="`${activeSection.id}-${blockIndex}`"
+                  >
+                    <p
+                      v-if="block.type === 'paragraph'"
+                      class="docs-paragraph"
+                    >
+                      {{ block.text }}
+                    </p>
+
+                    <div
+                      v-else-if="block.type === 'bullet'"
+                      class="docs-bullet-block"
+                    >
+                      <h3
+                        v-if="block.title"
+                        :id="`docs-block-${blockIndex}`"
+                      >
+                        {{ block.title }}
+                      </h3>
+                      <ul>
+                        <li
+                          v-for="(item, itemIndex) in block.items"
+                          :key="`${activeSection.id}-${blockIndex}-${itemIndex}`"
+                        >
+                          {{ item }}
+                        </li>
+                      </ul>
+                    </div>
+
+                    <div
+                      v-else-if="block.type === 'table'"
+                      class="docs-table-block"
+                    >
+                      <h3
+                        v-if="block.title"
+                        :id="`docs-block-${blockIndex}`"
+                      >
+                        {{ block.title }}
+                      </h3>
+                      <div
+                        class="docs-table-wrap"
+                        tabindex="0"
+                        role="region"
+                        :aria-label="block.title || 'Reference table'"
+                      >
+                        <table>
+                          <thead>
+                            <tr>
+                              <th
+                                v-for="(column, columnIndex) in block.columns"
+                                :key="`${activeSection.id}-${blockIndex}-head-${columnIndex}`"
+                                scope="col"
+                              >
+                                {{ column }}
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr
+                              v-for="(row, rowIndex) in block.rows"
+                              :key="`${activeSection.id}-${blockIndex}-row-${rowIndex}`"
+                            >
+                              <td
+                                v-for="(cell, cellIndex) in row"
+                                :key="`${activeSection.id}-${blockIndex}-row-${rowIndex}-cell-${cellIndex}`"
+                              >
+                                {{ cell }}
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    <div
+                      v-else-if="block.type === 'code'"
+                      class="docs-code-block"
+                    >
+                      <h3
+                        v-if="block.title"
+                        :id="`docs-block-${blockIndex}`"
+                      >
+                        {{ block.title }}
+                      </h3>
+                      <span
+                        v-if="block.language"
+                        class="docs-code-language"
+                      >{{ block.language }}</span>
+                      <pre
+                        tabindex="0"
+                        :aria-label="block.title || 'Code example'"
+                      ><code>{{ block.code }}</code></pre>
+                    </div>
+
+                    <div
+                      v-else-if="block.type === 'note'"
+                      class="docs-note-block"
+                    >
+                      {{ block.text }}
+                    </div>
+                  </template>
+                </div>
+              </article>
+              <nav
+                class="docs-pagination"
+                aria-label="Article navigation"
+              >
+                <button
+                  v-if="previousSection"
+                  type="button"
+                  @click="jumpToSection(previousSection.id)"
                 >
-                  <h3 v-if="block.title">
-                    {{ block.title }}
-                  </h3>
-                  <span
-                    v-if="block.language"
-                    class="docs-code-language"
-                  >{{ block.language }}</span>
-                  <pre
-                    tabindex="0"
-                    :aria-label="block.title || 'Code example'"
-                  ><code>{{ block.code }}</code></pre>
-                </div>
-
-                <div
-                  v-else-if="block.type === 'note'"
-                  class="docs-note-block"
+                  <span>← Previous article</span>
+                  <strong>{{ previousSection.title }}</strong>
+                </button>
+                <button
+                  v-if="nextSection"
+                  type="button"
+                  class="docs-next"
+                  @click="jumpToSection(nextSection.id)"
                 >
-                  {{ block.text }}
-                </div>
-              </template>
-            </div>
-          </article>
-          <nav
-            class="docs-pagination"
-            aria-label="Article navigation"
-          >
-            <button
-              v-if="previousSection"
-              type="button"
-              @click="jumpToSection(previousSection.id)"
-            >
-              <span>← Previous article</span>
-              <strong>{{ previousSection.title }}</strong>
-            </button>
-            <button
-              v-if="nextSection"
-              type="button"
-              class="docs-next"
-              @click="jumpToSection(nextSection.id)"
-            >
-              <span>Next article →</span>
-              <strong>{{ nextSection.title }}</strong>
-            </button>
-          </nav>
-        </template>
+                  <span>Next article →</span>
+                  <strong>{{ nextSection.title }}</strong>
+                </button>
+              </nav>
+            </template>
 
-        <section
-          v-else
-          class="empty-state"
-        >
-          <p class="empty-title">
-            No matching sections
-          </p>
-          <p class="empty-hint">
-            Try broader keywords, shorter terms, or clear search to browse the complete guide.
-          </p>
-          <button
-            type="button"
-            class="btn btn-ghost"
-            @click="clearSearch"
+            <section
+              v-else
+              class="empty-state"
+            >
+              <p class="empty-title">
+                No matching sections
+              </p>
+              <p class="empty-hint">
+                Try broader keywords, shorter terms, or clear search to browse the complete guide.
+              </p>
+              <button
+                type="button"
+                class="btn btn-ghost"
+                @click="clearSearch"
+              >
+                Reset search
+              </button>
+            </section>
+          </div>
+          <aside
+            v-if="articleOutline.length"
+            class="docs-outline"
+            aria-label="On this page"
           >
-            Reset search
-          </button>
-        </section>
+            <p>On this page</p>
+            <button
+              v-for="item in articleOutline"
+              :key="item.id"
+              type="button"
+              @click="jumpToBlock(item.id)"
+            >
+              {{ item.title }}
+            </button>
+          </aside>
+        </div>
       </div>
     </section>
   </div>
@@ -1067,73 +1130,85 @@ watch(filteredSections, (sections) => {
 
 <style scoped>
 .docs-page {
-  max-width: 1240px;
-  padding-bottom: 40px;
-}
-
-.docs-page-header {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  gap: 24px;
-  padding-bottom: 28px;
-  margin-bottom: 32px;
-  border-bottom: 1px solid var(--border);
-}
-
-.docs-eyebrow {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  color: var(--accent);
-  margin-bottom: 12px;
-}
-
-.docs-page-header h1 {
-  font-size: clamp(26px, 3vw, 34px);
-  font-weight: 600;
-  line-height: 1.2;
-  margin-bottom: 10px;
-}
-
-.docs-page-header h1 + p {
-  color: var(--muted);
-  font-size: 14px;
-}
-
-.docs-result-count {
-  color: var(--muted);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  white-space: nowrap;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .docs-layout {
   display: grid;
-  grid-template-columns: 236px minmax(0, 1fr);
-  gap: clamp(28px, 4vw, 56px);
-  align-items: start;
+  grid-template-columns: 268px minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+}
+
+.docs-sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+}
+
+.docs-library-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 28px 22px 24px;
+}
+
+.docs-book-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--accent);
+  font-size: 22px;
+}
+
+.docs-book-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.docs-library-header h1 {
+  font: 600 15px var(--font-body);
+  letter-spacing: -0.02em;
+}
+
+.docs-library-header p {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .docs-rail {
-  position: sticky;
-  top: 24px;
-  max-height: calc(100dvh - 132px);
+  min-height: 0;
+  flex: 1;
   overflow-y: auto;
-  padding-right: 18px;
-  border-right: 1px solid var(--border);
-  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+  padding: 0 14px 24px;
+}
+
+.docs-result-count {
+  margin: 0 10px 28px;
+  font: 10px var(--font-mono);
+  color: var(--muted);
 }
 
 .docs-nav-group + .docs-nav-group {
-  margin-top: 24px;
+  margin-top: 26px;
 }
 
 .docs-nav-group h2 {
   padding: 0 12px;
-  margin-bottom: 8px;
-  font: 600 11px var(--font-body);
-  letter-spacing: 0.06em;
+  margin-bottom: 9px;
+  font: 600 10px var(--font-body);
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--muted);
 }
@@ -1141,13 +1216,13 @@ watch(filteredSections, (sections) => {
 .docs-rail-btn {
   display: block;
   width: 100%;
-  padding: 10px 12px;
-  margin: 2px 0;
-  border: 0;
-  border-radius: 8px;
+  padding: 9px 12px;
+  margin: 3px 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
   background: transparent;
   color: var(--muted);
-  font: 400 13px/1.5 var(--font-body);
+  font: 400 13px/1.45 var(--font-body);
   text-align: left;
   cursor: pointer;
   transition: background 150ms, color 150ms;
@@ -1161,12 +1236,46 @@ watch(filteredSections, (sections) => {
 .docs-rail-btn.active {
   color: var(--accent);
   background: var(--accentDim);
+  border-color: color-mix(in srgb, var(--accent) 15%, transparent);
   font-weight: 500;
 }
 
 .docs-rail-empty {
   color: var(--muted);
-  font-size: 13px;
+  padding: 12px;
+}
+
+.docs-library-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 18px 24px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.docs-footer-dot {
+  width: 5px;
+  height: 5px;
+  background: var(--accent);
+  border-radius: 50%;
+}
+
+.docs-reader {
+  min-width: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.docs-reading-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 760px);
+  justify-content: center;
+  gap: 48px;
+  padding: 36px clamp(28px, 4vw, 72px) 64px;
+  margin: 0 auto;
 }
 
 .docs-content-col {
@@ -1177,38 +1286,58 @@ watch(filteredSections, (sections) => {
   animation: docs-enter 180ms var(--ease-out);
 }
 
-.docs-section-header {
-  padding-bottom: 28px;
-  margin-bottom: 28px;
-  border-bottom: 1px solid var(--border);
+.docs-breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 44px;
+}
+
+.docs-breadcrumb span:last-child {
+  color: var(--text);
+}
+
+.docs-article-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+  font: 11px var(--font-mono);
+  color: var(--muted);
 }
 
 .docs-section-kicker {
-  display: block;
   color: var(--accent);
-  font-size: 12px;
-  font-weight: 500;
-  margin-bottom: 12px;
+  padding-right: 12px;
+  border-right: 1px solid var(--border);
+}
+
+.docs-section-header {
+  padding-bottom: 32px;
+  margin-bottom: 32px;
+  border-bottom: 1px solid var(--border);
 }
 
 .docs-section-header h2 {
-  font-size: clamp(24px, 2.3vw, 30px);
-  line-height: 1.25;
+  font-size: clamp(30px, 3vw, 42px);
   font-weight: 600;
-  max-width: 30ch;
-  overflow-wrap: anywhere;
+  line-height: 1.15;
+  letter-spacing: -0.045em;
+  text-wrap: balance;
 }
 
 .docs-section-header h2:focus {
   outline: none;
 }
 
-.docs-section-header p {
-  margin-top: 14px;
+.docs-section-header > p {
+  margin-top: 20px;
   color: var(--muted);
-  font-size: 15px;
+  font-size: 17px;
   line-height: 1.7;
-  max-width: 65ch;
+  max-width: 60ch;
 }
 
 .docs-section-body {
@@ -1218,32 +1347,38 @@ watch(filteredSections, (sections) => {
 }
 
 .docs-paragraph, .docs-bullet-block li {
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1.85;
   color: color-mix(in srgb, var(--text) 90%, transparent);
   overflow-wrap: anywhere;
 }
 
 .docs-bullet-block h3, .docs-table-block h3, .docs-code-block h3 {
-  margin-bottom: 14px;
-  font-family: var(--font-body);
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: 0;
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 500;
+  letter-spacing: -0.025em;
+  margin-bottom: 18px;
+  scroll-margin-top: 32px;
 }
 
 .docs-bullet-block ul {
   padding-left: 20px;
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .docs-bullet-block li {
-  padding-left: 4px;
+  padding-left: 6px;
 }
 
 .docs-bullet-block li::marker {
-  color: var(--muted);
+  color: var(--accent);
+  font-size: 10px;
+}
+
+.docs-outline {
+  display: none;
 }
 
 .docs-table-wrap {
@@ -1390,47 +1525,129 @@ watch(filteredSections, (sections) => {
 
 }
 
-@media (max-width: 1000px) {
+@media (min-width: 1600px) {
+  .docs-reading-layout {
+    grid-template-columns: minmax(0, 760px) 160px;
+    max-width: 1120px;
+    padding-inline: 40px;
+  }
+
+  .docs-outline {
+    display: block;
+    position: sticky;
+    top: 36px;
+    align-self: start;
+    padding-top: 4px;
+  }
+
+  .docs-outline p {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 18px;
+  }
+
+  .docs-outline button {
+    display: block;
+    border: 0;
+    border-left: 1px solid var(--border);
+    padding: 9px 0 9px 16px;
+    background: transparent;
+    color: var(--muted);
+    font: 12px/1.5 var(--font-body);
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .docs-outline button:hover {
+    color: var(--accent);
+    border-left-color: var(--accent);
+  }
+
+}
+
+@media (max-width: 1100px) {
+  .docs-layout {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+
+  .docs-library-header {
+    padding-inline: 18px;
+  }
+
+  .docs-book-icon {
+    display: none;
+  }
+
+  .docs-reading-layout {
+    padding: 28px 28px 48px;
+  }
+
+}
+
+@media (max-width: 900px) {
   .docs-layout {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .docs-rail {
+  .docs-sidebar {
     display: none;
   }
 
   .docs-mobile-nav {
-    display: block;
-    margin-bottom: 28px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
   }
 
   .docs-mobile-nav label {
-    margin: 0 0 8px;
+    flex-shrink: 0;
+    font-size: 11px;
+    margin: 0;
   }
 
   .docs-mobile-nav select {
+    min-width: 0;
+    flex: 1;
     width: 100%;
     margin: 0;
     text-overflow: ellipsis;
   }
 
-  .docs-page-header {
-    margin-bottom: 24px;
-  }
-
 }
 
 @media (max-width: 640px) {
-  .docs-page-header {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 16px;
-    padding-bottom: 24px;
+  .docs-reading-layout {
+    padding: 24px 20px 40px;
+  }
+
+  .docs-mobile-nav {
+    padding: 12px 16px;
+  }
+
+  .docs-mobile-nav label {
+    display: none;
+  }
+
+  .docs-breadcrumb {
+    margin-bottom: 28px;
+    font-size: 11px;
+  }
+
+  .docs-section-header > p {
+    font-size: 15px;
   }
 
   .docs-section-header {
     padding-bottom: 24px;
     margin-bottom: 24px;
+  }
+
+  .docs-paragraph, .docs-bullet-block li {
+    font-size: 14px;
   }
 
   .docs-pagination {

@@ -16,11 +16,13 @@ describe('Documentation reader', () => {
     await openDocs()
     expect(wrapper.findAll('article')).toHaveLength(1)
     expect(wrapper.get('article h2').text()).toBe('Platform Overview')
+    wrapper.get('.docs-reader').element.scrollTop = 300
     await wrapper.get('.docs-next').trigger('click')
     await flushPromises()
     expect(wrapper.get('article h2').text()).toBe('Access, Authentication, and Session Lifecycle')
     expect(document.activeElement).toBe(wrapper.get('article h2').element)
-    expect(wrapper.get('[aria-current="page"]').text()).toBe(wrapper.get('article h2').text())
+    expect(wrapper.get('.docs-reader').element.scrollTop).toBe(0)
+    expect(wrapper.get('[aria-current="page"]').text()).toBe('Authentication & sessions')
     await wrapper.get('.docs-pagination button').trigger('click')
     expect(wrapper.get('article h2').text()).toBe('Platform Overview')
   })
@@ -31,7 +33,7 @@ describe('Documentation reader', () => {
     search.value.query = 'websocket'
     await flushPromises()
     expect(wrapper.find('article').exists()).toBe(true)
-    expect(wrapper.get('[aria-current="page"]').text()).toBe(wrapper.get('article h2').text())
+    expect(wrapper.get('article').text().toLowerCase()).toContain('websocket')
     search.value.query = 'no-such-doc-xyz'
     await flushPromises()
     expect(wrapper.find('article').exists()).toBe(false)

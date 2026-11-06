@@ -122,7 +122,7 @@ const KEEP_MOUNTED = new Set(['chat'])
 // hairline, so they skip .page's padding and 1440px centring. Chat needs it so
 // its conversation rail sits flush against the shell nav instead of floating in
 // the middle of a wide screen; Workflows needs the whole canvas.
-const FLUSH_PAGES = new Set(['chat', 'workflows'])
+const FLUSH_PAGES = new Set(['chat', 'workflows', 'docs'])
 const visitedPages = ref(new Set(['chat']))
 const sidebarOpen = ref(false)
 // Chat is the default landing page and, like Workflows, wants the full canvas —
