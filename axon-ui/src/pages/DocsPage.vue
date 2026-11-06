@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useHeaderSearch } from '../lib/headerSearch.js'
 
 const DOC_SECTIONS = [
@@ -730,7 +730,7 @@ const DOC_SECTIONS = [
 
 const searchQuery = ref('')
 const activeSectionId = ref(DOC_SECTIONS[0]?.id || '')
-let sectionObserver = null
+const articleHeading = ref(null)
 
 // The docs search lives in the shell topbar, like every other page.
 useHeaderSearch('docs', {
@@ -793,125 +793,138 @@ const filteredSections = computed(() => {
     .sort((a, b) => (b.score || 0) - (a.score || 0))
 })
 
-const visibleSectionsCount = computed(() => filteredSections.value.length)
+const activeSection = computed(() => filteredSections.value.find((section) => section.id === activeSectionId.value))
+const sectionIndex = computed(() => filteredSections.value.findIndex((section) => section.id === activeSectionId.value))
+const previousSection = computed(() => filteredSections.value[sectionIndex.value - 1])
+const nextSection = computed(() => filteredSections.value[sectionIndex.value + 1])
+const sectionGroups = computed(() => {
+  const groups = new Map()
+  for (const section of filteredSections.value) {
+    if (!groups.has(section.category)) groups.set(section.category, [])
+    groups.get(section.category).push(section)
+  }
+  return [...groups].map(([category, sections]) => ({ category, sections }))
+})
 
 function clearSearch() {
   searchQuery.value = ''
 }
 
-function jumpToSection(sectionId) {
-  const el = document.getElementById(`docs-${sectionId}`)
-  if (!el) return
+async function jumpToSection(sectionId) {
   activeSectionId.value = sectionId
-  // CSS `scroll-behavior` can't reach a scrollIntoView call, so the
-  // reduced-motion preference has to be honored here by hand.
-  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
-  el.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' })
+  await nextTick()
+  const heading = articleHeading.value
+  heading?.focus({ preventScroll: true })
+  // Move only the page scroller; keep the shell and navigation in place.
+  const scroller = heading?.closest('.main-scroll')
+  if (scroller) scroller.scrollTop = 0
 }
 
-function destroyObserver() {
-  if (!sectionObserver) return
-  sectionObserver.disconnect()
-  sectionObserver = null
-}
-
-function startObserver() {
-  destroyObserver()
-  if (typeof IntersectionObserver === 'undefined') return
-
-  sectionObserver = new IntersectionObserver(
-    (entries) => {
-      const visible = entries
-        .filter((entry) => entry.isIntersecting)
-        .sort((a, b) => b.intersectionRatio - a.intersectionRatio)
-      if (visible[0]) {
-        activeSectionId.value = visible[0].target.dataset.sectionId || activeSectionId.value
-      }
-    },
-    {
-      root: null,
-      rootMargin: '-18% 0px -60% 0px',
-      threshold: [0.2, 0.45, 0.7],
-    }
-  )
-
-  filteredSections.value.forEach((section) => {
-    const el = document.getElementById(`docs-${section.id}`)
-    if (el) sectionObserver.observe(el)
-  })
-}
-
-watch(
-  filteredSections,
-  async (sections) => {
-    await nextTick()
-    startObserver()
-    if (!sections.length) {
-      activeSectionId.value = ''
-      return
-    }
-    if (!sections.find((section) => section.id === activeSectionId.value)) {
-      activeSectionId.value = sections[0].id
-    }
-  },
-  { immediate: true }
-)
-
-onBeforeUnmount(() => {
-  destroyObserver()
+watch(filteredSections, (sections) => {
+  if (!sections.some((section) => section.id === activeSectionId.value)) {
+    activeSectionId.value = sections[0]?.id || ''
+  }
 })
 </script>
 
 <template>
   <div class="page-wrap docs-page">
-    <section class="docs-layout">
-      <nav class="docs-rail">
-        <p class="docs-rail-meta">
-          {{ visibleSectionsCount }} / {{ DOC_SECTIONS.length }} sections
+    <header class="docs-page-header">
+      <div>
+        <p class="docs-eyebrow">
+          AXON / KNOWLEDGE BASE
         </p>
-        <button
-          v-for="section in filteredSections"
-          :key="`index-${section.id}`"
-          type="button"
-          class="docs-rail-btn"
-          :class="{ active: section.id === activeSectionId }"
-          @click="jumpToSection(section.id)"
+        <h1>Documentation</h1>
+        <p>Guides and reference for your Axon workspace.</p>
+      </div>
+      <span
+        class="docs-result-count"
+        role="status"
+      >
+        {{ filteredSections.length }} {{ searchQuery.trim() ? 'matching' : '' }} articles
+      </span>
+    </header>
+
+    <div
+      v-if="filteredSections.length"
+      class="docs-mobile-nav"
+    >
+      <label for="docs-topic">Browse documentation</label>
+      <select
+        id="docs-topic"
+        :value="activeSectionId"
+        @change="jumpToSection($event.target.value)"
+      >
+        <optgroup
+          v-for="group in sectionGroups"
+          :key="group.category"
+          :label="group.category"
         >
-          <span class="docs-rail-title">{{ section.title }}</span>
-        </button>
+          <option
+            v-for="section in group.sections"
+            :key="section.id"
+            :value="section.id"
+          >
+            {{ section.title }}
+          </option>
+        </optgroup>
+      </select>
+    </div>
+
+    <section class="docs-layout">
+      <nav
+        class="docs-rail"
+        aria-label="Documentation topics"
+      >
+        <div
+          v-for="group in sectionGroups"
+          :key="group.category"
+          class="docs-nav-group"
+        >
+          <h2>{{ group.category }}</h2>
+          <button
+            v-for="section in group.sections"
+            :key="section.id"
+            type="button"
+            class="docs-rail-btn"
+            :class="{ active: section.id === activeSectionId }"
+            :aria-current="section.id === activeSectionId ? 'page' : undefined"
+            @click="jumpToSection(section.id)"
+          >
+            {{ section.title }}
+          </button>
+        </div>
+        <p
+          v-if="!filteredSections.length"
+          class="docs-rail-empty"
+        >
+          No topics found.
+        </p>
       </nav>
 
       <div class="docs-content-col">
-        <template v-if="filteredSections.length">
+        <template v-if="activeSection">
           <article
-            v-for="(section, index) in filteredSections"
-            :id="`docs-${section.id}`"
-            :key="section.id"
-            :data-section-id="section.id"
-            class="panel docs-section-card"
-            :style="{ '--stagger-delay': `${Math.min(index * 0.05, 0.4)}s` }"
+            :key="activeSection.id"
+            class="docs-article"
+            aria-labelledby="docs-article-title"
           >
             <header class="docs-section-header">
-              <div>
-                <span class="docs-section-kicker">{{ section.category }}</span>
-                <h2>{{ section.title }}</h2>
-                <p>{{ section.summary }}</p>
-              </div>
-              <div class="docs-tag-row chip-row">
-                <span
-                  v-for="tag in section.tags"
-                  :key="`${section.id}-${tag}`"
-                  class="mono-chip"
-                >
-                  {{ tag }}
-                </span>
-              </div>
+              <span class="docs-section-kicker">{{ activeSection.category }}</span>
+              <h2
+                id="docs-article-title"
+                ref="articleHeading"
+                tabindex="-1"
+              >
+                {{ activeSection.title }}
+              </h2>
+              <p>{{ activeSection.summary }}</p>
             </header>
 
             <div class="docs-section-body">
               <template
-                v-for="(block, blockIndex) in section.blocks"
-                :key="`${section.id}-${blockIndex}`"
+                v-for="(block, blockIndex) in activeSection.blocks"
+                :key="`${activeSection.id}-${blockIndex}`"
               >
                 <p
                   v-if="block.type === 'paragraph'"
@@ -930,7 +943,7 @@ onBeforeUnmount(() => {
                   <ul>
                     <li
                       v-for="(item, itemIndex) in block.items"
-                      :key="`${section.id}-${blockIndex}-${itemIndex}`"
+                      :key="`${activeSection.id}-${blockIndex}-${itemIndex}`"
                     >
                       {{ item }}
                     </li>
@@ -944,13 +957,19 @@ onBeforeUnmount(() => {
                   <h3 v-if="block.title">
                     {{ block.title }}
                   </h3>
-                  <div class="docs-table-wrap">
+                  <div
+                    class="docs-table-wrap"
+                    tabindex="0"
+                    role="region"
+                    :aria-label="block.title || 'Reference table'"
+                  >
                     <table>
                       <thead>
                         <tr>
                           <th
                             v-for="(column, columnIndex) in block.columns"
-                            :key="`${section.id}-${blockIndex}-head-${columnIndex}`"
+                            :key="`${activeSection.id}-${blockIndex}-head-${columnIndex}`"
+                            scope="col"
                           >
                             {{ column }}
                           </th>
@@ -959,11 +978,11 @@ onBeforeUnmount(() => {
                       <tbody>
                         <tr
                           v-for="(row, rowIndex) in block.rows"
-                          :key="`${section.id}-${blockIndex}-row-${rowIndex}`"
+                          :key="`${activeSection.id}-${blockIndex}-row-${rowIndex}`"
                         >
                           <td
                             v-for="(cell, cellIndex) in row"
-                            :key="`${section.id}-${blockIndex}-row-${rowIndex}-cell-${cellIndex}`"
+                            :key="`${activeSection.id}-${blockIndex}-row-${rowIndex}-cell-${cellIndex}`"
                           >
                             {{ cell }}
                           </td>
@@ -980,7 +999,14 @@ onBeforeUnmount(() => {
                   <h3 v-if="block.title">
                     {{ block.title }}
                   </h3>
-                  <pre><code>{{ block.code }}</code></pre>
+                  <span
+                    v-if="block.language"
+                    class="docs-code-language"
+                  >{{ block.language }}</span>
+                  <pre
+                    tabindex="0"
+                    :aria-label="block.title || 'Code example'"
+                  ><code>{{ block.code }}</code></pre>
                 </div>
 
                 <div
@@ -992,6 +1018,28 @@ onBeforeUnmount(() => {
               </template>
             </div>
           </article>
+          <nav
+            class="docs-pagination"
+            aria-label="Article navigation"
+          >
+            <button
+              v-if="previousSection"
+              type="button"
+              @click="jumpToSection(previousSection.id)"
+            >
+              <span>← Previous article</span>
+              <strong>{{ previousSection.title }}</strong>
+            </button>
+            <button
+              v-if="nextSection"
+              type="button"
+              class="docs-next"
+              @click="jumpToSection(nextSection.id)"
+            >
+              <span>Next article →</span>
+              <strong>{{ nextSection.title }}</strong>
+            </button>
+          </nav>
         </template>
 
         <section
@@ -1019,273 +1067,383 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .docs-page {
-  padding-bottom: 60px;
+  max-width: 1240px;
+  padding-bottom: 40px;
+}
+
+.docs-page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 24px;
+  padding-bottom: 28px;
+  margin-bottom: 32px;
+  border-bottom: 1px solid var(--border);
+}
+
+.docs-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: var(--accent);
+  margin-bottom: 12px;
+}
+
+.docs-page-header h1 {
+  font-size: clamp(26px, 3vw, 34px);
+  font-weight: 600;
+  line-height: 1.2;
+  margin-bottom: 10px;
+}
+
+.docs-page-header h1 + p {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.docs-result-count {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .docs-layout {
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr);
-  gap: 26px;
+  grid-template-columns: 236px minmax(0, 1fr);
+  gap: clamp(28px, 4vw, 56px);
   align-items: start;
 }
 
-/* ── Rail: bare text, hairline on the right, inset accent when active ─────── */
 .docs-rail {
   position: sticky;
-  top: 8px;
-  max-height: calc(100vh - 90px);
+  top: 24px;
+  max-height: calc(100dvh - 132px);
   overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  padding-right: 12px;
+  padding-right: 18px;
   border-right: 1px solid var(--border);
+  scrollbar-gutter: stable;
 }
 
-.docs-rail-meta {
-  margin: 0 0 8px;
-  padding: 0 9px;
-  font-family: var(--font-mono);
-  font-size: 0.62rem;
+.docs-nav-group + .docs-nav-group {
+  margin-top: 24px;
+}
+
+.docs-nav-group h2 {
+  padding: 0 12px;
+  margin-bottom: 8px;
+  font: 600 11px var(--font-body);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--muted);
 }
 
 .docs-rail-btn {
   display: block;
   width: 100%;
-  padding: 6px 9px;
+  padding: 10px 12px;
+  margin: 2px 0;
   border: 0;
-  border-radius: var(--r-md);
+  border-radius: 8px;
   background: transparent;
   color: var(--muted);
-  font: inherit;
-  font-size: 0.78rem;
+  font: 400 13px/1.5 var(--font-body);
   text-align: left;
   cursor: pointer;
-  transition: background 0.15s var(--ease-out), color 0.15s var(--ease-out);
+  transition: background 150ms, color 150ms;
 }
 
 .docs-rail-btn:hover {
-  background: var(--surface2);
   color: var(--text);
+  background: var(--surface2);
 }
 
 .docs-rail-btn.active {
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-  color: var(--text);
-  box-shadow: inset 2px 0 0 var(--accent);
-}
-
-.docs-rail-title {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  color: var(--accent);
+  background: var(--accentDim);
   font-weight: 500;
 }
 
-.docs-rail-btn.active .docs-rail-title {
-  font-weight: 600;
+.docs-rail-empty {
+  color: var(--muted);
+  font-size: 13px;
 }
 
-/* ── Section panels ───────────────────────────────────────────────────────── */
 .docs-content-col {
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
 }
 
-.docs-section-card {
-  animation: docs-slide-in 0.28s var(--ease-out) both;
-  animation-delay: var(--stagger-delay, 0s);
-  scroll-margin-top: 10px;
+.docs-article {
+  animation: docs-enter 180ms var(--ease-out);
 }
 
 .docs-section-header {
-  padding: 14px 16px 12px;
+  padding-bottom: 28px;
+  margin-bottom: 28px;
   border-bottom: 1px solid var(--border);
-  background: var(--surface);
-  display: flex;
-  gap: 12px;
-  justify-content: space-between;
-  align-items: flex-start;
 }
 
 .docs-section-kicker {
   display: block;
-  margin-bottom: 6px;
-  font-family: var(--font-mono);
-  font-size: 0.62rem;
+  color: var(--accent);
+  font-size: 12px;
   font-weight: 500;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--muted);
+  margin-bottom: 12px;
 }
 
 .docs-section-header h2 {
-  font-size: 1rem;
+  font-size: clamp(24px, 2.3vw, 30px);
+  line-height: 1.25;
   font-weight: 600;
-  letter-spacing: 0.01em;
-  color: var(--text);
+  max-width: 30ch;
+  overflow-wrap: anywhere;
+}
+
+.docs-section-header h2:focus {
+  outline: none;
 }
 
 .docs-section-header p {
-  margin-top: 6px;
-  max-width: 720px;
-  font-size: 0.78rem;
-  line-height: 1.55;
+  margin-top: 14px;
   color: var(--muted);
-}
-
-.docs-tag-row {
-  margin-top: 0;
-  justify-content: flex-end;
-  max-width: 300px;
-  flex-shrink: 0;
+  font-size: 15px;
+  line-height: 1.7;
+  max-width: 65ch;
 }
 
 .docs-section-body {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 14px 16px 18px;
+  gap: 32px;
 }
 
-.docs-paragraph {
-  font-size: 0.84rem;
-  line-height: 1.65;
-  color: var(--text);
+.docs-paragraph, .docs-bullet-block li {
+  font-size: 14px;
+  line-height: 1.85;
+  color: color-mix(in srgb, var(--text) 90%, transparent);
+  overflow-wrap: anywhere;
 }
 
-.docs-bullet-block h3,
-.docs-table-block h3,
-.docs-code-block h3 {
-  margin-bottom: 8px;
-  font-family: var(--font-mono);
-  font-size: 0.64rem;
+.docs-bullet-block h3, .docs-table-block h3, .docs-code-block h3 {
+  margin-bottom: 14px;
+  font-family: var(--font-body);
+  font-size: 15px;
   font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted);
+  letter-spacing: 0;
 }
 
 .docs-bullet-block ul {
-  padding-left: 18px;
+  padding-left: 20px;
   display: grid;
-  gap: 7px;
+  gap: 10px;
 }
 
 .docs-bullet-block li {
-  font-size: 0.8rem;
-  line-height: 1.6;
-  color: color-mix(in srgb, var(--text) 88%, transparent);
+  padding-left: 4px;
+}
+
+.docs-bullet-block li::marker {
+  color: var(--muted);
 }
 
 .docs-table-wrap {
   overflow-x: auto;
-  border-radius: var(--r-md);
   border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-card);
 }
 
 .docs-table-wrap table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 640px;
+  min-width: 520px;
 }
 
-.docs-table-wrap th,
-.docs-table-wrap td {
-  padding: 8px 10px;
+.docs-table-wrap th, .docs-table-wrap td {
+  padding: 14px 16px;
   text-align: left;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
   vertical-align: top;
-  font-size: 0.76rem;
-  line-height: 1.5;
+  font-size: 13px;
+  line-height: 1.65;
+  border-bottom: 1px solid var(--border);
 }
 
 .docs-table-wrap th {
-  background: var(--surface);
-  color: var(--muted);
-  font-family: var(--font-mono);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  font-size: 0.62rem;
+  background: var(--surface2);
+  color: var(--text);
+  font-size: 12px;
   font-weight: 600;
+}
+
+.docs-table-wrap td {
+  color: var(--muted);
+}
+
+.docs-table-wrap td:first-child {
+  color: var(--text);
+  font-weight: 500;
 }
 
 .docs-table-wrap tr:last-child td {
   border-bottom: 0;
 }
 
-.docs-code-block pre {
-  border-radius: var(--r-md);
+.docs-code-block {
+  min-width: 0;
+}
+
+.docs-code-language {
+  display: block;
   border: 1px solid var(--border);
-  background: color-mix(in srgb, var(--text) 2.5%, transparent);
-  padding: 12px 14px;
+  border-bottom: 0;
+  border-radius: 12px 12px 0 0;
+  padding: 10px 18px;
+  background: var(--surface2);
+  color: var(--muted);
+  font: 11px var(--font-mono);
+}
+
+.docs-code-block pre {
+  padding: 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
   overflow-x: auto;
 }
 
+.docs-code-language + pre {
+  border-radius: 0 0 12px 12px;
+}
+
 .docs-code-block code {
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-  line-height: 1.6;
-  color: var(--teal);
+  font: 12px/1.8 var(--font-mono);
+  color: var(--text);
   white-space: pre;
 }
 
 .docs-note-block {
-  border-radius: var(--r-sm);
+  padding: 18px 20px;
   border-left: 2px solid var(--accent);
-  background: color-mix(in srgb, var(--accent) 6%, transparent);
-  padding: 10px 12px;
-  font-size: 0.78rem;
-  line-height: 1.6;
-  color: color-mix(in srgb, var(--text) 90%, transparent);
+  border-radius: 0 10px 10px 0;
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
 }
 
-@keyframes docs-slide-in {
+.docs-pagination {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  border-top: 1px solid var(--border);
+  padding-top: 28px;
+  margin-top: 40px;
+}
+
+.docs-pagination button {
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background 150ms, border-color 150ms;
+}
+
+.docs-pagination button:hover {
+  background: var(--surface);
+  border-color: var(--accent);
+}
+
+.docs-pagination span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  margin-bottom: 8px;
+}
+
+.docs-pagination strong {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+  font-weight: 500;
+}
+
+.docs-next {
+  grid-column: 2;
+}
+
+.docs-mobile-nav {
+  display: none;
+}
+
+@keyframes docs-enter {
   from {
     opacity: 0;
-    transform: translateY(8px);
   }
+
   to {
     opacity: 1;
-    transform: translateY(0);
   }
+
 }
 
-@media (max-width: 1160px) {
+@media (max-width: 1000px) {
   .docs-layout {
-    grid-template-columns: 1fr;
-    gap: 14px;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .docs-rail {
-    position: static;
-    max-height: 240px;
-    padding-right: 0;
-    padding-bottom: 10px;
-    border-right: 0;
-    border-bottom: 1px solid var(--border);
-  }
-}
-
-@media (max-width: 860px) {
-  .docs-section-header {
-    flex-direction: column;
+    display: none;
   }
 
-  .docs-tag-row {
-    justify-content: flex-start;
-    max-width: 100%;
+  .docs-mobile-nav {
+    display: block;
+    margin-bottom: 28px;
   }
+
+  .docs-mobile-nav label {
+    margin: 0 0 8px;
+  }
+
+  .docs-mobile-nav select {
+    width: 100%;
+    margin: 0;
+    text-overflow: ellipsis;
+  }
+
+  .docs-page-header {
+    margin-bottom: 24px;
+  }
+
 }
 
 @media (max-width: 640px) {
-  .docs-section-header,
-  .docs-section-body {
-    padding-inline: 12px;
+  .docs-page-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 16px;
+    padding-bottom: 24px;
   }
+
+  .docs-section-header {
+    padding-bottom: 24px;
+    margin-bottom: 24px;
+  }
+
+  .docs-pagination {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .docs-next {
+    grid-column: 1;
+  }
+
+  .docs-table-wrap th, .docs-table-wrap td {
+    padding: 12px;
+  }
+
 }
 </style>
