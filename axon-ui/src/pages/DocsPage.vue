@@ -795,9 +795,6 @@ const filteredSections = computed(() => {
 })
 
 const activeSection = computed(() => filteredSections.value.find((section) => section.id === activeSectionId.value))
-const sectionIndex = computed(() => filteredSections.value.findIndex((section) => section.id === activeSectionId.value))
-const previousSection = computed(() => filteredSections.value[sectionIndex.value - 1])
-const nextSection = computed(() => filteredSections.value[sectionIndex.value + 1])
 const sectionGroups = computed(() => {
   const groups = new Map()
   for (const section of filteredSections.value) {
@@ -1064,28 +1061,6 @@ watch(filteredSections, (sections) => {
                   </template>
                 </div>
               </article>
-              <nav
-                class="docs-pagination"
-                aria-label="Article navigation"
-              >
-                <button
-                  v-if="previousSection"
-                  type="button"
-                  @click="jumpToSection(previousSection.id)"
-                >
-                  <span>← Previous article</span>
-                  <strong>{{ previousSection.title }}</strong>
-                </button>
-                <button
-                  v-if="nextSection"
-                  type="button"
-                  class="docs-next"
-                  @click="jumpToSection(nextSection.id)"
-                >
-                  <span>Next article →</span>
-                  <strong>{{ nextSection.title }}</strong>
-                </button>
-              </nav>
             </template>
 
             <section
@@ -1156,7 +1131,12 @@ watch(filteredSections, (sections) => {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 28px 22px 24px;
+  padding: 18px 14px;
+  margin: 16px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-card);
+  box-shadow: var(--edge-sheen);
 }
 
 .docs-book-icon {
@@ -1195,13 +1175,21 @@ watch(filteredSections, (sections) => {
 }
 
 .docs-result-count {
-  margin: 0 10px 28px;
+  margin: 0 10px 16px;
   font: 10px var(--font-mono);
   color: var(--muted);
 }
 
+.docs-nav-group {
+  padding: 16px 8px 8px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-card);
+  box-shadow: var(--edge-sheen);
+}
+
 .docs-nav-group + .docs-nav-group {
-  margin-top: 26px;
+  margin-top: 12px;
 }
 
 .docs-nav-group h2 {
@@ -1483,46 +1471,11 @@ watch(filteredSections, (sections) => {
   overflow-wrap: anywhere;
 }
 
-.docs-pagination {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-  margin-top: 20px;
-}
 
-.docs-pagination button {
-  min-width: 0;
-  padding: 18px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--bg-card);
-  text-align: left;
-  cursor: pointer;
-  transition: background 150ms, border-color 150ms;
-}
 
-.docs-pagination button:hover {
-  background: var(--surface);
-  border-color: var(--accent);
-}
 
-.docs-pagination span {
-  display: block;
-  color: var(--muted);
-  font-size: 11px;
-  margin-bottom: 8px;
-}
 
-.docs-pagination strong {
-  color: var(--text);
-  font-size: 13px;
-  line-height: 1.5;
-  font-weight: 500;
-}
 
-.docs-next {
-  grid-column: 2;
-}
 
 .docs-mobile-nav {
   display: none;
@@ -1680,13 +1633,7 @@ watch(filteredSections, (sections) => {
     font-size: 14px;
   }
 
-  .docs-pagination {
-    grid-template-columns: minmax(0, 1fr);
-  }
 
-  .docs-next {
-    grid-column: 1;
-  }
 
   .docs-table-wrap th, .docs-table-wrap td {
     padding: 12px;

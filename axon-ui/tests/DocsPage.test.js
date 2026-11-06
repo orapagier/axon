@@ -17,13 +17,13 @@ describe('Documentation reader', () => {
     expect(wrapper.findAll('article')).toHaveLength(1)
     expect(wrapper.get('article h2').text()).toBe('Platform Overview')
     wrapper.get('.docs-reader').element.scrollTop = 300
-    await wrapper.get('.docs-next').trigger('click')
+    await wrapper.findAll('.docs-rail-btn')[1].trigger('click')
     await flushPromises()
     expect(wrapper.get('article h2').text()).toBe('Access, Authentication, and Session Lifecycle')
     expect(document.activeElement).toBe(wrapper.get('article h2').element)
     expect(wrapper.get('.docs-reader').element.scrollTop).toBe(0)
     expect(wrapper.get('[aria-current="page"]').text()).toBe('Authentication & sessions')
-    await wrapper.get('.docs-pagination button').trigger('click')
+    await wrapper.findAll('.docs-rail-btn')[0].trigger('click')
     expect(wrapper.get('article h2').text()).toBe('Platform Overview')
   })
 
