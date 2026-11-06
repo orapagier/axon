@@ -1,27 +1,8 @@
-/* ════════════════════════════════════════════════════════════════════════════
-   AXON · design system v7 — "Liquid Glass" — the single source of truth
-   ----------------------------------------------------------------------------
-   A deep cool workspace lit by one slow-drifting aurora, with frosted chrome
-   floating on top of it. One electric-blue accent, a cyan focus halo, IBM Plex
-   Mono for every data readout. Token-driven throughout — every
-   color/radius/shadow/glass/easing value reads from :root, so the palette
-   changes in exactly one place.
-
-   What makes the glass read as glass rather than fog, in order of importance:
-     1. saturate() in the backdrop filter (--glass-filter), so what is behind a
-        surface blooms through in colour instead of going grey;
-     2. something moving behind it to refract — the .layout::before aurora is
-        the only ambient light in the app, and it drifts on a 48s cycle;
-     3. a specular edge — bright inset hairline on top, dark one underneath
-        (--glass-highlight) — so the surface has a lit rim and a grounded one.
-
-   Blur is scoped to chrome (.shell-topbar, .sidebar, .mobile-tabbar) plus
-   .panel and .modal. Inputs, buttons, .card and chat bubbles stay opaque so
-   text stays crisp; they join the same material family through --edge-sheen
-   (raised) or --well-shade (recessed) rather than through transparency.
-   Honors prefers-reduced-transparency and prefers-reduced-motion at the bottom
-   of the file. This is the only global stylesheet.
-   ════════════════════════════════════════════════════════════════════════════ */
+/* AXON · Orbit design system
+   Quiet graphite surfaces, ice-blue interaction accents and a 4px spacing scale.
+   Shared tokens keep page controls and shell chrome consistent. Glass is limited
+   to shell chrome and overlays; content surfaces stay crisp and inexpensive to
+   render. Motion and transparency preferences are honored at the end. */
 
 /* ── Reset ────────────────────────────────────────────────────────────────── */
 *,
@@ -91,17 +72,17 @@
     color-scheme: dark;
 
     /* Core surfaces & text — deep cool graphite */
-    --bg: #090c14;
-    --bg-card: #151a26;
-    --surface: #10141d;
-    --surface2: #1e2433;
-    --border: rgba(140, 175, 235, 0.14);
+    --bg: #0b0e14;
+    --bg-card: #141922;
+    --surface: #10141c;
+    --surface2: #1c2330;
+    --border: rgba(165, 185, 215, 0.12);
     --text: #e6ebf5;
-    --muted: #7e8aa0;
+    --muted: #939fb2;
 
     /* Accent & semantic palette — one electric blue accent + cyan glow + lab semantics */
-    --accent: #4dabf7;
-    --accentDim: rgba(77, 171, 247, 0.16);
+    --accent: #8acbff;
+    --accentDim: rgba(138, 203, 255, 0.12);
     --accent-glow: #22d3ee;
     /* Keyboard focus. One definition, consumed by the global :focus-visible
        rule and by every component that paints its own ring, so the halo can
@@ -138,28 +119,35 @@
     --ease-fluid: cubic-bezier(0.32, 0.72, 0, 1);
 
     /* Button sizing — single source of truth. Every button derives from these.
-       HEIGHT IS UNIFORM across base / -sm / -xs by design. */
-    --btn-h: 27px;
-    --btn-px: 12px;
+       Compact variants keep dense tables usable without shrinking primary actions. */
+    --btn-h: 36px;
+    --btn-px: 14px;
     --btn-radius: 9px;
-    --btn-fs: 0.72rem;
+    --btn-fs: 0.8rem;
     --btn-gap: 6px;
-    --btn-sm-h: var(--btn-h);
+    --btn-sm-h: 32px;
     --btn-sm-px: 10px;
-    --btn-sm-fs: 0.71rem;
+    --btn-sm-fs: 0.76rem;
     --btn-sm-radius: var(--btn-radius);
-    --btn-xs-h: var(--btn-h);
+    --btn-xs-h: 28px;
     --btn-xs-px: 9px;
-    --btn-xs-fs: 0.7rem;
+    --btn-xs-fs: 0.72rem;
     --btn-xs-radius: var(--btn-radius);
 
     /* Search field sizing */
-    --search-h: 32px;
-    --search-fs: 0.78rem;
+    --search-h: 38px;
+    --search-fs: 0.84rem;
     --search-max-w: 420px;
 
     /* Layout, shadows */
-    --sidebar-w: 252px;
+    --sidebar-w: 240px;
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 24px;
+    --space-6: 32px;
+    --page-gutter: clamp(20px, 2.6vw, 40px);
     /* Two-part shadows: a tight contact shadow that anchors the surface to
        what is under it, plus a wide ambient one that gives it height. A single
        shadow can do one or the other, never both. */
@@ -170,12 +158,12 @@
        Consumed by .shell-topbar, .sidebar, .mobile-tabbar, .panel, .modal.
        The body's ambient glow (see body {}) gives these surfaces something
        to refract; inputs/buttons/.card stay solid for text crispness. */
-    --glass-bg: color-mix(in srgb, var(--bg-card) 62%, transparent);
-    --glass-border: rgba(178, 206, 255, 0.15);
-    --glass-blur: 22px;
+    --glass-bg: color-mix(in srgb, var(--bg-card) 90%, transparent);
+    --glass-border: rgba(178, 206, 255, 0.12);
+    --glass-blur: 16px;
     /* saturate() is the whole trick: without it a blurred backdrop desaturates
        into grey fog. brightness() lifts it back off the near-black ground. */
-    --glass-filter: blur(var(--glass-blur)) saturate(165%) brightness(1.04);
+    --glass-filter: blur(var(--glass-blur)) saturate(115%);
     --glass-highlight:
         inset 0 1px 0 rgba(255, 255, 255, 0.08),
         inset 0 -1px 0 rgba(0, 0, 0, 0.28);
@@ -252,7 +240,7 @@ h1,
 h2,
 h3 {
     font-family: var(--font-display);
-    letter-spacing: 0.01em;
+    letter-spacing: -0.025em;
 }
 
 code,
@@ -300,43 +288,18 @@ textarea {
    ════════════════════════════════════════════════════════════════════════════ */
 .layout {
     display: flex;
-    height: 100vh;
+    height: 100dvh;
 }
 
-/* ── Ambient aurora · the light every glass surface refracts ──────────────
-   Three soft light pools on a 48s drift, sitting behind the whole shell. This
-   is the only ambient light in the app: without something moving back here the
-   backdrop-filters above have nothing to do and the chrome reads as flat
-   translucent plastic. Transform-only and gradient-only — no filter, so it
-   composites on the GPU and never repaints. Oversized by 25% on every side so
-   the drift never walks an edge into view. Pinned to its end state by the
-   global prefers-reduced-motion rule.
-
-   z-index 0 rather than -1, and .main deliberately gets NO z-index: both are
-   positioned with z-index 0/auto, so they paint in tree order and .main lands
-   on top for free. Giving .main a z-index would make it a stacking context and
-   trap the page-level overlays that are tuned against the shell's own layers
-   (ChatPage's 960 sits above the mobile tab bar at 890 — inside a new context
-   it would sink below it). */
+/* Static edge light gives the workspace depth without continuous GPU work. */
 .layout::before,
 .login-page::before {
     content: "";
     position: fixed;
-    inset: -25%;
+    inset: 0;
     z-index: 0;
     pointer-events: none;
-    opacity: 0.55;
-    background:
-        radial-gradient(38% 42% at 22% 26%, color-mix(in srgb, var(--accent) 32%, transparent), transparent 68%),
-        radial-gradient(34% 38% at 78% 16%, color-mix(in srgb, var(--accent-glow) 24%, transparent), transparent 66%),
-        radial-gradient(46% 42% at 52% 90%, color-mix(in srgb, var(--purple) 22%, transparent), transparent 70%);
-    animation: aurora-drift 48s cubic-bezier(0.4, 0, 0.6, 1) infinite alternate;
-    will-change: transform;
-}
-
-@keyframes aurora-drift {
-    from { transform: translate3d(-3%, -2%, 0) scale(1); }
-    to { transform: translate3d(3%, 2.5%, 0) scale(1.08); }
+    background: radial-gradient(ellipse at 65% 0%, rgba(92, 158, 230, 0.07), transparent 55%);
 }
 
 .app-shell {
@@ -393,23 +356,24 @@ textarea {
     flex-direction: column;
     flex-shrink: 0;
     position: fixed;
-    left: -100%;
+    left: 0;
+    transform: translateX(-100%);
     top: 0;
     bottom: 0;
     z-index: 1000;
-    transition: left 0.42s var(--ease-fluid);
+    transition: transform 0.24s var(--ease-out);
 }
 
 .sidebar.open {
-    left: 0;
+    transform: translateX(0);
 }
 
 .sidebar-panel {
     height: 100%;
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    padding: 14px 12px 12px;
+    gap: var(--space-4);
+    padding: 20px 12px 16px;
 }
 
 .sidebar-header-row {
@@ -511,7 +475,7 @@ textarea {
     padding: 6px 0;
     display: flex;
     flex-direction: column;
-    gap: 1px;
+    gap: var(--space-1);
     overflow-y: auto;
 }
 
@@ -522,7 +486,8 @@ textarea {
     align-items: center;
     gap: 12px;
     width: 100%;
-    padding: 8px 10px;
+    padding: 11px 12px;
+    min-height: 44px;
     border: 0;
     border-radius: var(--r-md);
     background: transparent;
@@ -540,14 +505,13 @@ textarea {
 }
 
 .nav-item.active {
-    background: linear-gradient(90deg,
-        color-mix(in srgb, var(--nav-tint) 22%, transparent),
-        color-mix(in srgb, var(--nav-tint) 6%, transparent) 58%,
-        transparent);
+    background: var(--accentDim);
     color: var(--text);
-    box-shadow:
-        inset 0 0 0 1px color-mix(in srgb, var(--nav-tint) 20%, transparent),
-        var(--edge-sheen);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.nav-item.active .nav-icon {
+    color: var(--accent);
 }
 
 .nav-item.active::after {
@@ -555,10 +519,10 @@ textarea {
     position: absolute;
     top: 50%;
     right: 10px;
-    width: 6px;
-    height: 6px;
+    width: 4px;
+    height: 4px;
     border-radius: 50%;
-    background: var(--nav-tint);
+    background: var(--accent);
     transform: translateY(-50%);
 }
 
@@ -569,7 +533,7 @@ textarea {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    color: var(--nav-tint, var(--muted));
+    color: var(--muted);
 }
 
 .nav-icon svg {
@@ -609,6 +573,7 @@ textarea {
     .sidebar {
         position: relative;
         left: 0;
+        transform: none;
         box-shadow: none;
         z-index: 1;
     }
@@ -646,7 +611,8 @@ textarea {
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding: 12px 22px;
+    min-height: 72px;
+    padding: 16px var(--page-gutter);
     background: var(--glass-bg);
     backdrop-filter: var(--glass-filter);
     -webkit-backdrop-filter: var(--glass-filter);
@@ -681,7 +647,7 @@ textarea {
     width: 8px;
     height: 8px;
     border-radius: 2px;
-    background: var(--page-tint, var(--accent));
+    background: var(--accent);
     transition: background 0.25s var(--ease-out);
 }
 
@@ -768,7 +734,7 @@ textarea {
     display: none;
     flex: 1;
     width: 100%;
-    padding: 18px 22px 30px;
+    padding: var(--space-6) var(--page-gutter) 40px;
     min-height: 0;
 }
 
@@ -776,12 +742,12 @@ textarea {
     display: flex;
     flex-direction: column;
     flex: 1 1 auto;
-    animation: page-enter 0.5s var(--ease-fluid) both;
+    animation: page-enter 0.22s var(--ease-out);
 }
 
 @keyframes page-enter {
-    from { opacity: 0; transform: translateY(12px) scale(0.994); }
-    to { opacity: 1; transform: translateY(0) scale(1); }
+    from { opacity: 0; }
+    to { opacity: 1; }
 }
 
 .page-flush {
@@ -841,8 +807,8 @@ textarea {
     flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
-    gap: 10px;
-    margin-bottom: 16px;
+    gap: var(--space-3);
+    margin-bottom: var(--space-5);
     min-height: var(--search-h);
 }
 
@@ -862,9 +828,7 @@ textarea {
    PANELS & ROWS
    ════════════════════════════════════════════════════════════════════════════ */
 .panel {
-    background: var(--glass-bg);
-    backdrop-filter: var(--glass-filter);
-    -webkit-backdrop-filter: var(--glass-filter);
+    background: var(--bg-card);
     border: 1px solid var(--glass-border);
     border-radius: var(--r-lg);
     box-shadow: var(--glass-highlight), var(--shadow-sm);
@@ -876,7 +840,7 @@ textarea {
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding: 10px 16px;
+    padding: 16px 20px;
     border-bottom: 1px solid var(--border);
     /* Not a flat fill: a short top-down wash reads as the light falling on the
        lip of the panel, and keeps the head distinct from the body without a
@@ -904,7 +868,7 @@ textarea {
 
 .panel-empty,
 .panel-body {
-    padding: 16px;
+    padding: var(--space-5);
 }
 
 .row-list {
@@ -913,7 +877,7 @@ textarea {
 }
 
 .list-row {
-    padding: 11px 16px 12px;
+    padding: 16px 20px;
     border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
     transition: background 0.15s var(--ease-out);
 }
@@ -937,7 +901,7 @@ textarea {
 }
 
 .row-title {
-    font-size: 0.84rem;
+    font-size: 0.9rem;
     font-weight: 600;
     min-width: 0;
     overflow-wrap: anywhere;
@@ -945,8 +909,8 @@ textarea {
 }
 
 .row-desc {
-    margin-top: 3px;
-    font-size: 0.76rem;
+    margin-top: 5px;
+    font-size: 0.82rem;
     line-height: 1.5;
     color: var(--muted);
 }
@@ -1018,8 +982,8 @@ textarea {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 6px;
-    padding: 44px 20px;
+    gap: var(--space-3);
+    padding: 64px 24px;
     border: 1px solid var(--border);
     border-radius: var(--r-lg);
     background: color-mix(in srgb, var(--text) 2.5%, transparent);
@@ -1486,8 +1450,8 @@ label {
 /* ════════════════════════════════════════════════════════════════════════════
    BUTTON SYSTEM
    ----------------------------------------------------------------------------
-   Single source of truth. Every button is exactly --btn-h tall; variants
-   differ only in horizontal padding / fill.
+   Single source of truth. Primary controls are 36px; compact row actions
+   use the small and extra-small token sizes.
    ════════════════════════════════════════════════════════════════════════════ */
 .btn,
 .btn-icon,
@@ -1822,7 +1786,7 @@ label {
     display: flex;
     flex-direction: column;
     height: 100%;
-    min-height: calc(100vh - 110px);
+    min-height: 0;
     /* Anchors the hands-free voice-orb overlay (ChatPage.vue), which covers
        this panel with position: absolute; inset: 0. */
     position: relative;
@@ -1868,6 +1832,8 @@ label {
 .chat-welcome {
     text-align: center;
     margin: auto;
+    width: 100%;
+    min-width: 0;
     max-width: 760px;
     padding: 48px 24px;
     position: relative;
@@ -1904,9 +1870,9 @@ label {
 }
 
 .welcome-title {
-    font-size: clamp(1.28rem, 2.4vw, 1.7rem);
+    font-size: clamp(1.8rem, 3.2vw, 2.8rem);
     font-weight: 700;
-    line-height: 1.02;
+    line-height: 1.15;
     letter-spacing: -0.05em;
     color: var(--text);
     background: none;
@@ -1914,7 +1880,7 @@ label {
 }
 
 .welcome-desc {
-    max-width: 600px;
+    max-width: 480px;
     font-size: 1rem;
     line-height: 1.55;
     color: var(--muted);
@@ -1923,7 +1889,7 @@ label {
 .chat-starter-grid {
     width: 100%;
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(190px, 100%), 1fr));
     gap: 10px;
     max-width: 680px;
 }
@@ -2048,7 +2014,7 @@ label {
 
 /* ── Chat input ───────────────────────────────────────────────────────────── */
 .chat-input-area {
-    padding: 0 0 18px 0;
+    padding: 0 28px 24px;
     background: transparent;
     border: none;
     flex-shrink: 0;
@@ -2066,7 +2032,7 @@ label {
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: 14px;
-    padding: 6px 6px 6px 8px;
+    padding: 10px;
     align-items: flex-end;
     box-shadow: var(--shadow-sm);
     transition: border-color 0.3s, box-shadow 0.3s;
@@ -2444,7 +2410,7 @@ label {
     }
 
     .page {
-        padding: 12px 12px 22px;
+        padding: 20px 16px 24px;
     }
 
     .card,
@@ -2460,6 +2426,18 @@ label {
     .panel-empty,
     .panel-body {
         padding-inline: 14px;
+    }
+
+    .page.page-flush {
+        padding: 0;
+    }
+
+    .chat-welcome {
+        padding: 24px 4px;
+    }
+
+    .shell-page-pill {
+        display: none;
     }
 
     .chat-messages {
@@ -2607,7 +2585,8 @@ textarea {
     }
 
     .tabbar-item.active {
-        color: var(--tab-tint, var(--accent));
+        color: var(--accent);
+        background: var(--accentDim);
     }
 
     .tabbar-item:active {
@@ -2720,6 +2699,13 @@ textarea {
     .list-row:active,
     .nav-item:active {
         background: color-mix(in srgb, var(--text) 5%, transparent);
+    }
+
+    .btn,
+    .btn-sm,
+    .btn-xs,
+    .shell-icon-btn {
+        min-height: 44px;
     }
 
     .btn:active:not(:disabled) {

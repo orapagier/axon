@@ -348,12 +348,17 @@ async function logout() {
           </button>
         </div>
 
-        <nav class="sidebar-nav">
+        <nav
+          class="sidebar-nav"
+          aria-label="Main navigation"
+        >
           <button
             v-for="item in primaryNav"
             :key="item.id"
             class="nav-item"
             :class="{ active: activePage === item.id }"
+            :aria-current="activePage === item.id ? 'page' : undefined"
+            :aria-label="item.label"
             :style="{ '--nav-tint': item.tint }"
             :title="isSidebarCollapsed ? item.label : ''"
             type="button"
@@ -374,6 +379,8 @@ async function logout() {
           <button
             class="nav-item"
             :class="{ active: activePage === 'settings' }"
+            :aria-current="activePage === 'settings' ? 'page' : undefined"
+            aria-label="Settings"
             :style="{ '--nav-tint': settingsNav.tint }"
             :title="isSidebarCollapsed ? settingsNav.label : ''"
             type="button"
@@ -492,6 +499,7 @@ async function logout() {
         :key="item.id"
         class="tabbar-item"
         :class="{ active: activePage === item.id }"
+        :aria-label="item.label"
         :style="{ '--tab-tint': item.tint }"
         :aria-current="activePage === item.id ? 'page' : undefined"
         type="button"

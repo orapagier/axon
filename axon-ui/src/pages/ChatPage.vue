@@ -2230,8 +2230,11 @@ watch(disabled, (newVal) => {
               class="logo-img chat-logo"
             >
           </div>
+          <h1 class="welcome-title">
+            What will you build today?
+          </h1>
           <p class="welcome-desc">
-            Ask for research, debugging, automation, or ops work. Axon can coordinate the details while you stay focused on decisions.
+            Research, create, and automate with Axon. Bring an idea — let’s work through the details.
           </p>
           <div class="chat-starter-grid">
             <button
@@ -2718,13 +2721,14 @@ watch(disabled, (newVal) => {
 }
 
 .conv-pane {
-  width: 250px;
+  width: 260px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 12px 10px;
-  border-right: 1px solid rgba(148, 163, 184, 0.18);
+  padding: 20px 14px;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
   min-height: 0;
 }
 
@@ -2764,15 +2768,16 @@ watch(disabled, (newVal) => {
 
 .conv-empty {
   font-size: 0.82rem;
-  opacity: 0.55;
-  padding: 8px 6px;
+  color: var(--muted);
+  padding: 16px 8px;
+  line-height: 1.6;
 }
 
 .conv-item {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 9px 10px;
+  padding: 12px;
   border-radius: 9px;
   cursor: pointer;
   transition: background 0.12s var(--ease-out);
@@ -2783,7 +2788,7 @@ watch(disabled, (newVal) => {
 }
 
 .conv-item.active {
-  background: rgba(94, 234, 212, 0.14);
+  background: var(--accentDim);
 }
 
 .conv-item-text {
